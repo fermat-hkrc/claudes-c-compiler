@@ -1852,3 +1852,591 @@ pub(crate) fn encode_neon_scalar_qshrn(operands: &[Operand], u_bit: u32, is_roun
 }
 
 // ── NEON addp (integer pairwise add) — already handled in three-same as addp ──
+
+#[cfg(test)]
+mod encode_neon_three_diff_narrow_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:628-635 addhn/raddhn/subhn/rsubhn (+2) => encode_neon_three_diff_narrow;
+    //   neon.rs:1513 Format 0 Q U 01110 size 1 Rm opcode 00 Rn Rd; ARM ARM Advanced SIMD three-different
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_three_diff_narrow is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree ADDHN decoder
+    //   - Differential vs encode_neon_three_diff: rejected — widening/long sibling, different Ta map (same-job gate)
+    // Weaker available: algebraic.metamorphic (Q/U bits), algebraic.invariant (word layout), negative_error (arity / Ta / Tb / non-reg)
+    // Differential: candidate=encode_neon_three_diff_narrow, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[RegArrangement(Vd,Tb), RegArrangement(Vn,Ta), RegArrangement(Vm,Ta)] <-> `{mnem} Vd.Tb, Vn.Ta, Vm.Ta`
+
+    use super::encode_neon_three_diff_narrow;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn mandated_tb(ta: &str, is_high: bool) -> &'static str {
+        match (ta, is_high) {
+            ("8h", false) => "8b",
+            ("8h", true) => "16b",
+            ("4s", false) => "4h",
+            ("4s", true) => "8h",
+            ("2d", false) => "2s",
+            ("2d", true) => "4s",
+            _ => "8b",
+        }
+    }
+
+    fn size_of_ta(ta: &str) -> u32 {
+        match ta {
+            "8h" => 0b00,
+            "4s" => 0b01,
+            "2d" => 0b10,
+            _ => 0xff,
+        }
+    }
+
+    fn mnemonic(u_bit: u32, opcode: u32, is_high: bool) -> &'static str {
+        match (u_bit, opcode, is_high) {
+            (0, 0b0100, false) => "addhn",
+            (0, 0b0100, true) => "addhn2",
+            (1, 0b0100, false) => "raddhn",
+            (1, 0b0100, true) => "raddhn2",
+            (0, 0b0110, false) => "subhn",
+            (0, 0b0110, true) => "subhn2",
+            (1, 0b0110, false) => "rsubhn",
+            (1, 0b0110, true) => "rsubhn2",
+            _ => "addhn",
+        }
+    }
+
+    fn sut_word(ops: &[Operand], u_bit: u32, opcode: u32, is_high: bool) -> Result<u32, String> {
+        match encode_neon_three_diff_narrow(ops, u_bit, opcode, is_high)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn ta_arr() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8h", "4s", "2d"])
+    }
+
+    fn opcode_bits() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0b0100u32), Just(0b0110u32)]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_neon_three_diff_narrow_kat_llvm_mc_addhn_v0_v1_v2() {
+        let want = 0x0e224020u32;
+        let mc = llvm_mc_word("addhn v0.8b, v1.8h, v2.8h").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            neon_arr(0, "8b"),
+            neon_arr(1, "8h"),
+            neon_arr(2, "8h"),
+        ];
+        let sut = sut_word(&ops, 0, 0b0100, false).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_three_diff_narrow_diff_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            ta in ta_arr(),
+            is_high in any::<bool>(),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+        ) {
+            let tb = mandated_tb(ta, is_high);
+            let mnem = mnemonic(u_bit, opcode, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, {}.{} ",
+                mnem, vreg(rd), tb, vreg(rn), ta, vreg(rm), ta
+            ).trim_end().to_string();
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+            ];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops, u_bit, opcode, is_high)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_q_bit_is_high(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            ta in ta_arr(),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+        ) {
+            let tb = mandated_tb(ta, false);
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+            ];
+            let lo = sut_word(&ops, u_bit, opcode, false)
+                .unwrap_or_else(|e| panic!("SUT Q=0 rejected: {}", e));
+            let hi = sut_word(&ops, u_bit, opcode, true)
+                .unwrap_or_else(|e| panic!("SUT Q=1 rejected: {}", e));
+            prop_assert_eq!(lo ^ hi, 1u32 << 30, "is_high must toggle only Q (bit 30)");
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_u_bit(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            ta in ta_arr(),
+            is_high in any::<bool>(),
+            opcode in opcode_bits(),
+        ) {
+            let tb = mandated_tb(ta, is_high);
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+            ];
+            let u0 = sut_word(&ops, 0, opcode, is_high)
+                .unwrap_or_else(|e| panic!("SUT U=0 rejected: {}", e));
+            let u1 = sut_word(&ops, 1, opcode, is_high)
+                .unwrap_or_else(|e| panic!("SUT U=1 rejected: {}", e));
+            prop_assert_eq!(u0 ^ u1, 1u32 << 29, "u_bit must toggle only U (bit 29)");
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_word_layout(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            ta in ta_arr(),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+            is_high in any::<bool>(),
+        ) {
+            let tb = mandated_tb(ta, is_high);
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+            ];
+            let w = sut_word(&ops, u_bit, opcode, is_high)
+                .unwrap_or_else(|e| panic!("SUT rejected valid layout: {}", e));
+            let q = if is_high { 1u32 } else { 0 };
+            let size = size_of_ta(ta);
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 30) & 1, q, "Q bit");
+            prop_assert_eq!((w >> 29) & 1, u_bit, "U bit");
+            prop_assert_eq!((w >> 24) & 0b11111, 0b01110u32, "bits[28:24]=01110");
+            prop_assert_eq!((w >> 22) & 0b11, size, "size from Ta");
+            prop_assert_eq!((w >> 21) & 1, 1u32, "bit 21 must be 1");
+            prop_assert_eq!((w >> 16) & 0b11111, rm, "Rm");
+            prop_assert_eq!((w >> 12) & 0b1111, opcode, "opcode[15:12]");
+            prop_assert_eq!((w >> 10) & 0b11, 0u32, "bits[11:10]=00");
+            prop_assert_eq!((w >> 5) & 0b11111, rn, "Rn");
+            prop_assert_eq!(w & 0b11111, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_arity_err(
+            n in 0usize..=2,
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+            is_high in any::<bool>(),
+            rd in reg_num(),
+            rn in reg_num(),
+        ) {
+            let all = [
+                neon_arr(rd, "8b"),
+                neon_arr(rn, "8h"),
+            ];
+            let ops: Vec<Operand> = all.iter().take(n).cloned().collect();
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "len={} must Err (requires 3 operands)",
+                n
+            );
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_unsupported_src(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            ta in prop::sample::select(vec!["8b", "16b", "4h", "2s", "1d", "16h", "8s", "4d", "", "b", "h"]),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+            is_high in any::<bool>(),
+        ) {
+            let ops = [
+                neon_arr(rd, "8b"),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+            ];
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "source Ta={} is not 8h/4s/2d and must Err",
+                ta
+            );
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_dest_tb_must_match(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            ta in ta_arr(),
+            tb in prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s", "1d", "2d"]),
+            is_high in any::<bool>(),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+        ) {
+            prop_assume!(tb != mandated_tb(ta, is_high));
+            let mnem = mnemonic(u_bit, opcode, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, {}.{} ",
+                mnem, vreg(rd), tb, vreg(rn), ta, vreg(rm), ta
+            ).trim_end().to_string();
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted mismatched Tb {}",
+                asm
+            );
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+            ];
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "mismatched dest Tb={} for Ta={} is_high={} must Err (llvm-mc rejects {})",
+                tb,
+                ta,
+                is_high,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_non_reg_err(
+            slot in 0usize..=2,
+            which in 0u32..=5,
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+            is_high in any::<bool>(),
+            rd in reg_num(),
+        ) {
+            let bad = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let mut ops = vec![
+                neon_arr(rd, "8b"),
+                neon_arr(rd, "8h"),
+                neon_arr(rd, "8h"),
+            ];
+            ops[slot] = bad;
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "non-register at slot {} which={} must Err",
+                slot,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_rm_ta_must_match(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            ta_n in ta_arr(),
+            ta_m in ta_arr(),
+            is_high in any::<bool>(),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+        ) {
+            prop_assume!(ta_n != ta_m);
+            let tb = mandated_tb(ta_n, is_high);
+            let mnem = mnemonic(u_bit, opcode, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, {}.{} ",
+                mnem, vreg(rd), tb, vreg(rn), ta_n, vreg(rm), ta_m
+            ).trim_end().to_string();
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted mismatched Rm Ta {}",
+                asm
+            );
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta_n),
+                neon_arr(rm, ta_m),
+            ];
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "mismatched Rm Ta={} vs Rn Ta={} must Err (llvm-mc rejects {})",
+                ta_m,
+                ta_n,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_extra_operand_err(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            extra in reg_num(),
+            ta in ta_arr(),
+            is_high in any::<bool>(),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+        ) {
+            let tb = mandated_tb(ta, is_high);
+            let mnem = mnemonic(u_bit, opcode, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, {}.{}, {}.{} ",
+                mnem, vreg(rd), tb, vreg(rn), ta, vreg(rm), ta, vreg(extra), ta
+            ).trim_end().to_string();
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted 4-operand {}",
+                asm
+            );
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+                neon_arr(extra, ta),
+            ];
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "4 operands must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_gpr_dest_err(
+            prefix in prop::sample::select(vec!["x", "w", "d", "s", "q", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+            rn in reg_num(),
+            rm in reg_num(),
+            ta in ta_arr(),
+            is_high in any::<bool>(),
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+        ) {
+            let dest = format!("{}{}", prefix, n);
+            let tb = mandated_tb(ta, is_high);
+            let mnem = mnemonic(u_bit, opcode, is_high);
+            let asm = format!(
+                "{} {}, {}.{}, {}.{} ",
+                mnem, dest, vreg(rn), ta, vreg(rm), ta
+            ).trim_end().to_string();
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted GPR/FP dest {}",
+                asm
+            );
+            let ops = [
+                Operand::Reg(dest.clone()),
+                neon_arr(rn, ta),
+                neon_arr(rm, ta),
+            ];
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "GPR/FP dest {} is not a NEON Vd.Tb and must Err (llvm-mc rejects {})",
+                dest,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_three_diff_narrow_invalid_reg_err(
+            slot in 0usize..=2,
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("v99".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v-1".to_string()),
+            ],
+            u_bit in 0u32..=1u32,
+            opcode in opcode_bits(),
+            is_high in any::<bool>(),
+            rd in reg_num(),
+        ) {
+            let mut ops = vec![
+                neon_arr(rd, "8b"),
+                neon_arr(rd, "8h"),
+                neon_arr(rd, "8h"),
+            ];
+            ops[slot] = Operand::RegArrangement {
+                reg: bad.clone(),
+                arrangement: if slot == 1 { "8h".into() } else { "8b".into() },
+            };
+            prop_assert!(
+                encode_neon_three_diff_narrow(&ops, u_bit, opcode, is_high).is_err(),
+                "invalid NEON register {} at slot {} must Err",
+                bad,
+                slot
+            );
+        }
+    }
+
+    /// Deterministic regression: ADDHN2 dest must be 16B when Ta=8H (shrunk from dest_tb_must_match).
+    #[test]
+    fn test_encode_neon_three_diff_narrow_regression_mismatched_dest_tb() {
+        let ops = [
+            neon_arr(0, "8b"),
+            neon_arr(0, "8h"),
+            neon_arr(0, "8h"),
+        ];
+        assert!(
+            encode_neon_three_diff_narrow(&ops, 0, 0b0100, true).is_err(),
+            "addhn2 v0.8b, v0.8h, v0.8h must Err (dest Tb=8b is not 16b)"
+        );
+    }
+
+    /// Deterministic regression: Vm.Ta must equal Vn.Ta (shrunk from rm_ta_must_match).
+    #[test]
+    fn test_encode_neon_three_diff_narrow_regression_rm_ta_mismatch() {
+        let ops = [
+            neon_arr(0, "4h"),
+            neon_arr(0, "4s"),
+            neon_arr(0, "8h"),
+        ];
+        assert!(
+            encode_neon_three_diff_narrow(&ops, 0, 0b0100, false).is_err(),
+            "addhn v0.4h, v0.4s, v0.8h must Err (Rm Ta != Rn Ta)"
+        );
+    }
+
+    /// Deterministic regression: exactly 3 operands (shrunk from extra_operand_err).
+    #[test]
+    fn test_encode_neon_three_diff_narrow_regression_extra_operand() {
+        let ops = [
+            neon_arr(0, "8b"),
+            neon_arr(0, "8h"),
+            neon_arr(0, "8h"),
+            neon_arr(0, "8h"),
+        ];
+        assert!(
+            encode_neon_three_diff_narrow(&ops, 0, 0b0100, false).is_err(),
+            "addhn v0.8b, v0.8h, v0.8h, v0.8h must Err (exactly 3 operands)"
+        );
+    }
+
+    /// Deterministic regression: dest must be Vd.Tb, not a GPR (shrunk from gpr_dest_err).
+    #[test]
+    fn test_encode_neon_three_diff_narrow_regression_gpr_dest() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            neon_arr(0, "8h"),
+            neon_arr(0, "8h"),
+        ];
+        assert!(
+            encode_neon_three_diff_narrow(&ops, 0, 0b0100, false).is_err(),
+            "addhn x0, v0.8h, v0.8h must Err (GPR dest is not Vd.Tb)"
+        );
+    }
+}

@@ -159,3 +159,32 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid bitmask, unsupported third operand, invalid rm, unknown shift kind).
 
+---
+
+# Confirmed invariants (encode_neon_three_diff_narrow)
+
+- Valid ADDHN/RADDHN/SUBHN/RSUBHN (+2) with mandated (Ta,Tb) pairs matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Ta∈{8h,4s,2d}; Tb is 8b/16b, 4h/8h, 2s/4s according to is_high.
+- encode(..., is_high=true) XOR encode(..., is_high=false) = 1<<30 (ARM ARM Q bit).
+- encode(..., u=1) XOR encode(..., u=0) = 1<<29 (ARM ARM U bit).
+- Success-path word: bit 31 = 0, bits [28:24] = 0b01110, bit 21 = 1, bits [11:10] = 00, Rd at [4:0], Rn at [9:5], Rm at [20:16], opcode at [15:12], size at [23:22] from Ta (8h=00, 4s=01, 2d=10).
+- Fewer than 3 operands always Err.
+- Unsupported source Ta (not 8h/4s/2d) always Err.
+- Non-register (Imm/Mem/Symbol/Shift/Cond/Label) in any of the three slots always Err.
+- Invalid NEON register names (v32, v99, foo, empty, v, v-1) always Err.
+- Known-answer: `addhn v0.8b, v1.8h, v2.8h` encodes as 0x0e224020.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ADDHN2/RADDHN2/SUBHN2/RSUBHN2 set Q=1 (upper half).
+- U=1 is the rounding form (RADDHN/RSUBHN); opcode 0b0100 add-family, 0b0110 sub-family.
+
+## Quirks
+
+- Dest arrangement Tb is ignored (see bugs).
+- Rm arrangement is ignored; size comes only from operand 1 (see bugs).
+- Extra operands beyond 3 are ignored (see bugs).
+- get_neon_reg accepts Operand::Reg; parse_reg_num accepts x/w/d/s/q/v/h/b, so GPR/FP dest encodes as Vd (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid register names via get_neon_reg).
+

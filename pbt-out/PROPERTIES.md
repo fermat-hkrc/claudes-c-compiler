@@ -1,435 +1,380 @@
-# Properties: encode_bic
+# Properties: encode_neon_three_diff_narrow
 
-## encode_bic_diff_reg_llvm_mc
+## encode_neon_three_diff_narrow_diff_llvm_mc
 - Tier: 7
-- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). In-tree BIC decoder does not exist so algebraic round-trip of a sibling decoder is unavailable. encode_logical is AND (N=0), a different job, so it fails the same-job sibling gate as a differential reference. Doc evidence: assembler README "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:674 bic dispatch; ARM ARM BIC shifted-register encoding.
-- Seed: (none) — no existing tests for encode_bic
-- Formal: ∀ rd,rn,rm ∈ 0..=31, ∀ is_64 ∈ Bool, ∀ shift ∈ {None} ∪ {lsl,lsr,asr,ror}×[0, width-1]. encode_bic([Reg(gpr), Reg(gpr), Reg(gpr), Shift?]) = Word(w) ∧ w = llvm-mc("bic Rd, Rn, Rm{, shift #amt}"). Register 31 is XZR/WZR, never SP.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). In-tree ADDHN decoder does not exist so algebraic round-trip is unavailable. encode_neon_three_diff is a widening/long sibling with a different source-arrangement map and fails the same-job sibling gate. Doc evidence: assembler README "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:628-635 addhn family dispatch; ARM ARM Advanced SIMD three-different encoding.
+- Seed: (none) — no existing tests for encode_neon_three_diff_narrow
+- Formal: ∀ rd,rn,rm ∈ 0..=31, ∀ (Ta,Tb,is_high) ∈ {(8h,8b,false),(8h,16b,true),(4s,4h,false),(4s,8h,true),(2d,2s,false),(2d,4s,true)}, ∀ (mnemonic,U,opcode) ∈ {(addhn,0,0b0100),(raddhn,1,0b0100),(subhn,0,0b0110),(rsubhn,1,0b0110)}. encode_neon_three_diff_narrow([Vd.Tb,Vn.Ta,Vm.Ta], U, opcode, is_high) = Word(llvm-mc("{mnemonic}{2?} Vd.Tb, Vn.Ta, Vm.Ta")).
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bic
+function: encoder.neon.encode_neon_three_diff_narrow
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, shift_kind, shift_amt]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_64: bool, shift: optional_aarch64_shift }
+  vars: [rd, rn, rm, ta, tb, is_high, u_bit, opcode]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, arr: valid_addhn_ta_tb, mnemonic: addhn_family }
   relation:
     op: eq
-    lhs: encode_bic([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm)), Shift?]) as Word
-    rhs: llvm_mc("bic Rd, Rn, Rm{, shift #amt}")
+    lhs: encode_neon_three_diff_narrow([RegArrangement(vd,tb), RegArrangement(vn,ta), RegArrangement(vm,ta)], u_bit, opcode, is_high) as Word
+    rhs: llvm_mc("{mnem} vd.tb, vn.ta, vm.ta")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  shift_kind: { gen: oneof, options: [none, lsl, lsr, asr, ror] }
-  shift_amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:674 bic dispatch; ARM ARM BIC shifted register sf 00 01010 shift N=1 Rm imm6 Rn Rd
+  ta: { gen: oneof, options: [8h, 4s, 2d] }
+  is_high: { gen: bool }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:628-635 addhn dispatch; neon.rs:1513 ARM ARM three-different format 0 Q U 01110 size 1 Rm opcode 00 Rn Rd
 ```
 
-## encode_bic_diff_imm_llvm_mc
-- Tier: 7
-- Rationale: Differential against llvm-mc for the documented BIC-immediate alias of AND-immediate. State machine rejected. Round-trip decoder unavailable. Doc evidence: function comment "BIC Xd, Xn, #imm -> AND Xd, Xn, #~imm"; ARM ARM BIC (immediate) is an alias of AND (immediate); README gas-compatible. Rd of 31 is SP/WSP (AND-immediate), not XZR.
+## encode_neon_three_diff_narrow_q_bit_is_high
+- Tier: 4
+- Rationale: Algebraic metamorphic: ARM ARM Q is bit 30 and is 1 iff the `*2` (upper-half) variant. Stronger differential already covers the happy path; this isolates the is_high→Q contract independently of llvm-mc. State machine / round-trip rejected as above.
 - Seed: (none)
-- Formal: ∀ rd ∈ {x0..x30,sp} ∪ {w0..w30,wsp}, ∀ rn ∈ {x0..x30,xzr} matching width, ∀ imm such that ~imm is a valid AArch64 bitmask. encode_bic([Reg(rd), Reg(rn), Imm(imm)]) = Word(llvm-mc("bic rd, rn, #imm"))
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ valid 3-reg ADDHN operands, ∀ u ∈ {0,1}, ∀ opcode ∈ {0b0100,0b0110}. encode(..., is_high=true) XOR encode(..., is_high=false) = 1<<30, and both succeed.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bic
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, is_64, rd_is_sp, imm]
-  domain: { rd: u32_0_31, rn: u32_0_31, is_64: bool, imm: bic_imm_with_valid_inverted_bitmask }
-  relation:
-    op: eq
-    lhs: encode_bic([Reg(rd_name), Reg(rn_name), Imm(imm)]) as Word
-    rhs: llvm_mc("bic rd, rn, #imm")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  imm: { gen: int, type: i64 }
-evidence: data_processing.rs:1008-1012 BIC imm alias of AND ~imm; ARM ARM AND-immediate Rd=SP; README.md:5-14
-```
-
-## encode_bic_diff_neon_llvm_mc
-- Tier: 7
-- Rationale: Differential against llvm-mc for NEON three-same BIC. ARM ARM BIC (vector) T is 8B or 16B only. State machine rejected. README.md:224 lists bic under NEON three-same. encode_neon_bic is the helper encode_bic calls, not an independent reference.
-- Seed: (none)
-- Formal: ∀ d,n,m ∈ 0..=31, ∀ T ∈ {8b,16b}. encode_bic([RegArrangement(vd,T), RegArrangement(vn,T), RegArrangement(vm,T)]) = Word(llvm-mc("bic vd.T, vn.T, vm.T"))
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_bic
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [d, n, m, arr]
-  domain: { d: u32_0_31, n: u32_0_31, m: u32_0_31, arr: {8b,16b} }
-  relation:
-    op: eq
-    lhs: encode_bic([RegArrangement(vd,arr), RegArrangement(vn,arr), RegArrangement(vm,arr)]) as Word
-    rhs: llvm_mc("bic vd.arr, vn.arr, vm.arr")
-generators:
-  d: { gen: int, min: 0, max: 31, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  arr: { gen: oneof, options: [8b, 16b] }
-evidence: README.md:224 NEON three-same bic; ARM ARM BIC vector 0 Q 0 01110 01 1 Rm 000111 Rn Rd T=8B|16B
-```
-
-## encode_bic_meta_imm_and_alias
-- Tier: 4c
-- Rationale: Algebraic metamorphic from the ARM ARM alias BIC imm = AND ~imm. Stronger differential is the sibling llvm-mc immediate property. encode_logical(opc=00) is the in-tree AND encoder (different mnemonic, same AND-immediate encoding job for the inverted immediate). State machine rejected.
-- Seed: (none)
-- Formal: ∀ rd,rn ∈ GPR-same-width, ∀ imm such that ~imm is a valid bitmask. encode_bic([Rd,Rn,Imm(imm)]) = encode_logical([Rd,Rn,Imm(~imm)], opc=00)
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_bic
+function: encoder.neon.encode_neon_three_diff_narrow
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64, imm]
-  domain: { rd: u32_0_30, rn: u32_0_31, is_64: bool, imm: bic_imm_with_valid_inverted_bitmask }
+  vars: [rd, rn, rm, ta, u_bit, opcode]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, ta: {8h,4s,2d}, u_bit: {0,1}, opcode: {0b0100,0b0110} }
   relation:
     op: eq
-    lhs: encode_bic([Reg(rd), Reg(rn), Imm(imm)])
-    rhs: encode_logical([Reg(rd), Reg(rn), Imm(~imm)], 0)
+    lhs: encode_neon_three_diff_narrow(ops, u_bit, opcode, true) XOR encode_neon_three_diff_narrow(ops, u_bit, opcode, false)
+    rhs: 1 << 30
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  imm: { gen: int, type: i64 }
-evidence: ARM ARM BIC (immediate) is an alias of AND (immediate); data_processing.rs:1008-1012
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, options: [8h, 4s, 2d] }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+evidence: neon.rs:1513 Format 0 Q U 01110; encoder/mod.rs:628-635 is_high true for *2 mnemonics; ARM ARM Q=1 writes upper half
 ```
 
-## encode_bic_neg_arity
-- Tier: 4e
-- Rationale: Negative/error contract from the explicit "bic requires 3 operands" check and llvm-mc "too few operands". Stronger differential does not apply to the invalid-arity domain. State machine rejected.
+## encode_neon_three_diff_narrow_u_bit
+- Tier: 4
+- Rationale: Algebraic metamorphic: ARM ARM U is bit 29 (0=ADDHN/SUBHN, 1=RADDHN/RSUBHN). Isolates the U field independently of llvm-mc.
 - Seed: (none)
-- Formal: ∀ ops with len(ops) < 3. encode_bic(ops) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ valid 3-reg ADDHN operands, ∀ is_high ∈ Bool, ∀ opcode ∈ {0b0100,0b0110}. encode(..., u=1) XOR encode(..., u=0) = 1<<29, and both succeed.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
+function: encoder.neon.encode_neon_three_diff_narrow
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [ops]
-  domain: { ops: operand_lists_len_0_to_2 }
+  vars: [rd, rn, rm, ta, is_high, opcode]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, ta: {8h,4s,2d}, is_high: Bool, opcode: {0b0100,0b0110} }
   relation:
-    op: throws
-    lhs: encode_bic(ops)
-    error: String
+    op: eq
+    lhs: encode_neon_three_diff_narrow(ops, 1, opcode, is_high) XOR encode_neon_three_diff_narrow(ops, 0, opcode, is_high)
+    rhs: 1 << 29
 generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
-expected_error: String
-evidence: data_processing.rs:1014-1016 "bic requires 3 operands"; llvm-mc "too few operands for instruction"
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, options: [8h, 4s, 2d] }
+  is_high: { gen: bool }
+  opcode: { gen: oneof, options: [4, 6] }
+evidence: neon.rs:1513 U at bit 29; encoder/mod.rs:628-635 U=1 for raddhn/rsubhn; ARM ARM U field
 ```
 
-## encode_bic_neg_mixed_width
-- Tier: 4e
-- Rationale: Negative/error contract from ARM ARM (all three GPRs must be the same width) and llvm-mc "invalid operand for instruction" on mixed x/w. encode_bic takes sf only from operand 0, so this is the contract llvm-mc/gas enforce. State machine rejected. Differential on valid same-width inputs is the sibling property.
+## encode_neon_three_diff_narrow_word_layout
+- Tier: 4
+- Rationale: Algebraic invariant from the documented bit layout: bit31=0, bits[28:24]=01110, bit21=1, bits[11:10]=00, Rd/Rn/Rm/size/opcode placed as specified. Stronger differential already covers numeric equality; this pins each field so a swapped Rn/Rm would fail even if llvm-mc were unavailable.
 - Seed: (none)
-- Formal: ∀ rd,rn,rm ∈ 0..=30, ∀ widths not all equal. encode_bic([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))]) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=true (bic w0, w0, x0)
-- Bug report: pbt-out/bug_reports/encode_bic_mixed_width.md
-
-```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64]
-  domain: { rd: u32_0_30, rn: u32_0_30, rm: u32_0_30, widths: not_all_equal }
-  relation:
-    op: throws
-    lhs: encode_bic([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))])
-    error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-  rm64: { gen: bool }
-expected_error: String
-evidence: ARM ARM BIC shifted-register all registers same width; llvm-mc rejects bic x0, w1, x2
-```
-
-## encode_bic_neg_sp_fp_regform
-- Tier: 4e
-- Rationale: Negative/error contract from ARM ARM BIC shifted-register (Rd/Rn/Rm of 31 are XZR not SP; FP/SIMD names are not GPRs) and llvm-mc rejects `bic sp,...` / `bic d0,...`. parse_reg_num maps sp and d/s/q/v/h/b prefixes to 0-31, so this checks the public gas contract. State machine rejected.
-- Seed: (none)
-- Formal: ∀ which ∈ {0,1,2}. placing SP/WSP or an FP/SIMD name (d/s/q/v/h/b0..31) at operand `which` of a 3-register BIC yields Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: which=0, is_64=false, kind=0 (bic wsp, w0, w0)
-- Bug report: pbt-out/bug_reports/encode_bic_sp_register_form.md
-
-```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, bad]
-  domain: { which: 0..=2, bad: sp_or_fp_name }
-  relation:
-    op: throws
-    lhs: encode_bic(ops_with_bad_at(which, bad))
-    error: String
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  bad: { gen: oneof, options: [sp, wsp, d0, s0, q0, v0, h0, b0, d31] }
-expected_error: String
-evidence: ARM ARM BIC shifted-register Rd/Rn/Rm are Xd/Wn not SP/FP; llvm-mc rejects bic sp, x0, x1 and bic d0, x1, x2
-```
-
-## encode_bic_neg_shift_range_neon_arr
-- Tier: 4e
-- Rationale: Negative/error contract from documented bounds: ARM ARM W-form shift amount in [0,31], X-form in [0,63] (bound and bound+1 must be sampled); ARM ARM BIC vector T is 8B|16B only (8h/4s/2d/4h/2s rejected by llvm-mc). Field masking of imm6 and Q=(arr==16b) would silently accept these. State machine rejected. Differential covers the valid side of each bound.
-- Seed: (none)
-- Formal: (1) ∀ 32-bit BIC with shift amount ∈ {32,33,63,64}. encode_bic is Err. (2) ∀ 64-bit BIC with shift amount ∈ {64,65,128}. encode_bic is Err. (3) ∀ T ∈ {8h,4h,4s,2s,2d}. encode_bic(Vd.T,Vn.T,Vm.T) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: is_64=false, kind=lsl, amt_w=32, which=0 (bic w0, w0, w0, lsl #32)
-- Bug report: pbt-out/bug_reports/encode_bic_shift_out_of_range.md
-
-```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_64, amt, arr]
-  domain: { amt: out_of_range_shift, arr: invalid_neon_T }
-  relation:
-    op: throws
-    lhs: encode_bic(shifted_or_neon_invalid)
-    error: String
-generators:
-  amt_w: { gen: oneof, options: [32, 33, 63, 64] }
-  amt_x: { gen: oneof, options: [64, 65, 128] }
-  arr: { gen: oneof, options: [8h, 4h, 4s, 2s, 2d] }
-expected_error: String
-evidence: ARM ARM BIC shifted-register imm6 range [0,31]/[0,63]; ARM ARM BIC vector T=8B|16B; llvm-mc rejects bic w0,w1,w2,lsl #32 and bic v0.8h,v1.8h,v2.8h
-```
-
-## encode_bic_neg_fp_reg
-- Tier: 4e
-- Rationale: Negative/error contract from ARM ARM (BIC shifted-register operands are GPRs) and llvm-mc rejecting d/s/q/v/h/b names. Split out of encode_bic_neg_sp_fp_regform so shrinking can witness FP independently of SP. parse_reg_num accepts those prefixes. State machine rejected.
-- Seed: (none)
-- Formal: ∀ which ∈ {0,1,2}, ∀ prefix ∈ {d,s,q,v,h,b}, ∀ n ∈ 0..=31. encode_bic with that FP name at operand `which` is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: which=0, prefix=d, n=0 (bic d0, x1, x2)
-- Bug report: pbt-out/bug_reports/encode_bic_fp_reg.md
-
-```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, prefix, n]
-  domain: { which: 0..=2, prefix: {d,s,q,v,h,b}, n: u32_0_31 }
-  relation:
-    op: throws
-    lhs: encode_bic(ops_with_fp_at(which))
-    error: String
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: ARM ARM BIC shifted-register GPRs only; llvm-mc rejects bic d0, x1, x2; parse_reg_num in encoder/mod.rs:131-147 accepts d/s/q/v/h/b
-```
-
-## encode_bic_neg_invalid_neon_arr
-- Tier: 4e
-- Rationale: Negative/error contract from ARM ARM BIC (vector) T is 8B or 16B only; llvm-mc rejects 8h/4s/2d three-register form. encode_neon_bic sets Q only for 16b and silently encodes every other arrangement as 8b. Split out of encode_bic_neg_shift_range_neon_arr so shrinking can witness this independently.
-- Seed: (none)
-- Formal: ∀ d,n,m ∈ 0..=31, ∀ T ∈ {8h,4h,4s,2s,2d}. encode_bic(Vd.T, Vn.T, Vm.T) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: d=0, n=0, m=0, arr=8h (bic v0.8h, v1.8h, v2.8h)
-- Bug report: pbt-out/bug_reports/encode_bic_invalid_neon_arr.md
-
-```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [d, n, m, arr]
-  domain: { d: u32_0_31, n: u32_0_31, m: u32_0_31, arr: {8h,4h,4s,2s,2d} }
-  relation:
-    op: throws
-    lhs: encode_bic([RegArrangement(vd,arr), RegArrangement(vn,arr), RegArrangement(vm,arr)])
-    error: String
-generators:
-  d: { gen: int, min: 0, max: 31, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  arr: { gen: oneof, options: [8h, 4h, 4s, 2s, 2d] }
-expected_error: String
-evidence: ARM ARM BIC vector T=8B|16B; README.md:224 NEON three-same bic; llvm-mc rejects bic v0.8h, v1.8h, v2.8h
-```
-
-## encode_bic_neg_imm_xzr_rd
-- Tier: 4e
-- Rationale: Negative/error contract from ARM ARM AND-immediate (BIC-imm alias): Rd of 31 is SP/WSP, not XZR/WZR. llvm-mc rejects `bic xzr, x0, #1` and `bic wzr, w0, #1`. get_reg maps both xzr and sp to 31, so the SUT cannot distinguish them. State machine rejected. Differential on valid SP-as-Rd immediates is encode_bic_diff_imm_llvm_mc.
-- Seed: (none)
-- Formal: ∀ is_64 ∈ Bool, ∀ rn ∈ 0..=30. encode_bic([Reg(xzr|wzr), Reg(gpr(is_64,rn)), Imm(1)]) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: is_64=false, rn=0 (bic wzr, w0, #1)
-- Bug report: pbt-out/bug_reports/encode_bic_imm_xzr_rd.md
-
-```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_64, rn]
-  domain: { is_64: bool, rn: u32_0_30 }
-  relation:
-    op: throws
-    lhs: encode_bic([Reg(xzr_or_wzr), Reg(gpr(is_64,rn)), Imm(1)])
-    error: String
-generators:
-  is_64: { gen: bool }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: ARM ARM AND-immediate Rd is Xd|SP not XZR; llvm-mc rejects bic xzr, x0, #1
-```
-
-## encode_bic_neg_invalid_imm
-- Tier: 4e
-- Rationale: Coverage-sweep of the documented bitmask-failure path (`cannot encode bitmask immediate for bic`). Differential vs llvm-mc on the invalid-imm domain: if llvm-mc rejects, SUT must Err; if llvm-mc accepts, encodings must match. State machine rejected. Stronger valid-imm differential is encode_bic_diff_imm_llvm_mc.
-- Seed: (none)
-- Formal: ∀ rd,rn ∈ 0..=30, ∀ is_64, ∀ imm ∈ {0,-1,5,9,0x11,i64::MIN}. llvm-mc("bic Rd, Rn, #imm") rejects ⇒ encode_bic is Err; accepts ⇒ encodings equal
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ valid 3-reg ADDHN operands, ∀ u ∈ {0,1}, ∀ opcode ∈ {0b0100,0b0110}, ∀ is_high ∈ Bool. let w = encode(...). w[31]=0 ∧ w[30]=is_high ∧ w[29]=u ∧ w[28:24]=0b01110 ∧ w[23:22]=size(Ta) ∧ w[21]=1 ∧ w[20:16]=rm ∧ w[15:12]=opcode ∧ w[11:10]=0 ∧ w[9:5]=rn ∧ w[4:0]=rd. size(8h)=00, size(4s)=01, size(2d)=10.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bic
-oracle: negative_error
+function: encoder.neon.encode_neon_three_diff_narrow
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, imm]
-  domain: { imm: known_non_bitmask_skew }
+  vars: [rd, rn, rm, ta, u_bit, opcode, is_high]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, ta: {8h,4s,2d}, u_bit: {0,1}, opcode: {0b0100,0b0110}, is_high: Bool }
   relation:
     op: holds
-    expr: llvm_mc_rejects(asm) => encode_bic(ops).is_err()
+    expr: word_fields_match_arm_three_diff_narrow(w, rd, rn, rm, size(ta), u_bit, opcode, is_high)
 generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  imm: { gen: oneof, options: [0, -1, 5, 9, 0x11, i64_min] }
-expected_error: String
-evidence: data_processing.rs:1046 cannot encode bitmask immediate for bic; llvm-mc rejects #0 / all-ones / 0x5
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, options: [8h, 4s, 2d] }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+  is_high: { gen: bool }
+evidence: neon.rs:1513 Format 0 Q U 01110 size 1 Rm opcode 00 Rn Rd; ARM ARM Advanced SIMD three different
 ```
 
-## encode_bic_neg_unsupported_third
-- Tier: 4e
-- Rationale: Coverage-sweep of the documented `unsupported bic operands` path when operand 2 is neither Imm nor Reg. State machine rejected.
+## encode_neon_three_diff_narrow_arity_err
+- Tier: 4
+- Rationale: Negative/error contract: function returns Err when operands.len() < 3. Evidence: neon.rs:1515 `if operands.len() < 3 { return Err("addhn/subhn requires 3 operands") }`. Documented bound is exactly 3; sample empty, 1, and 2 (bound-1).
 - Seed: (none)
-- Formal: ∀ third ∈ {Mem, Symbol, Cond, Label, Barrier}. encode_bic([Reg, Reg, third]) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ ops with len(ops) ∈ {0,1,2}, ∀ u ∈ {0,1}, ∀ opcode ∈ {0b0100,0b0110}, ∀ is_high ∈ Bool. encode_neon_three_diff_narrow(ops, u, opcode, is_high) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bic
+function: encoder.neon.encode_neon_three_diff_narrow
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, third]
-  domain: { third: {Mem, Symbol, Cond, Label, Barrier} }
+  vars: [ops, u_bit, opcode, is_high]
+  domain: { ops: neon_reg_list_len_0_to_2, u_bit: {0,1}, opcode: {0b0100,0b0110}, is_high: Bool }
   relation:
     op: throws
-    lhs: encode_bic([Reg, Reg, third])
-    error: String
-generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  which: { gen: int, min: 0, max: 4, type: u32 }
+    expr: encode_neon_three_diff_narrow(ops, u_bit, opcode, is_high)
 expected_error: String
-evidence: data_processing.rs:1066 Err("unsupported bic operands")
+generators:
+  n: { gen: int, min: 0, max: 2, type: usize }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+  is_high: { gen: bool }
+evidence: neon.rs:1515 addhn/subhn requires 3 operands
 ```
 
-## encode_bic_neg_invalid_rm
-- Tier: 4e
-- Rationale: Coverage-sweep of `invalid rm register for bic` when operand 2 is a Reg with an unparsable name. State machine rejected.
+## encode_neon_three_diff_narrow_unsupported_src
+- Tier: 4
+- Rationale: Negative/error contract: source arrangement (operand 1) must be 8h/4s/2d; any other Ta is Err. Evidence: neon.rs:1519-1520. ARM ARM size=11 reserved; Ta of 8B/16B/4H/2S/1D are not ADDHN sources. Bound: valid set {8h,4s,2d}; generate outside that closed set.
 - Seed: (none)
-- Formal: ∀ bad ∈ {x32,w32,x99,"",foo,r0,x}. encode_bic([Reg(x0), Reg(x1), Reg(bad)]) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd,rn,rm ∈ 0..=31, ∀ Ta ∉ {8h,4s,2d} ∪ {empty}, ∀ u,opcode,is_high in the dispatch domain. encode([Vd.8b, Vn.Ta, Vm.Ta], ...) is Err containing "unsupported source".
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bic
+function: encoder.neon.encode_neon_three_diff_narrow
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, bad]
-  domain: { bad: invalid_reg_names }
+  vars: [rd, rn, rm, ta, u_bit, opcode, is_high]
+  domain: { ta: invalid_addhn_source_arrangement }
   relation:
     op: throws
-    lhs: encode_bic([Reg, Reg, Reg(bad)])
-    error: String
-generators:
-  bad: { gen: oneof, options: [x32, w32, x99, empty, foo, r0, x] }
+    expr: encode_neon_three_diff_narrow([Vd.8b, Vn.ta, Vm.ta], u_bit, opcode, is_high)
 expected_error: String
-evidence: data_processing.rs:1051 parse_reg_num(rm_name).ok_or("invalid rm register for bic")
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, options: [8b, 16b, 4h, 8h_invalid_as_only_when_paired_wrong, 2s, 1d, 2d_ok_excluded, empty, 4d, 8s] }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+  is_high: { gen: bool }
+evidence: neon.rs:1519-1520 addhn: unsupported source; ARM ARM ADDHN Ta in {8H,4S,2D}
 ```
 
-## encode_bic_neg_unknown_shift_kind
-- Tier: 4e
-- Rationale: Coverage-sweep of the shift-kind match default (`_ => 0b00`). ARM ARM BIC shifted-register allows only lsl/lsr/asr/ror. Unknown kinds must Err, not encode as LSL. State machine rejected.
+## encode_neon_three_diff_narrow_dest_tb_must_match
+- Tier: 5
+- Rationale: Negative/error (and differential rejection) contract from ARM ARM / gas: dest Tb is determined by Ta and Q. ADDHN Vd.Tb, Vn.Ta, Vm.Ta with wrong Tb is rejected by llvm-mc/gas. README claims gas-compatible assembly. SUT currently ignores dest arrangement — this property asserts Err (or agreement with llvm-mc reject) when Tb is not the mandated pairing. Stronger full differential on invalid text is the same job.
 - Seed: (none)
-- Formal: ∀ kind ∉ {lsl,lsr,asr,ror}. encode_bic([Rd, Rn, Rm, Shift{kind, amt}]) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd,rn,rm ∈ 0..=31, ∀ (Ta,is_high) valid, ∀ Tb such that Tb ≠ mandated_tb(Ta,is_high) and Tb is a NEON arrangement. llvm-mc rejects the asm ∧ encode_neon_three_diff_narrow([Vd.Tb,Vn.Ta,Vm.Ta], ...) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: failing
-- Counterexample: kind="lslx", amt=0, is_64=false, rd=rn=rm=0 (bic w0, w0, w0 with Shift lslx #0)
-- Bug report: pbt-out/bug_reports/encode_bic_unknown_shift_kind.md
+- Counterexample: addhn2 v0.8b, v0.8h, v0.8h (rd=rn=rm=0, Ta=8h, Tb=8b, is_high=true, U=0, opcode=0b0100)
+- Bug report: pbt-out/bug_reports/encode_neon_three_diff_narrow_mismatched_dest_tb.md
 
 ```property
-function: encoder.data_processing.encode_bic
+function: encoder.neon.encode_neon_three_diff_narrow
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { kind: {lslx, rrx, rol, empty, "asr "} }
+  vars: [rd, rn, rm, ta, tb, is_high, u_bit, opcode]
+  domain: { tb: mismatched_addhn_dest_arrangement, ta: valid_addhn_source }
   relation:
     op: throws
-    lhs: encode_bic([Reg, Reg, Reg, Shift{kind, amt}])
-    error: String
-generators:
-  kind: { gen: oneof, options: [lslx, rrx, rol, empty, asr_space] }
-  amt: { gen: oneof, options: [0, 1, 31] }
+    expr: encode_neon_three_diff_narrow([Vd.tb, Vn.ta, Vm.ta], u_bit, opcode, is_high)
 expected_error: String
-evidence: ARM ARM BIC shifted-register shift in {lsl,lsr,asr,ror}; data_processing.rs:1053-1060 match default _ => 0b00
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, options: [8h, 4s, 2d] }
+  tb: { gen: oneof, options: [8b, 16b, 4h, 8h, 2s, 4s, 1d, 2d] }
+  is_high: { gen: bool }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+evidence: ARM ARM ADDHN Vd.Tb,Vn.Ta,Vm.Ta pairing; README.md:5-14 gas-compatible; llvm-mc rejects mismatched Tb
+```
+
+## encode_neon_three_diff_narrow_non_reg_err
+- Tier: 4
+- Rationale: Negative/error contract: each of the three slots must be a NEON register (RegArrangement or Reg). Imm/Mem/Symbol/Shift/Cond/etc. at any slot is Err via get_neon_reg. Evidence: neon.rs:7-20 get_neon_reg `expected NEON register at operand N`.
+- Seed: (none)
+- Formal: ∀ slot ∈ {0,1,2}, ∀ non-reg Operand o, ∀ valid fillers in the other two slots. encode(ops with ops[slot]=o, ...) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.neon.encode_neon_three_diff_narrow
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [slot, bad, rd, rn, rm, u_bit, opcode, is_high]
+  domain: { slot: {0,1,2}, bad: Imm|Mem|Symbol|Shift|Cond|Label|Barrier }
+  relation:
+    op: throws
+    expr: encode_neon_three_diff_narrow(ops_with_bad_at_slot, u_bit, opcode, is_high)
+expected_error: String
+generators:
+  slot: { gen: int, min: 0, max: 2, type: usize }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+  is_high: { gen: bool }
+evidence: neon.rs:7-20 get_neon_reg expected NEON register; ARM ARM three register form
+```
+
+## encode_neon_three_diff_narrow_rm_ta_must_match
+- Tier: 5
+- Rationale: Negative/error contract from ARM ARM / gas: Vm.Ta must equal Vn.Ta. llvm-mc rejects mixed source arrangements. README claims gas-compatible assembly. SUT discards Rm arrangement.
+- Seed: (none)
+- Formal: ∀ rd,rn,rm ∈ 0..=31, ∀ Ta_n ≠ Ta_m ∈ {8h,4s,2d}, ∀ is_high, u, opcode in dispatch domain. llvm-mc rejects the asm ∧ encode([Vd.Tb(Ta_n), Vn.Ta_n, Vm.Ta_m], ...) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: addhn v0.4h, v0.4s, v0.8h (rd=rn=rm=0, Ta_n=4s, Ta_m=8h, is_high=false, U=0, opcode=0b0100)
+- Bug report: pbt-out/bug_reports/encode_neon_three_diff_narrow_rm_ta_mismatch.md
+
+```property
+function: encoder.neon.encode_neon_three_diff_narrow
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, ta_n, ta_m, is_high, u_bit, opcode]
+  domain: { ta_n: valid_addhn_source, ta_m: valid_addhn_source_neq_ta_n }
+  relation:
+    op: throws
+    expr: encode_neon_three_diff_narrow([Vd.tb, Vn.ta_n, Vm.ta_m], u_bit, opcode, is_high)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta_n: { gen: oneof, options: [8h, 4s, 2d] }
+  ta_m: { gen: oneof, options: [8h, 4s, 2d] }
+  is_high: { gen: bool }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+evidence: ARM ARM ADDHN Vd.Tb,Vn.Ta,Vm.Ta same Ta; README.md:5-14 gas-compatible; llvm-mc rejects mismatched Rm Ta
+```
+
+## encode_neon_three_diff_narrow_extra_operand_err
+- Tier: 5
+- Rationale: Negative/error contract: ARM ADDHN is a 3-register instruction. llvm-mc rejects a fourth operand. SUT only checks len < 3.
+- Seed: (none)
+- Formal: ∀ valid 3-reg ADDHN ops, ∀ extra NEON reg. encode(ops ++ [extra], ...) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: addhn v0.8b, v0.8h, v0.8h, v0.8h (four RegArrangement operands, U=0, opcode=0b0100, is_high=false)
+- Bug report: pbt-out/bug_reports/encode_neon_three_diff_narrow_extra_operand.md
+
+```property
+function: encoder.neon.encode_neon_three_diff_narrow
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, extra, ta, is_high, u_bit, opcode]
+  domain: { extra: neon_vreg }
+  relation:
+    op: throws
+    expr: encode_neon_three_diff_narrow([Vd.tb, Vn.ta, Vm.ta, Vextra.ta], u_bit, opcode, is_high)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, options: [8h, 4s, 2d] }
+  is_high: { gen: bool }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+evidence: ARM ARM three-register ADDHN; README.md:5-14 gas-compatible; llvm-mc rejects 4th operand
+```
+
+## encode_neon_three_diff_narrow_gpr_dest_err
+- Tier: 5
+- Rationale: Negative/error contract: dest must be Vd.Tb. GPR/FP names (x/w/d/s/q/h/b) are rejected by llvm-mc. get_neon_reg accepts Operand::Reg via parse_reg_num.
+- Seed: (none)
+- Formal: ∀ prefix ∈ {x,w,d,s,q,h,b}, ∀ n ∈ 0..=31, ∀ valid Rn/Rm Ta. encode([Reg(prefix n), Vn.Ta, Vm.Ta], ...) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: addhn x0, v0.8h, v0.8h (prefix=x, n=0, Ta=8h, is_high=false, U=0, opcode=0b0100)
+- Bug report: pbt-out/bug_reports/encode_neon_three_diff_narrow_gpr_dest.md
+
+```property
+function: encoder.neon.encode_neon_three_diff_narrow
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [prefix, n, rn, rm, ta, is_high, u_bit, opcode]
+  domain: { prefix: gpr_or_fp_prefix, n: u32_0_31 }
+  relation:
+    op: throws
+    expr: encode_neon_three_diff_narrow([Reg(prefix n), Vn.ta, Vm.ta], u_bit, opcode, is_high)
+expected_error: String
+generators:
+  prefix: { gen: oneof, options: [x, w, d, s, q, h, b] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, options: [8h, 4s, 2d] }
+  is_high: { gen: bool }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+evidence: ARM ARM Vd.Tb destination; README.md:5-14 gas-compatible; llvm-mc rejects addhn x0, ...
+```
+
+## encode_neon_three_diff_narrow_invalid_reg_err
+- Tier: 4
+- Rationale: Negative/error contract: get_neon_reg returns Err when parse_reg_num fails (v32, empty, non-register names). Coverage-sweep of the invalid-register branch of get_neon_reg used by all three slots.
+- Seed: (none)
+- Formal: ∀ slot ∈ {0,1,2}, ∀ bad ∈ {v32,v99,foo,"",v,v-1}, ∀ u,opcode,is_high. encode(ops with RegArrangement(bad, ...) at slot) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.neon.encode_neon_three_diff_narrow
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [slot, bad, u_bit, opcode, is_high, rd]
+  domain: { slot: {0,1,2}, bad: invalid_neon_reg_name }
+  relation:
+    op: throws
+    expr: encode_neon_three_diff_narrow(ops_with_bad_reg_at_slot, u_bit, opcode, is_high)
+expected_error: String
+generators:
+  slot: { gen: int, min: 0, max: 2, type: usize }
+  bad: { gen: oneof, options: [v32, v99, foo, empty, v, v-1] }
+  u_bit: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: oneof, options: [4, 6] }
+  is_high: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:7-12 get_neon_reg invalid NEON register; parse_reg_num rejects n>31
 ```

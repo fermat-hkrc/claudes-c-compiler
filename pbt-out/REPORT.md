@@ -1,35 +1,29 @@
-# PBT Campaign Report: encode_bic
+# PBT Campaign Report: encode_neon_three_diff_narrow
 
 ## Summary
 
 **Date:** 2026-09-11
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bic (src/backend/arm/assembler/encoder/data_processing.rs)
-**Tests:** 15 properties (8 passing, 7 failing) plus 3 KAT and 7 regression witnesses
-**Result:** 8 passing, 7 bugs
+**Modules tested:** encode_neon_three_diff_narrow (src/backend/arm/assembler/encoder/neon.rs)
+**Tests:** 12 properties (8 passing, 4 failing) plus 1 KAT and 4 regression witnesses
+**Result:** 8 passing, 4 bugs
 **Effort tier:** standard (1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bic | 15 properties + 3 KAT + 7 regressions | 7 | differential (llvm-mc), algebraic.metamorphic, negative_error |
+| encode_neon_three_diff_narrow | 12 properties + 1 KAT + 4 regressions | 4 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **Mixed-width GPRs accepted.** Law: all three BIC GPRs must be the same width. Counterexample: `bic w0, w0, x0`. Expected Err (llvm-mc rejects); actual Ok(Word) because sf is taken only from Rd. Severity: medium. Report: `pbt-out/bug_reports/encode_bic_mixed_width.md`. Regression: `test_encode_bic_regression_mixed_width`. Serial reconfirm: yes.
+1. **Destination arrangement Tb ignored.** Law: ARM ARM ADDHN Vd.Tb is paired with Vn.Ta (8H→8B / 16B for *2, 4S→4H / 8H, 2D→2S / 4S). Counterexample: `addhn2 v0.8b, v0.8h, v0.8h`. Expected Err (llvm-mc rejects); actual Ok(Word) because dest arrangement is discarded and Q comes only from `is_high`. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_three_diff_narrow_mismatched_dest_tb.md`. Regression: `test_encode_neon_three_diff_narrow_regression_mismatched_dest_tb`. Serial reconfirm: yes (`PBT_TEST_JOBS=1`).
 
-2. **SP/WSP accepted in register form.** Law: BIC shifted-register register 31 is XZR/WZR, never SP. Counterexample: `bic wsp, w0, w0`. Expected Err; actual encoded as `bic wzr, w0, w0`. Severity: medium. Report: `pbt-out/bug_reports/encode_bic_sp_register_form.md`. Regression: `test_encode_bic_regression_sp`. Serial reconfirm: yes.
+2. **Rm arrangement Ta ignored.** Law: Vm.Ta must equal Vn.Ta. Counterexample: `addhn v0.4h, v0.4s, v0.8h`. Expected Err; actual Ok(Word) — size taken only from operand 1; Rm arrangement discarded. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_three_diff_narrow_rm_ta_mismatch.md`. Regression: `test_encode_neon_three_diff_narrow_regression_rm_ta_mismatch`. Serial reconfirm: yes.
 
-3. **Out-of-range shift amount masked, not rejected.** Law: W-form shift amount in [0, 31]; bound+1 must Err. Counterexample: `bic w0, w0, w0, lsl #32`. Expected Err; actual Ok with imm6=32 (UNALLOCATED). Severity: medium. Report: `pbt-out/bug_reports/encode_bic_shift_out_of_range.md`. Regression: `test_encode_bic_regression_shift32`. Serial reconfirm: yes.
+3. **Fourth operand silently ignored.** Law: ADDHN is a three-register instruction. Counterexample: `addhn v0.8b, v0.8h, v0.8h, v0.8h`. Expected Err; actual Ok(Word) — only `len < 3` is checked. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_three_diff_narrow_extra_operand.md`. Regression: `test_encode_neon_three_diff_narrow_regression_extra_operand`. Serial reconfirm: yes.
 
-4. **FP/SIMD names accepted as GPRs.** Law: scalar BIC operands are GPRs only. Counterexample: `bic d0, x1, x2`. Expected Err; actual encoded as 32-bit `bic w0, x1, x2`. Severity: medium. Report: `pbt-out/bug_reports/encode_bic_fp_reg.md`. Regression: `test_encode_bic_regression_fp_reg`. Serial reconfirm: yes.
-
-5. **NEON arrangements other than 8b/16b accepted.** Law: ARM ARM BIC vector T is 8B|16B. Counterexample: `bic v0.8h, v1.8h, v2.8h`. Expected Err; actual encoded as `bic v0.8b, ...` (Q=0). Severity: medium. Report: `pbt-out/bug_reports/encode_bic_invalid_neon_arr.md`. Regression: `test_encode_bic_regression_neon_8h`. Serial reconfirm: yes.
-
-6. **Immediate-form XZR/WZR treated as SP/WSP.** Law: BIC-imm is AND-imm; Rd of 31 is SP, not XZR. Counterexample: `bic wzr, w0, #1`. Expected Err; actual encoded as `and wsp, w0, #0xfffffffe` (writes the stack pointer). Severity: high. Report: `pbt-out/bug_reports/encode_bic_imm_xzr_rd.md`. Regression: `test_encode_bic_regression_imm_xzr_rd`. Serial reconfirm: yes.
-
-7. **Unknown shift kind mapped to LSL.** Law: shift kind ∈ {lsl, lsr, asr, ror}. Counterexample: Shift kind `"lslx"` amount 0 on `bic w0, w0, w0`. Expected Err; actual encoded as LSL (`_ => 0b00`). Severity: medium. Report: `pbt-out/bug_reports/encode_bic_unknown_shift_kind.md`. Regression: `test_encode_bic_regression_unknown_shift_kind`. Serial reconfirm: yes.
+4. **GPR/FP names accepted as NEON Vd.** Law: dest is Vd.Tb. Counterexample: `addhn x0, v0.8h, v0.8h`. Expected Err; actual encoded as `addhn v0.8b, v0.8h, v0.8h` (`parse_reg_num("x0")` = 0). Severity: medium. Report: `pbt-out/bug_reports/encode_neon_three_diff_narrow_gpr_dest.md`. Regression: `test_encode_neon_three_diff_narrow_regression_gpr_dest`. Serial reconfirm: yes.
 
 ## Design Caveats
 
@@ -39,46 +33,48 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_bic_pbt) | 15 properties + 3 KAT + 7 regressions |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_three_diff_narrow_pbt) | 12 properties + 1 KAT + 4 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign phases
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger row for encode_bic
-- pbt-out/FUNCTION_INDEX.md — encode_bic marked PBT candidate
-- pbt-out/INVARIANTS.md — confirmed encode_bic invariants
-- pbt-out/bug_reports/encode_bic_mixed_width.md
-- pbt-out/bug_reports/encode_bic_sp_register_form.md
-- pbt-out/bug_reports/encode_bic_shift_out_of_range.md
-- pbt-out/bug_reports/encode_bic_fp_reg.md
-- pbt-out/bug_reports/encode_bic_invalid_neon_arr.md
-- pbt-out/bug_reports/encode_bic_imm_xzr_rd.md
-- pbt-out/bug_reports/encode_bic_unknown_shift_kind.md
+- `pbt-out/PLAN.md` — campaign checklist
+- `pbt-out/PROPERTIES.md` — property ledger
+- `pbt-out/FUNCTION_INDEX.md` — merged function index (neon.rs appended)
+- `pbt-out/COVERAGE.md` — per-function coverage ledger
+- `pbt-out/COVERAGE_STATUS.md` — coverage statistics
+- `pbt-out/INVARIANTS.md` — confirmed invariants
+- `pbt-out/REPORT.md` — this report
+- `pbt-out/bug_reports/encode_neon_three_diff_narrow_mismatched_dest_tb.md`
+- `pbt-out/bug_reports/encode_neon_three_diff_narrow_rm_ta_mismatch.md`
+- `pbt-out/bug_reports/encode_neon_three_diff_narrow_extra_operand.md`
+- `pbt-out/bug_reports/encode_neon_three_diff_narrow_gpr_dest.md`
 
-## Sweep
+## Coverage-sweep close
 
-Contract-surface sweep: 1 round (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_bic added properties for invalid bitmask immediate, unsupported third operand, invalid Rm name (all passing) and unknown shift kind (failing — bug 7). Close reason: tier's one sweep round done.
+Closed after exactly 1 coverage-driven round (standard tier). `coverage_gaps` had no LLVM profraw in this session (RUSTFLAGS/LLVM_PROFILE_FILE unset by the environment). Manual arm audit of `encode_neon_three_diff_narrow`: every match arm (Ta=8h/4s/2d and unsupported), both Q values, both U values, both opcodes, arity 0..=2, non-reg operands, and get_neon_reg parse failure (v32/foo/empty) now have properties. Remaining documented contract holes (dest Tb, Rm Ta, extra operand, GPR dest) are failing properties with bug reports, not untested surface.
+
+## Skipped targets
+
+(none) — campaign scoped to encode_neon_three_diff_narrow; `cargo check --lib` / `cargo test --lib` harness used throughout. No easier-target swap.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-11 12:05 (campaign: coverage)
-> Files: 4/4 scanned (100%) | Functions: 6/96 total | PBT candidates: 6 | Tested: 6 (100%) | 0 pass, 6 fail
+> Last updated: 2026-09-11 12:19 (campaign: coverage)
+> Files: 5/5 scanned (100%) | Functions: 7/164 total | PBT candidates: 7 | Tested: 7 (100%) | 0 pass, 7 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 4 |
-| Files scanned | 4 / 4 (100%) |
-| Total functions (all files) | 96 |
-| PBT candidates (from FUNCTION_INDEX) | 6 |
-| **Tested (of PBT candidates)** | **6 / 6 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 6 / 0 |
-| **Overall (tested / all functions)** | **6 / 96 (6%)** |
+| Total source files | 5 |
+| Files scanned | 5 / 5 (100%) |
+| Total functions (all files) | 164 |
+| PBT candidates (from FUNCTION_INDEX) | 7 |
+| **Tested (of PBT candidates)** | **7 / 7 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 7 / 0 |
+| **Overall (tested / all functions)** | **7 / 164 (4%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -86,13 +82,13 @@ Contract-surface sweep: 1 round (standard). `coverage_gaps` had no LLVM profraw.
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 6 | 6 | 0 | 100% |
+|  | 7 | 7 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 6 | 6 | 0 | 100% |
+| unknown | 7 | 7 | 0 | 100% |
 
 ## File Coverage
 
@@ -102,6 +98,7 @@ Contract-surface sweep: 1 round (standard). `coverage_gaps` had no LLVM profraw.
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 3 | 3 | 100% | covered |
 | load_store.rs | 20 | 1 | 1 | 100% | covered |
+| neon.rs | 68 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
 
@@ -116,3 +113,4 @@ Contract-surface sweep: 1 round (standard). `coverage_gaps` had no LLVM profraw.
 | encode_adc | data_processing.rs |
 | encode_adr | load_store.rs |
 | encode_bic | data_processing.rs |
+| encode_neon_three_diff_narrow | neon.rs |

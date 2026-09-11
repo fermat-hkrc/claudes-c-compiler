@@ -1,4 +1,4 @@
-> Total files: 4 | Total functions: 96 | PBT candidates: 6 | Excluded: 90
+> Total files: 5 | Total functions: 164 | PBT candidates: 7 | Excluded: 157
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -98,3 +98,71 @@
 | encode_swp | load_store.rs | 849 | function | no | out of campaign scope |
 | encode_ldop | load_store.rs | 882 | function | no | out of campaign scope |
 | encode_stop | load_store.rs | 927 | function | no | out of campaign scope |
+| get_neon_reg | neon.rs | 7 | function | no | helper; campaign is single-symbol |
+| encode_cnt | neon.rs | 23 | function | no | out of campaign scope |
+| neon_arr_to_q_size | neon.rs | 44 | function | no | helper; campaign is single-symbol |
+| encode_neon_three_same | neon.rs | 65 | function | no | out of campaign scope |
+| encode_neon_three_diff | neon.rs | 89 | function | no | out of campaign scope |
+| encode_neon_sqshrun | neon.rs | 119 | function | no | out of campaign scope |
+| encode_neon_xtl | neon.rs | 163 | function | no | out of campaign scope |
+| encode_neon_cmp_zero | neon.rs | 189 | function | no | out of campaign scope |
+| encode_neon_two_misc_narrow | neon.rs | 206 | function | no | out of campaign scope |
+| encode_neon_elem_long | neon.rs | 235 | function | no | out of campaign scope |
+| encode_neon_logical | neon.rs | 297 | function | no | out of campaign scope |
+| encode_neon_mul | neon.rs | 323 | function | no | out of campaign scope |
+| encode_neon_pmul | neon.rs | 336 | function | no | out of campaign scope |
+| encode_neon_mla | neon.rs | 349 | function | no | out of campaign scope |
+| encode_neon_mls | neon.rs | 361 | function | no | out of campaign scope |
+| encode_neon_shift_imm | neon.rs | 373 | function | no | out of campaign scope |
+| encode_neon_ext | neon.rs | 405 | function | no | out of campaign scope |
+| encode_neon_addv | neon.rs | 424 | function | no | out of campaign scope |
+| encode_neon_across | neon.rs | 445 | function | no | out of campaign scope |
+| encode_neon_umov | neon.rs | 461 | function | no | out of campaign scope |
+| encode_neon_dup | neon.rs | 491 | function | no | out of campaign scope |
+| encode_neon_ins | neon.rs | 549 | function | no | out of campaign scope |
+| encode_neon_not | neon.rs | 608 | function | no | out of campaign scope |
+| encode_neon_movi | neon.rs | 624 | function | no | out of campaign scope |
+| encode_neon_bic | neon.rs | 718 | function | no | out of campaign scope |
+| encode_neon_bsl | neon.rs | 735 | function | no | out of campaign scope |
+| encode_neon_rev64 | neon.rs | 752 | function | no | out of campaign scope |
+| encode_neon_tbl | neon.rs | 768 | function | no | out of campaign scope |
+| encode_neon_tbx | neon.rs | 803 | function | no | out of campaign scope |
+| encode_neon_ld1r | neon.rs | 832 | function | no | out of campaign scope |
+| encode_neon_ld_st_dispatch | neon.rs | 889 | function | no | out of campaign scope |
+| encode_neon_ld_st_single | neon.rs | 904 | function | no | out of campaign scope |
+| encode_neon_ld_st_multi | neon.rs | 1008 | function | no | out of campaign scope |
+| encode_neon_zip_uzp | neon.rs | 1094 | function | no | out of campaign scope |
+| encode_neon_eor3 | neon.rs | 1112 | function | no | out of campaign scope |
+| encode_neon_pmull | neon.rs | 1128 | function | no | out of campaign scope |
+| encode_neon_aes | neon.rs | 1146 | function | no | out of campaign scope |
+| encode_neon_add_sub | neon.rs | 1164 | function | no | out of campaign scope |
+| encode_neon_ushr | neon.rs | 1179 | function | no | out of campaign scope |
+| encode_neon_sshr | neon.rs | 1205 | function | no | out of campaign scope |
+| encode_neon_shl | neon.rs | 1231 | function | no | out of campaign scope |
+| encode_neon_sli | neon.rs | 1258 | function | no | out of campaign scope |
+| encode_neon_sri | neon.rs | 1285 | function | no | out of campaign scope |
+| encode_neon_rbit | neon.rs | 1312 | function | no | out of campaign scope |
+| encode_neon_mvni | neon.rs | 1333 | function | no | out of campaign scope |
+| encode_neon_float_three_same | neon.rs | 1390 | function | no | out of campaign scope |
+| encode_neon_two_misc | neon.rs | 1407 | function | no | out of campaign scope |
+| encode_neon_float_two_misc | neon.rs | 1420 | function | no | out of campaign scope |
+| encode_neon_shrn | neon.rs | 1436 | function | no | out of campaign scope |
+| encode_neon_shift_right | neon.rs | 1454 | function | no | out of campaign scope |
+| encode_neon_shll | neon.rs | 1472 | function | no | out of campaign scope |
+| encode_neon_qshrn | neon.rs | 1496 | function | no | out of campaign scope |
+| encode_neon_three_diff_narrow | neon.rs | 1514 | function | yes | - |
+| encode_neon_ldnr | neon.rs | 1528 | function | no | out of campaign scope |
+| encode_neon_float_cmp_zero | neon.rs | 1576 | function | no | out of campaign scope |
+| encode_neon_elem | neon.rs | 1591 | function | no | out of campaign scope |
+| encode_neon_float_elem | neon.rs | 1613 | function | no | out of campaign scope |
+| encode_neon_fcvtl | neon.rs | 1640 | function | no | out of campaign scope |
+| encode_neon_fcvtn | neon.rs | 1652 | function | no | out of campaign scope |
+| encode_neon_bitwise_insert | neon.rs | 1667 | function | no | out of campaign scope |
+| encode_neon_faddp | neon.rs | 1686 | function | no | out of campaign scope |
+| encode_neon_across_long | neon.rs | 1724 | function | no | out of campaign scope |
+| encode_neon_shift_left_imm | neon.rs | 1744 | function | no | out of campaign scope |
+| is_neon_scalar_d_reg_op | neon.rs | 1778 | function | no | out of campaign scope |
+| encode_neon_scalar_three_same | neon.rs | 1791 | function | no | out of campaign scope |
+| encode_neon_scalar_addp | neon.rs | 1802 | function | no | out of campaign scope |
+| encode_neon_scalar_two_misc | neon.rs | 1819 | function | no | out of campaign scope |
+| encode_neon_scalar_qshrn | neon.rs | 1835 | function | no | out of campaign scope |
