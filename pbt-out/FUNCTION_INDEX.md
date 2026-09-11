@@ -1,4 +1,4 @@
-> Total files: 5 | Total functions: 164 | PBT candidates: 7 | Excluded: 157
+> Total files: 5 | Total functions: 164 | PBT candidates: 8 | Excluded: 156
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -36,7 +36,7 @@
 | encode_uxtb | data_processing.rs | 900 | function | no | out of campaign scope |
 | encode_orn | data_processing.rs | 910 | function | no | out of campaign scope |
 | encode_eon | data_processing.rs | 952 | function | no | out of campaign scope |
-| encode_bics | data_processing.rs | 981 | function | no | out of campaign scope |
+| encode_bics | data_processing.rs | 981 | function | yes | - |
 | encode_bic | data_processing.rs | 1013 | function | yes | - |
 | f64_to_f128_bytes | constants.rs | 48 | function | no | out of campaign scope |
 | f64_to_x87_bytes | constants.rs | 103 | function | no | out of campaign scope |

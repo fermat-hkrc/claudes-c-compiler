@@ -188,3 +188,34 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid register names via get_neon_reg).
 
+---
+
+# Confirmed invariants (encode_bics)
+
+- Same-width GPR BICS register form (x0–x30/xzr and w0–w30/wzr, optional lsl/lsr/asr/ror in range) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_bics(ops) XOR encode_bic(ops) = 0b11<<29 for the same 3-reg (+ in-range shift) operands (ARM ARM opc field).
+- Success-path word: sf at 31, opc=11 at [30:29], bits [28:24]=0b01010, N=1 at 21, Rd at [4:0], Rn at [9:5], Rm at [20:16], shift at [23:22], imm6 at [15:10].
+- Fewer than 3 operands always Err.
+- Invalid Rm names (x32, w32, empty, foo, r0, x) always Err.
+- Known-answer: `bics x0, x1, x2` encodes as 0xea220020; `bics w0, w1, w2` as 0x6a220020.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- Register form: register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `bics sp, ...`).
+- Immediate form: GNU/llvm-mc alias `bics Rd, Rn, #imm` → `ands Rd, Rn, #~imm` (Rd=XZR becomes TST). SP/WSP is not a valid Rd.
+- Shift amount: W-form [0, 31], X-form [0, 63]. Bound+1 (32 / 64) is rejected by llvm-mc.
+- BICS has no NEON form (llvm-mc rejects `bics v0.16b, ...`).
+
+## Quirks
+
+- sf is taken only from operand 0; mixed x/w is not rejected (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- parse_reg_num maps sp/wsp to 31, so register-form SP encodes as XZR (see bugs).
+- Shift amount is masked with 0x3F; 32-bit lsl #32 is accepted (see bugs).
+- Unknown shift kinds fall through to LSL (`_ => 0b00`) (see bugs).
+- Immediate form is not implemented; get_reg on operand 2 returns Err (see bugs).
+- A 4th operand that is not Shift is ignored (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid rm names, extra 4th operand).
+
