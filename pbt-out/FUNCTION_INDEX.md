@@ -1,4 +1,4 @@
-> Total files: 1 | Total functions: 36 | PBT candidates: 1 | Excluded: 35
+> Total files: 2 | Total functions: 70 | PBT candidates: 2 | Excluded: 68
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -38,3 +38,37 @@
 | encode_eon | data_processing.rs | 952 | function | no | out of campaign scope |
 | encode_bics | data_processing.rs | 981 | function | no | out of campaign scope |
 | encode_bic | data_processing.rs | 1013 | function | no | out of campaign scope |
+| f64_to_f128_bytes | constants.rs | 48 | function | no | out of campaign scope |
+| f64_to_x87_bytes | constants.rs | 103 | function | no | out of campaign scope |
+| is_zero | constants.rs | 155 | method | no | out of campaign scope |
+| long_double | constants.rs | 168 | method | no | out of campaign scope |
+| long_double_with_bytes | constants.rs | 173 | method | no | out of campaign scope |
+| long_double_from_i64 | constants.rs | 179 | method | no | out of campaign scope |
+| long_double_from_u64 | constants.rs | 186 | method | no | out of campaign scope |
+| long_double_from_u128 | constants.rs | 194 | method | no | out of campaign scope |
+| long_double_from_i128 | constants.rs | 202 | method | no | out of campaign scope |
+| long_double_bytes | constants.rs | 208 | method | no | out of campaign scope |
+| x87_bytes | constants.rs | 219 | method | no | out of campaign scope |
+| is_one | constants.rs | 235 | method | no | out of campaign scope |
+| is_nonzero | constants.rs | 240 | method | no | out of campaign scope |
+| to_hash_key | constants.rs | 245 | method | no | out of campaign scope |
+| to_f64 | constants.rs | 260 | method | no | out of campaign scope |
+| cast_float_to_target | constants.rs | 277 | method | yes | - |
+| cast_long_double_to_target | constants.rs | 299 | method | no | out of campaign scope |
+| to_i64 | constants.rs | 322 | method | no | out of campaign scope |
+| to_i128 | constants.rs | 336 | method | no | out of campaign scope |
+| to_u64 | constants.rs | 349 | method | no | out of campaign scope |
+| to_usize | constants.rs | 362 | method | no | out of campaign scope |
+| to_u32 | constants.rs | 367 | method | no | out of campaign scope |
+| push_le_bytes | constants.rs | 377 | method | no | out of campaign scope |
+| push_le_bytes_x86 | constants.rs | 410 | method | no | out of campaign scope |
+| push_le_bytes_riscv | constants.rs | 425 | method | no | out of campaign scope |
+| ptr_int | constants.rs | 438 | method | no | out of campaign scope |
+| from_i64 | constants.rs | 452 | method | no | out of campaign scope |
+| coerce_to_with_src | constants.rs | 484 | method | no | out of campaign scope |
+| coerce_to | constants.rs | 550 | method | no | out of campaign scope |
+| bool_normalize | constants.rs | 557 | method | no | out of campaign scope |
+| zero | constants.rs | 562 | method | no | out of campaign scope |
+| narrowed_to | constants.rs | 579 | method | no | out of campaign scope |
+| to_le_bytes | constants.rs | 617 | method | no | out of campaign scope |
+| one | constants.rs | 632 | method | no | out of campaign scope |

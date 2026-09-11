@@ -642,3 +642,437 @@ impl IrConst {
         }
     }
 }
+
+#[cfg(test)]
+mod cast_float_to_target_pbt {
+    // Oracle: differential — IrConst::from_i64 (same-job integer constructor)
+    // Evidence: src/ir/constants.rs:448-451 (unsigned sub-64-bit stored as I64 zero-extended);
+    //   src/ir/constants.rs:275-276 (200.0 as u8 = 200, not i8 max);
+    //   src/passes/constant_fold.rs:606 uses from_i64 for float-to-int;
+    //   src/passes/simplify.rs:407 uses cast_float_to_target for the same fold;
+    //   src/passes/constant_fold.rs:583-584 TODO to unify the two paths;
+    //   src/passes/constant_fold.rs:1049-1062 (3.125 → I32(3) truncation toward zero)
+    // Stronger considered:
+    //   - State machine: rejected — pure function, no lifecycle/state
+    //   - Differential vs clang/gcc: rejected — C float-to-int out-of-range is UB; in-range
+    //     agreement is already captured by from_i64 after trunc-toward-zero
+    // Weaker available: algebraic.invariant (truncation, F64 identity, F128 approx),
+    //   algebraic.metamorphic (F32 sign), negative_error (Void → None)
+    // Differential: candidate=cast_float_to_target, reference=from_i64,
+    //   SUT-boundary=internal-helper, mapping=trunc_toward_zero(fv) as i64 → from_i64(n, ty)
+
+    use super::IrConst;
+    use crate::common::types::IrType;
+    use proptest::prelude::*;
+
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn irconst_eq(a: &IrConst, b: &IrConst) -> bool {
+        match (a, b) {
+            (IrConst::I8(x), IrConst::I8(y)) => x == y,
+            (IrConst::I16(x), IrConst::I16(y)) => x == y,
+            (IrConst::I32(x), IrConst::I32(y)) => x == y,
+            (IrConst::I64(x), IrConst::I64(y)) => x == y,
+            (IrConst::I128(x), IrConst::I128(y)) => x == y,
+            (IrConst::F32(x), IrConst::F32(y)) => x.to_bits() == y.to_bits(),
+            (IrConst::F64(x), IrConst::F64(y)) => x.to_bits() == y.to_bits(),
+            (IrConst::LongDouble(x, xb), IrConst::LongDouble(y, yb)) => {
+                x.to_bits() == y.to_bits() && xb == yb
+            }
+            (IrConst::Zero, IrConst::Zero) => true,
+            _ => false,
+        }
+    }
+
+    fn int_tys() -> impl Strategy<Value = IrType> {
+        prop_oneof![
+            Just(IrType::I8),
+            Just(IrType::U8),
+            Just(IrType::I16),
+            Just(IrType::U16),
+            Just(IrType::I32),
+            Just(IrType::U32),
+            Just(IrType::I64),
+            Just(IrType::U64),
+            Just(IrType::I128),
+            Just(IrType::U128),
+        ]
+    }
+
+    fn signed_tys() -> impl Strategy<Value = IrType> {
+        prop_oneof![
+            Just(IrType::I8),
+            Just(IrType::I16),
+            Just(IrType::I32),
+            Just(IrType::I64),
+        ]
+    }
+
+    fn unsigned_pair() -> impl Strategy<Value = (u64, IrType)> {
+        prop_oneof![
+            (prop_oneof![
+                Just(0u64),
+                Just(1),
+                Just(127),
+                Just(128),
+                Just(200),
+                Just(255),
+                0u64..=255,
+            ])
+            .prop_map(|n| (n, IrType::U8)),
+            (prop_oneof![
+                Just(0u64),
+                Just(1),
+                Just(32767),
+                Just(32768),
+                Just(65535),
+                0u64..=65535,
+            ])
+            .prop_map(|n| (n, IrType::U16)),
+            (prop_oneof![
+                Just(0u64),
+                Just(1),
+                Just(0x7FFF_FFFF),
+                Just(0x8000_0000),
+                Just(0xFFFF_FFFF),
+                0u64..=(u32::MAX as u64),
+            ])
+            .prop_map(|n| (n, IrType::U32)),
+            (prop_oneof![
+                Just(0u64),
+                Just(1),
+                Just((1u64 << 53) - 1),
+                Just(1u64 << 53),
+                Just(1u64 << 63),
+                0u64..=(1u64 << 53),
+            ])
+            .prop_map(|n| (n, IrType::U64)),
+        ]
+    }
+
+    /// Integers that are exact as f64 (well inside the 53-bit mantissa) plus
+    /// documented 8/16/32-bit bounds and bound±1.
+    fn exact_int() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(1),
+            Just(-1),
+            Just(i8::MAX as i64),
+            Just(i8::MIN as i64),
+            Just(i8::MAX as i64 + 1),
+            Just(i8::MIN as i64 - 1),
+            Just(u8::MAX as i64),
+            Just(u8::MAX as i64 + 1),
+            Just(200),
+            Just(i16::MAX as i64),
+            Just(i16::MIN as i64),
+            Just(i16::MAX as i64 + 1),
+            Just(i16::MIN as i64 - 1),
+            Just(u16::MAX as i64),
+            Just(i32::MAX as i64),
+            Just(i32::MIN as i64),
+            Just(u32::MAX as i64),
+            -1000i64..=1000,
+            i32::MIN as i64..=i32::MAX as i64,
+        ]
+    }
+
+    fn frac() -> impl Strategy<Value = f64> {
+        (0u32..=999).prop_map(|k| k as f64 / 1000.0)
+    }
+
+    fn in_range(n: i64, ty: IrType) -> bool {
+        match ty {
+            IrType::I8 => n >= i8::MIN as i64 && n <= i8::MAX as i64,
+            IrType::U8 => n >= 0 && n <= u8::MAX as i64,
+            IrType::I16 => n >= i16::MIN as i64 && n <= i16::MAX as i64,
+            IrType::U16 => n >= 0 && n <= u16::MAX as i64,
+            IrType::I32 => n >= i32::MIN as i64 && n <= i32::MAX as i64,
+            IrType::U32 => n >= 0 && n <= u32::MAX as i64,
+            IrType::I64 | IrType::I128 => true,
+            IrType::U64 | IrType::U128 => n >= 0,
+            _ => false,
+        }
+    }
+
+    fn signed_payload(c: IrConst, ty: IrType) -> Option<i64> {
+        match (c, ty) {
+            (IrConst::I8(v), IrType::I8) => Some(v as i64),
+            (IrConst::I16(v), IrType::I16) => Some(v as i64),
+            (IrConst::I32(v), IrType::I32) => Some(v as i64),
+            (IrConst::I64(v), IrType::I64) => Some(v),
+            _ => None,
+        }
+    }
+
+    fn u8_pattern(c: &IrConst) -> Option<u8> {
+        match c {
+            IrConst::I8(v) => Some(*v as u8),
+            IrConst::I64(v) => Some(*v as u8),
+            IrConst::I32(v) => Some(*v as u8),
+            IrConst::I16(v) => Some(*v as u8),
+            _ => None,
+        }
+    }
+
+    fn make_fv(n: i64, frac: f64) -> f64 {
+        if n >= 0 {
+            n as f64 + frac
+        } else {
+            n as f64 - frac
+        }
+    }
+
+    // Oracle: differential — from_i64
+    // Evidence: src/ir/constants.rs:448-451; src/passes/constant_fold.rs:606
+    // Stronger considered: state machine rejected (pure function)
+    // Weaker available: algebraic.invariant
+    // Differential: candidate=cast_float_to_target, reference=from_i64,
+    //   SUT-boundary=internal-helper, mapping=trunc_tz(fv)→from_i64
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_diff_from_i64_in_range(
+            n in exact_int(),
+            frac in frac(),
+            ty in int_tys(),
+        ) {
+            prop_assume!((n as f64) as i64 == n);
+            prop_assume!(in_range(n, ty));
+            let fv = make_fv(n, frac);
+            let got = IrConst::cast_float_to_target(fv, ty);
+            let expected = IrConst::from_i64(n, ty);
+            match got {
+                Some(ref g) => prop_assert!(
+                    irconst_eq(g, &expected),
+                    "cast_float_to_target({:?}, {:?}) = {:?} != from_i64({}, {:?})={:?}",
+                    fv, ty, g, n, ty, expected
+                ),
+                None => prop_assert!(
+                    false,
+                    "cast_float_to_target({:?}, {:?}) returned None, expected {:?}",
+                    fv, ty, expected
+                ),
+            }
+        }
+    }
+
+    // Oracle: algebraic.invariant
+    // Evidence: src/ir/constants.rs:448-451; src/ir/constants.rs:275-276
+    // Stronger considered: differential (see previous property)
+    // Weaker available: crash_only
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_unsigned_to_i64_zero_extended((n, ty) in unsigned_pair()) {
+            prop_assume!((n as f64) as u64 == n);
+            let got = IrConst::cast_float_to_target(n as f64, ty).and_then(|c| c.to_i64());
+            prop_assert_eq!(
+                got,
+                Some(n as i64),
+                "cast_float_to_target({} as f64, {:?}).to_i64() = {:?}, expected Some({})",
+                n, ty, got, n as i64
+            );
+        }
+    }
+
+    // Oracle: algebraic.invariant — truncation toward zero
+    // Evidence: src/passes/constant_fold.rs:1049-1062 (3.125 → I32(3))
+    // Stronger considered: differential (property 1); round-trip rejected (lossy)
+    // Weaker available: crash_only
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_trunc_toward_zero_signed(
+            n in exact_int(),
+            frac in frac(),
+            ty in signed_tys(),
+        ) {
+            prop_assume!((n as f64) as i64 == n);
+            prop_assume!(in_range(n, ty));
+            let fv = make_fv(n, frac);
+            let got = IrConst::cast_float_to_target(fv, ty);
+            let payload = got.and_then(|c| signed_payload(c, ty));
+            prop_assert_eq!(
+                payload,
+                Some(n),
+                "cast_float_to_target({:?}, {:?}) payload {:?}, expected {}",
+                fv, ty, payload, n
+            );
+        }
+    }
+
+    // Oracle: algebraic.invariant — F64 bit-identity
+    // Evidence: src/ir/constants.rs:278; src/ir/README.md:466
+    // Stronger considered: state machine / differential rejected (no independent F64 wrapper)
+    // Weaker available: crash_only
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_f64_identity(bits in any::<u64>()) {
+            let fv = f64::from_bits(bits);
+            let got = IrConst::cast_float_to_target(fv, IrType::F64);
+            match got {
+                Some(IrConst::F64(x)) => prop_assert_eq!(
+                    x.to_bits(),
+                    bits,
+                    "F64 identity failed for bits={:#x}",
+                    bits
+                ),
+                other => prop_assert!(
+                    false,
+                    "expected Some(F64(...)), got {:?}",
+                    other
+                ),
+            }
+        }
+    }
+
+    // Oracle: negative_error — Void is unsupported
+    // Evidence: src/ir/constants.rs:293; src/common/types.rs:1718
+    // Stronger considered: n/a on the unsupported-type path
+    // Weaker available: crash_only
+    // Invalid domain: IrType::Void; expected failure: None
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_void_none(bits in any::<u64>()) {
+            let fv = f64::from_bits(bits);
+            prop_assert!(
+                IrConst::cast_float_to_target(fv, IrType::Void).is_none(),
+                "Void target must return None, got {:?}",
+                IrConst::cast_float_to_target(fv, IrType::Void)
+            );
+        }
+    }
+
+    // Oracle: algebraic.invariant — F128 approximation field equals fv
+    // Evidence: src/ir/constants.rs:167-168; src/ir/constants.rs:279
+    // Stronger considered: differential vs long_double rejected (that is the callee)
+    // Weaker available: crash_only
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_f128_approx_field(bits in any::<u64>()) {
+            let fv = f64::from_bits(bits);
+            match IrConst::cast_float_to_target(fv, IrType::F128) {
+                Some(IrConst::LongDouble(x, _)) => prop_assert_eq!(
+                    x.to_bits(),
+                    bits,
+                    "F128 approx field bits={:#x} != {:#x}",
+                    x.to_bits(), bits
+                ),
+                other => prop_assert!(
+                    false,
+                    "expected Some(LongDouble(...)), got {:?}",
+                    other
+                ),
+            }
+        }
+    }
+
+    // Oracle: algebraic.invariant — U8 values 128..=255 are not saturated to 127
+    // Evidence: src/ir/constants.rs:275-276
+    // Stronger considered: differential / to_i64 zero-extend (property 2)
+    // Weaker available: crash_only
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_u8_not_i8_saturate(n in 128u8..=255u8) {
+            let got = IrConst::cast_float_to_target(n as f64, IrType::U8);
+            let pat = got.as_ref().and_then(u8_pattern);
+            prop_assert_eq!(
+                pat,
+                Some(n),
+                "U8 pattern of {:?} for {} was {:?}, not {}",
+                got, n, pat, n
+            );
+            prop_assert_ne!(pat, Some(127u8), "U8 {} saturated to i8::MAX", n);
+        }
+    }
+
+    // Oracle: algebraic.metamorphic — F32 preserves sign; inf stays inf
+    // Evidence: src/ir/README.md:465; src/ir/constants.rs:280
+    // Stronger considered: round-trip rejected (f64→f32 is lossy);
+    //   differential vs `as f32` rejected (producing statement)
+    // Weaker available: crash_only
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_f32_sign_and_finite(bits in any::<u64>()) {
+            let fv = f64::from_bits(bits);
+            prop_assume!(fv.is_infinite() || (fv.is_finite() && fv != 0.0));
+            match IrConst::cast_float_to_target(fv, IrType::F32) {
+                Some(IrConst::F32(x)) => {
+                    prop_assert_eq!(
+                        x.is_sign_negative(),
+                        fv.is_sign_negative(),
+                        "F32 sign mismatch: fv={:?} x={:?}",
+                        fv, x
+                    );
+                    if fv.is_infinite() {
+                        prop_assert!(x.is_infinite(), "inf f64 -> non-inf f32 {:?}", x);
+                    }
+                }
+                other => prop_assert!(false, "expected Some(F32(...)), got {:?}", other),
+            }
+        }
+    }
+
+    // Oracle: differential — from_i64 for IrType::Ptr (previously untested arm)
+    // Evidence: src/ir/constants.rs:286 (Ptr => ptr_int); src/ir/constants.rs:438-447;
+    //   from_i64 Ptr arm at src/ir/constants.rs (Ptr => ptr_int)
+    // Stronger considered: state machine rejected
+    // Weaker available: algebraic.invariant (LP64 => I64)
+    // Differential: candidate=cast_float_to_target, reference=from_i64,
+    //   SUT-boundary=internal-helper, mapping=trunc_tz(fv)→from_i64(n, Ptr)
+    proptest! {
+        #![proptest_config(cfg())]
+        #[test]
+        fn cast_float_to_target_ptr_matches_from_i64(
+            n in exact_int(),
+            frac in frac(),
+        ) {
+            prop_assume!((n as f64) as i64 == n);
+            let fv = make_fv(n, frac);
+            let got = IrConst::cast_float_to_target(fv, IrType::Ptr);
+            let expected = IrConst::from_i64(n, IrType::Ptr);
+            match got {
+                Some(ref g) => prop_assert!(
+                    irconst_eq(g, &expected),
+                    "Ptr: cast_float_to_target({:?}, Ptr)={:?} != from_i64({}, Ptr)={:?}",
+                    fv, g, n, expected
+                ),
+                None => prop_assert!(false, "Ptr target returned None for {:?}", fv),
+            }
+        }
+    }
+
+    #[test]
+    fn test_cast_float_to_target_regression_u8_high_bit() {
+        // Shrunk counterexample: n=128, ty=U8. Storage as I8 sign-extends through to_i64().
+        let got = IrConst::cast_float_to_target(128.0, IrType::U8).and_then(|c| c.to_i64());
+        assert_eq!(got, Some(128), "U8 128.0 must zero-extend through to_i64()");
+        let got200 = IrConst::cast_float_to_target(200.0, IrType::U8).and_then(|c| c.to_i64());
+        assert_eq!(got200, Some(200), "docstring: 200.0 as u8 = 200");
+    }
+
+    #[test]
+    fn test_cast_float_to_target_regression_f128_neg_subnormal() {
+        // Shrunk counterexample: bits = 9223372036854775809 (0x8000000000000001),
+        // a negative f64 subnormal. F128 arm currently panics in f64_to_f128_bytes_lossless.
+        let bits = 9223372036854775809u64;
+        let fv = f64::from_bits(bits);
+        let got = IrConst::cast_float_to_target(fv, IrType::F128);
+        match got {
+            Some(IrConst::LongDouble(x, _)) => {
+                assert_eq!(x.to_bits(), bits, "F128 approx field must preserve fv bits");
+            }
+            other => panic!("expected Some(LongDouble), got {:?}", other),
+        }
+    }
+}
