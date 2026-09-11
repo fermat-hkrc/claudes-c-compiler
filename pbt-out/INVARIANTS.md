@@ -219,3 +219,31 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid rm names, extra 4th operand).
 
+---
+
+# Confirmed invariants (encode_bl)
+
+- Symbol / Label produce WordWithReloc { Call26, symbol, addend: 0 } with word = 0x94000000 (bits[31:26]=100101, imm26=0) (1000 cases).
+- SymbolOffset(s, addend) preserves symbol and addend and still uses Call26 / 0x94000000 (1000 cases).
+- Call26.elf_type() = 283 (R_AARCH64_CALL26).
+- encode_bl(ops) XOR encode_branch(ops) = 1<<31 for the same SymbolOffset operands; BL reloc is Call26 and B reloc is Jump26 (1000 cases).
+- Empty operands always Err.
+- Unaligned or out-of-range Imm (bound±1 / ±4, #1, i64::MIN/MAX) always Err.
+- Parser-misclassified Reg/Cond/Barrier names produce Call26 with that name (get_symbol workaround).
+- Known-answer (llvm-mc): `bl #0` encodes as 0x94000000; `bl #4` as 0x94000001; `bl #-134217728` as 0x96000000. SUT currently rejects Imm (see bugs).
+- Known-answer (SUT): `bl foo` → WordWithReloc { 0x94000000, Call26, "foo", 0 }.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM BL range: aligned offsets in [-134217728, 134217724]; llvm-mc rejects #1, #134217728, #-134217732.
+- llvm-mc `bl foo` emits R_AARCH64_CALL26 with instruction word 0x94000000 (imm26 filled later).
+
+## Quirks
+
+- encode_bl does not encode the immediate form; get_symbol rejects Imm (see bugs).
+- Extra operands beyond index 0 are ignored (see bugs).
+- get_symbol accepts Modifier / ModifierOffset, dropping the kind, so `:lo12:` becomes Call26 (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_symbol (Reg/Cond/Barrier).
+

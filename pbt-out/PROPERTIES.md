@@ -1,306 +1,236 @@
-# Properties: encode_bics
+# Properties: encode_bl
 
-## encode_bics_diff_reg_llvm_mc
+## encode_bl_diff_imm_llvm_mc
 - Tier: 7
-- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). In-tree BICS decoder does not exist so algebraic round-trip is unavailable. encode_bic is a different job (no flag-setting) and fails the same-job sibling gate as a differential reference. Doc evidence: assembler README "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:237 bics dispatch; ARM ARM Logical (shifted register) BICS encoding.
-- Seed: src/backend/arm/assembler/encoder/data_processing.rs encode_bic_pbt::encode_bic_diff_reg_llvm_mc (sibling register-form generalization)
-- Formal: ∀ rd,rn,rm ∈ 0..=31, ∀ is_64 ∈ Bool, ∀ kind ∈ {lsl,lsr,asr,ror}, ∀ amt ∈ [0, 31] if ¬is_64 else [0, 63], ∀ use_shift ∈ Bool. encode_bics([Rd,Rn,Rm] {+ Shift(kind,amt) if use_shift}) = Word(llvm-mc("bics Rd, Rn, Rm{, kind #amt}")).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_bics
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt, use_shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_64: Bool, kind: {lsl,lsr,asr,ror}, amt: in_range_for_sf, use_shift: Bool }
-  relation:
-    op: eq
-    lhs: encode_bics([Reg(rd), Reg(rn), Reg(rm)] + optional Shift) as Word
-    rhs: llvm_mc("bics Rd, Rn, Rm{, kind #amt}")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, options: [lsl, lsr, asr, ror] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-  use_shift: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:237 bics dispatch; data_processing.rs:1009 ARM ARM format sf 11 01010 shift 1 Rm imm6 Rn Rd
-```
-
-## encode_bics_diff_imm_llvm_mc
-- Tier: 7
-- Rationale: Differential against llvm-mc for the GNU alias `bics Rd, Rn, #imm` → `ands Rd, Rn, #~imm` when ~imm is a valid AArch64 bitmask. State machine / round-trip rejected as above. Immediate form is part of the gas-compat public contract (llvm-mc accepts it); encode_bics is the sole dispatcher for the bics mnemonic.
-- Seed: encode_bic_pbt::encode_bic_diff_imm_llvm_mc
-- Formal: ∀ rd,rn ∈ 0..=31, ∀ is_64 ∈ Bool, ∀ imm such that ~imm is a valid AArch64 bitmask. encode_bics([Rd,Rn,Imm(imm)]) = Word(llvm-mc("bics Rd, Rn, #imm")).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler) for the ARM ARM immediate form `bl #imm`. State machine rejected (pure function, no lifecycle). In-tree BL decoder does not exist so algebraic round-trip is unavailable. encode_branch is a different job (B/Jump26, no link) and fails the same-job sibling gate as a differential reference. Doc evidence: assembler README gas-compat; ARM ARM BL bits[31:26]=100101, imm26 = offset/4; llvm-mc accepts aligned offsets in [-134217728, 134217724].
+- Seed: src/backend/arm/assembler/encoder/load_store.rs encode_adr_pbt::encode_adr_diff_imm_llvm_mc (sibling PC-relative immediate generalization)
+- Formal: ∀ imm ∈ {k·4 | k ∈ ℤ, -2^25 ≤ k ≤ 2^25-1}. encode_bl([Imm(imm)]) = Word(llvm-mc("bl #imm")).
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, is_64=false, imm=0xaaaaaaaa (bics w0, w0, #0xaaaaaaaa)
-- Bug report: pbt-out/bug_reports/encode_bics_imm_alias.md
+- Counterexample: imm = -134217728 (bl #-134217728); also Imm(0), Imm(4)
+- Bug report: pbt-out/bug_reports/encode_bl_imm_offset.md
 
 ```property
-function: encoder.data_processing.encode_bics
+function: encoder.compare_branch.encode_bl
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64, imm]
-  domain: { rd: u32_0_31, rn: u32_0_31, is_64: Bool, imm: inverted_valid_bitmask }
+  vars: [imm]
+  domain: { imm: aligned_i64_in_pm_128MiB }
   relation:
     op: eq
-    lhs: encode_bics([Reg(rd), Reg(rn), Imm(imm)]) as Word
-    rhs: llvm_mc("bics Rd, Rn, #imm")
+    lhs: encode_bl([Imm(imm)]) as Word
+    rhs: llvm_mc("bl #imm")
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  seed: { gen: int, min: 0, max: 9999, type: u32 }
-evidence: llvm-mc -triple=aarch64 accepts bics Rd, Rn, #1 as ands Rd, Rn, #~1; README.md:5-14 gas-compatible; encoder/mod.rs:237 bics dispatch
+  imm: { gen: int, min: -134217728, max: 134217724, type: i64 }
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:317 bl dispatch; compare_branch.rs:186 BL 100101 imm26; ARM ARM Unconditional branch (immediate)
 ```
 
-## encode_bics_meta_opc_vs_bic
+## encode_bl_symbol_reloc
 - Tier: 4
-- Rationale: Algebraic metamorphic: ARM ARM Logical (shifted register) BICS is BIC with opc=11 instead of 00 (N=1 in both). encode_bic is not a same-job differential reference; the relation is the documented opc-field XOR. Stronger differential already covers the happy path; this isolates the opc contract independently of llvm-mc.
-- Seed: encode_adc_pbt S-bit XOR; encode_bic register form
-- Formal: ∀ same-width GPR 3-reg operands (optional in-range shift). encode_bics(ops) XOR encode_bic(ops) = 0b11 << 29, and both succeed.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Algebraic invariant from the documented reloc contract: BL to a symbol/label/symbol+addend returns WordWithReloc { word = 0b100101<<26, Call26, symbol, addend } with imm26 left 0 for the assembler/linker to fill. Stronger differential via llvm-mc -show-encoding is unavailable on this path (encoding uses A placeholders / a CALL26 fixup, not a numeric word). encode_branch is not a same-job sibling.
+- Seed: src/backend/arm/assembler/encoder/load_store.rs encode_adr_pbt::encode_adr_symbol_reloc
+- Formal: ∀ s ∈ ident, ∀ addend ∈ i64. encode_bl([Symbol(s)]) = encode_bl([Label(s)]) = WordWithReloc{word:0x94000000, Call26, s, 0} ∧ encode_bl([SymbolOffset(s,addend)]) = WordWithReloc{word:0x94000000, Call26, s, addend} ∧ Call26.elf_type()=283.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bics
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt, use_shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_64: Bool, shift: optional_in_range }
-  relation:
-    op: eq
-    lhs: encode_bics(ops) XOR encode_bic(ops)
-    rhs: 0b11 << 29
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, options: [lsl, lsr, asr, ror] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-  use_shift: { gen: bool }
-evidence: data_processing.rs:1009 BICS opc=11 N=1; data_processing.rs:1088 BIC opc=00 N=1; ARM ARM Logical shifted-register opc field bits[30:29]
-```
-
-## encode_bics_word_layout
-- Tier: 4
-- Rationale: Algebraic invariant from the documented bit layout: sf at 31, opc=11 at [30:29], bits[28:24]=01010, N=1 at 21, Rd/Rn/Rm/shift/imm6 placed as specified. Stronger differential already covers numeric equality; this pins each field so a swapped Rn/Rm would fail even if llvm-mc were unavailable.
-- Seed: (none)
-- Formal: ∀ valid 3-reg BICS encodings W. bit31=sf, bits[30:29]=0b11, bits[28:24]=0b01010, bit21=1, W[4:0]=rd, W[9:5]=rn, W[20:16]=rm, W[23:22]=shift_type, W[15:10]=amt&0x3F.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_bics
+function: encoder.compare_branch.encode_bl
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_64: Bool, kind: {lsl,lsr,asr,ror}, amt: in_range_for_sf }
+  vars: [s, addend]
+  domain: { s: ident, addend: i64 }
   relation:
     op: holds
-    expr: word_fields_match_arm_arm(encode_bics(ops))
+    expr: word_is_0x94000000_and_reloc_is_Call26_with_symbol_and_addend
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, options: [lsl, lsr, asr, ror] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: data_processing.rs:1009 Format sf 11 01010 shift 1 Rm imm6 Rn Rd; ARM ARM Logical (shifted register)
+  suffix: { gen: int, min: 0, max: 1000, type: u32 }
+  addend: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: README.md:247-253 Call26 ELF 283 for bl; encoder/mod.rs:49 R_AARCH64_CALL26; compare_branch.rs:186-192 WordWithReloc Call26 word 0b100101<<26
 ```
 
-## encode_bics_neg_arity
-- Tier: 3
-- Rationale: Negative/error contract: function comment and early return require 3 operands. Stronger oracles do not apply to the underspecified-arity path.
-- Seed: encode_bic_pbt::encode_bic_neg_arity
-- Formal: ∀ n ∈ {0,1,2}, ∀ valid-looking register names. encode_bics(ops) with |ops|=n is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+## encode_bl_meta_vs_b
+- Tier: 4
+- Rationale: Algebraic metamorphic: ARM ARM BL is B with bit 31 set (100101 vs 000101) and reloc Call26 vs Jump26. encode_branch is not a same-job differential reference; the relation is the documented opcode/reloc pair. Stronger differential already covers the immediate happy path; this isolates the BL-vs-B contract independently of llvm-mc.
+- Seed: encode_adc_pbt S-bit XOR; encode_bics opc XOR
+- Formal: ∀ s ∈ ident, ∀ addend ∈ i64. let bl = encode_bl([SymbolOffset(s,addend)]); let b = encode_branch([SymbolOffset(s,addend)]). bl.word XOR b.word = 1<<31 ∧ bl.reloc_type=Call26 ∧ b.reloc_type=Jump26 ∧ bl.symbol=b.symbol=s ∧ bl.addend=b.addend=addend.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bics
-oracle: negative_error
+function: encoder.compare_branch.encode_bl
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, is_64, r]
-  domain: { n: 0..=2, is_64: Bool, r: 0..=30 }
+  vars: [s, addend]
+  domain: { s: ident, addend: i64 }
   relation:
-    op: throws
-    expr: encode_bics(ops_of_len_n)
-expected_error: String
+    op: eq
+    lhs: encode_bl(ops).word XOR encode_branch(ops).word
+    rhs: 1 << 31
 generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
-  is_64: { gen: bool }
-  r: { gen: int, min: 0, max: 30, type: u32 }
-evidence: data_processing.rs:982-984 "bics requires 3 operands"
+  suffix: { gen: int, min: 0, max: 1000, type: u32 }
+  addend: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: compare_branch.rs:173 B 000101 Jump26; compare_branch.rs:186 BL 100101 Call26; ARM ARM Unconditional branch (immediate) op bit 31
 ```
 
-## encode_bics_neg_mixed_width
-- Tier: 3
-- Rationale: Negative/error contract from ARM ARM / llvm-mc: all three GPRs must share sf. Mixed x/w is rejected by llvm-mc ("invalid operand"). Stronger differential does not apply to invalid encodings.
-- Seed: encode_bic_pbt::encode_bic_neg_mixed_width
-- Formal: ∀ rd,rn,rm ∈ 0..=30, ∀ (rd64,rn64,rm64) not all equal. encode_bics([Rd,Rn,Rm]) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=true (bics w0, w0, x0)
-- Bug report: pbt-out/bug_reports/encode_bics_mixed_width.md
+## encode_bl_word_layout
+- Tier: 4
+- Rationale: Algebraic invariant pinning each field of the reloc-form word so a swapped opcode would fail even if llvm-mc were unavailable: bits[31:26]=100101, bits[25:0]=0 (imm26 filled later). Stronger differential already covers numeric equality on the immediate path.
+- Seed: (none)
+- Formal: ∀ s ∈ ident. let W = encode_bl([Symbol(s)]).word. W[31:26]=0b100101 ∧ W[25:0]=0.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bics
-oracle: negative_error
+function: encoder.compare_branch.encode_bl
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64]
-  domain: { rd: 0..=30, rn: 0..=30, rm: 0..=30, widths: not_all_equal }
+  vars: [s]
+  domain: { s: ident }
   relation:
-    op: throws
-    expr: encode_bics([Reg(rd), Reg(rn), Reg(rm)])
-expected_error: String
+    op: holds
+    expr: ((word >> 26) & 0x3F) == 0b100101 && (word & 0x3FFFFFF) == 0
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-  rm64: { gen: bool }
-evidence: llvm-mc rejects `bics x0, w1, x2`; ARM ARM BICS requires same-width GPRs; README.md:5-14 gas-compat
+  suffix: { gen: int, min: 0, max: 1000, type: u32 }
+evidence: compare_branch.rs:186 BL 100101 imm26; ARM ARM Unconditional branch (immediate); README.md:376 JUMP26/CALL26 encode imm26 field later
 ```
 
-## encode_bics_neg_sp_fp
+## encode_bl_neg_arity
 - Tier: 3
-- Rationale: Negative/error contract: ARM ARM BICS register 31 is XZR/WZR not SP/WSP; FP/SIMD names (d/s/q/v/h/b) are not GPRs. llvm-mc rejects `bics sp, ...` and `bics d0, ...`.
-- Seed: encode_bic_pbt::encode_bic_neg_sp_fp_regform
-- Formal: ∀ which ∈ {0,1,2}, ∀ bad ∈ {sp,wsp,dN,sN,qN,vN,hN,bN}. encode_bics with bad at operand `which` (other slots valid GPRs) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: which=0, is_64=false, kind=0 (bics wsp, w0, w0); also d0 at any slot
-- Bug report: pbt-out/bug_reports/encode_bics_sp_register_form.md; pbt-out/bug_reports/encode_bics_fp_reg.md
+- Rationale: Negative/error contract: BL requires a target operand. llvm-mc reports "too few operands for instruction" for bare `bl`. Stronger oracles do not apply to the missing-operand path.
+- Seed: encode_adr_pbt::encode_adr_neg_bad_operands
+- Formal: ∀ ops with |ops|=0. encode_bl(ops) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_bics
+function: encoder.compare_branch.encode_bl
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, is_64, a, b, bad]
-  domain: { which: 0..=2, bad: {sp,wsp,dN,sN,qN,vN,hN,bN} }
+  vars: []
+  domain: { ops: empty }
   relation:
     op: throws
-    expr: encode_bics(ops_with_bad_at_which)
+    expr: encode_bl([])
 expected_error: String
+generators:
+  dummy: { gen: int, min: 0, max: 0, type: u32 }
+evidence: llvm-mc rejects `bl`; README.md:5-14 gas-compat; get_symbol errors when operand 0 is missing
+```
+
+## encode_bl_neg_imm_unaligned_oor
+- Tier: 3
+- Rationale: Negative/error contract from ARM ARM / llvm-mc: the PC offset must be a multiple of 4 and in [-2^27, 2^27-4]. llvm-mc rejects #1, #134217728, #-134217732. Bounds -134217728 / 134217724 and bound±4 (and unaligned 1) are sampled exactly.
+- Seed: encode_adr_pbt::encode_adr_neg_imm_range
+- Formal: ∀ imm ∈ {-134217732, -134217729, -1, 1, 2, 3, 5, 134217725, 134217728, i64::MIN, i64::MAX}. encode_bl([Imm(imm)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_bl
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [imm]
+  domain: { imm: unaligned_or_out_of_26bit_range }
+  relation:
+    op: throws
+    expr: encode_bl([Imm(imm)])
+expected_error: String
+generators:
+  imm: { gen: int, min: -134217732, max: 134217728, type: i64 }
+evidence: llvm-mc rejects `bl #1` and `bl #134217728`; ARM ARM imm26 range ±128MB, offset multiple of 4; README.md:5-14 gas-compat
+```
+
+## encode_bl_neg_extra_operand
+- Tier: 3
+- Rationale: Negative/error contract: BL takes a single target. llvm-mc rejects `bl foo, x0`. Stronger differential does not apply to invalid encodings.
+- Seed: encode_bics_pbt::encode_bics_neg_extra_operand
+- Formal: ∀ s ∈ ident, ∀ extra ∈ {Reg, Imm, Symbol, Mem}. encode_bl([Symbol(s), extra]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: suffix=0, which=0 (bl labl0, x0)
+- Bug report: pbt-out/bug_reports/encode_bl_extra_operand.md
+
+```property
+function: encoder.compare_branch.encode_bl
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [s, extra]
+  domain: { extra: non_empty_second_operand }
+  relation:
+    op: throws
+    expr: encode_bl([Symbol(s), extra])
+expected_error: String
+generators:
+  suffix: { gen: int, min: 0, max: 1000, type: u32 }
+  which: { gen: int, min: 0, max: 3, type: u32 }
+evidence: llvm-mc rejects `bl foo, x0`; README.md:5-14 gas-compat; ARM ARM BL has a single label/imm operand
+```
+
+## encode_bl_neg_bad_operand
+- Tier: 3
+- Rationale: Negative/error contract: Mem/Shift/Extend/RegArrangement/Modifier are not BL targets. llvm-mc rejects `bl :lo12:foo` and register-offset memory; ARM ARM BL operand is a label or PC offset. Modifier is accepted by get_symbol (kind dropped) which would violate the gas-compat contract.
+- Seed: encode_adr_pbt::encode_adr_neg_modifier
+- Formal: ∀ bad ∈ {Mem, Shift, Extend, RegArrangement, Modifier, ModifierOffset}. encode_bl([bad]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: which=4 (Operand::Modifier { kind: lo12, symbol: foo })
+- Bug report: pbt-out/bug_reports/encode_bl_modifier.md
+
+```property
+function: encoder.compare_branch.encode_bl
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [bad]
+  domain: { bad: Mem|Shift|Extend|RegArrangement|Modifier|ModifierOffset }
+  relation:
+    op: throws
+    expr: encode_bl([bad])
+expected_error: String
+generators:
+  which: { gen: int, min: 0, max: 5, type: u32 }
+evidence: llvm-mc rejects `bl :lo12:foo`; ARM ARM BL operand is label or encodable integer pc offset; README.md:5-14 gas-compat
+```
+
+## encode_bl_symbol_misclassified
+- Tier: 4
+- Rationale: Algebraic invariant covering get_symbol parser-misclassification arms (coverage sweep). Doc evidence: encoder/mod.rs:982-986 states that symbol names colliding with register/cond/barrier names are valid symbols in context. llvm-mc accepts `bl eq` and `bl sy` as Call26 labels. Stronger differential via -show-encoding is unavailable (A placeholders).
+- Seed: encode_adr_pbt::encode_adr_symbol_misclassified
+- Formal: ∀ which ∈ {Reg,Cond,Barrier}, ∀ name ∈ {eq,ne,lt,gt,sy,ish,st,ld}. encode_bl([which(name)]) = WordWithReloc{word:0x94000000, Call26, name, 0}.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_bl
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [which, name]
+  domain: { which: {Reg,Cond,Barrier}, name: {eq,ne,lt,gt,sy,ish,st,ld} }
+  relation:
+    op: holds
+    expr: encode_bl([which(name)]) is Call26 reloc with symbol=name addend=0 word=0x94000000
 generators:
   which: { gen: int, min: 0, max: 2, type: u32 }
-  is_64: { gen: bool }
-  a: { gen: int, min: 0, max: 30, type: u32 }
-  b: { gen: int, min: 0, max: 30, type: u32 }
-  kind: { gen: int, min: 0, max: 8, type: u32 }
-  fp_n: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc rejects `bics sp, x1, x2` and `bics d0, x1, x2`; ARM ARM BICS Rd/Rn/Rm are GPRs, R31=XZR/WZR
-```
-
-## encode_bics_neg_shift_range_unknown
-- Tier: 3
-- Rationale: Negative/error contract: ARM ARM imm6 range is [0,31] (32-bit) / [0,63] (64-bit); only lsl/lsr/asr/ror are valid. llvm-mc rejects bound+1 and unknown kinds. Bounds 31/32 (W) and 63/64 (X) are sampled exactly.
-- Seed: encode_bic_pbt::encode_bic_neg_shift_range_neon_arr / encode_bic_neg_unknown_shift_kind
-- Formal: ∀ valid 3-reg BICS, ∀ kind ∈ {lsl,lsr,asr,ror}, ∀ amt ∈ {32,33,63,64} if ¬is_64 else {64,65,128}. encode_bics(ops+Shift(kind,amt)) is Err. Also ∀ unknown kind ∈ {lslx,rrx,rol,"","asr "}. encode_bics(... Shift(kind,amt)) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: lsl #32 on 32-bit (rd=rn=rm=0); unknown kind "lslx" amount 0
-- Bug report: pbt-out/bug_reports/encode_bics_shift_out_of_range.md; pbt-out/bug_reports/encode_bics_unknown_shift_kind.md
-
-```property
-function: encoder.data_processing.encode_bics
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { amt: bound_plus_one_or_unknown_kind }
-  relation:
-    op: throws
-    expr: encode_bics([Rd,Rn,Rm,Shift(kind,amt)])
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, options: [lsl, lsr, asr, ror] }
-  amt_w: { gen: oneof, options: [32, 33, 63, 64] }
-  amt_x: { gen: oneof, options: [64, 65, 128] }
-  unknown: { gen: oneof, options: [lslx, rrx, rol, "", "asr "] }
-evidence: llvm-mc rejects `bics w0, w1, w2, lsl #32` and `bics x0, x1, x2, lsl #64`; ARM ARM imm6 range; README.md:5-14 gas-compat
-```
-
-## encode_bics_neg_invalid_rm
-- Tier: 3
-- Rationale: Negative/error contract covering the get_reg error path (parse_reg_num None). Sweep round: coverage_gaps had no profraw; manual arm audit of encode_bics error paths. x32/w32/empty/foo/r0/x are not GPRs; llvm-mc rejects them.
-- Seed: encode_bic_pbt::encode_bic_neg_invalid_rm
-- Formal: ∀ rd,rn ∈ 0..=30, ∀ is_64 ∈ Bool, ∀ bad ∈ {x32,w32,x99,"",foo,r0,x}. encode_bics([Rd,Rn,Reg(bad)]) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_bics
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_64, rd, rn, bad]
-  domain: { bad: {x32,w32,x99,"",foo,r0,x} }
-  relation:
-    op: throws
-    expr: encode_bics([Reg(rd), Reg(rn), Reg(bad)])
-expected_error: String
-generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  bad: { gen: oneof, options: [x32, w32, x99, "", foo, r0, x] }
-evidence: parse_reg_num returns None for num>31 and unknown prefixes; llvm-mc rejects invalid register names; README.md:5-14 gas-compat
-```
-
-## encode_bics_neg_extra_operand
-- Tier: 3
-- Rationale: Negative/error contract: a 4th operand that is not a valid shift is not a BICS encoding. llvm-mc rejects `bics x0, x1, x2, x3`. Sweep round: encode_bics only inspects operand 3 when it is Shift and otherwise ignores extras.
-- Seed: (none)
-- Formal: ∀ rd,rn,rm ∈ 0..=30, ∀ extra ∈ {Reg, Imm, Mem, Symbol}. encode_bics([Rd,Rn,Rm,extra]) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: is_64=false, rd=rn=rm=0, which=0 (bics w0, w0, w0, w0)
-- Bug report: pbt-out/bug_reports/encode_bics_extra_operand.md
-
-```property
-function: encoder.data_processing.encode_bics
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_64, rd, rn, rm, extra]
-  domain: { extra: non_shift_operand }
-  relation:
-    op: throws
-    expr: encode_bics([Rd, Rn, Rm, extra])
-expected_error: String
-generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  which: { gen: int, min: 0, max: 3, type: u32 }
-evidence: llvm-mc rejects `bics x0, x1, x2, x3`; README.md:5-14 gas-compat; ARM ARM BICS 4th operand is optional shift only
+  name: { gen: oneof, options: [eq, ne, lt, gt, sy, ish, st, ld] }
+evidence: encoder/mod.rs:982-986 parser-misclassified Reg/Cond/Barrier are valid symbols in context; llvm-mc accepts `bl eq` as Call26
 ```

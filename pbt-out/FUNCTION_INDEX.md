@@ -1,4 +1,4 @@
-> Total files: 5 | Total functions: 164 | PBT candidates: 8 | Excluded: 156
+> Total files: 6 | Total functions: 184 | PBT candidates: 9 | Excluded: 175
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -166,3 +166,24 @@
 | encode_neon_scalar_addp | neon.rs | 1802 | function | no | out of campaign scope |
 | encode_neon_scalar_two_misc | neon.rs | 1819 | function | no | out of campaign scope |
 | encode_neon_scalar_qshrn | neon.rs | 1835 | function | no | out of campaign scope |
+| encode_cmp | compare_branch.rs | 6 | function | no | out of campaign scope |
+| encode_cmn | compare_branch.rs | 22 | function | no | out of campaign scope |
+| encode_tst | compare_branch.rs | 37 | function | no | out of campaign scope |
+| encode_ccmp_ccmn | compare_branch.rs | 52 | function | no | out of campaign scope |
+| encode_csel | compare_branch.rs | 85 | function | no | out of campaign scope |
+| encode_csinc | compare_branch.rs | 99 | function | no | out of campaign scope |
+| encode_csinv | compare_branch.rs | 113 | function | no | out of campaign scope |
+| encode_csneg | compare_branch.rs | 127 | function | no | out of campaign scope |
+| encode_cset | compare_branch.rs | 141 | function | no | out of campaign scope |
+| encode_csetm | compare_branch.rs | 155 | function | no | out of campaign scope |
+| encode_branch | compare_branch.rs | 171 | function | no | out of campaign scope |
+| encode_bl | compare_branch.rs | 184 | function | yes | - |
+| encode_cond_branch | compare_branch.rs | 197 | function | no | out of campaign scope |
+| encode_br | compare_branch.rs | 212 | function | no | out of campaign scope |
+| encode_blr | compare_branch.rs | 219 | function | no | out of campaign scope |
+| encode_ret | compare_branch.rs | 226 | function | no | out of campaign scope |
+| encode_cbz | compare_branch.rs | 237 | function | no | out of campaign scope |
+| encode_tbz | compare_branch.rs | 254 | function | no | out of campaign scope |
+| encode_cneg | compare_branch.rs | 276 | function | no | out of campaign scope |
+| encode_cinc | compare_branch.rs | 293 | function | no | out of campaign scope |
+| encode_cinv | compare_branch.rs | 309 | function | no | out of campaign scope |
