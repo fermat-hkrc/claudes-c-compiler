@@ -964,3 +964,550 @@ pub(crate) fn encode_stop(mnemonic: &str, operands: &[Operand]) -> Result<Encode
         | (rs << 16) | (opc << 12) | (rn << 5) | rt;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod encode_adr_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:373 adr dispatch;
+    //   ARM ARM ADR (PC-relative): op=0 immlo 10000 immhi Rd, 21-bit signed offset.
+    // Stronger considered:
+    //   - State machine: rejected — encode_adr is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no ADR decoder
+    //   - Linker reloc::encode_adr as differential sibling: rejected — different job (patches imm)
+    // Weaker available: algebraic.round_trip (ARM field unpack), algebraic.metamorphic (Rd/imm independence),
+    //   algebraic.invariant (AdrPrelLo21 reloc), negative_error (W/SP/range/arity/FP/modifier)
+    // Differential: candidate=encode_adr, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=(Reg(Xd), Imm(imm)) <-> asm text `adr Xd, #imm`
+
+    use super::encode_adr;
+    use super::super::{EncodeResult, RelocType};
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const IMM_MIN: i64 = -1_048_576; // -2^20
+    const IMM_MAX: i64 = 1_048_575; // 2^20 - 1
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn xreg(n: u32) -> String {
+        if n == 31 {
+            "xzr".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn wreg(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_adr(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    /// Unpack ADR fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_adr(word: u32) -> (u32 /*rd*/, i64 /*imm21*/, u32 /*op*/, u32 /*opc*/ ) {
+        let rd = word & 0x1f;
+        let immlo = (word >> 29) & 0x3;
+        let immhi = (word >> 5) & 0x7ffff;
+        let imm21 = (immhi << 2) | immlo;
+        let imm = if (imm21 & (1 << 20)) != 0 {
+            (imm21 as i64) | !0x1f_ffffi64
+        } else {
+            imm21 as i64
+        };
+        let op = (word >> 31) & 1;
+        let opc = (word >> 24) & 0x1f;
+        (rd, imm, op, opc)
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn imm_in_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN),
+            Just(IMM_MIN + 1),
+            Just(-1i64),
+            Just(0i64),
+            Just(1i64),
+            Just(3i64),
+            Just(4i64),
+            Just(IMM_MAX - 1),
+            Just(IMM_MAX),
+            IMM_MIN..=IMM_MAX,
+        ]
+    }
+
+    fn imm_out_of_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN - 1),
+            Just(IMM_MAX + 1),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            Just(1i64 << 21),
+            Just(1i64 << 40),
+            Just(-(1i64 << 21)),
+            (i64::MIN..=IMM_MIN - 1),
+            (IMM_MAX + 1..=i64::MAX),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_adr_kat_llvm_mc_adr_x0_imm0() {
+        let want = 0x10000000u32;
+        let mc = llvm_mc_word("adr x0, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(0)];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_adr_kat_llvm_mc_adr_x0_imm1() {
+        let want = 0x30000000u32;
+        let mc = llvm_mc_word("adr x0, #1").expect("llvm-mc KAT #1");
+        assert_eq!(mc, want, "llvm-mc KAT #1 mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(1)];
+        let sut = sut_word(&ops).expect("SUT KAT #1");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_diff_imm_llvm_mc(
+            rd in 0u32..=31,
+            imm in imm_in_range(),
+        ) {
+            let rd_n = xreg(rd);
+            let asm = format!("adr {}, #{}", rd_n, imm);
+            let ops = [Operand::Reg(rd_n.clone()), Operand::Imm(imm)];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid ADR {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid ADR {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.round_trip
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_roundtrip_arm_fields(
+            rd in 0u32..=31,
+            imm in imm_in_range(),
+        ) {
+            let ops = [Operand::Reg(xreg(rd)), Operand::Imm(imm)];
+            let word = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected in-range ADR: {}", e));
+            let (got_rd, got_imm, op, opc) = unpack_adr(word);
+            prop_assert_eq!(op, 0, "ADR op bit 31 must be 0 (not ADRP), word={:#010x}", word);
+            prop_assert_eq!(opc, 0b10000, "ADR bits [28:24] must be 10000, word={:#010x}", word);
+            prop_assert_eq!(got_rd, rd, "Rd field mismatch word={:#010x}", word);
+            prop_assert_eq!(got_imm, imm, "unpacked 21-bit imm mismatch word={:#010x}", word);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_metamorphic_rd_imm_independent(
+            rd in 0u32..=31,
+            rd2 in 0u32..=31,
+            imm in imm_in_range(),
+            imm2 in imm_in_range(),
+        ) {
+            let w_rd_imm = sut_word(&[Operand::Reg(xreg(rd)), Operand::Imm(imm)])
+                .unwrap_or_else(|e| panic!("encode rd,imm: {}", e));
+            let w_rd_imm2 = sut_word(&[Operand::Reg(xreg(rd)), Operand::Imm(imm2)])
+                .unwrap_or_else(|e| panic!("encode rd,imm2: {}", e));
+            let w_rd2_imm = sut_word(&[Operand::Reg(xreg(rd2)), Operand::Imm(imm)])
+                .unwrap_or_else(|e| panic!("encode rd2,imm: {}", e));
+            prop_assert_eq!(
+                (w_rd_imm ^ w_rd_imm2) & 0x1f,
+                0,
+                "changing imm must not change Rd (w1={:#010x} w2={:#010x})",
+                w_rd_imm,
+                w_rd_imm2
+            );
+            prop_assert_eq!(
+                (w_rd_imm ^ w_rd2_imm) & !0x1fu32,
+                0,
+                "changing Rd must not change opcode/imm fields (w1={:#010x} w2={:#010x})",
+                w_rd_imm,
+                w_rd2_imm
+            );
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_symbol_reloc(
+            rd in 0u32..=31,
+            suffix in 0u32..=1000,
+            addend in prop_oneof![
+                Just(0i64),
+                Just(-1i64),
+                Just(8i64),
+                Just(-8i64),
+                -4096i64..=4096i64,
+            ],
+        ) {
+            let sym = format!("labl{}", suffix);
+            let rd_n = xreg(rd);
+            let expected_word = 0x10000000u32 | rd;
+
+            let check = |ops: &[Operand], expect_addend: i64, tag: &str| {
+                match encode_adr(ops) {
+                    Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                        prop_assert_eq!(word, expected_word, "{} word", tag);
+                        match reloc.reloc_type {
+                            RelocType::AdrPrelLo21 => {}
+                            other => {
+                                return Err(TestCaseError::fail(format!(
+                                    "{} expected AdrPrelLo21, got {:?}",
+                                    tag, other
+                                )));
+                            }
+                        }
+                        prop_assert_eq!(&reloc.symbol, &sym, "{} symbol", tag);
+                        prop_assert_eq!(reloc.addend, expect_addend, "{} addend", tag);
+                        let (got_rd, got_imm, op, opc) = unpack_adr(word);
+                        prop_assert_eq!(op, 0, "{} op bit", tag);
+                        prop_assert_eq!(opc, 0b10000, "{} opc", tag);
+                        prop_assert_eq!(got_rd, rd, "{} rd", tag);
+                        prop_assert_eq!(got_imm, 0, "{} reloc imm fields must be 0", tag);
+                        Ok(())
+                    }
+                    other => Err(TestCaseError::fail(format!(
+                        "{} expected WordWithReloc, got {:?}",
+                        tag, other
+                    ))),
+                }
+            };
+
+            check(
+                &[Operand::Reg(rd_n.clone()), Operand::Symbol(sym.clone())],
+                0,
+                "Symbol",
+            )?;
+            check(
+                &[Operand::Reg(rd_n.clone()), Operand::Label(sym.clone())],
+                0,
+                "Label",
+            )?;
+            check(
+                &[
+                    Operand::Reg(rd_n),
+                    Operand::SymbolOffset(sym.clone(), addend),
+                ],
+                addend,
+                "SymbolOffset",
+            )?;
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_neg_w_reg(
+            wd in 0u32..=31,
+            imm in imm_in_range(),
+            use_wsp in any::<bool>(),
+        ) {
+            let name = if use_wsp { "wsp".to_string() } else { wreg(wd) };
+            let ops = [Operand::Reg(name.clone()), Operand::Imm(imm)];
+            prop_assert!(
+                encode_adr(&ops).is_err(),
+                "ADR takes Xd only; {} must Err (imm={})",
+                name,
+                imm
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_neg_sp(imm in imm_in_range()) {
+            let ops = [Operand::Reg("sp".into()), Operand::Imm(imm)];
+            prop_assert!(
+                encode_adr(&ops).is_err(),
+                "ADR Rd is Xd (X31=XZR, not SP); adr sp, #{} must Err",
+                imm
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_neg_imm_range(
+            rd in 0u32..=31,
+            imm in imm_out_of_range(),
+        ) {
+            let ops = [Operand::Reg(xreg(rd)), Operand::Imm(imm)];
+            prop_assert!(
+                encode_adr(&ops).is_err(),
+                "21-bit signed ADR offset {} is out of range [-1048576, 1048575] and must Err",
+                imm
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_neg_bad_operands(
+            kind in 0u32..=4,
+            rd in 0u32..=30,
+            imm in imm_in_range(),
+        ) {
+            let x = xreg(rd);
+            let ops: Vec<Operand> = match kind {
+                0 => vec![],
+                1 => vec![Operand::Imm(imm)],
+                2 => vec![Operand::Reg(x.clone())],
+                3 => vec![Operand::Reg(x.clone()), Operand::Mem { base: "x1".into(), offset: 0 }],
+                _ => vec![Operand::Reg("x32".into()), Operand::Imm(imm)],
+            };
+            prop_assert!(
+                encode_adr(&ops).is_err(),
+                "invalid ADR arity/kind={} must Err, got {:?}",
+                kind,
+                encode_adr(&ops)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_neg_fp_reg(
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in 0u32..=31,
+            imm in imm_in_range(),
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let ops = [Operand::Reg(fp.clone()), Operand::Imm(imm)];
+            prop_assert!(
+                encode_adr(&ops).is_err(),
+                "ADR takes Xd only; FP/SIMD {} must Err (imm={})",
+                fp,
+                imm
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_neg_modifier(
+            rd in 0u32..=31,
+            mod_kind in prop::sample::select(vec!["lo12", "got", "got_lo12"]),
+            suffix in 0u32..=1000,
+        ) {
+            let sym = format!("labl{}", suffix);
+            let ops = [
+                Operand::Reg(xreg(rd)),
+                Operand::Modifier {
+                    kind: mod_kind.to_string(),
+                    symbol: sym,
+                },
+            ];
+            prop_assert!(
+                encode_adr(&ops).is_err(),
+                "ADR does not take :{}: modifiers (llvm-mc: unexpected adr label)",
+                mod_kind
+            );
+        }
+
+        // Oracle: algebraic.invariant (coverage sweep: get_symbol parser-misclassification arms)
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_symbol_misclassified(
+            rd in 0u32..=31,
+            which in 0u32..=2,
+            name in prop::sample::select(vec!["s1", "v0", "d1", "cc", "lt", "le", "st", "ld"]),
+        ) {
+            let second = match which {
+                0 => Operand::Reg(name.to_string()),
+                1 => Operand::Cond(name.to_string()),
+                _ => Operand::Barrier(name.to_string()),
+            };
+            let ops = [Operand::Reg(xreg(rd)), second];
+            match encode_adr(&ops) {
+                Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                    prop_assert_eq!(word, 0x10000000u32 | rd);
+                    match reloc.reloc_type {
+                        RelocType::AdrPrelLo21 => {}
+                        other => {
+                            return Err(TestCaseError::fail(format!(
+                                "expected AdrPrelLo21, got {:?}",
+                                other
+                            )));
+                        }
+                    }
+                    prop_assert_eq!(&reloc.symbol, name);
+                    prop_assert_eq!(reloc.addend, 0);
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "parser-misclassified {} as operand 1 must be a symbol reloc, got {:?}",
+                        name, other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: negative_error (coverage sweep: ModifierOffset)
+        // Target: encoder.load_store.encode_adr
+        #[test]
+        fn encode_adr_neg_modifier_offset(
+            rd in 0u32..=31,
+            mod_kind in prop::sample::select(vec!["lo12", "got", "got_lo12"]),
+            offset in prop_oneof![Just(0i64), Just(8i64), Just(-8i64), -4096i64..=4096],
+        ) {
+            let ops = [
+                Operand::Reg(xreg(rd)),
+                Operand::ModifierOffset {
+                    kind: mod_kind.to_string(),
+                    symbol: "foo".into(),
+                    offset,
+                },
+            ];
+            prop_assert!(
+                encode_adr(&ops).is_err(),
+                "ADR does not take :{}:symbol+offset modifiers",
+                mod_kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_adr_regression_w_reg() {
+        let ops = [Operand::Reg("w0".into()), Operand::Imm(-1_048_576)];
+        assert!(
+            encode_adr(&ops).is_err(),
+            "adr w0, #-1048576 must Err; ADR takes Xd only (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_adr_regression_sp() {
+        let ops = [Operand::Reg("sp".into()), Operand::Imm(-1_048_576)];
+        assert!(
+            encode_adr(&ops).is_err(),
+            "adr sp, #-1048576 must Err; ADR Rd is Xd (X31=XZR, not SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_adr_regression_imm_range() {
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(-1_048_577)];
+        assert!(
+            encode_adr(&ops).is_err(),
+            "adr x0, #-1048577 must Err; 21-bit signed offset is out of range"
+        );
+    }
+
+    #[test]
+    fn test_encode_adr_regression_fp_reg() {
+        let ops = [Operand::Reg("d0".into()), Operand::Imm(0)];
+        assert!(
+            encode_adr(&ops).is_err(),
+            "adr d0, #0 must Err; FP/SIMD registers are not ADR operands (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_adr_regression_modifier() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Modifier {
+                kind: "lo12".into(),
+                symbol: "foo".into(),
+            },
+        ];
+        assert!(
+            encode_adr(&ops).is_err(),
+            "adr x0, :lo12:foo must Err; llvm-mc reports unexpected adr label"
+        );
+    }
+
+    #[test]
+    fn test_encode_adr_regression_modifier_offset() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::ModifierOffset {
+                kind: "lo12".into(),
+                symbol: "foo".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_adr(&ops).is_err(),
+            "adr x0, :lo12:foo+0 must Err; ADR does not take :lo12: modifiers"
+        );
+    }
+}

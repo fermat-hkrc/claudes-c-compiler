@@ -1,400 +1,327 @@
-# Properties: encode_add_sub
+# Properties: encode_adr
 
-## encode_add_sub_diff_imm
-- Tier: 2
-- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler). State machine rejected — encode_add_sub is a pure function with no lifecycle. Algebraic round-trip rejected — no in-tree ADD/SUB decoder. SUT-boundary: internal-helper of the GNU-style assembler; encode_instruction dispatches add/adds/sub/subs here. Argument mapping: (Rd,Rn,Imm,optional lsl#12,is_sub,set_flags) ↔ asm text. Shared contract: assembler README "accepts the same textual assembly that GCC's gas would consume" plus encoder "Encodes AArch64 instructions into 32-bit machine code words". Immediate form register 31 is SP/WSP (ARM ARM).
-- Seed: DESIGN_DOC.md:338 (imm12 auto-shift); existing encode_add_sub_pbt::encode_add_sub_diff_imm
-- Formal: ∀ rd,rn ∈ {0..31}, is_64,is_sub,set_flags ∈ bool, (imm,sh12) a valid imm12 or auto-shift (or negative alias). encode_add_sub([Reg(SP-or-GPR),Reg(SP-or-GPR),Imm(imm), optional Shift{lsl,12}], is_sub, set_flags) = Word(w) ∧ llvm-mc(asm) = w.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+## encode_adr_diff_imm_llvm_mc
+- Tier: 7
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). In-tree ADR decoder does not exist so algebraic round-trip of a sibling decoder is unavailable. Linker reloc::encode_adr is a different job (patches imm into an already-encoded word) and fails the same-job sibling gate. Doc evidence: assembler README "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs ADR dispatch; ARM ARM ADR encoding.
+- Seed: (none) — load_store.rs has no existing tests for adr
+- Formal: ∀ rd ∈ {x0..x30, xzr, lr}, ∀ imm ∈ [-2^20, 2^20-1]. encode_adr([Reg(rd), Imm(imm)]) = Word(w) ∧ w = llvm-mc("adr rd, #imm")
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_add_sub
+function: encoder.load_store.encode_adr
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64, is_sub, set_flags, imm, sh12]
-  domain: { rd: 0..31, rn: 0..31, imm: valid_imm12_or_autoshift }
+  vars: [rd, imm]
+  domain: { rd: x_regs_and_aliases, imm: i64_21bit_signed }
   relation:
     op: eq
-    lhs: encode_add_sub([Reg(gpr_or_sp(is_64,rd)), Reg(gpr_or_sp(is_64,rn)), Imm(imm)] ++ lsl12(sh12), is_sub, set_flags)
-    rhs: llvm_mc(asm_add_sub_imm(is_sub, set_flags, rd, rn, imm, sh12))
+    lhs: encode_adr([Reg(rd), Imm(imm)]) as Word
+    rhs: llvm_mc("adr " + rd + ", #" + imm)
+generators:
+  rd: { gen: oneof, options: [x0..x30, xzr, lr] }
+  imm: { gen: int, min: -1048576, max: 1048575, type: i64 }
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:373 adr dispatch; ARM ARM ADR PC-relative 21-bit
+```
+
+## encode_adr_roundtrip_arm_fields
+- Tier: 4a
+- Rationale: Algebraic round-trip of ARM ARM field layout (unpack is specified by the architecture, not copied from the SUT packer). Stronger differential is the sibling property above. State machine rejected. Doc evidence: load_store.rs:699-702 encoding comment `ADR: 0 immlo[1:0] 10000 immhi[18:0] Rd`; ARM ARM ADR.
+- Seed: (none)
+- Formal: ∀ rd ∈ 0..=31, ∀ imm ∈ [-2^20, 2^20-1]. let w = encode_adr([Reg(gpr64(rd)), Imm(imm)]) as Word. Then w[31]=0 ∧ w[28:24]=0b10000 ∧ w[4:0]=rd ∧ SignExtend21(w[30:29] | (w[23:5]<<2)) = imm
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_adr
+oracle: algebraic.round_trip
+round_trip: {forward: encode_adr, backward: arm_adr_field_unpack, var: (rd, imm)}
+predicate:
+  quantifier: forall
+  vars: [rd, imm]
+  domain: { rd: u32_0_31, imm: i64_21bit_signed }
+  relation:
+    op: holds
+    expr: decode_adr_fields(encode_adr([Reg(gpr64(rd)), Imm(imm)])) == (rd, imm)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-  imm: { gen: int, min: -4095, max: 16773120, type: i64 }
-evidence: src/backend/arm/assembler/README.md:5-14; encoder/mod.rs:1-7; DESIGN_DOC.md:338; ARM ARM ADD/SUB (immediate)
+  imm: { gen: int, min: -1048576, max: 1048575, type: i64 }
+evidence: load_store.rs:699-702 ADR encoding comment; ARM ARM ADR op=0 immlo 10000 immhi Rd
 ```
 
-## encode_add_sub_diff_shifted_reg
-- Tier: 2
-- Rationale: Differential vs llvm-mc for the shifted-register form. Round-trip rejected (no decoder). State machine rejected (pure). Rd/Rn restricted to 0..30 so register 31 is not SP (shifted form encodes 31 as XZR). Shift kind in {lsl,lsr,asr}; amount in 0..=63 (sf=1) or 0..=31 (sf=0).
-- Seed: existing encode_add_sub_pbt::encode_add_sub_diff_shifted_reg
-- Formal: ∀ rd,rn ∈ {0..30}, rm ∈ {0..31}, is_64,is_sub,set_flags ∈ bool, kind ∈ {lsl,lsr,asr}, amt ∈ 0..max(sf). encode_add_sub([Reg,Reg,Reg,Shift{kind,amt}], is_sub, set_flags) = Word(w) ∧ llvm-mc(asm) = w.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, is_sub, set_flags, kind, amt]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..31, kind: {lsl,lsr,asr}, amt: 0..max_shift(is_64) }
-  relation:
-    op: eq
-    lhs: encode_add_sub([Reg,Reg,Reg,Shift{kind,amt}], is_sub, set_flags)
-    rhs: llvm_mc(asm_add_sub_shifted(is_sub, set_flags, rd, rn, rm, kind, amt))
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: ARM ARM ADD/SUB (shifted register); assembler README.md:5-14
-```
-
-## encode_add_sub_diff_extended_and_sp
-- Tier: 2
-- Rationale: Differential vs llvm-mc for extended-register form and the SP/WSP LSL alias (ARM ARM: when Rd or Rn is SP, the encoding is extended-register so 31 means SP not XZR; LSL #N with N in 0..=4 aliases UXTX/UXTW #N).
-- Seed: existing encode_add_sub_pbt::encode_add_sub_diff_extended_and_sp
-- Formal: ∀ valid extended-register or SP+LSL-alias operands accepted by llvm-mc. encode_add_sub(ops, is_sub, set_flags) = Word(w) ∧ llvm-mc(asm) = w.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, is_64=false, is_sub=false, set_flags=false, ext=uxtb, amt=1, use_lsl_alias=true (asm=add w0, wsp, w0, lsl #1; sut=0x0b0007e0 vs llvm-mc=0x0b2047e0)
-- Bug report: pbt-out/bug_reports/encode_add_sub_sp_lsl_shifted_form.md
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, is_sub, set_flags, ext, amt]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..30, ext: {uxtb,uxth,uxtw,uxtx,sxtb,sxth,sxtw,sxtx,lsl}, amt: 0..4 }
-  relation:
-    op: eq
-    lhs: encode_add_sub(ops_extended_or_sp_lsl, is_sub, set_flags)
-    rhs: llvm_mc(asm)
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  amt: { gen: int, min: 0, max: 4, type: u32 }
-evidence: ARM ARM ADD/SUB (extended register); llvm-mc add w0, wsp, w0, lsl #1
-```
-
-## encode_add_sub_diff_neon
-- Tier: 2
-- Rationale: Differential vs llvm-mc for NEON vector ADD/SUB Vd.T, Vn.T, Vm.T. encode_add_sub dispatches this form when the first operand is RegArrangement and set_flags is false. State machine / round-trip rejected as above.
-- Seed: existing encode_add_sub_pbt::encode_add_sub_diff_neon; assembler README.md NEON three-same lists add/sub
-- Formal: ∀ vd,vn,vm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ bool. encode_add_sub([RegArrangement(vN,T)]^3, is_sub, false) = Word(w) ∧ llvm-mc("add/sub vN.T, ...") = w.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [vd, vn, vm, arr, is_sub]
-  domain: { vd: 0..31, vn: 0..31, vm: 0..31, arr: {8b,16b,4h,8h,2s,4s,2d} }
-  relation:
-    op: eq
-    lhs: encode_add_sub([RegArrangement(v{vd},arr), RegArrangement(v{vn},arr), RegArrangement(v{vm},arr)], is_sub, false)
-    rhs: llvm_mc(asm_neon_add_sub(is_sub, vd, vn, vm, arr))
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  vn: { gen: int, min: 0, max: 31, type: u32 }
-  vm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-evidence: assembler README.md:214 NEON three-same add/sub; encoder/data_processing.rs:305-310
-```
-
-## encode_add_sub_neg_too_few_operands
-- Tier: 4e
-- Rationale: Documented error path: encode_add_sub returns Err("add/sub requires 3 operands, got N") when len < 3. Stronger oracles do not apply to the invalid-arity domain. llvm-mc reports "too few operands".
-- Seed: data_processing.rs:292-294; existing encode_add_sub_pbt::encode_add_sub_neg_too_few_operands
-- Formal: ∀ ops with |ops| < 3, is_sub,set_flags ∈ bool. encode_add_sub(ops, is_sub, set_flags) = Err(s) ∧ s contains "requires 3 operands".
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, is_sub, set_flags]
-  domain: { n: 0..2 }
-  body: encode_add_sub(ops_of_len(n), is_sub, set_flags).is_err()
-generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-expected_error: String
-evidence: data_processing.rs:292-294; llvm-mc too few operands
-```
-
-## encode_add_sub_neg_imm_out_of_range
-- Tier: 4e
-- Rationale: ARM ARM imm12 is 12 bits; with explicit lsl #12 the unshifted field must be in 0..=4095. llvm-mc: "integer in range [0, 4095]". SUT comment: "must fit in 12 bits". Values that are not a 12-bit unshifted or (N<<12) auto-shift must Err, not mask.
-- Seed: data_processing.rs:323-330; existing encode_add_sub_pbt::encode_add_sub_neg_imm_out_of_range
-- Formal: ∀ rd,rn ∈ {0..30}, is_64,is_sub,set_flags ∈ bool, imm not a valid imm12 encoding (or mag>0xFFF with explicit lsl#12). encode_add_sub([Reg,Reg,Imm(imm), optional Shift{lsl,12}], is_sub, set_flags) = Err(_).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, is_64=false, is_sub=false, set_flags=false, imm=4097, explicit_lsl12=true
-- Bug report: pbt-out/bug_reports/encode_add_sub_imm12_lsl12_mask.md
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, is_64, is_sub, set_flags, imm, explicit_lsl12]
-  domain: { rd: 0..30, rn: 0..30 }
-  body: encode_add_sub(imm_ops(rd, rn, imm, explicit_lsl12), is_sub, set_flags).is_err()
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  imm: { gen: int, min: -9223372036854775808, max: 9223372036854775807, type: i64 }
-  is_64: { gen: bool }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-  explicit_lsl12: { gen: bool }
-expected_error: String
-evidence: ARM ARM ADD/SUB (immediate) imm12 12-bit field; llvm-mc range [0,4095]; data_processing.rs:323 comment must fit in 12 bits
-```
-
-## encode_add_sub_neg_invalid_shift_extend
-- Tier: 4e
-- Rationale: ARM ARM shifted-register allows only LSL/LSR/ASR with imm6 in range; ROR is not a valid ADD/SUB shift. Extended-register imm3 > 4 is UNALLOCATED. llvm-mc and GNU as reject these. Encoder must Err, not default ROR to LSL or mask amounts.
-- Seed: existing encode_add_sub_pbt::encode_add_sub_neg_invalid_shift_extend; llvm-mc `add w0, w1, w2, ror #0`
-- Formal: ∀ rd,rn,rm ∈ {0..30}, is_64,is_sub,set_flags ∈ bool, invalid ∈ {ROR, shift_amt out of range, extend_amt > 4}. encode_add_sub([Reg,Reg,Reg,invalid], is_sub, set_flags) = Err(_).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, is_64=false, is_sub=false, set_flags=false, class=0, extra=0 (ROR #0)
-- Bug report: pbt-out/bug_reports/encode_add_sub_ror_accepted.md
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, is_sub, set_flags, class, extra]
-  body: encode_add_sub(bad_shift_or_extend_ops(rd, rn, rm, class, extra, is_64), is_sub, set_flags).is_err()
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  class: { gen: int, min: 0, max: 3, type: u8 }
-  extra: { gen: int, min: 0, max: 64, type: u32 }
-expected_error: String
-evidence: ARM ARM ADD/SUB shifted-register shift in LSL LSR ASR; llvm-mc rejects ror; ARM ARM extended imm3 in 0..=4
-```
-
-## encode_add_sub_metamorphic_neg_imm
+## encode_adr_metamorphic_rd_imm_independent
 - Tier: 4c
-- Rationale: SUT comment and ARM assembler alias: add #-N encodes as sub #N and vice versa. Metamorphic relation independent of llvm-mc. Differential is stronger and is a sibling property; this pins the alias without an external tool. Round-trip rejected (no decoder).
-- Seed: data_processing.rs:311-317 "Handle negative immediates: add #-N -> sub #N and vice versa"; existing encode_add_sub_pbt::encode_add_sub_metamorphic_neg_imm
-- Formal: ∀ rd ∈ {0..30}, rn ∈ {0..31}, is_64,is_sub,set_flags ∈ bool, n a positive valid imm12 magnitude. encode_add_sub([Rd,Rn,Imm(-n)], is_sub, s) = encode_add_sub([Rd,Rn,Imm(n)], !is_sub, s).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Metamorphic: the packed immediate field is independent of Rd and the Rd field is independent of imm (ARM ADR field layout). Stronger differential covers value equality with llvm-mc; this catches Rd/imm cross-talk. State machine rejected.
+- Seed: (none)
+- Formal: ∀ rd, rd' ∈ 0..=31, ∀ imm, imm' ∈ [-2^20, 2^20-1]. encode(rd,imm) ⊕ encode(rd,imm') has bits[4:0]=0 ∧ encode(rd,imm) ⊕ encode(rd',imm) has bits[31:5]=0
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_add_sub
+function: encoder.load_store.encode_adr
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64, is_sub, set_flags, n]
-  domain: { n: positive valid imm12 magnitude }
+  vars: [rd, rd2, imm, imm2]
+  domain: { rd: u32_0_31, rd2: u32_0_31, imm: i64_21bit_signed, imm2: i64_21bit_signed }
   relation:
-    op: eq
-    lhs: encode_add_sub([Rd,Rn,Imm(-n)], is_sub, set_flags)
-    rhs: encode_add_sub([Rd,Rn,Imm(n)], not is_sub, set_flags)
+    op: holds
+    expr: ((encode(rd,imm) XOR encode(rd,imm2)) & 0x1F) == 0 && ((encode(rd,imm) XOR encode(rd2,imm)) & !0x1F) == 0
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  n: { gen: int, min: 1, max: 16773120, type: i64 }
-  is_64: { gen: bool }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-evidence: data_processing.rs:311-317; ARM assembler negative-imm alias
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rd2: { gen: int, min: 0, max: 31, type: u32 }
+  imm: { gen: int, min: -1048576, max: 1048575, type: i64 }
+  imm2: { gen: int, min: -1048576, max: 1048575, type: i64 }
+evidence: load_store.rs:699-702; ARM ARM ADR Rd at [4:0], imm at [30:29]+[23:5]
 ```
 
-## encode_add_sub_neg_imm_bad_shift
-- Tier: 4e
-- Rationale: ARM ARM ADD/SUB (immediate) permits only LSL #0 or LSL #12 after the immediate. llvm-mc: "only 'lsl #+N' valid after immediate" for lsr/asr/ror, and rejects lsl #N for N ∉ {0,12}. Silent ignore of a fourth operand would assemble a different instruction than the source text. Gas-compatible assembler contract. Stronger oracles do not apply to this invalid domain.
-- Seed: llvm-mc `add x0, x1, #1, lsr #12` → error: only 'lsl #+N' valid after immediate
-- Formal: ∀ rd,rn ∈ {0..30}, is_64,is_sub,set_flags ∈ bool, imm ∈ 0..0xFFF, (kind,amt) with kind ∈ {lsr,asr,ror} ∨ (kind=lsl ∧ amt ∉ {0,12}). encode_add_sub([Reg,Reg,Imm(imm),Shift{kind,amt}], is_sub, set_flags) = Err(_).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, is_64=false, is_sub=false, set_flags=false, imm=0, class=0, amt=0 (lsr #0)
-- Bug report: pbt-out/bug_reports/encode_add_sub_imm_bad_shift_ignored.md
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, is_64, is_sub, set_flags, imm, kind, amt]
-  domain: { rd: 0..30, rn: 0..30, imm: 0..4095, amt: 0..63 }
-  body: encode_add_sub([Reg,Reg,Imm(imm),Shift{kind,amt}], is_sub, set_flags).is_err()
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  imm: { gen: int, min: 0, max: 4095, type: i64 }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-expected_error: String
-evidence: ARM ARM ADD/SUB (immediate) sh in 0 or 1 equals LSL 0 or 12; llvm-mc only lsl valid after immediate; assembler README.md:5-14
-```
-
-## encode_add_sub_neg_mixed_width
-- Tier: 4e
-- Rationale: ARM ARM ADD/SUB immediate and shifted-register forms require all registers the same width (all W or all X). llvm-mc rejects `add x0, w1, #1` and `add w0, x1, x2`. A single sf bit taken only from Rd would silently encode the wrong-width instruction. Extended-register Wm with Xd is a different form and is excluded from this domain. Negative/error.
-- Seed: llvm-mc `add x0, w1, #1` → error: invalid operand
-- Formal: ∀ rd,rn ∈ {0..30}, rd64 ≠ rn64, is_sub,set_flags ∈ bool, imm ∈ 0..0xFFF. encode_add_sub([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Imm(imm)], is_sub, set_flags) = Err(_). And ∀ rd,rn,rm ∈ {0..30} with not-all-equal widths, no extend: encode_add_sub([Reg,Reg,Reg], is_sub, set_flags) = Err(_).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, rd64=true, rn64=false, rm64=false, is_sub=false, set_flags=false, use_imm=false (ops=[x0, w0, w0])
-- Bug report: pbt-out/bug_reports/encode_add_sub_mixed_width.md
-
-```property
-function: encoder.data_processing.encode_add_sub
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64, is_sub, set_flags, use_imm, imm]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30, imm: 0..4095 }
-  body: encode_add_sub(mixed_width_ops(rd, rn, rm, rd64, rn64, rm64, use_imm, imm), is_sub, set_flags).is_err()
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  imm: { gen: int, min: 0, max: 4095, type: i64 }
-expected_error: String
-evidence: ARM ARM ADD Wd Wn imm or Xd Xn imm; llvm-mc mixed-width error; assembler README.md:5-14
-```
-
-## encode_add_sub_reloc_lo12
+## encode_adr_symbol_reloc
 - Tier: 4d
-- Rationale: RelocType::AddAbsLo12 is documented as R_AARCH64_ADD_ABS_LO12_NC for ADD :lo12:. DESIGN_DOC.md:350 lists ADD_ABS_LO12_NC. encode_add_sub must return WordWithReloc with that type, the given symbol, addend 0 (Modifier) or the given offset (ModifierOffset), and an ADD-immediate word with imm12=0 (reloc fills it). Differential vs llvm-mc encoding of the unresolved instruction is a sibling check on the word bits. State machine / round-trip rejected as above.
-- Seed: encoder/mod.rs:55-56 RelocType::AddAbsLo12; DESIGN_DOC.md:350; data_processing.rs:345-356
-- Formal: ∀ rd,rn ∈ {0..30}, is_64,is_sub,set_flags ∈ bool, sym a nonempty ident, off ∈ i64. encode_add_sub([Reg,Reg,Modifier{lo12,sym}], ...) = WordWithReloc { word = (sf<<31)|(op<<30)|(s<<29)|(0b10001<<24)|(rn<<5)|rd, reloc_type=AddAbsLo12, symbol=sym, addend=0 }. ModifierOffset{lo12,sym,off} same with addend=off.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Algebraic invariant on the reloc form. README and RelocType document AdrPrelLo21 (ELF 274) for `adr` with a symbol; encoding comment says op=0 and reloc word leaves imm fields 0. Differential against llvm-mc is weaker here because llvm-mc emits a fixup rather than a concrete word. State machine rejected.
+- Seed: (none)
+- Formal: ∀ rd ∈ 0..=30 ∪ {xzr}, ∀ sym ∈ ident, ∀ addend ∈ i64. encode_adr([Reg(Xd), SymbolOffset(sym, addend)]) = WordWithReloc { word: 0x10000000|rd, reloc_type: AdrPrelLo21, symbol: sym, addend } ∧ encode_adr([Reg(Xd), Symbol(sym)]) and Label(sym) agree with addend=0
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_add_sub
+function: encoder.load_store.encode_adr
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64, is_sub, set_flags, sym, off]
-  domain: { rd: 0..30, rn: 0..30 }
-  body: let WordWithReloc { word, reloc } = encode_add_sub([Reg,Reg,Modifier{lo12,sym} or ModifierOffset], is_sub, set_flags) in reloc.reloc_type == AddAbsLo12 && reloc.symbol == sym && reloc.addend == off && (word & 0x1F) == rd && ((word>>5)&0x1F) == rn && ((word>>31)&1)==sf && ((word>>30)&1)==op && ((word>>29)&1)==s && ((word>>24)&0x1F)==0b10001 && ((word>>10)&0xFFF)==0
+  vars: [rd, sym, addend]
+  domain: { rd: u32_0_31, sym: ident, addend: i64 }
+  relation:
+    op: holds
+    expr: encode_adr_symbol_offset(rd, sym, addend) is WordWithReloc AdrPrelLo21
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  off: { gen: int, min: -4096, max: 4096, type: i64 }
-  is_64: { gen: bool }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-evidence: encoder/mod.rs:55-56; DESIGN_DOC.md:350; data_processing.rs:345-390
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  sym: { gen: string, minLen: 1, maxLen: 16 }
+  addend: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: assembler/README.md:255 AdrPrelLo21 for adr; encoder/mod.rs:79-80,103; load_store.rs:709-716
 ```
 
-## encode_add_sub_neg_fp_reg
+## encode_adr_neg_w_reg
 - Tier: 4e
-- Rationale: ADD/SUB data-processing form uses W/X registers (assembler README Data Processing vs FP/NEON). llvm-mc rejects `adds d0, d1, d2`. parse_reg_num accepts d/s/q/v/h/b prefixes, so this path was untested. Coverage-sweep: FP register names at any of the three GPR slots must Err. Dispatch filters scalar d-regs only for add/sub, not adds/subs, so this is caller-reachable.
-- Seed: llvm-mc `adds d0, d1, d2` → error: invalid operand; assembler README.md:214
-- Formal: ∀ which ∈ {0,1,2}, is_sub,set_flags ∈ bool, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_add_sub(ops with ops[which]=Reg(prefix||n) and other slots GPR, is_sub, set_flags) = Err(_).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Negative/error contract. ARM ADR takes Xd only; llvm-mc rejects `adr w0, #imm` and `adr wsp, #0`. Assembler claims gas-compatible text. Stronger differential on the valid Xd domain is the sibling property; this covers the documented-invalid W/WSP domain.
+- Seed: (none)
+- Formal: ∀ wd ∈ {w0..w30, wzr, wsp}, ∀ imm ∈ i64. encode_adr([Reg(wd), Imm(imm)]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: which=0, is_sub=false, set_flags=false, prefix=d, n=0 (ops=[d0, x1, x2])
-- Bug report: pbt-out/bug_reports/encode_add_sub_fp_reg.md
+- Counterexample: wd=0, imm=-1048576, use_wsp=false (adr w0, #-1048576)
+- Bug report: pbt-out/bug_reports/encode_adr_w_reg.md
 
 ```property
-function: encoder.data_processing.encode_add_sub
+function: encoder.load_store.encode_adr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, is_sub, set_flags, prefix, n]
-  domain: { which: 0..2, n: 0..31 }
-  body: encode_add_sub(ops_with_fp_at(which, prefix, n), is_sub, set_flags).is_err()
+  vars: [wd, imm]
+  domain: { wd: w_regs_and_aliases, imm: i64 }
+  relation:
+    op: throws
+    expr: encode_adr([Reg(wd), Imm(imm)])
+expected_error: String
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
+  wd: { gen: oneof, options: [w0..w30, wzr, wsp] }
+  imm: { gen: int, min: -1048576, max: 1048575, type: i64 }
+evidence: ARM ARM ADR <Xd>; llvm-mc rejects adr w0/# wsp; assembler README.md:5-14 gas-compatible
+```
+
+## encode_adr_neg_sp
+- Tier: 4e
+- Rationale: Negative/error. ARM ADR Rd is Xd; register 31 is XZR not SP. llvm-mc rejects `adr sp, #0`. parse_reg_num maps sp to 31, same as xzr.
+- Seed: (none)
+- Formal: ∀ imm ∈ i64. encode_adr([Reg("sp"), Imm(imm)]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: imm=-1048576 (adr sp, #-1048576)
+- Bug report: pbt-out/bug_reports/encode_adr_sp_as_zr.md
+
+```property
+function: encoder.load_store.encode_adr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [imm]
+  domain: { imm: i64_21bit_signed }
+  relation:
+    op: throws
+    expr: encode_adr([Reg("sp"), Imm(imm)])
+expected_error: String
+generators:
+  imm: { gen: int, min: -1048576, max: 1048575, type: i64 }
+evidence: ARM ARM ADR Xd, X31=XZR; llvm-mc rejects adr sp; assembler README.md:5-14
+```
+
+## encode_adr_neg_imm_range
+- Tier: 4e
+- Rationale: Negative/error. ARM ADR immediate is 21-bit signed [-2^20, 2^20-1]; llvm-mc rejects #1048576 and #-1048577. The SUT itself documents the missing check: `TODO: validate 21-bit signed immediate range` at load_store.rs:697. Documented bounds sampled at bound and bound±1.
+- Seed: (none)
+- Formal: ∀ rd ∈ {x0..x30, xzr}, ∀ imm ∈ i64 \ [-2^20, 2^20-1]. encode_adr([Reg(rd), Imm(imm)]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: rd=0, imm=-1048577 (adr x0, #-1048577)
+- Bug report: pbt-out/bug_reports/encode_adr_imm_range.md
+
+```property
+function: encoder.load_store.encode_adr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, imm]
+  domain: { rd: x_regs, imm: i64_outside_21bit_signed }
+  relation:
+    op: throws
+    expr: encode_adr([Reg(rd), Imm(imm)])
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  imm: { gen: oneof, options: [int(-2^63..-1048577), int(1048576..2^63-1)] }
+evidence: load_store.rs:697 TODO validate 21-bit signed immediate range; ARM ARM ADR ±1MB; llvm-mc rejects #1048576
+```
+
+## encode_adr_neg_bad_operands
+- Tier: 4e
+- Rationale: Negative/error for arity and operand-kind contract. get_reg requires a register at 0; get_symbol (after Imm miss) requires a symbol-like operand at 1. FP and modifier shapes were split into dedicated properties after the first batch (they are distinct bugs).
+- Seed: (none)
+- Formal: ∀ ops ∈ {[], [Imm(_)], [Reg(Xd)], [Reg(Xd), Mem{_}], [Reg("x32"), Imm(_)]}. encode_adr(ops) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_adr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  domain: { ops: adr_invalid_arity_and_kinds }
+  relation:
+    op: throws
+    expr: encode_adr(ops)
+expected_error: String
+generators:
+  ops: { gen: oneof, options: [empty, imm_only, rd_only, rd_plus_mem, x32_plus_imm] }
+evidence: load_store.rs:694 get_reg; :707 get_symbol
+```
+
+## encode_adr_neg_fp_reg
+- Tier: 4e
+- Rationale: Negative/error. ARM ADR takes Xd only; llvm-mc rejects `adr d0, #0`. parse_reg_num accepts d/s/q/v/h/b prefixes. Split from encode_adr_neg_bad_operands after the first batch so the FP path is a dedicated contract.
+- Seed: (none)
+- Formal: ∀ prefix ∈ {d,s,q,v,h,b}, ∀ n ∈ 0..=31, ∀ imm ∈ [-2^20, 2^20-1]. encode_adr([Reg(prefix+n), Imm(imm)]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: prefix="d", n=0, imm=-1048576 (adr d0, #-1048576)
+- Bug report: pbt-out/bug_reports/encode_adr_fp_reg.md
+
+```property
+function: encoder.load_store.encode_adr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [prefix, n, imm]
+  domain: { prefix: fp_simd_prefixes, n: u32_0_31, imm: i64_21bit_signed }
+  relation:
+    op: throws
+    expr: encode_adr([Reg(prefix+n), Imm(imm)])
+expected_error: String
+generators:
+  prefix: { gen: oneof, options: [d, s, q, v, h, b] }
   n: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-expected_error: String
-evidence: assembler README.md:214 Data Processing GPR vs FP/NEON; ARM ARM ADD Wd/Xd; llvm-mc rejects d/s/v forms; encoder/mod.rs:226 adds dispatches without neon filter
+  imm: { gen: int, min: -1048576, max: 1048575, type: i64 }
+evidence: ARM ARM ADR <Xd>; llvm-mc rejects adr d0, #0; assembler README.md:5-14
 ```
 
-## encode_add_sub_neg_adds_sp_rd
+## encode_adr_neg_modifier
 - Tier: 4e
-- Rationale: ARM ARM ADDS/SUBS (immediate) Rd is Wd/Xd, not SP/WSP. llvm-mc rejects `adds sp, x0, #0`. Encoding SP as 31 with S=1 silently assembles ADDS XZR (i.e. CMP), a different instruction. Coverage-sweep of the set_flags && Rd==SP path.
-- Seed: llvm-mc `adds sp, x0, #0` → error: invalid operand
-- Formal: ∀ is_64,is_sub ∈ bool, rn ∈ {0..30}, imm ∈ 0..0xFFF. encode_add_sub([Reg(sp/wsp), Reg(gpr), Imm(imm)], is_sub, true) = Err(_).
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Negative/error. llvm-mc rejects `adr x0, :lo12:foo` ("unexpected adr label"). get_symbol accepts any Modifier and encode_adr emits AdrPrelLo21, which is the wrong reloc for :lo12:/:got:. Split from encode_adr_neg_bad_operands after the first-batch shrink to kind=5.
+- Seed: (none)
+- Formal: ∀ rd ∈ 0..=31, ∀ kind ∈ {lo12, got, got_lo12}, ∀ sym ∈ ident. encode_adr([Reg(Xd), Modifier{kind, symbol:sym}]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: is_64=false, is_sub=false, rn=0, imm=0 (ops=[wsp, w0, #0], set_flags=true)
-- Bug report: pbt-out/bug_reports/encode_add_sub_adds_sp_rd.md
+- Counterexample: rd=0, mod_kind="lo12", suffix=0 (adr x0, :lo12:labl0)
+- Bug report: pbt-out/bug_reports/encode_adr_modifier.md
 
 ```property
-function: encoder.data_processing.encode_add_sub
+function: encoder.load_store.encode_adr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_64, is_sub, rn, imm]
-  domain: { rn: 0..30, imm: 0..4095 }
-  body: encode_add_sub([Reg(sp_or_wsp), Reg(gpr), Imm(imm)], is_sub, true).is_err()
-generators:
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  imm: { gen: int, min: 0, max: 4095, type: i64 }
-  is_64: { gen: bool }
-  is_sub: { gen: bool }
+  vars: [rd, mod_kind, sym]
+  domain: { rd: u32_0_31, mod_kind: lo12_got_got_lo12, sym: ident }
+  relation:
+    op: throws
+    expr: encode_adr_modifier(rd, mod_kind, sym)
 expected_error: String
-evidence: ARM ARM ADDS/SUBS Rd is Wd/Xd not SP; llvm-mc rejects adds sp; assembler README.md:5-14
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  mod_kind: { gen: oneof, options: [lo12, got, got_lo12] }
+  sym: { gen: string, minLen: 1, maxLen: 16 }
+evidence: llvm-mc rejects adr x0, :lo12:foo; assembler README.md:255 AdrPrelLo21 is for bare adr, not :lo12:
 ```
 
-## encode_add_sub_reloc_tprel
+## encode_adr_symbol_misclassified
 - Tier: 4d
-- Rationale: RelocType documents TlsLeAddTprelLo12 (R_AARCH64_TLSLE_ADD_TPREL_LO12_NC) and TlsLeAddTprelHi12 (R_AARCH64_TLSLE_ADD_TPREL_HI12). Coverage-sweep of the tprel modifier arms. tprel_hi12 must set sh=1 (bit 22). State machine / round-trip rejected as above.
-- Seed: encoder/mod.rs:72-74; data_processing.rs:357-375
-- Formal: ∀ rd,rn ∈ {0..30}, is_64,is_sub,set_flags ∈ bool, hi ∈ bool, sym ident. encode_add_sub([Reg,Reg,Modifier{tprel_hi12|tprel_lo12_nc,sym}], ...) = WordWithReloc { reloc_type = TlsLeAddTprelHi12 if hi else TlsLeAddTprelLo12, symbol=sym, addend=0, word sh bit = hi }.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Coverage-sweep algebraic invariant for get_symbol parser-misclassification arms (Reg/Cond/Barrier names that collide with symbols). Doc evidence: encoder/mod.rs:975-988 get_symbol treats those as symbols. Not a bug path — documented workaround.
+- Seed: (none)
+- Formal: ∀ rd ∈ 0..=31, ∀ name ∈ {s1,v0,d1,cc,lt,le,st,ld}, ∀ which ∈ {Reg,Cond,Barrier}. encode_adr([Reg(Xd), which(name)]) = WordWithReloc { word: 0x10000000|rd, AdrPrelLo21, symbol: name, addend: 0 }
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_add_sub
+function: encoder.load_store.encode_adr
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64, is_sub, set_flags, hi, suffix]
-  domain: { rd: 0..30, rn: 0..30 }
-  body: let WordWithReloc { word, reloc } = encode_add_sub([Reg,Reg,Modifier{tprel,sym}], is_sub, set_flags) in reloc.symbol == sym && reloc.addend == 0 && ((word >> 22) & 1) == hi && reloc_type matches hi
+  vars: [rd, which, name]
+  domain: { rd: u32_0_31, which: reg_cond_barrier, name: colliding_symbol_names }
+  relation:
+    op: holds
+    expr: encode_adr_misclassified(rd, which, name) is WordWithReloc AdrPrelLo21
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  is_sub: { gen: bool }
-  set_flags: { gen: bool }
-  hi: { gen: bool }
-evidence: encoder/mod.rs:72-74; data_processing.rs:357-375
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  name: { gen: oneof, options: [s1, v0, d1, cc, lt, le, st, ld] }
+evidence: encoder/mod.rs:975-988 get_symbol treats Reg/Cond/Barrier as symbols
+```
+
+## encode_adr_neg_modifier_offset
+- Tier: 4e
+- Rationale: Coverage-sweep negative/error for ModifierOffset, the remaining get_symbol modifier arm. Same law as encode_adr_neg_modifier.
+- Seed: (none)
+- Formal: ∀ rd ∈ 0..=31, ∀ kind ∈ {lo12, got, got_lo12}, ∀ offset ∈ i64. encode_adr([Reg(Xd), ModifierOffset{kind, symbol:foo, offset}]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: rd=0, mod_kind="lo12", offset=0
+- Bug report: pbt-out/bug_reports/encode_adr_modifier.md
+
+```property
+function: encoder.load_store.encode_adr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, mod_kind, offset]
+  domain: { rd: u32_0_31, mod_kind: lo12_got_got_lo12, offset: i64 }
+  relation:
+    op: throws
+    expr: encode_adr_modifier_offset(rd, mod_kind, offset)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  mod_kind: { gen: oneof, options: [lo12, got, got_lo12] }
+  offset: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: llvm-mc rejects adr x0, :lo12:foo; get_symbol ModifierOffset arm encoder/mod.rs:981
 ```

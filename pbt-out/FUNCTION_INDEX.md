@@ -1,4 +1,4 @@
-> Total files: 3 | Total functions: 76 | PBT candidates: 4 | Excluded: 72
+> Total files: 4 | Total functions: 96 | PBT candidates: 5 | Excluded: 91
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -78,3 +78,23 @@
 | classify_float_binop | cast.rs | 208 | function | no | out of campaign scope |
 | f128_cmp_libcall | cast.rs | 239 | function | no | out of campaign scope |
 | f128_const_halves | cast.rs | 253 | function | no | out of campaign scope |
+| encode_ldr_str_auto | load_store.rs | 7 | function | no | out of campaign scope |
+| encode_ldr_str | load_store.rs | 33 | function | no | out of campaign scope |
+| encode_ldur_stur | load_store.rs | 248 | function | no | out of campaign scope |
+| encode_ldtr_sized | load_store.rs | 292 | function | no | out of campaign scope |
+| encode_ldrsw | load_store.rs | 311 | function | no | out of campaign scope |
+| encode_ldrs | load_store.rs | 382 | function | no | out of campaign scope |
+| encode_ldp_stp | load_store.rs | 452 | function | no | out of campaign scope |
+| encode_ldnp_stnp | load_store.rs | 518 | function | no | out of campaign scope |
+| encode_ldxr_stxr | load_store.rs | 547 | function | no | out of campaign scope |
+| encode_ldaxr_stlxr | load_store.rs | 573 | function | no | out of campaign scope |
+| encode_ldxp_stxp | load_store.rs | 604 | function | no | out of campaign scope |
+| encode_ldar_stlr | load_store.rs | 637 | function | no | out of campaign scope |
+| encode_adrp | load_store.rs | 653 | function | no | out of campaign scope |
+| encode_adr | load_store.rs | 693 | function | yes | - |
+| encode_prfm | load_store.rs | 726 | function | no | out of campaign scope |
+| encode_prfop | load_store.rs | 786 | function | no | out of campaign scope |
+| encode_cas | load_store.rs | 814 | function | no | out of campaign scope |
+| encode_swp | load_store.rs | 849 | function | no | out of campaign scope |
+| encode_ldop | load_store.rs | 882 | function | no | out of campaign scope |
+| encode_stop | load_store.rs | 927 | function | no | out of campaign scope |
