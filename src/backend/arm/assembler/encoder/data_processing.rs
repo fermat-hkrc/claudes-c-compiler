@@ -2314,3 +2314,795 @@ mod encode_adc_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_bic_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:674 "bic" => encode_bic; ARM ARM BIC shifted-register / immediate-alias / vector
+    // Stronger considered:
+    //   - State machine: rejected — encode_bic is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree BIC decoder
+    // Weaker available: algebraic.metamorphic (BIC-imm = AND-~imm), negative_error (arity / mixed width / SP / FP / shift range / NEON T)
+    // Differential: candidate=encode_bic, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=operands <-> asm text `bic Rd, Rn, Rm{, shift}` / `bic Rd, Rn, #imm` / `bic Vd.T, Vn.T, Vm.T`
+
+    use super::{encode_bic, encode_logical};
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    /// Immediate-form Rd: register 31 is SP/WSP (AND-immediate), never XZR.
+    fn gpr_imm_rd(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "sp".into()
+            } else {
+                "wsp".into()
+            }
+        } else {
+            gpr(is_64, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_bic(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    /// Independent AArch64 logical-immediate constructor (ARM ARM, not encode_bitmask_imm).
+    /// `ones` consecutive 1s of element `size`, right-rotated by `immr`, tiled to register width.
+    fn bitmask_from_fields(size: u32, ones: u32, immr: u32, is_64: bool) -> u64 {
+        let width = if is_64 { 64u32 } else { 32 };
+        let mask = if size == 64 {
+            u64::MAX
+        } else {
+            (1u64 << size) - 1
+        };
+        let base = (1u64 << ones) - 1;
+        let elem = if immr % size == 0 {
+            base
+        } else {
+            let r = immr % size;
+            ((base >> r) | (base << (size - r))) & mask
+        };
+        let mut val = 0u64;
+        let mut pos = 0u32;
+        while pos < width {
+            val |= elem << pos;
+            pos += size;
+        }
+        val
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn shift_kind() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["lsl", "lsr", "asr", "ror"])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_bic_kat_llvm_mc_bic_x0_x1_x2() {
+        let want = 0x8a220020u32;
+        let mc = llvm_mc_word("bic x0, x1, x2").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_bic_kat_llvm_mc_bic_imm1() {
+        let want = 0x927ff820u32;
+        let mc = llvm_mc_word("bic x0, x1, #1").expect("llvm-mc imm KAT");
+        assert_eq!(mc, want, "llvm-mc imm KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(1),
+        ];
+        let sut = sut_word(&ops).expect("SUT imm KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_bic_kat_llvm_mc_bic_neon_16b() {
+        let want = 0x4e621c20u32;
+        let mc = llvm_mc_word("bic v0.16b, v1.16b, v2.16b").expect("llvm-mc neon KAT");
+        assert_eq!(mc, want, "llvm-mc neon KAT mapping broken");
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v1".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v2".into(),
+                arrangement: "16b".into(),
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT neon KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_bic_diff_reg_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in 0u32..=63,
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let rm_n = gpr(is_64, rm);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rn_n.clone()),
+                Operand::Reg(rm_n.clone()),
+            ];
+            let mut asm = format!("bic {}, {}, {}", rd_n, rn_n, rm_n);
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+                if !(kind == "lsl" && amt == 0) {
+                    asm.push_str(&format!(", {} #{}", kind, amt));
+                }
+            }
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_bic_diff_imm_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            is_64 in any::<bool>(),
+            seed in 0u32..10000,
+        ) {
+            // Draw a valid BIC immediate whose inverted value is an AArch64 bitmask.
+            let sizes: [u32; 6] = if is_64 {
+                [2, 4, 8, 16, 32, 64]
+            } else {
+                [2, 4, 8, 16, 32, 32]
+            };
+            let size = sizes[(seed as usize) % sizes.len()];
+            let ones = 1 + (seed / 6) % (size - 1);
+            let rot = (seed / 6 / (size - 1).max(1)) % size;
+            let m = bitmask_from_fields(size, ones, rot, is_64);
+            let bic_u = if is_64 { !m } else { (!(m as u32)) as u64 };
+            let imm = bic_u as i64;
+            let rd_n = gpr_imm_rd(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let hex = if is_64 {
+                format!("#0x{:x}", bic_u)
+            } else {
+                format!("#0x{:x}", bic_u as u32)
+            };
+            let asm = format!("bic {}, {}, {}", rd_n, rn_n, hex);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(imm),
+            ];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_bic_diff_neon_llvm_mc(
+            d in reg_num(),
+            n in reg_num(),
+            m in reg_num(),
+            q16 in any::<bool>(),
+        ) {
+            let arr = if q16 { "16b" } else { "8b" };
+            let asm = format!("bic v{}.{}, v{}.{}, v{}.{}", d, arr, n, arr, m, arr);
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{}", d),
+                    arrangement: arr.into(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{}", n),
+                    arrangement: arr.into(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{}", m),
+                    arrangement: arr.into(),
+                },
+            ];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_bic_meta_imm_and_alias(
+            rd in 0u32..=30,
+            rn in reg_num(),
+            is_64 in any::<bool>(),
+            seed in 0u32..10000,
+        ) {
+            let sizes: [u32; 6] = if is_64 {
+                [2, 4, 8, 16, 32, 64]
+            } else {
+                [2, 4, 8, 16, 32, 32]
+            };
+            let size = sizes[(seed as usize) % sizes.len()];
+            let ones = 1 + (seed / 6) % (size - 1);
+            let rot = (seed / 6 / (size - 1).max(1)) % size;
+            let m = bitmask_from_fields(size, ones, rot, is_64);
+            let bic_u = if is_64 { !m } else { (!(m as u32)) as u64 };
+            let imm = bic_u as i64;
+            let inv = if is_64 {
+                (!bic_u) as i64
+            } else {
+                ((!(bic_u as u32)) as u64) as i64
+            };
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let bic_ops = [
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rn_n.clone()),
+                Operand::Imm(imm),
+            ];
+            let and_ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(inv),
+            ];
+            let bic_w = match encode_bic(&bic_ops) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => panic!("BIC imm should encode, got {:?}", other),
+            };
+            let and_w = match encode_logical(&and_ops, 0b00) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => panic!("AND ~imm should encode, got {:?}", other),
+            };
+            prop_assert_eq!(bic_w, and_w, "BIC #imm must equal AND #~imm");
+        }
+
+        #[test]
+        fn encode_bic_neg_arity(n in 0usize..=2, is_64 in any::<bool>(), r in 0u32..=30) {
+            let ops: Vec<Operand> = (0..n)
+                .map(|_| Operand::Reg(gpr(is_64, r)))
+                .collect();
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "fewer than 3 operands must Err, n={}",
+                n
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_mixed_width(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+            rm64 in any::<bool>(),
+        ) {
+            prop_assume!(!(rd64 == rn64 && rn64 == rm64));
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+                Operand::Reg(gpr(rm64, rm)),
+            ];
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "mixed-width BIC registers must Err (rd64={} rn64={} rm64={})",
+                rd64,
+                rn64,
+                rm64
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_sp_fp_regform(
+            which in 0u32..=2,
+            is_64 in any::<bool>(),
+            a in 0u32..=30,
+            b in 0u32..=30,
+            kind in 0u32..=8,
+            fp_n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+        ) {
+            let ra = gpr(is_64, a);
+            let rb = gpr(is_64, b);
+            let bad = match kind {
+                0 => if is_64 { "sp".to_string() } else { "wsp".to_string() },
+                1 => format!("d{}", fp_n),
+                2 => format!("s{}", fp_n),
+                3 => format!("q{}", fp_n),
+                4 => format!("v{}", fp_n),
+                5 => format!("h{}", fp_n),
+                6 => format!("b{}", fp_n),
+                7 => if is_64 { "sp".to_string() } else { "wsp".to_string() },
+                _ => format!("d{}", fp_n),
+            };
+            let mut names = [ra, rb, bad.clone()];
+            names.swap(2, which as usize);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "SP/FP name {} at operand {} must Err (names={:?})",
+                bad,
+                which,
+                names
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_shift_range_neon_arr(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            which in 0u32..=1,
+            amt_w in prop_oneof![Just(32u32), Just(33u32), Just(63u32), Just(64u32)],
+            amt_x in prop_oneof![Just(64u32), Just(65u32), Just(128u32)],
+            arr in prop::sample::select(vec!["8h", "4h", "4s", "2s", "2d"]),
+            d in 0u32..=31,
+            n in 0u32..=31,
+            m in 0u32..=31,
+        ) {
+            if which == 0 {
+                let amt = if is_64 { amt_x } else { amt_w };
+                let ops = [
+                    Operand::Reg(gpr(is_64, rd)),
+                    Operand::Reg(gpr(is_64, rn)),
+                    Operand::Reg(gpr(is_64, rm)),
+                    Operand::Shift {
+                        kind: kind.to_string(),
+                        amount: amt,
+                    },
+                ];
+                prop_assert!(
+                    encode_bic(&ops).is_err(),
+                    "out-of-range {} #{} on {}-bit BIC must Err",
+                    kind,
+                    amt,
+                    if is_64 { 64 } else { 32 }
+                );
+            } else {
+                let ops = [
+                    Operand::RegArrangement {
+                        reg: format!("v{}", d),
+                        arrangement: arr.to_string(),
+                    },
+                    Operand::RegArrangement {
+                        reg: format!("v{}", n),
+                        arrangement: arr.to_string(),
+                    },
+                    Operand::RegArrangement {
+                        reg: format!("v{}", m),
+                        arrangement: arr.to_string(),
+                    },
+                ];
+                prop_assert!(
+                    encode_bic(&ops).is_err(),
+                    "NEON BIC T={} is not 8b/16b and must Err",
+                    arr
+                );
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_bic_neg_fp_reg(
+            which in 0u32..=2,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+            ];
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "FP/SIMD register {} is not a valid BIC GPR (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_invalid_neon_arr(
+            d in 0u32..=31,
+            n in 0u32..=31,
+            m in 0u32..=31,
+            arr in prop::sample::select(vec!["8h", "4h", "4s", "2s", "2d"]),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{}", d),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{}", n),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{}", m),
+                    arrangement: arr.to_string(),
+                },
+            ];
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "NEON BIC T={} is not 8b/16b and must Err",
+                arr
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_imm_xzr_rd(is_64 in any::<bool>(), rn in 0u32..=30) {
+            let rd = if is_64 { "xzr" } else { "wzr" };
+            let rn_n = gpr(is_64, rn);
+            let ops = [
+                Operand::Reg(rd.into()),
+                Operand::Reg(rn_n),
+                Operand::Imm(1),
+            ];
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "BIC immediate Rd={} is XZR not SP and must Err (llvm-mc rejects it)",
+                rd
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_invalid_imm(
+            is_64 in any::<bool>(),
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            imm in prop_oneof![
+                Just(0i64),
+                Just(-1i64),
+                Just(5i64),
+                Just(9i64),
+                Just(0x11i64),
+                Just(i64::MIN),
+            ],
+        ) {
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let hex = if is_64 {
+                format!("#0x{:x}", imm as u64)
+            } else {
+                format!("#0x{:x}", imm as u32)
+            };
+            let asm = format!("bic {}, {}, {}", rd_n, rn_n, hex);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(imm),
+            ];
+            match llvm_mc_word(&asm) {
+                Ok(mc) => {
+                    let sut = sut_word(&ops)
+                        .unwrap_or_else(|e| panic!("SUT rejected llvm-mc-valid {}: {}", asm, e));
+                    prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+                }
+                Err(_) => {
+                    prop_assert!(
+                        encode_bic(&ops).is_err(),
+                        "invalid bitmask BIC {} must Err (llvm-mc rejects it)",
+                        asm
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn encode_bic_neg_unsupported_third(
+            is_64 in any::<bool>(),
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            which in 0u32..=4,
+        ) {
+            let bad = match which {
+                0 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                1 => Operand::Symbol("foo".into()),
+                2 => Operand::Cond("eq".into()),
+                3 => Operand::Label(".L0".into()),
+                _ => Operand::Barrier("sy".into()),
+            };
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                bad,
+            ];
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "non-Reg/Imm third operand must Err (which={})",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_invalid_rm(
+            is_64 in any::<bool>(),
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            bad in prop_oneof![
+                Just("x32".to_string()),
+                Just("w32".to_string()),
+                Just("x99".to_string()),
+                Just("".to_string()),
+                Just("foo".to_string()),
+                Just("r0".to_string()),
+                Just("x".to_string()),
+            ],
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(bad.clone()),
+            ];
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "invalid rm name {:?} must Err",
+                bad
+            );
+        }
+
+        #[test]
+        fn encode_bic_neg_unknown_shift_kind(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            kind in prop_oneof![
+                Just("lslx".to_string()),
+                Just("rrx".to_string()),
+                Just("rol".to_string()),
+                Just("".to_string()),
+                Just("asr ".to_string()),
+            ],
+            amt in prop_oneof![Just(0u32), Just(1u32), Just(31u32)],
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.clone(),
+                    amount: amt,
+                },
+            ];
+            prop_assert!(
+                encode_bic(&ops).is_err(),
+                "unknown shift kind {:?} must Err",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_bic_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_bic(&ops).is_err(),
+            "mixed-width BIC w0, w0, x0 must Err (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_bic_regression_sp() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_bic(&ops).is_err(),
+            "BIC wsp, w0, w0 must Err; register 31 is WZR not WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_bic_regression_shift32() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lsl".into(),
+                amount: 32,
+            },
+        ];
+        assert!(
+            encode_bic(&ops).is_err(),
+            "BIC w0, w0, w0, lsl #32 must Err; 32-bit shift amount range is [0, 31]"
+        );
+    }
+
+    #[test]
+    fn test_encode_bic_regression_fp_reg() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_bic(&ops).is_err(),
+            "BIC d0, x1, x2 must Err; FP/SIMD registers are not BIC GPRs (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_bic_regression_neon_8h() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8h".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v1".into(),
+                arrangement: "8h".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v2".into(),
+                arrangement: "8h".into(),
+            },
+        ];
+        assert!(
+            encode_bic(&ops).is_err(),
+            "BIC v0.8h, v1.8h, v2.8h must Err; ARM ARM BIC vector T is 8B|16B only"
+        );
+    }
+
+    #[test]
+    fn test_encode_bic_regression_imm_xzr_rd() {
+        let ops = [
+            Operand::Reg("xzr".into()),
+            Operand::Reg("x0".into()),
+            Operand::Imm(1),
+        ];
+        assert!(
+            encode_bic(&ops).is_err(),
+            "BIC xzr, x0, #1 must Err; AND-immediate Rd of 31 is SP not XZR (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_bic_regression_unknown_shift_kind() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lslx".into(),
+                amount: 0,
+            },
+        ];
+        assert!(
+            encode_bic(&ops).is_err(),
+            "BIC w0, w0, w0, lslx #0 must Err; only lsl/lsr/asr/ror are valid (unknown kinds default to lsl)"
+        );
+    }
+}

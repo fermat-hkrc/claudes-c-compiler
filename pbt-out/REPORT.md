@@ -1,34 +1,37 @@
-# PBT Campaign Report: encode_adr
+# PBT Campaign Report: encode_bic
 
 ## Summary
 
 **Date:** 2026-09-11
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_adr
-**Tests:** 12 properties (plus 2 KAT + 6 regression witnesses)
-**Result:** 6 passing, 6 failing (5 distinct SUT bugs)
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening round, 1 coverage-surface sweep)
-**Contract-surface sweep:** 1 round. `coverage_gaps` had no LLVM profraw (RUSTFLAGS/LLVM_PROFILE_FILE unset). Manual arm audit of encode_adr / get_symbol added encode_adr_symbol_misclassified (passing) and encode_adr_neg_modifier_offset (failing, same bug as :lo12: Modifier). Close reason: the tier's one sweep round is done.
+**Modules tested:** encode_bic (src/backend/arm/assembler/encoder/data_processing.rs)
+**Tests:** 15 properties (8 passing, 7 failing) plus 3 KAT and 7 regression witnesses
+**Result:** 8 passing, 7 bugs
+**Effort tier:** standard (1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_adr | 12 properties (6 pass / 6 fail) | 5 | differential, algebraic.round_trip, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_bic | 15 properties + 3 KAT + 7 regressions | 7 | differential (llvm-mc), algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_adr accepts W registers as Rd.** Law: ADR takes Xd only; llvm-mc rejects `adr w0, #imm`. Minimal input: `[Reg("w0"), Imm(-1048576)]` → Ok(Word(0x10800000)) same as `adr x0, #-1048576`. Severity: high. Serial reconfirm: PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_adr_w_reg.md`
+1. **Mixed-width GPRs accepted.** Law: all three BIC GPRs must be the same width. Counterexample: `bic w0, w0, x0`. Expected Err (llvm-mc rejects); actual Ok(Word) because sf is taken only from Rd. Severity: medium. Report: `pbt-out/bug_reports/encode_bic_mixed_width.md`. Regression: `test_encode_bic_regression_mixed_width`. Serial reconfirm: yes.
 
-2. **encode_adr treats SP as XZR.** Law: ADR Rd is Xd; register 31 is XZR not SP; llvm-mc rejects `adr sp, #0`. Minimal input: `[Reg("sp"), Imm(-1048576)]` → Ok(Word(0x1080001f)) same as `adr xzr, #-1048576`. Severity: high. Serial reconfirm: PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_adr_sp_as_zr.md`
+2. **SP/WSP accepted in register form.** Law: BIC shifted-register register 31 is XZR/WZR, never SP. Counterexample: `bic wsp, w0, w0`. Expected Err; actual encoded as `bic wzr, w0, w0`. Severity: medium. Report: `pbt-out/bug_reports/encode_bic_sp_register_form.md`. Regression: `test_encode_bic_regression_sp`. Serial reconfirm: yes.
 
-3. **encode_adr silently truncates immediates outside the 21-bit signed range.** Law: offset ∈ [-1048576, 1048575]; llvm-mc rejects `#-1048577`; SUT TODO at load_store.rs:697. Minimal input: `[Reg("x0"), Imm(-1048577)]` → Ok(Word(0x70ffffe0)) same as `adr x0, #-1`. Severity: high. Serial reconfirm: PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_adr_imm_range.md`
+3. **Out-of-range shift amount masked, not rejected.** Law: W-form shift amount in [0, 31]; bound+1 must Err. Counterexample: `bic w0, w0, w0, lsl #32`. Expected Err; actual Ok with imm6=32 (UNALLOCATED). Severity: medium. Report: `pbt-out/bug_reports/encode_bic_shift_out_of_range.md`. Regression: `test_encode_bic_regression_shift32`. Serial reconfirm: yes.
 
-4. **encode_adr accepts FP/SIMD register names as GPR Rd.** Law: ADR takes Xd only; llvm-mc rejects `adr d0, #0`. Minimal input: `[Reg("d0"), Imm(-1048576)]` encoded as x0. Severity: medium. Serial reconfirm: PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_adr_fp_reg.md`
+4. **FP/SIMD names accepted as GPRs.** Law: scalar BIC operands are GPRs only. Counterexample: `bic d0, x1, x2`. Expected Err; actual encoded as 32-bit `bic w0, x1, x2`. Severity: medium. Report: `pbt-out/bug_reports/encode_bic_fp_reg.md`. Regression: `test_encode_bic_regression_fp_reg`. Serial reconfirm: yes.
 
-5. **encode_adr accepts :lo12:/:got: modifiers as a bare ADR reloc.** Law: llvm-mc rejects `adr x0, :lo12:foo` ("unexpected adr label"). Minimal input: `[Reg("x0"), Modifier{kind:"lo12", symbol:"foo"}]` → WordWithReloc AdrPrelLo21. Additional witness: ModifierOffset with offset=0. Severity: high. Serial reconfirm: PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_adr_modifier.md`
+5. **NEON arrangements other than 8b/16b accepted.** Law: ARM ARM BIC vector T is 8B|16B. Counterexample: `bic v0.8h, v1.8h, v2.8h`. Expected Err; actual encoded as `bic v0.8b, ...` (Q=0). Severity: medium. Report: `pbt-out/bug_reports/encode_bic_invalid_neon_arr.md`. Regression: `test_encode_bic_regression_neon_8h`. Serial reconfirm: yes.
 
-## Design Caveats (if any)
+6. **Immediate-form XZR/WZR treated as SP/WSP.** Law: BIC-imm is AND-imm; Rd of 31 is SP, not XZR. Counterexample: `bic wzr, w0, #1`. Expected Err; actual encoded as `and wsp, w0, #0xfffffffe` (writes the stack pointer). Severity: high. Report: `pbt-out/bug_reports/encode_bic_imm_xzr_rd.md`. Regression: `test_encode_bic_regression_imm_xzr_rd`. Serial reconfirm: yes.
+
+7. **Unknown shift kind mapped to LSL.** Law: shift kind ∈ {lsl, lsr, asr, ror}. Counterexample: Shift kind `"lslx"` amount 0 on `bic w0, w0, w0`. Expected Err; actual encoded as LSL (`_ => 0b00`). Severity: medium. Report: `pbt-out/bug_reports/encode_bic_unknown_shift_kind.md`. Regression: `test_encode_bic_regression_unknown_shift_kind`. Serial reconfirm: yes.
+
+## Design Caveats
 
 (none)
 
@@ -36,29 +39,34 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/load_store.rs (mod encode_adr_pbt) | 12 properties + 2 KAT + 6 regressions |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_bic_pbt) | 15 properties + 3 KAT + 7 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md (merged)
-- pbt-out/INVARIANTS.md (appended)
-- pbt-out/bug_reports/encode_adr_w_reg.md
-- pbt-out/bug_reports/encode_adr_sp_as_zr.md
-- pbt-out/bug_reports/encode_adr_imm_range.md
-- pbt-out/bug_reports/encode_adr_fp_reg.md
-- pbt-out/bug_reports/encode_adr_modifier.md
+- pbt-out/PLAN.md — campaign phases
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — coverage ledger row for encode_bic
+- pbt-out/FUNCTION_INDEX.md — encode_bic marked PBT candidate
+- pbt-out/INVARIANTS.md — confirmed encode_bic invariants
+- pbt-out/bug_reports/encode_bic_mixed_width.md
+- pbt-out/bug_reports/encode_bic_sp_register_form.md
+- pbt-out/bug_reports/encode_bic_shift_out_of_range.md
+- pbt-out/bug_reports/encode_bic_fp_reg.md
+- pbt-out/bug_reports/encode_bic_invalid_neon_arr.md
+- pbt-out/bug_reports/encode_bic_imm_xzr_rd.md
+- pbt-out/bug_reports/encode_bic_unknown_shift_kind.md
+
+## Sweep
+
+Contract-surface sweep: 1 round (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_bic added properties for invalid bitmask immediate, unsupported third operand, invalid Rm name (all passing) and unknown shift kind (failing — bug 7). Close reason: tier's one sweep round done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-11 11:47 (campaign: coverage)
-> Files: 4/4 scanned (100%) | Functions: 5/96 total | PBT candidates: 5 | Tested: 5 (100%) | 0 pass, 5 fail
+> Last updated: 2026-09-11 12:05 (campaign: coverage)
+> Files: 4/4 scanned (100%) | Functions: 6/96 total | PBT candidates: 6 | Tested: 6 (100%) | 0 pass, 6 fail
 
 ## Summary
 
@@ -67,10 +75,10 @@
 | Total source files | 4 |
 | Files scanned | 4 / 4 (100%) |
 | Total functions (all files) | 96 |
-| PBT candidates (from FUNCTION_INDEX) | 5 |
-| **Tested (of PBT candidates)** | **5 / 5 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 5 / 0 |
-| **Overall (tested / all functions)** | **5 / 96 (5%)** |
+| PBT candidates (from FUNCTION_INDEX) | 6 |
+| **Tested (of PBT candidates)** | **6 / 6 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 6 / 0 |
+| **Overall (tested / all functions)** | **6 / 96 (6%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -78,13 +86,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 5 | 5 | 0 | 100% |
+|  | 6 | 6 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 5 | 5 | 0 | 100% |
+| unknown | 6 | 6 | 0 | 100% |
 
 ## File Coverage
 
@@ -92,7 +100,7 @@
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 2 | 2 | 100% | covered |
+| data_processing.rs | 36 | 3 | 3 | 100% | covered |
 | load_store.rs | 20 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -107,3 +115,4 @@
 | classify_cast_with_f128 | cast.rs |
 | encode_adc | data_processing.rs |
 | encode_adr | load_store.rs |
+| encode_bic | data_processing.rs |
