@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 193013cbe4775bf03120fdc16d4e2e2e1b1aea8d8af0be58497fc24aa00103c8 # shrinks to rd = 0, rn = 0, rm = 0, is_64 = false, is_sub = false, set_flags = false, class = 0, extra = 0
+cc 6989545cabcdd1cb3f77ba49d902fa0e124b8f139814f9f2bbabd0d52f7a0a0b # shrinks to rd = 0, rn = 0, is_64 = false, is_sub = false, set_flags = false, imm = 4097, explicit_lsl12 = true
+cc e981eb4e3a5383274ecce5e0e33d6c027f3dc6a5dbd920322d3d4629c7b3988b # shrinks to rd = 0, rn = 0, rm = 0, is_64 = false, is_sub = false, set_flags = false, ext = "uxtb", amt = 1, prefer_sp_rd = false, prefer_sp_rn = false, use_lsl_alias = true
+cc b0c81da39f63dea0b534ba189e1cf057fa8ad198673ae44f936efc07e443a8f4 # shrinks to rd = 0, rn = 31, is_64 = false, is_sub = false, set_flags = false, (imm, sh12) = (0, false), prefer_sp = false

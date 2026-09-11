@@ -1065,3 +1065,536 @@ pub(crate) fn encode_bic(operands: &[Operand]) -> Result<EncodeResult, String> {
 
     Err("unsupported bic operands".to_string())
 }
+
+#[cfg(test)]
+mod encode_add_sub_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   DESIGN_DOC.md "AArch64 | ARM assembly syntax | Fixed 32-bit encoding | imm12 auto-shift"
+    // Stronger considered:
+    //   - State machine: rejected — encode_add_sub is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree ADD/SUB decoder
+    // Weaker available: algebraic.metamorphic (neg-imm swap), negative_error (operand count / range)
+    // Differential: candidate=encode_add_sub, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler, mapping=(operands,is_sub,set_flags)<->asm text
+
+    use super::encode_add_sub;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn mnemonic(is_sub: bool, set_flags: bool) -> &'static str {
+        match (is_sub, set_flags) {
+            (false, false) => "add",
+            (false, true) => "adds",
+            (true, false) => "sub",
+            (true, true) => "subs",
+        }
+    }
+
+    fn gpr(is_64: bool, n: u32, as_sp: bool) -> String {
+        if n == 31 {
+            if as_sp {
+                if is_64 { "sp".into() } else { "wsp".into() }
+            } else if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand], is_sub: bool, set_flags: bool) -> Result<u32, String> {
+        match encode_add_sub(ops, is_sub, set_flags)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest.find(']').ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin.write_all(b"\n").map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn is_valid_imm12_magnitude(mag: u64) -> bool {
+        mag <= 0xFFF || ((mag & 0xFFF) == 0 && (mag >> 12) <= 0xFFF)
+    }
+
+    fn is_valid_signed_imm12(imm: i64) -> bool {
+        if imm == i64::MIN {
+            return false;
+        }
+        let mag = if imm < 0 { (-imm) as u64 } else { imm as u64 };
+        is_valid_imm12_magnitude(mag)
+    }
+
+    fn imm12_unshifted() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(1i64),
+            Just(0xFFFi64),
+            0i64..=0xFFF,
+        ]
+    }
+
+    fn imm12_autoshift() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(4096i64),
+            Just(0xFFF000i64),
+            (1i64..=0xFFF).prop_map(|k| k << 12),
+        ]
+    }
+
+    // (imm, explicit_lsl12)
+    fn valid_imm_form() -> impl Strategy<Value = (i64, bool)> {
+        prop_oneof![
+            imm12_unshifted().prop_map(|i| (i, false)),
+            imm12_unshifted().prop_map(|i| (-i, false)),
+            imm12_autoshift().prop_map(|i| (i, false)),
+            imm12_autoshift().prop_map(|i| (-i, false)),
+            imm12_unshifted().prop_map(|i| (i, true)),
+        ]
+    }
+
+    fn invalid_imm() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(4097i64),
+            Just(-4097i64),
+            Just(0x1001i64),
+            Just(0xFFF001i64),
+            Just(0x1000000i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            (0x1001i64..=0x1F_FFFFi64).prop_filter("not a valid auto-shift", |x| {
+                !is_valid_signed_imm12(*x)
+            }),
+        ]
+    }
+
+    fn shift_kind() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["lsl", "lsr", "asr"])
+    }
+
+    fn extend_kind() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec![
+            "uxtb", "uxth", "uxtw", "uxtx", "sxtb", "sxth", "sxtw", "sxtx",
+        ])
+    }
+
+    fn neon_arr() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s", "2d"])
+    }
+
+    fn rm_width_64(dn_is_64: bool, ext: &str) -> bool {
+        dn_is_64 && matches!(ext, "uxtx" | "sxtx" | "lsl")
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_add_sub_kat_llvm_mc_add_imm42() {
+        let want = 0x9100a820u32;
+        let mc = llvm_mc_word("add x0, x1, #42").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(42),
+        ];
+        let sut = sut_word(&ops, false, false).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_add_sub_diff_imm(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            (imm, sh12) in valid_imm_form(),
+            prefer_sp in any::<bool>(),
+        ) {
+            // Immediate form: register 31 is SP/WSP, never XZR/WZR (llvm-mc rejects add Rd, XZR, #imm).
+            let rd_sp = rd == 31 && !set_flags;
+            let rn_sp = rn == 31;
+            let _ = prefer_sp;
+            let rd_n = gpr(is_64, rd, rd_sp);
+            let rn_n = gpr(is_64, rn, rn_sp);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rn_n.clone()),
+                Operand::Imm(imm),
+            ];
+            let mut asm = format!("{} {}, {}, #{}", mnemonic(is_sub, set_flags), rd_n, rn_n, imm);
+            if sh12 {
+                ops.push(Operand::Shift { kind: "lsl".into(), amount: 12 });
+                asm.push_str(", lsl #12");
+            }
+            let mc = llvm_mc_word(&asm).unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, is_sub, set_flags)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "asm={}", asm);
+        }
+
+        #[test]
+        fn encode_add_sub_diff_shifted_reg(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=31,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            kind in shift_kind(),
+            amt in 0u32..=63,
+        ) {
+            let max_amt = if is_64 { 63u32 } else { 31u32 };
+            prop_assume!(amt <= max_amt);
+            let rd_n = gpr(is_64, rd, false);
+            let rn_n = gpr(is_64, rn, false);
+            let rm_n = gpr(is_64, rm, false);
+            let ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rn_n.clone()),
+                Operand::Reg(rm_n.clone()),
+                Operand::Shift { kind: kind.to_string(), amount: amt },
+            ];
+            let asm = format!(
+                "{} {}, {}, {}, {} #{}",
+                mnemonic(is_sub, set_flags), rd_n, rn_n, rm_n, kind, amt
+            );
+            let mc = llvm_mc_word(&asm).unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, is_sub, set_flags)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "asm={}", asm);
+        }
+
+        #[test]
+        fn encode_add_sub_diff_extended_and_sp(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            ext in extend_kind(),
+            amt in 0u32..=4,
+            prefer_sp_rd in any::<bool>(),
+            prefer_sp_rn in any::<bool>(),
+            use_lsl_alias in any::<bool>(),
+        ) {
+            let rd_sp = prefer_sp_rd && rd == 31 && !set_flags;
+            let rn_sp = prefer_sp_rn && rn == 31;
+            // Force at least one SP when using the LSL/UXTX alias path so we hit SP encoding.
+            let (rd_sp, rn_sp, ext, rm_64) = if use_lsl_alias {
+                let rn_sp = true;
+                let rn = 31u32;
+                let _ = rn;
+                (false, true, "lsl", is_64)
+            } else {
+                (rd_sp, rn_sp, ext, rm_width_64(is_64, ext))
+            };
+            let rd_n = if use_lsl_alias {
+                gpr(is_64, rd.min(30), false)
+            } else {
+                gpr(is_64, rd, rd_sp)
+            };
+            let rn_n = if use_lsl_alias {
+                gpr(is_64, 31, true)
+            } else {
+                gpr(is_64, rn, rn_sp)
+            };
+            let rm_n = gpr(rm_64, rm, false);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rn_n.clone()),
+                Operand::Reg(rm_n.clone()),
+            ];
+            let mut asm = format!("{} {}, {}, {}", mnemonic(is_sub, set_flags), rd_n, rn_n, rm_n);
+            if ext == "lsl" {
+                if amt > 0 {
+                    ops.push(Operand::Shift { kind: "lsl".into(), amount: amt });
+                    asm.push_str(&format!(", lsl #{amt}"));
+                }
+            } else {
+                ops.push(Operand::Extend { kind: ext.to_string(), amount: amt });
+                if amt > 0 {
+                    asm.push_str(&format!(", {ext} #{amt}"));
+                } else {
+                    asm.push_str(&format!(", {ext}"));
+                }
+            }
+            let mc = match llvm_mc_word(&asm) {
+                Ok(w) => w,
+                Err(_) => return Ok(()), // skip combinations llvm-mc rejects (e.g. odd extend/width)
+            };
+            let sut = sut_word(&ops, is_sub, set_flags)
+                .unwrap_or_else(|e| panic!("SUT rejected {asm} which llvm-mc accepted as {mc:#010x}: {e}"));
+            prop_assert_eq!(sut, mc, "asm={}", asm);
+        }
+
+        #[test]
+        fn encode_add_sub_diff_neon(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            arr in neon_arr(),
+            is_sub in any::<bool>(),
+        ) {
+            let rd = format!("v{vd}");
+            let rn = format!("v{vn}");
+            let rm = format!("v{vm}");
+            let ops = vec![
+                Operand::RegArrangement { reg: rd.clone(), arrangement: arr.to_string() },
+                Operand::RegArrangement { reg: rn.clone(), arrangement: arr.to_string() },
+                Operand::RegArrangement { reg: rm.clone(), arrangement: arr.to_string() },
+            ];
+            let mn = if is_sub { "sub" } else { "add" };
+            let asm = format!("{mn} {rd}.{arr}, {rn}.{arr}, {rm}.{arr}");
+            let mc = llvm_mc_word(&asm).unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, is_sub, false)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "asm={}", asm);
+        }
+
+        #[test]
+        fn encode_add_sub_neg_too_few_operands(
+            n in 0usize..=2,
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            r0 in 0u32..=30,
+            r1 in 0u32..=30,
+        ) {
+            let mut ops = Vec::new();
+            if n >= 1 {
+                ops.push(Operand::Reg(gpr(true, r0, false)));
+            }
+            if n >= 2 {
+                ops.push(Operand::Reg(gpr(true, r1, false)));
+            }
+            let err = encode_add_sub(&ops, is_sub, set_flags).expect_err("too few operands must Err");
+            prop_assert!(
+                err.contains("requires 3 operands"),
+                "unexpected error for n={}: {}", n, err
+            );
+        }
+
+        #[test]
+        fn encode_add_sub_neg_imm_out_of_range(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            imm in invalid_imm(),
+            explicit_lsl12 in any::<bool>(),
+        ) {
+            if !explicit_lsl12 {
+                prop_assume!(!is_valid_signed_imm12(imm));
+            } else {
+                // Explicit lsl #12: the unshifted field must fit in 12 bits; overflow is invalid.
+                let mag = if imm == i64::MIN {
+                    u64::MAX
+                } else if imm < 0 {
+                    (-imm) as u64
+                } else {
+                    imm as u64
+                };
+                prop_assume!(mag > 0xFFF);
+            }
+            let rd_n = gpr(is_64, rd, false);
+            let rn_n = gpr(is_64, rn, false);
+            let mut ops = vec![
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(imm),
+            ];
+            if explicit_lsl12 {
+                ops.push(Operand::Shift { kind: "lsl".into(), amount: 12 });
+            }
+            prop_assert!(
+                encode_add_sub(&ops, is_sub, set_flags).is_err(),
+                "out-of-range imm {} (lsl12={}) must Err, not encode", imm, explicit_lsl12
+            );
+        }
+
+        #[test]
+        fn encode_add_sub_neg_invalid_shift_extend(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            class in 0u8..=3,
+            extra in 0u32..=64,
+        ) {
+            let rd_n = gpr(is_64, rd, false);
+            let rn_n = gpr(is_64, rn, false);
+            let rm_n = gpr(is_64, rm, false);
+            let mut ops = vec![
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Reg(rm_n),
+            ];
+            match class {
+                0 => {
+                    // ROR is not a valid ADD/SUB shift.
+                    ops.push(Operand::Shift { kind: "ror".into(), amount: extra % 64 });
+                }
+                1 => {
+                    // Shift amount outside the sf-dependent range.
+                    let bad = if is_64 { 64 + (extra % 16) } else { 32 + (extra % 16) };
+                    let kind = ["lsl", "lsr", "asr"][(extra as usize) % 3];
+                    ops.push(Operand::Shift { kind: kind.into(), amount: bad });
+                }
+                2 => {
+                    // Extend amount > 4 is UNALLOCATED (ARM ARM).
+                    let kind = ["uxtb", "uxth", "uxtw", "uxtx", "sxtb", "sxth", "sxtw", "sxtx"]
+                        [(extra as usize) % 8];
+                    ops.push(Operand::Extend { kind: kind.into(), amount: 5 + (extra % 4) });
+                }
+                _ => {
+                    // 32-bit shifted-register with imm6 bit 5 set (UNALLOCATED).
+                    prop_assume!(!is_64);
+                    ops.push(Operand::Shift { kind: "lsl".into(), amount: 32 + (extra % 32) });
+                }
+            }
+            prop_assert!(
+                encode_add_sub(&ops, is_sub, set_flags).is_err(),
+                "invalid shift/extend must Err, got Ok for class={} extra={} is_64={}", class, extra, is_64
+            );
+        }
+
+        #[test]
+        fn encode_add_sub_metamorphic_neg_imm(
+            rd in 0u32..=30,
+            rn in 0u32..=31,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            n in prop_oneof![1i64..=0xFFF, (1i64..=0xFFF).prop_map(|k| k << 12)],
+            prefer_sp in any::<bool>(),
+        ) {
+            prop_assume!(n > 0);
+            prop_assume!(is_valid_signed_imm12(n));
+            let rn_n = gpr(is_64, rn, prefer_sp && rn == 31);
+            let rd_n = gpr(is_64, rd, false);
+            let ops_neg = [
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rn_n.clone()),
+                Operand::Imm(-n),
+            ];
+            let ops_pos = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(n),
+            ];
+            let a = sut_word(&ops_neg, is_sub, set_flags)
+                .unwrap_or_else(|e| panic!("neg-imm form rejected n={n}: {e}"));
+            let b = sut_word(&ops_pos, !is_sub, set_flags)
+                .unwrap_or_else(|e| panic!("pos-imm form rejected n={n}: {e}"));
+            prop_assert_eq!(a, b, "add #-N must match sub #N (n={} is_sub={})", n, is_sub);
+        }
+    }
+
+    #[test]
+    fn test_encode_add_sub_regression_ror_rejected() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Reg("w2".into()),
+            Operand::Shift { kind: "ror".into(), amount: 0 },
+        ];
+        assert!(
+            encode_add_sub(&ops, false, false).is_err(),
+            "ROR is not a valid ADD/SUB shift; encoder must Err (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_add_sub_regression_imm12_lsl12_overflow() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Imm(4097),
+            Operand::Shift { kind: "lsl".into(), amount: 12 },
+        ];
+        assert!(
+            encode_add_sub(&ops, false, false).is_err(),
+            "imm 4097 with explicit lsl #12 does not fit imm12; encoder must Err, not mask"
+        );
+    }
+
+    #[test]
+    fn test_encode_add_sub_regression_sp_lsl_extended() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift { kind: "lsl".into(), amount: 1 },
+        ];
+        let sut = sut_word(&ops, false, false).expect("valid SP+LSL form");
+        // llvm-mc: add w0, wsp, w0, lsl #1 => 0x0b2047e0 (extended UXTW #1)
+        assert_eq!(
+            sut, 0x0b2047e0,
+            "SP/WSP as Rn with LSL #N (N<=4) must use extended-register form, not shifted-register (XZR)"
+        );
+    }
+}
