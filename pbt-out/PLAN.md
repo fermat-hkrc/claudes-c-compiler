@@ -1,20 +1,21 @@
-# PBT Campaign: classify_cast_with_f128
+# PBT Campaign: encode_adc
 
 ## Scan findings
 - **Spec:** (none found as a standalone requirement/dev-task document). In-tree contract for this symbol:
-  - Module + function docstring at `src/backend/cast.rs:1-7` and `:57-66`: shared decision logic for all four backends; Ptr normalization (Ptr treated as U64) and F128 reduction (F128 treated as F64 on x86) happen before classification; `f128_is_native` is true where F128 is IEEE binary128 (softfloat libcalls) and false where F128 is x87 80-bit approximated as F64.
-  - `CastKind` variant docs at `src/backend/cast.rs:16-54` (Noop = same type or Ptr <-> I64/U64 or F128 <-> F64; native F128 variants; float/int/widen/narrow kinds).
-  - Backend README `src/backend/README.md:644-670`: pointer normalization Ptr as U64; x86 F128 approximated as F64; `f128_is_native` distinguishes ARM/RISC-V binary128 from x86 x87.
-  - Ptr width: `src/common/types.rs:20-21` and `src/backend/cast.rs:88-89` (Ptr ≡ U64 on LP64, U32 on ILP32).
-  - Caller: i686 uses `classify_cast_with_f128(..., true)` (`src/backend/i686/codegen/casts.rs:32-37`); ARM/RISC-V `classify_cast()` is the `false` wrapper (`src/backend/arm/codegen/cast_ops.rs:10`, `src/backend/cast.rs:151-154`) and asserts F128 libcall kinds are unreachable (`src/backend/arm/codegen/cast_ops.rs:128`).
-- **Test layout:** Project-owned tests are inline `#[cfg(test)] mod <name>` inside source files, discovered by `cargo test --lib`. Examples: `src/backend/asm_expr.rs`, `src/ir/constants.rs` (`mod cast_float_to_target_pbt`), `src/backend/arm/assembler/encoder/data_processing.rs`. No crate-root `tests/` directory. No existing tests in `src/backend/cast.rs`. Filename convention: `#[test] fn` inside the source file's test module. `proptest` is already a `[dev-dependencies]` entry (`Cargo.toml`).
-- **Buildability probe:** `cargo test --lib -- --test-threads=${PBT_TEST_JOBS}` in `/home/toan/github/claudes-c-compiler` → `test result: FAILED. 505 passed; 11 failed; 6 ignored`. All 11 failures are pre-existing from prior campaigns (`encode_add_sub_pbt` in `data_processing.rs` and `cast_float_to_target_pbt` in `constants.rs`), unrelated to this target. Rung 1 available.
-- **Harness placement:** extend existing `cargo test --lib` target (rung 1) by appending `#[cfg(test)] mod classify_cast_with_f128_pbt` at the bottom of `src/backend/cast.rs` (inline layout; no test block exists yet). Reuse the existing `proptest` dev-dependency. Not pbt-native: project cargo harness builds and runs.
-- **Candidate modules:** classify_cast_with_f128 (cast.rs)
-- **Skipped modules:** (none) — campaign scoped to this single symbol; other functions in cast.rs are indexed but not tested.
+  - Encoder module docstring at `src/backend/arm/assembler/encoder/mod.rs:1-7`: Encodes AArch64 instructions into 32-bit machine code words; covers the subset emitted by codegen; always 4 bytes little-endian.
+  - Assembler README `src/backend/arm/assembler/README.md:5-14`: accepts the same textual assembly that GCC's gas would consume; GNU-style assembly text as emitted by AArch64 codegen.
+  - Assembler README `src/backend/arm/assembler/README.md:208-214`: `adc` / `adcs` listed under Data Processing mnemonics handled by `encode_instruction()`.
+  - Dispatch `src/backend/arm/assembler/encoder/mod.rs:281-282`: `"adc" => encode_adc(operands, false)`, `"adcs" => encode_adc(operands, true)`.
+  - ARM ARM ADC (register) form: `ADC{S} <Wd>, <Wn>, <Wm>` / `ADC{S} <Xd>, <Xn>, <Xm>`; encoding `sf 0 S 11010000 Rm 000000 Rn Rd`; register 31 is WZR/XZR not WSP/SP; no shift/extend form.
+  - Callers: `src/backend/arm/codegen/i128_ops.rs:46` (`adc x1, x1, xzr`) and `:68` (`adc x1, x3, x5`).
+- **Test layout:** Project-owned tests are inline `#[cfg(test)] mod <name>` inside source files, discovered by `cargo test --lib`. Existing module in this file: `encode_add_sub_pbt` at `data_processing.rs:1069`. No crate-root `tests/` directory. Filename convention: `#[test] fn` inside the source file's test module. `proptest` is already a `[dev-dependencies]` entry (`Cargo.toml`).
+- **Buildability probe:** `cargo test --lib -- --test-threads=${PBT_TEST_JOBS}` in `/home/toan/github/claudes-c-compiler` → `test result: FAILED. 513 passed; 17 failed; 6 ignored`. All 17 failures are pre-existing from prior campaigns (`encode_add_sub_pbt`, `cast_float_to_target_pbt`, `classify_cast_with_f128_pbt`), unrelated to encode_adc. Rung 1 available.
+- **Harness placement:** extend existing `cargo test --lib` target (rung 1) by appending `#[cfg(test)] mod encode_adc_pbt` at the bottom of `src/backend/arm/assembler/encoder/data_processing.rs` (inline layout; do not edit `encode_add_sub_pbt`). Reuse the existing `proptest` dev-dependency. Not pbt-native: project cargo harness builds and runs.
+- **Candidate modules:** encode_adc (data_processing.rs)
+- **Skipped modules:** (none) — campaign scoped to this single symbol; other functions in data_processing.rs are indexed but not tested.
 
-## Module: classify_cast_with_f128
+## Module: encode_adc
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
 - [x] Test: write and run
-- [x] Review: triage results
+- [x] Review: triage results (1 coverage-sweep round: invalid names + FP regs)

@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_adc)
+
+- Same-width GPR ADC/ADCS (x0–x30/xzr and w0–w30/wzr, both S values) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_adc(ops, true) XOR encode_adc(ops, false) = 1<<29 (ARM ARM S bit).
+- Success-path word: Rd at [4:0], Rn at [9:5], Rm at [20:16], sf at 31, S at 29, op at 30 = 0, bits [28:21] = 0b11010000, bits [15:10] = 0.
+- Fewer than 3 operands always Err.
+- Non-register (Imm/Mem/Shift/Symbol/Cond) in any of the three slots always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1) always Err.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ADC register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `adc sp, ...`).
+- Known-answer: `adc x0, x1, x2` encodes as 0x9a020020.
+
+## Quirks
+
+- encode_adc does not inspect operands beyond index 2, so a trailing Shift is silently dropped (see bugs).
+- sf is taken only from operand 0; mixed x/w is not rejected (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
+---
+
 # Confirmed invariants (encode_add_sub)
 
 - Immediate-form ADD/SUB/ADDS/SUBS with a valid imm12 or auto-shift (N<<12, N in 1..=0xFFF), including negative-imm alias, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

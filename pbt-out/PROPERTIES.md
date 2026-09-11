@@ -1,280 +1,290 @@
-# Properties: classify_cast_with_f128
+# Properties: encode_adc
 
-## classify_cast_identity_is_noop
-- Tier: 4
-- Rationale: Algebraic invariant from CastKind::Noop ("No conversion needed (same type, ...)") at src/backend/cast.rs:16-17 and README src/backend/README.md:652. State machine rejected — pure function, no lifecycle. Differential rejected — classify_cast is a same-source wrapper (src/backend/cast.rs:151-154); f128_emit_cast emits libcalls rather than CastKind (different job). Round-trip rejected — classification is not an invertible pair. Idempotence rejected — not a normalizer.
-- Seed: (none)
-- Formal: ∀ ty ∈ IrType, native ∈ bool. classify_cast_with_f128(ty, ty, native) = CastKind::Noop.
-- Test file: src/backend/cast.rs
+## encode_adc_diff_gpr_same_width
+- Tier: 2
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler). State machine rejected — encode_adc is a pure function with no lifecycle. Algebraic round-trip rejected — no in-tree ADC decoder. Same-job sibling encode_sbc implements SBC (op=1), not ADC. SUT-boundary: internal-helper of the GNU-style assembler; encode_instruction dispatches adc/adcs here with parsed operands. Argument mapping: (Rd,Rn,Rm,set_flags) ↔ `adc`/`adcs` Rd, Rn, Rm. Shared contract: assembler README "accepts the same textual assembly that GCC's gas would consume" plus encoder "Encodes AArch64 instructions into 32-bit machine code words".
+- Seed: src/backend/arm/codegen/i128_ops.rs:46 (`adc x1, x1, xzr`) and :68 (`adc x1, x3, x5`)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ bool, set_flags ∈ bool. Let names be xN/wN with 31 → xzr/wzr. encode_adc([Reg(Rd),Reg(Rn),Reg(Rm)], set_flags) = Word(w) ∧ llvm-mc("adc(s) Rd, Rn, Rm") = w.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
+function: encoder.data_processing.encode_adc
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [ty, native]
-  domain: { ty: IrType, native: bool }
+  vars: [rd, rn, rm, is_64, set_flags]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: classify_cast_with_f128(ty, ty, native)
-    rhs: CastKind::Noop
+    lhs: encode_adc([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm))], set_flags)
+    rhs: llvm_mc(asm_adc(is_64, set_flags, rd, rn, rm))
 generators:
-  ty: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
-  native: { gen: bool }
-evidence: src/backend/cast.rs:16-17; src/backend/README.md:652
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+evidence: src/backend/arm/assembler/README.md:5-14 (gas-compatible textual assembly); encoder/mod.rs:1-7 (AArch64 32-bit encoding); encoder/mod.rs:281-282 (adc/adcs dispatch)
 ```
 
-## classify_cast_f128_non_native_reduces_to_f64
-- Tier: 4
-- Rationale: Algebraic metamorphic — documented F128 reduction on x86: "F128 treated as F64 for computation purposes on x86" (src/backend/cast.rs:61-62, :80-81) and README "on x86, F128 is approximated as F64" (src/backend/README.md:649-650). Transform: replace F128 with F64 in either endpoint; classification with f128_is_native=false must be unchanged. Stronger oracles rejected as in identity property.
-- Seed: (none)
-- Formal: ∀ from, to ∈ IrType. let from' = F64 if from = F128 else from; let to' = F64 if to = F128 else to. classify_cast_with_f128(from, to, false) = classify_cast_with_f128(from', to', false).
-- Test file: src/backend/cast.rs
+## encode_adc_metamorphic_s_bit
+- Tier: 4c
+- Rationale: ARM ARM places the S flag at bit 29 of ADC/ADCS; the two encodings of the same registers must differ only by that bit. Differential is stronger and is a sibling property; this metamorphic check does not depend on llvm-mc and pins the S-bit contract independently. State machine and round-trip rejected as above.
+- Seed: encoder/mod.rs:281-282 (`adc` → set_flags=false, `adcs` → set_flags=true)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ bool. encode_adc(ops, true) XOR encode_adc(ops, false) = 1<<29, where both succeed as Word.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: backend.cast.classify_cast_with_f128
+function: encoder.data_processing.encode_adc
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [from, to]
-  domain: { from: IrType, to: IrType }
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  body: encode_adc(ops, true) XOR encode_adc(ops, false) == (1u32 << 29)
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+evidence: ARM ARM ADC encoding sf 0 S 11010000 Rm 000000 Rn Rd; encoder/mod.rs:281-282
+```
+
+## encode_adc_invariant_arm_fields
+- Tier: 4d
+- Rationale: ARM ARM field layout for ADC (register): sf at 31, op=0 at 30, S at 29, opcode 11010000 at 28:21, Rm at 20:16, 000000 at 15:10, Rn at 9:5, Rd at 4:0. Differential is stronger (sibling); this invariant checks the documented bit fields against the SUT output without copying encode_adc's expression. Reference-as-full-word was rejected as it would reimplement the encoder; field extraction from the produced word is the ARM ARM contract.
+- Seed: (none)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ bool, set_flags ∈ bool. encode_adc([x/w rd,rn,rm], set_flags) = Word(w) ⇒ w[4:0]=rd ∧ w[9:5]=rn ∧ w[20:16]=rm ∧ w[31]=sf(is_64) ∧ w[29]=set_flags ∧ w[30]=0 ∧ w[28:21]=0b11010000 ∧ w[15:10]=0.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_adc
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, is_64, set_flags]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  body: let Word(w) = encode_adc(ops, set_flags) in (w & 0x1F) == rd && ((w >> 5) & 0x1F) == rn && ((w >> 16) & 0x1F) == rm && ((w >> 31) & 1) == sf && ((w >> 29) & 1) == s && ((w >> 30) & 1) == 0 && ((w >> 21) & 0xFF) == 0b11010000 && ((w >> 10) & 0x3F) == 0
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+evidence: ARM ARM ADC (register) encoding; encoder/mod.rs:1-7
+```
+
+## encode_adc_neg_too_few_operands
+- Tier: 4e
+- Rationale: ARM ADC requires three register operands; llvm-mc reports "too few operands for instruction" for `adc x0, x1`. get_reg on a missing index must Err. Documented error path: get_reg returns Err("expected register at operand N, got None"). Negative/error contract. Stronger oracles do not apply to the invalid-arity domain.
+- Seed: llvm-mc `adc x0, x1` → error: too few operands
+- Formal: ∀ ops with |ops| < 3, set_flags ∈ bool. encode_adc(ops, set_flags) = Err(_).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_adc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops, set_flags]
+  domain: { ops: sequences of Reg of length 0..2 }
   relation:
-    op: eq
-    lhs: classify_cast_with_f128(from, to, false)
-    rhs: classify_cast_with_f128(from_f128_as_f64(from), from_f128_as_f64(to), false)
+    op: throws
+    lhs: encode_adc(ops, set_flags)
+    rhs: String
 generators:
-  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
-  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
-evidence: src/backend/cast.rs:61-62; src/backend/cast.rs:80-81; src/backend/README.md:649-650
+  n: { gen: int, min: 0, max: 2, type: usize }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: ARM ARM ADC requires Rd, Rn, Rm; llvm-mc "too few operands"; get_reg at encoder/mod.rs:956-966
 ```
 
-## classify_cast_native_flag_irrelevant_without_f128
-- Tier: 4
-- Rationale: Algebraic metamorphic — F128 handling is gated on `from_ty == F128 || to_ty == F128` (src/backend/cast.rs:72-73); when neither endpoint is F128 the `f128_is_native` flag must not change the result. Transform: flip the flag. Stronger oracles rejected as above.
-- Seed: (none)
-- Formal: ∀ from, to ∈ IrType \ {F128}. classify_cast_with_f128(from, to, true) = classify_cast_with_f128(from, to, false).
-- Test file: src/backend/cast.rs
+## encode_adc_neg_non_register
+- Tier: 4e
+- Rationale: ARM ADC operands are registers only (no immediate, memory, or shift form). llvm-mc rejects `adc x0, x1, #1`. get_reg returns Err on non-Reg. Stronger oracles do not apply to this invalid domain.
+- Seed: llvm-mc `adc x0, x1, #1` → error: invalid operand
+- Formal: ∀ is_64, set_flags, which ∈ {0,1,2}, bad ∈ {Imm, Mem, Shift, Symbol, Cond}. encode_adc(ops with ops[which]=bad, set_flags) = Err(_).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.metamorphic
+function: encoder.data_processing.encode_adc
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [from, to]
-  domain: { from: IrType minus F128, to: IrType minus F128 }
+  vars: [rd, rn, bad, set_flags]
   relation:
-    op: eq
-    lhs: classify_cast_with_f128(from, to, true)
-    rhs: classify_cast_with_f128(from, to, false)
+    op: throws
+    lhs: encode_adc([Reg(rd), Reg(rn), bad], set_flags)
+    rhs: String
 generators:
-  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, Ptr, Void] }
-  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, Ptr, Void] }
-evidence: src/backend/cast.rs:72-73
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: ARM ARM ADC register form only; llvm-mc rejects immediate third operand
 ```
 
-## classify_cast_ptr_normalized_as_unsigned_int
-- Tier: 4
-- Rationale: Algebraic metamorphic — documented Ptr normalization happens before classification: "Ptr treated as U64" (src/backend/cast.rs:61, README:649) and "Ptr is equivalent to U64 on LP64 targets, U32 on ILP32 targets" (src/backend/cast.rs:88-89; src/common/types.rs:20-21). Transform: replace Ptr with that unsigned pointer-width integer. Documented Noop exception: CastKind::Noop includes "Ptr <-> I64/U64" (src/backend/cast.rs:16-17; README:652), generalized to pointer-width signed/unsigned integers (I32/U32 on ILP32). Stronger oracles rejected as above.
-- Seed: (none)
-- Formal: ∀ from, to ∈ IrType, native ∈ bool, ptr_size ∈ {4,8}. let u = U32 if ptr_size=4 else U64. let from' = u if from=Ptr else from; let to' = u if to=Ptr else to. If from=Ptr ∨ to=Ptr: if ¬from.is_float() ∧ ¬to.is_float() ∧ size(from')=ptr_size ∧ size(to')=ptr_size then classify_cast_with_f128(from,to,native)=Noop else classify_cast_with_f128(from,to,native)=classify_cast_with_f128(from',to',native).
-- Test file: src/backend/cast.rs
+## encode_adc_neg_extra_shift
+- Tier: 4e
+- Rationale: ARM ADC has no shifted-register form (unlike ADD). llvm-mc rejects `adc x0, x1, x2, lsl #1` as invalid operand. Silent encoding that ignores the extra operand would assemble a different instruction than the source text. Assembler contract is gas-compatible textual assembly. Negative/error: extra Shift/Extend must Err.
+- Seed: llvm-mc `adc x0, x1, x2, lsl #1` → error: invalid operand
+- Formal: ∀ rd,rn,rm ∈ {0..30}, is_64 ∈ bool, set_flags ∈ bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ {0..63}. encode_adc([Reg,Reg,Reg,Shift{kind,amt}], set_flags) = Err(_).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: from=Ptr, to=F32, native=false, ptr_size=4 → SignedToFloat { to_f64: false, from_ty: Ptr } != UnsignedToFloat { to_f64: false, from_ty: U32 }
-- Bug report: pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
+- Counterexample: rd=0, rn=0, rm=0, is_64=false, set_flags=false, kind="lsl", amt=0
+- Bug report: pbt-out/bug_reports/encode_adc_extra_shift_ignored.md
 
 ```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.metamorphic
+function: encoder.data_processing.encode_adc
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [from, to, native, ptr_size]
-  domain: { from: IrType, to: IrType, native: bool, ptr_size: {4,8} }
-  body: ptr_replaced_equals_or_pointer_width_noop(from, to, native, ptr_size)
+  vars: [rd, rn, rm, is_64, set_flags, kind, amt]
+  relation:
+    op: throws
+    lhs: encode_adc([Reg,Reg,Reg,Shift{kind,amt}], set_flags)
+    rhs: String
 generators:
-  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
-  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
-  native: { gen: bool }
-  ptr_size: { gen: oneof, options: [4, 8], type: usize }
-evidence: src/backend/cast.rs:16-17; src/backend/cast.rs:61; src/backend/cast.rs:88-89; src/backend/README.md:649,652; src/common/types.rs:20-21
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+expected_error: String
+evidence: ARM ARM ADC has no shift field (bits 15-10 fixed 000000); llvm-mc rejects extra lsl; assembler README.md:5-14
 ```
 
-## classify_cast_native_f128_float_kinds
-- Tier: 4
-- Rationale: Algebraic invariant from CastKind docs: FloatToF128 is "F32/F64 -> F128 widening via softfloat" with from_f32 flag (src/backend/cast.rs:51-52); F128ToFloat is "F128 -> F32/F64 narrowing" with to_f32 flag (src/backend/cast.rs:53-54). README lists these as IEEE binary128 conversions when f128_is_native (src/backend/README.md:662-668). Domain is the four (F32|F64)x F128 pairs. Stronger oracles rejected as above.
-- Seed: (none)
-- Formal: ∀ from_f32 ∈ bool. classify_cast_with_f128(F32 if from_f32 else F64, F128, true) = FloatToF128 { from_f32 }. ∀ to_f32 ∈ bool. classify_cast_with_f128(F128, F32 if to_f32 else F64, true) = F128ToFloat { to_f32 }.
-- Test file: src/backend/cast.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [from_f32, to_f32]
-  domain: { from_f32: bool, to_f32: bool }
-  body: classify_cast_with_f128(F32 if from_f32 else F64, F128, true) == FloatToF128{from_f32} && classify_cast_with_f128(F128, F32 if to_f32 else F64, true) == F128ToFloat{to_f32}
-generators:
-  from_f32: { gen: bool }
-  to_f32: { gen: bool }
-evidence: src/backend/cast.rs:51-54; src/backend/README.md:662-668
-```
-
-## classify_cast_native_f128_int_signedness
-- Tier: 4
-- Rationale: Algebraic invariant from CastKind docs: SignedToF128 / UnsignedToF128 / F128ToSigned / F128ToUnsigned (src/backend/cast.rs:42-50) plus Ptr-as-unsigned (src/backend/cast.rs:61, :88-89). Integer endpoints keep their signedness; Ptr is the unsigned pointer-width integer. Documented bounds: every integer IrType plus Ptr sampled. Stronger oracles rejected as above.
-- Seed: (none)
-- Formal: ∀ ty ∈ integer IrType ∪ {Ptr}, native=true. If ty is unsigned or ty=Ptr then classify_cast_with_f128(ty, F128, true) = UnsignedToF128 { from_ty: u_of(ty) } and classify_cast_with_f128(F128, ty, true) = F128ToUnsigned { to_ty: u_of(ty) } where u_of(Ptr)=U64/U32 else ty. If ty is signed then classify_cast_with_f128(ty, F128, true) = SignedToF128 { from_ty: ty } and classify_cast_with_f128(F128, ty, true) = F128ToSigned { to_ty: ty }.
-- Test file: src/backend/cast.rs
+## encode_adc_neg_mixed_width
+- Tier: 4e
+- Rationale: ARM ADC requires all three registers the same width (all W or all X). llvm-mc rejects `adc x0, w1, x2`. A single sf bit taken only from Rd would silently encode a 64-bit ADC from mixed-width text. Negative/error: mixed x/w among the three registers must Err.
+- Seed: llvm-mc `adc x0, w1, x2` → error: invalid operand
+- Formal: ∀ rd,rn,rm ∈ {0..30}, widths ∈ {W,X}^3 with not-all-equal, set_flags ∈ bool. encode_adc([Reg(w0),Reg(w1),Reg(w2)], set_flags) = Err(_).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: ty=Ptr, ptr_size=4 → classify(Ptr, F128, true)=SignedToF128 { from_ty: Ptr } != UnsignedToF128 { from_ty: U32 }
-- Bug report: pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
+- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=true, set_flags=false
+- Bug report: pbt-out/bug_reports/encode_adc_mixed_width.md
 
 ```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
+function: encoder.data_processing.encode_adc
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ty, ptr_size]
-  domain: { ty: integer IrType or Ptr, ptr_size: {4,8} }
-  body: native_f128_int_kind_matches_signedness(ty, ptr_size)
+  vars: [rd, rn, rm, rd64, rn64, rm64, set_flags]
+  domain: { not (rd64 == rn64 == rm64) }
+  relation:
+    op: throws
+    lhs: encode_adc([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))], set_flags)
+    rhs: String
 generators:
-  ty: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, Ptr] }
-  ptr_size: { gen: oneof, options: [4, 8], type: usize }
-evidence: src/backend/cast.rs:42-50; src/backend/cast.rs:61; src/backend/cast.rs:88-89
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+  rm64: { gen: bool }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: ARM ARM ADC <Wd>,<Wn>,<Wm> or <Xd>,<Xn>,<Xm>; llvm-mc mixed-width error; assembler README.md:5-14
 ```
 
-## classify_cast_float_int_kinds
-- Tier: 4
-- Rationale: Algebraic invariant from CastKind docs: FloatToSigned when from is F32/F64 (src/backend/cast.rs:18-19); FloatToUnsigned when dest is unsigned (src/backend/cast.rs:20-21); SignedToFloat / UnsignedToFloat when dest is F32/F64 (src/backend/cast.rs:22-29). Ptr dest is unsigned per Ptr-as-U64/U32 (so to_u64 = dest is U64, or dest is Ptr on LP64). Domain excludes F128 (covered by native/reduction properties). Stronger oracles rejected as above.
-- Seed: (none)
-- Formal: ∀ from ∈ {F32,F64}, to ∈ integer IrType ∪ {Ptr}, native ∈ bool, ptr_size ∈ {4,8}. classify_cast_with_f128(from,to,native) = FloatToUnsigned { from_f64: from=F64, to_u64: to=U64 ∨ (to=Ptr ∧ ptr_size=8) } if to is unsigned or to=Ptr, else FloatToSigned { from_f64: from=F64 }. ∀ from ∈ integer IrType ∪ {Ptr}, to ∈ {F32,F64}. classify_cast_with_f128(from,to,native) = UnsignedToFloat { to_f64: to=F64, from_ty: u_of(from) } if from is unsigned or from=Ptr, else SignedToFloat { to_f64: to=F64, from_ty: from }.
-- Test file: src/backend/cast.rs
+## encode_adc_neg_sp
+- Tier: 4e
+- Rationale: ARM ADC encoding uses register 31 as WZR/XZR, not WSP/SP. llvm-mc rejects `adc sp, x0, x1` and `adc x0, sp, x1`. Encoding SP as 31 would silently assemble `adc xzr, ...` — a different instruction. Negative/error: any of Rd/Rn/Rm being sp/wsp must Err.
+- Seed: llvm-mc `adc sp, x0, x1` and `adc x0, sp, x1` → error: invalid operand
+- Formal: ∀ which ∈ {0,1,2}, is_64 ∈ bool, set_flags ∈ bool, others GPR 0..30. encode_adc(ops with ops[which] = sp/wsp, set_flags) = Err(_).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: int_ty=Ptr, is_f64=false, native=false, ptr_size=4, int_to_float=false → FloatToUnsigned { from_f64: false, to_u64: true } != FloatToUnsigned { from_f64: false, to_u64: false }
-- Bug report: pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
+- Counterexample: which=0, is_64=false, set_flags=false, a=0, b=0 (ops=[wsp, w0, w0])
+- Bug report: pbt-out/bug_reports/encode_adc_sp_as_zr.md
 
 ```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
+function: encoder.data_processing.encode_adc
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [int_ty, is_f64, native, ptr_size, int_to_float]
-  domain: { int_ty: integer IrType or Ptr, is_f64: bool, native: bool, ptr_size: {4,8}, int_to_float: bool }
-  body: float_int_kind_matches(int_ty, is_f64, native, ptr_size, int_to_float)
+  vars: [which, is_64, set_flags, a, b]
+  domain: { which: 0..2, a: 0..30, b: 0..30 }
+  relation:
+    op: throws
+    lhs: encode_adc(ops_with_sp_at(which), set_flags)
+    rhs: String
 generators:
-  int_ty: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, Ptr] }
-  is_f64: { gen: bool }
-  native: { gen: bool }
-  ptr_size: { gen: oneof, options: [4, 8], type: usize }
-  int_to_float: { gen: bool }
-evidence: src/backend/cast.rs:18-29; src/backend/cast.rs:61; src/backend/cast.rs:88-89
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+  a: { gen: int, min: 0, max: 30, type: u32 }
+  b: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: ARM ARM ADC Rd/Rn/Rm are Wd/Xd not SP; llvm-mc rejects SP; parse_reg_num maps sp→31 which is XZR in this encoding
 ```
 
-## classify_cast_int_widen_narrow_same_size
-- Tier: 4
-- Rationale: Algebraic invariant from CastKind docs and README: IntWiden when dest is larger, IntNarrow when dest is smaller (src/backend/cast.rs:32-35; README:656-657); same-size signed-to-unsigned is SignedToUnsignedSameSize and unsigned-to-signed is UnsignedToSignedSameSize (src/backend/cast.rs:36-41; README:658-661). Domain is integer IrType pairs (not Ptr/Void/float). Documented size boundaries 1/2/4/8/16 sampled via the closed integer type set. Stronger oracles rejected as above.
-- Seed: (none)
-- Formal: ∀ from, to ∈ {I8,I16,I32,I64,I128,U8,U16,U32,U64,U128}, native ∈ bool. If from=to then Noop. Else if size(to)>size(from) then IntWiden { from, to }. Else if size(to)<size(from) then IntNarrow { to }. Else if from signed ∧ to unsigned then SignedToUnsignedSameSize { to }. Else if from unsigned ∧ to signed then UnsignedToSignedSameSize { to }.
-- Test file: src/backend/cast.rs
+## encode_adc_neg_invalid_reg_name
+- Tier: 4e
+- Rationale: parse_reg_num rejects names outside x0-x31/w0-w31/sp/xzr/lr. Coverage-sweep gap: get_reg's parse_reg_num None path was not targeted. llvm-mc rejects `adc x32, x0, x1`. Negative/error.
+- Seed: llvm-mc `adc x32, x0, x1` → error: invalid operand
+- Formal: ∀ which ∈ {0,1,2}, set_flags ∈ bool, name ∈ {x32,w32,x99,w99,"",foo,r0,x,x-1}. encode_adc(ops with ops[which]=Reg(name), set_flags) = Err(_).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
+function: encoder.data_processing.encode_adc
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [from, to, native]
-  domain: { from: integer IrType, to: integer IrType, native: bool }
-  body: int_cast_kind_matches_sizes_and_signedness(from, to, native)
+  vars: [which, set_flags, name]
+  relation:
+    op: throws
+    lhs: encode_adc(ops_with_reg_name_at(which, name), set_flags)
+    rhs: String
 generators:
-  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128] }
-  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128] }
-  native: { gen: bool }
-evidence: src/backend/cast.rs:32-41; src/backend/README.md:656-661
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: encoder/mod.rs:131-149 parse_reg_num; llvm-mc rejects x32
 ```
 
-## classify_cast_float_to_float_widen
-- Tier: 4
-- Rationale: Contract-surface sweep. Algebraic invariant from CastKind::FloatToFloat "F32 <-> F64" (src/backend/cast.rs:30-31) and README:655. First batch never asserted the `widen` flag. Stronger oracles rejected as in identity property.
-- Seed: (none)
-- Formal: ∀ native ∈ bool. classify_cast_with_f128(F32, F64, native) = FloatToFloat { widen: true } ∧ classify_cast_with_f128(F64, F32, native) = FloatToFloat { widen: false }.
-- Test file: src/backend/cast.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_adc_neg_fp_reg
+- Tier: 4e
+- Rationale: ADC is integer data-processing (assembler README Data Processing list, ARM ARM W/X registers). llvm-mc rejects `adc d0, d1, d2`. parse_reg_num accepts d/s/q/v/h/b prefixes, so this path was untested. Coverage-sweep: FP register names at any operand must Err.
+- Seed: llvm-mc `adc d0, d1, d2` → error: invalid operand
+- Formal: ∀ which ∈ {0,1,2}, set_flags ∈ bool, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_adc(ops with ops[which]=Reg(prefix||n), set_flags) = Err(_).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, set_flags=false, prefix="d", n=0 (ops=[d0, x1, x2])
+- Bug report: pbt-out/bug_reports/encode_adc_fp_reg.md
 
 ```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
+function: encoder.data_processing.encode_adc
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [native]
-  domain: { native: bool }
-  body: classify(F32,F64,native)=FloatToFloat{widen:true} && classify(F64,F32,native)=FloatToFloat{widen:false}
+  vars: [which, set_flags, prefix, n]
+  relation:
+    op: throws
+    lhs: encode_adc(ops_with_fp_at(which), set_flags)
+    rhs: String
 generators:
-  native: { gen: bool }
-evidence: src/backend/cast.rs:30-31; src/backend/README.md:655
-```
-
-## classify_cast_non_native_never_f128_libcall_kinds
-- Tier: 4
-- Rationale: Contract-surface sweep. Algebraic invariant — ARM backend treats F128 libcall kinds as unreachable from classify_cast() (src/backend/arm/codegen/cast_ops.rs:128), and classify_cast is classify_cast_with_f128(..., false) (src/backend/cast.rs:151-154). CastKind docs mark those variants as native-F128 softfloat (src/backend/cast.rs:42-54).
-- Seed: (none)
-- Formal: ∀ from, to ∈ IrType. classify_cast_with_f128(from, to, false) ∉ {SignedToF128, UnsignedToF128, F128ToSigned, F128ToUnsigned, FloatToF128, F128ToFloat}.
-- Test file: src/backend/cast.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [from, to]
-  domain: { from: IrType, to: IrType }
-  body: not is_f128_libcall_kind(classify_cast_with_f128(from, to, false))
-generators:
-  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
-  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
-evidence: src/backend/arm/codegen/cast_ops.rs:128; src/backend/cast.rs:151-154; src/backend/cast.rs:42-54
-```
-
-## classify_cast_ptr_pointer_width_is_noop
-- Tier: 4
-- Rationale: Contract-surface sweep. Algebraic invariant from CastKind::Noop "Ptr <-> I64/U64" (src/backend/cast.rs:16-17; README:652) plus Ptr ≡ U32 on ILP32 (src/backend/cast.rs:88-89). Isolates the integer-Ptr Noop exception from the failing float Ptr metamorphic. Documented bounds I32/U32 (ILP32) and I64/U64 (LP64) sampled exactly.
-- Seed: (none)
-- Formal: ∀ native ∈ bool, ptr_size ∈ {4,8}, signed ∈ bool. let int_ty = (I32|U32) if ptr_size=4 else (I64|U64). classify_cast_with_f128(Ptr, int_ty, native) = Noop ∧ classify_cast_with_f128(int_ty, Ptr, native) = Noop.
-- Test file: src/backend/cast.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: backend.cast.classify_cast_with_f128
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [native, ptr_size, signed]
-  domain: { native: bool, ptr_size: {4,8}, signed: bool }
-  body: classify(Ptr, pointer_width_int, native) = Noop
-generators:
-  native: { gen: bool }
-  ptr_size: { gen: oneof, options: [4, 8], type: usize }
-  signed: { gen: bool }
-evidence: src/backend/cast.rs:16-17; src/backend/cast.rs:88-89; src/backend/README.md:652
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  set_flags: { gen: bool }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: assembler README.md:214 Data Processing (GPR) vs FP/NEON; ARM ARM ADC Wd/Xd; llvm-mc rejects d/s/v forms
 ```

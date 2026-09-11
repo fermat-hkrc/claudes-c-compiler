@@ -1,37 +1,53 @@
-# PBT Campaign Report: classify_cast_with_f128
+# PBT Campaign Report: encode_adc
 
 ## Summary
 
 **Date:** 2026-09-11
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** classify_cast_with_f128 (src/backend/cast.rs)
-**Tests:** 11 properties + 3 regression witnesses
-**Result:** 8 passing, 3 failing properties (1 bug), 3 failing regression witnesses
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthen/sweep round, ≥1 metamorphic)
+**Modules tested:** encode_adc
+**Tests:** 10 properties (plus 1 KAT + 4 regression witnesses)
+**Result:** 6 passing, 4 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| classify_cast_with_f128 | 11 properties (8 pass / 3 fail) + 3 regression | 1 | algebraic.invariant, algebraic.metamorphic |
+| encode_adc | 10 properties | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-**Ptr is not treated as U64/U32 for float and F128 casts.**
+1. **encode_adc silently ignores a trailing shift operand**
+   - Law: ARM ADC has no shifted-register form; extra Shift must Err.
+   - Minimal input: `[w0, w0, w0, lsl #0]`, set_flags=false
+   - Expected: Err. Actual: Ok(Word) — extra operand ignored.
+   - Severity: medium
+   - Bug report: pbt-out/bug_reports/encode_adc_extra_shift_ignored.md
 
-- **Laws violated:** Ptr normalization happens before classification (Ptr ≡ U64 on LP64, U32 on ILP32); pointer-to-float must be unsigned; float-to-pointer on ILP32 must use the 32-bit unsigned path.
-- **Failing properties:** `classify_cast_ptr_normalized_as_unsigned_int`, `classify_cast_native_f128_int_signedness`, `classify_cast_float_int_kinds`
-- **Shrunk counterexamples (serial reconfirm, PBT_TEST_JOBS=1):**
-  - `classify_cast_with_f128(Ptr, F32, false)` at ptr_size=4 → `SignedToFloat { to_f64: false, from_ty: Ptr }` (expected `UnsignedToFloat { to_f64: false, from_ty: U32 }`)
-  - `classify_cast_with_f128(Ptr, F128, true)` at ptr_size=4 → `SignedToF128 { from_ty: Ptr }` (expected `UnsignedToF128 { from_ty: U32 }`)
-  - `classify_cast_with_f128(F32, Ptr, false)` at ptr_size=4 → `FloatToUnsigned { from_f64: false, to_u64: true }` (expected `to_u64: false`)
-- **Root cause:** F128 handling and the float↔int arms run before (and skip) the Ptr-normalization block, which is gated on `!from_ty.is_float() && !to_ty.is_float()`.
-- **Impact:** High-bit-set pointers convert to negative floats via signed x87 `fild`; ILP32 float-to-ptr takes the 64-bit conversion path (i686 `emit_f32_to_i64` stores 8 bytes into a 4-byte pointer slot).
-- **Severity:** high
-- **Bug report:** pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
-- **Regression tests:** `test_classify_cast_with_f128_regression_ptr_to_f32_unsigned`, `test_classify_cast_with_f128_regression_ptr_to_f128_unsigned`, `test_classify_cast_with_f128_regression_f32_to_ptr_ilp32` in src/backend/cast.rs (all fail, as required while the bug remains)
+2. **encode_adc accepts mixed 32/64-bit register operands**
+   - Law: all three registers must be the same width.
+   - Minimal input: `[w0, w0, x0]`, set_flags=false
+   - Expected: Err. Actual: Ok(Word) using only Rd's sf bit.
+   - Severity: medium
+   - Bug report: pbt-out/bug_reports/encode_adc_mixed_width.md
 
-## Design Caveats (if any)
+3. **encode_adc treats SP/WSP as XZR/WZR**
+   - Law: register 31 in ADC is WZR/XZR, not WSP/SP; SP operands must Err.
+   - Minimal input: `[wsp, w0, w0]`, set_flags=false
+   - Expected: Err. Actual: Ok(Word) identical to `adc wzr, w0, w0`.
+   - Severity: high
+   - Bug report: pbt-out/bug_reports/encode_adc_sp_as_zr.md
+
+4. **encode_adc accepts FP/SIMD register names as GPRs**
+   - Law: ADC operands are W/X GPRs only.
+   - Minimal input: `[d0, x1, x2]`, set_flags=false
+   - Expected: Err. Actual: Ok(Word) treated as w0.
+   - Severity: medium
+   - Bug report: pbt-out/bug_reports/encode_adc_fp_reg.md
+
+All four reproduced serially (`PBT_TEST_JOBS=1`).
+
+## Design Caveats
 
 (none)
 
@@ -39,36 +55,39 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/cast.rs (`mod classify_cast_with_f128_pbt`) | 11 properties + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_adc_pbt) | 10 properties + KAT + 4 regressions |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
-- pbt-out/FUNCTION_INDEX.md — merged function index (cast.rs added)
-- pbt-out/COVERAGE.md — coverage ledger
-- pbt-out/COVERAGE_STATUS.md — coverage summary
-- pbt-out/INVARIANTS.md — confirmed invariants
 - pbt-out/REPORT.md — this report
-- pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/FUNCTION_INDEX.md — merged function index
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/bug_reports/encode_adc_extra_shift_ignored.md
+- pbt-out/bug_reports/encode_adc_mixed_width.md
+- pbt-out/bug_reports/encode_adc_sp_as_zr.md
+- pbt-out/bug_reports/encode_adc_fp_reg.md
 
 ## Contract-surface sweep
 
-Exactly 1 round (standard tier). `coverage_gaps` had no LLVM profraw in this session (`RUSTFLAGS`/`LLVM_PROFILE_FILE` unset); sweep was a manual arm audit of `classify_cast_with_f128` / `classify_f128_cast_native`. Added three documented-branch properties, all passing: F32↔F64 `widen` flag, non-native never emits F128 libcall kinds, Ptr ↔ pointer-width integer is Noop. Closed because the tier's one round is done.
+STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw (same environment quirk as prior campaigns). Manual ARM-field audit of encode_adc added `encode_adc_neg_invalid_reg_name` (passing) and `encode_adc_neg_fp_reg` (failing bug). Closed because the tier's 1 round is done.
 
-## Build / harness
+## SUT observations (not bugs)
 
-- Build contract: `cargo check --lib` (prebuilt; log pbt-out/build.log)
-- Harness: rung 1 — `cargo test --lib`, inline `#[cfg(test)]` in src/backend/cast.rs, existing `proptest` dev-dependency, 1000 cases
-- Probe: `cargo test --lib` → 505 passed, 11 failed, 6 ignored (pre-existing encode_add_sub / cast_float_to_target failures only)
-- No target skipped
+- Valid same-width GPR ADC/ADCS, including XZR/WZR (register 31), matches llvm-mc for 1000 random cases per property.
+- ADC vs ADCS encodings differ only by bit 29 (S).
+- ARM ARM field layout (sf, op=0, S, opcode 11010000, Rm/Rn/Rd, bits 15:10 zero) holds on the success path.
+- Fewer than 3 operands and a non-register in any of the three slots return Err.
+- Invalid register names (x32, empty, foo, r0) return Err via parse_reg_num.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-11 11:06 (campaign: coverage)
-> Files: 3/3 scanned (100%) | Functions: 3/76 total | PBT candidates: 3 | Tested: 3 (100%) | 0 pass, 3 fail
+> Last updated: 2026-09-11 11:18 (campaign: coverage)
+> Files: 3/3 scanned (100%) | Functions: 4/76 total | PBT candidates: 4 | Tested: 4 (100%) | 0 pass, 4 fail
 
 ## Summary
 
@@ -77,10 +96,10 @@ Exactly 1 round (standard tier). `coverage_gaps` had no LLVM profraw in this ses
 | Total source files | 3 |
 | Files scanned | 3 / 3 (100%) |
 | Total functions (all files) | 76 |
-| PBT candidates (from FUNCTION_INDEX) | 3 |
-| **Tested (of PBT candidates)** | **3 / 3 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 3 / 0 |
-| **Overall (tested / all functions)** | **3 / 76 (4%)** |
+| PBT candidates (from FUNCTION_INDEX) | 4 |
+| **Tested (of PBT candidates)** | **4 / 4 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 4 / 0 |
+| **Overall (tested / all functions)** | **4 / 76 (5%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -88,13 +107,13 @@ Exactly 1 round (standard tier). `coverage_gaps` had no LLVM profraw in this ses
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 3 | 3 | 0 | 100% |
+|  | 4 | 4 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 3 | 3 | 0 | 100% |
+| unknown | 4 | 4 | 0 | 100% |
 
 ## File Coverage
 
@@ -102,7 +121,7 @@ Exactly 1 round (standard tier). `coverage_gaps` had no LLVM profraw in this ses
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 1 | 1 | 100% | covered |
+| data_processing.rs | 36 | 2 | 2 | 100% | covered |
 
 ## Recommended Focus
 
@@ -114,3 +133,4 @@ Exactly 1 round (standard tier). `coverage_gaps` had no LLVM profraw in this ses
 | encode_add_sub | data_processing.rs |
 | cast_float_to_target | constants.rs |
 | classify_cast_with_f128 | cast.rs |
+| encode_adc | data_processing.rs |
