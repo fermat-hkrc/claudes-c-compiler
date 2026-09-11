@@ -1,4 +1,4 @@
-> Total files: 2 | Total functions: 70 | PBT candidates: 2 | Excluded: 68
+> Total files: 3 | Total functions: 76 | PBT candidates: 3 | Excluded: 73
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -72,3 +72,9 @@
 | narrowed_to | constants.rs | 579 | method | no | out of campaign scope |
 | to_le_bytes | constants.rs | 617 | method | no | out of campaign scope |
 | one | constants.rs | 632 | method | no | out of campaign scope |
+| classify_cast_with_f128 | cast.rs | 67 | function | yes | - |
+| classify_cast | cast.rs | 152 | function | no | out of campaign scope |
+| classify_f128_cast_native | cast.rs | 158 | function | no | private helper; campaign is single-symbol |
+| classify_float_binop | cast.rs | 208 | function | no | out of campaign scope |
+| f128_cmp_libcall | cast.rs | 239 | function | no | out of campaign scope |
+| f128_const_halves | cast.rs | 253 | function | no | out of campaign scope |

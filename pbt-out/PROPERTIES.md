@@ -1,234 +1,280 @@
-# Properties: IrConst::cast_float_to_target
+# Properties: classify_cast_with_f128
 
-## cast_float_to_target_diff_from_i64_in_range
-- Tier: 2
-- Rationale: Strongest applicable oracle is Differential against the same-job sibling `IrConst::from_i64`. State machine rejected — pure function, no lifecycle. Same-job evidence: `src/passes/constant_fold.rs:606` folds float-to-int via `from_i64(val as i64, to_ty)` while `src/passes/simplify.rs:407` folds the same cast via `cast_float_to_target`; TODO at `src/passes/constant_fold.rs:583-584` says the paths should be unified. Storage contract for unsigned sub-64-bit types is documented on `from_i64` (`src/ir/constants.rs:448-451`). SUT-boundary=internal-helper. Mapping: for finite fv whose trunc-toward-zero integer part n lies in the closed range of `ty`, expected = `from_i64(n, ty)`. Independent code path (integer constructor vs float `as` casts). Algebraic forms are weaker backups.
-- Seed: src/passes/constant_fold.rs:1049 (3.125 to I32 yields 3)
-- Formal: ∀ fv ∈ finite f64, ty ∈ {I8,U8,I16,U16,I32,U32,I64,U64,I128,U128}. let n = trunc_toward_zero(fv) as i64. If n is exactly representable in ty's value range (signed min..=max, unsigned 0..=max) then IrConst::cast_float_to_target(fv, ty) = Some(IrConst::from_i64(n, ty)).
-- Test file: src/ir/constants.rs
-- Status: failing
-- Counterexample: n=0, frac=0.0, ty=U8 (cast_float_to_target(0.0, U8)=I8(0) != from_i64(0, U8)=I64(0)). Same storage bug as 128.0/U8: unsigned sub-64-bit targets stored as I8/I16 instead of I64.
-- Bug report: pbt-out/bug_reports/cast_float_to_target_unsigned_storage.md
-
-```property
-function: IrConst::cast_float_to_target
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [fv, ty]
-  domain: { fv: finite f64 whose trunc-toward-zero integer part n is in-range for ty, ty: integer IrType }
-  relation:
-    op: eq
-    lhs: IrConst::cast_float_to_target(fv, ty)
-    rhs: Some(IrConst::from_i64(n, ty))
-generators:
-  n: { gen: int, min: -128, max: 255, type: i64 }
-  frac: { gen: float, min: 0.0, max: 0.999, type: f64 }
-  ty: { gen: oneof, options: [I8, U8, I16, U16, I32, U32, I64, U64, I128, U128] }
-evidence: src/ir/constants.rs:448-451; src/passes/constant_fold.rs:606; src/passes/simplify.rs:407
-```
-
-## cast_float_to_target_unsigned_to_i64_zero_extended
+## classify_cast_identity_is_noop
 - Tier: 4
-- Rationale: Algebraic invariant from the `from_i64` storage convention (`src/ir/constants.rs:448-451`: unsigned U8/U16/U32 stored as I64 zero-extended so `to_i64()` does not sign-extend; example U8(255) must not become -1) plus this function's own docstring (`src/ir/constants.rs:275-276`: `200.0 as u8 = 200`). Differential (property 1) is stronger for full variant equality; this isolates the `to_i64()` observer that callers actually use. Round-trip rejected — cast is lossy (fractional part discarded). Idempotence rejected — not a normalizer.
-- Seed: src/ir/constants.rs:276 (docstring example 200.0 as u8 = 200)
-- Formal: ∀ n ∈ ℕ, ty ∈ {U8,U16,U32,U64}. If n ≤ max(ty) then (IrConst::cast_float_to_target(n as f64, ty)).and_then(|c| c.to_i64()) = Some(n as i64).
-- Test file: src/ir/constants.rs
-- Status: failing
-- Counterexample: n=128, ty=U8; cast_float_to_target(128.0, U8).to_i64() = Some(-128), expected Some(128)
-- Bug report: pbt-out/bug_reports/cast_float_to_target_unsigned_storage.md
+- Rationale: Algebraic invariant from CastKind::Noop ("No conversion needed (same type, ...)") at src/backend/cast.rs:16-17 and README src/backend/README.md:652. State machine rejected — pure function, no lifecycle. Differential rejected — classify_cast is a same-source wrapper (src/backend/cast.rs:151-154); f128_emit_cast emits libcalls rather than CastKind (different job). Round-trip rejected — classification is not an invertible pair. Idempotence rejected — not a normalizer.
+- Seed: (none)
+- Formal: ∀ ty ∈ IrType, native ∈ bool. classify_cast_with_f128(ty, ty, native) = CastKind::Noop.
+- Test file: src/backend/cast.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: IrConst::cast_float_to_target
+function: backend.cast.classify_cast_with_f128
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [n, ty]
-  domain: { n: integer in 0..=max(ty), ty: {U8,U16,U32,U64} }
+  vars: [ty, native]
+  domain: { ty: IrType, native: bool }
   relation:
     op: eq
-    lhs: IrConst::cast_float_to_target(n as f64, ty).and_then(IrConst::to_i64)
-    rhs: Some(n as i64)
+    lhs: classify_cast_with_f128(ty, ty, native)
+    rhs: CastKind::Noop
 generators:
-  n: { gen: int, min: 0, max: 65535, type: u64 }
-  ty: { gen: oneof, options: [U8, U16, U32, U64] }
-evidence: src/ir/constants.rs:448-451; src/ir/constants.rs:275-276
+  ty: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
+  native: { gen: bool }
+evidence: src/backend/cast.rs:16-17; src/backend/README.md:652
 ```
 
-## cast_float_to_target_trunc_toward_zero_signed
+## classify_cast_f128_non_native_reduces_to_f64
 - Tier: 4
-- Rationale: Algebraic invariant — sibling test `test_fold_float_cast_float_to_int` (`src/passes/constant_fold.rs:1049-1062`) asserts 3.125 → I32(3), i.e. truncation toward zero. Domain is in-range finite floats for signed integer targets so the conversion is defined. Round-trip rejected — fractional part is discarded. Differential covered by property 1; this property additionally samples fractional parts and negative values against the integer payload.
-- Seed: src/passes/constant_fold.rs:1049
-- Formal: ∀ fv ∈ finite f64, ty ∈ {I8,I16,I32,I64}. If trunc_toward_zero(fv) ∈ [min(ty), max(ty)] then the signed integer payload of IrConst::cast_float_to_target(fv, ty) equals trunc_toward_zero(fv) as that signed type.
-- Test file: src/ir/constants.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: IrConst::cast_float_to_target
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [fv, ty]
-  domain: { fv: finite f64 with trunc-toward-zero in signed ty range, ty: {I8,I16,I32,I64} }
-  body: signed_payload(cast_float_to_target(fv, ty)) == (fv.trunc() as signed ty)
-generators:
-  mag: { gen: int, min: 0, max: 127, type: i64 }
-  frac: { gen: float, min: 0.0, max: 0.999, type: f64 }
-  neg: { gen: bool }
-  ty: { gen: oneof, options: [I8, I16, I32, I64] }
-evidence: src/passes/constant_fold.rs:1049-1062
-```
-
-## cast_float_to_target_f64_identity
-- Tier: 4
-- Rationale: Algebraic identity — F64 arm is `IrConst::F64(fv)` (`src/ir/constants.rs:278`) and the IR README lists F64 as 64-bit float storage (`src/ir/README.md:466`). Casting a float to F64 must preserve the bit pattern, including -0.0, infinities, and NaN payloads. State machine / differential rejected (no sibling F64 wrapper with a distinct implementation). Round-trip rejected — there is no inverse pair.
+- Rationale: Algebraic metamorphic — documented F128 reduction on x86: "F128 treated as F64 for computation purposes on x86" (src/backend/cast.rs:61-62, :80-81) and README "on x86, F128 is approximated as F64" (src/backend/README.md:649-650). Transform: replace F128 with F64 in either endpoint; classification with f128_is_native=false must be unchanged. Stronger oracles rejected as in identity property.
 - Seed: (none)
-- Formal: ∀ fv ∈ f64. IrConst::cast_float_to_target(fv, IrType::F64) = Some(IrConst::F64(fv)) with equality on to_bits() (NaN payload and sign of zero preserved).
-- Test file: src/ir/constants.rs
+- Formal: ∀ from, to ∈ IrType. let from' = F64 if from = F128 else from; let to' = F64 if to = F128 else to. classify_cast_with_f128(from, to, false) = classify_cast_with_f128(from', to', false).
+- Test file: src/backend/cast.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: IrConst::cast_float_to_target
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [fv]
-  domain: { fv: f64 (all bit patterns) }
-  relation:
-    op: eq
-    lhs: match IrConst::cast_float_to_target(fv, IrType::F64) { Some(IrConst::F64(x)) => x.to_bits(), _ => 0 }
-    rhs: fv.to_bits()
-generators:
-  fv: { gen: float, type: f64 }
-evidence: src/ir/constants.rs:278; src/ir/README.md:466
-```
-
-## cast_float_to_target_void_none
-- Tier: 4e
-- Rationale: Negative/error contract — the match's `_` arm returns None (`src/ir/constants.rs:293`); `IrType::Void` is the only remaining variant (`src/common/types.rs:1718`). Signature is `Option<IrConst>`, so unsupported targets must reject. Stronger oracles do not apply to the unsupported-type path.
-- Seed: (none)
-- Formal: ∀ fv ∈ f64. IrConst::cast_float_to_target(fv, IrType::Void) = None.
-- Test file: src/ir/constants.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: IrConst::cast_float_to_target
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [fv]
-  domain: { fv: f64 }
-  relation:
-    op: eq
-    lhs: IrConst::cast_float_to_target(fv, IrType::Void)
-    rhs: None
-generators:
-  fv: { gen: float, type: f64 }
-expected_error: None
-evidence: src/ir/constants.rs:293; src/common/types.rs:1718
-```
-
-## cast_float_to_target_f128_approx_field
-- Tier: 4
-- Rationale: Algebraic invariant — F128 arm is `IrConst::long_double(fv)` (`src/ir/constants.rs:279`) whose documented contract (`src/ir/constants.rs:167-168`) stores `fv` as the f64 approximation field of `LongDouble`. Differential against `long_double` would compare the function to the callee it wraps (not independent). Round-trip rejected — f64→f128 is widening but the stored approximation is the original f64.
-- Seed: (none)
-- Formal: ∀ fv ∈ f64. ∃ bytes. IrConst::cast_float_to_target(fv, IrType::F128) = Some(IrConst::LongDouble(fv, bytes)) with the approximation field equal to fv on to_bits().
-- Test file: src/ir/constants.rs
-- Status: failing
-- Counterexample: bits=9223372036854775809 (0x8000000000000001, negative f64 subnormal). Panics: attempt to subtract with overflow at src/common/long_double.rs:1040 in f64_to_f128_bytes_lossless (biased_exp=0 as u128 - 1023).
-- Bug report: pbt-out/bug_reports/cast_float_to_target_f128_subnormal.md
-
-```property
-function: IrConst::cast_float_to_target
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [fv]
-  domain: { fv: f64 }
-  relation:
-    op: eq
-    lhs: match IrConst::cast_float_to_target(fv, IrType::F128) { Some(IrConst::LongDouble(x, _)) => x.to_bits(), _ => 0 }
-    rhs: fv.to_bits()
-generators:
-  fv: { gen: float, type: f64 }
-evidence: src/ir/constants.rs:167-168; src/ir/constants.rs:279
-```
-
-## cast_float_to_target_u8_not_i8_saturate
-- Tier: 4
-- Rationale: Algebraic invariant from this function's docstring (`src/ir/constants.rs:275-276`): unsigned conversion must not saturate to i8::MAX (127). For n ∈ 128..=255, the U8 result's 8-bit pattern equals n as u8 (so 200, not 127). Weaker than property 2 (does not require I64 storage / to_i64()==n) but pins the documented anti-saturation example even if storage form is I8. Documented bound 127/128/255 sampled exactly.
-- Seed: src/ir/constants.rs:276
-- Formal: ∀ n ∈ {128,...,255}. let r = IrConst::cast_float_to_target(n as f64, IrType::U8). The 8-bit pattern of r equals n as u8 (not 127).
-- Test file: src/ir/constants.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: IrConst::cast_float_to_target
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [n]
-  domain: { n: u8 in 128..=255 }
-  body: u8_pattern(cast_float_to_target(n as f64, U8)) == n && u8_pattern(...) != 127
-generators:
-  n: { gen: int, min: 128, max: 255, type: u8 }
-evidence: src/ir/constants.rs:275-276
-```
-
-## cast_float_to_target_f32_sign_and_finite
-- Tier: 4
-- Rationale: Algebraic metamorphic — F32 narrowing preserves sign of finite nonzero inputs and maps infinities to infinities of the same sign (IEEE 754 binary32 conversion implied by IrType::F32 / README F32 row). Round-trip rejected — f64→f32 is lossy. Differential against Rust `as f32` rejected — that is the producing statement. This property checks the sign/finiteness relation, not bit-identity with the `as` implementation.
-- Seed: (none)
-- Formal: ∀ fv ∈ finite nonzero f64. let Some(IrConst::F32(x)) = cast_float_to_target(fv, F32). Then x.is_sign_negative() = fv.is_sign_negative(). ∀ fv ∈ {+∞,−∞}. x.is_infinite() ∧ x.is_sign_negative() = fv.is_sign_negative().
-- Test file: src/ir/constants.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-## cast_float_to_target_ptr_matches_from_i64
-- Tier: 2
-- Rationale: Contract-surface sweep — IrType::Ptr arm (`src/ir/constants.rs:286` → `ptr_int`) was not in the first-batch integer-type generator. Differential vs from_i64 (same Ptr → ptr_int constructor, `src/ir/constants.rs:438-447`). State machine rejected.
-- Seed: (none)
-- Formal: ∀ fv ∈ finite f64 with trunc-toward-zero n exactly representable as i64. IrConst::cast_float_to_target(fv, IrType::Ptr) = Some(IrConst::from_i64(n, IrType::Ptr)).
-- Test file: src/ir/constants.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: IrConst::cast_float_to_target
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [fv]
-  domain: { fv: finite f64 with exact trunc-toward-zero n }
-  relation:
-    op: eq
-    lhs: IrConst::cast_float_to_target(fv, IrType::Ptr)
-    rhs: Some(IrConst::from_i64(n, IrType::Ptr))
-generators:
-  n: { gen: int, min: -1000, max: 1000, type: i64 }
-  frac: { gen: float, min: 0.0, max: 0.999, type: f64 }
-evidence: src/ir/constants.rs:286; src/ir/constants.rs:438-447
-```
-
-```property
-function: IrConst::cast_float_to_target
+function: backend.cast.classify_cast_with_f128
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [fv]
-  domain: { fv: finite-nonzero or infinite f64 }
-  body: let F32(x) = cast_float_to_target(fv, F32); x.is_sign_negative() == fv.is_sign_negative() && (fv.is_infinite() => x.is_infinite())
+  vars: [from, to]
+  domain: { from: IrType, to: IrType }
+  relation:
+    op: eq
+    lhs: classify_cast_with_f128(from, to, false)
+    rhs: classify_cast_with_f128(from_f128_as_f64(from), from_f128_as_f64(to), false)
 generators:
-  fv: { gen: float, type: f64 }
-evidence: src/ir/README.md:465; src/ir/constants.rs:280
+  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
+  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
+evidence: src/backend/cast.rs:61-62; src/backend/cast.rs:80-81; src/backend/README.md:649-650
+```
+
+## classify_cast_native_flag_irrelevant_without_f128
+- Tier: 4
+- Rationale: Algebraic metamorphic — F128 handling is gated on `from_ty == F128 || to_ty == F128` (src/backend/cast.rs:72-73); when neither endpoint is F128 the `f128_is_native` flag must not change the result. Transform: flip the flag. Stronger oracles rejected as above.
+- Seed: (none)
+- Formal: ∀ from, to ∈ IrType \ {F128}. classify_cast_with_f128(from, to, true) = classify_cast_with_f128(from, to, false).
+- Test file: src/backend/cast.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [from, to]
+  domain: { from: IrType minus F128, to: IrType minus F128 }
+  relation:
+    op: eq
+    lhs: classify_cast_with_f128(from, to, true)
+    rhs: classify_cast_with_f128(from, to, false)
+generators:
+  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, Ptr, Void] }
+  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, Ptr, Void] }
+evidence: src/backend/cast.rs:72-73
+```
+
+## classify_cast_ptr_normalized_as_unsigned_int
+- Tier: 4
+- Rationale: Algebraic metamorphic — documented Ptr normalization happens before classification: "Ptr treated as U64" (src/backend/cast.rs:61, README:649) and "Ptr is equivalent to U64 on LP64 targets, U32 on ILP32 targets" (src/backend/cast.rs:88-89; src/common/types.rs:20-21). Transform: replace Ptr with that unsigned pointer-width integer. Documented Noop exception: CastKind::Noop includes "Ptr <-> I64/U64" (src/backend/cast.rs:16-17; README:652), generalized to pointer-width signed/unsigned integers (I32/U32 on ILP32). Stronger oracles rejected as above.
+- Seed: (none)
+- Formal: ∀ from, to ∈ IrType, native ∈ bool, ptr_size ∈ {4,8}. let u = U32 if ptr_size=4 else U64. let from' = u if from=Ptr else from; let to' = u if to=Ptr else to. If from=Ptr ∨ to=Ptr: if ¬from.is_float() ∧ ¬to.is_float() ∧ size(from')=ptr_size ∧ size(to')=ptr_size then classify_cast_with_f128(from,to,native)=Noop else classify_cast_with_f128(from,to,native)=classify_cast_with_f128(from',to',native).
+- Test file: src/backend/cast.rs
+- Status: failing
+- Counterexample: from=Ptr, to=F32, native=false, ptr_size=4 → SignedToFloat { to_f64: false, from_ty: Ptr } != UnsignedToFloat { to_f64: false, from_ty: U32 }
+- Bug report: pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [from, to, native, ptr_size]
+  domain: { from: IrType, to: IrType, native: bool, ptr_size: {4,8} }
+  body: ptr_replaced_equals_or_pointer_width_noop(from, to, native, ptr_size)
+generators:
+  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
+  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
+  native: { gen: bool }
+  ptr_size: { gen: oneof, options: [4, 8], type: usize }
+evidence: src/backend/cast.rs:16-17; src/backend/cast.rs:61; src/backend/cast.rs:88-89; src/backend/README.md:649,652; src/common/types.rs:20-21
+```
+
+## classify_cast_native_f128_float_kinds
+- Tier: 4
+- Rationale: Algebraic invariant from CastKind docs: FloatToF128 is "F32/F64 -> F128 widening via softfloat" with from_f32 flag (src/backend/cast.rs:51-52); F128ToFloat is "F128 -> F32/F64 narrowing" with to_f32 flag (src/backend/cast.rs:53-54). README lists these as IEEE binary128 conversions when f128_is_native (src/backend/README.md:662-668). Domain is the four (F32|F64)x F128 pairs. Stronger oracles rejected as above.
+- Seed: (none)
+- Formal: ∀ from_f32 ∈ bool. classify_cast_with_f128(F32 if from_f32 else F64, F128, true) = FloatToF128 { from_f32 }. ∀ to_f32 ∈ bool. classify_cast_with_f128(F128, F32 if to_f32 else F64, true) = F128ToFloat { to_f32 }.
+- Test file: src/backend/cast.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [from_f32, to_f32]
+  domain: { from_f32: bool, to_f32: bool }
+  body: classify_cast_with_f128(F32 if from_f32 else F64, F128, true) == FloatToF128{from_f32} && classify_cast_with_f128(F128, F32 if to_f32 else F64, true) == F128ToFloat{to_f32}
+generators:
+  from_f32: { gen: bool }
+  to_f32: { gen: bool }
+evidence: src/backend/cast.rs:51-54; src/backend/README.md:662-668
+```
+
+## classify_cast_native_f128_int_signedness
+- Tier: 4
+- Rationale: Algebraic invariant from CastKind docs: SignedToF128 / UnsignedToF128 / F128ToSigned / F128ToUnsigned (src/backend/cast.rs:42-50) plus Ptr-as-unsigned (src/backend/cast.rs:61, :88-89). Integer endpoints keep their signedness; Ptr is the unsigned pointer-width integer. Documented bounds: every integer IrType plus Ptr sampled. Stronger oracles rejected as above.
+- Seed: (none)
+- Formal: ∀ ty ∈ integer IrType ∪ {Ptr}, native=true. If ty is unsigned or ty=Ptr then classify_cast_with_f128(ty, F128, true) = UnsignedToF128 { from_ty: u_of(ty) } and classify_cast_with_f128(F128, ty, true) = F128ToUnsigned { to_ty: u_of(ty) } where u_of(Ptr)=U64/U32 else ty. If ty is signed then classify_cast_with_f128(ty, F128, true) = SignedToF128 { from_ty: ty } and classify_cast_with_f128(F128, ty, true) = F128ToSigned { to_ty: ty }.
+- Test file: src/backend/cast.rs
+- Status: failing
+- Counterexample: ty=Ptr, ptr_size=4 → classify(Ptr, F128, true)=SignedToF128 { from_ty: Ptr } != UnsignedToF128 { from_ty: U32 }
+- Bug report: pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [ty, ptr_size]
+  domain: { ty: integer IrType or Ptr, ptr_size: {4,8} }
+  body: native_f128_int_kind_matches_signedness(ty, ptr_size)
+generators:
+  ty: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, Ptr] }
+  ptr_size: { gen: oneof, options: [4, 8], type: usize }
+evidence: src/backend/cast.rs:42-50; src/backend/cast.rs:61; src/backend/cast.rs:88-89
+```
+
+## classify_cast_float_int_kinds
+- Tier: 4
+- Rationale: Algebraic invariant from CastKind docs: FloatToSigned when from is F32/F64 (src/backend/cast.rs:18-19); FloatToUnsigned when dest is unsigned (src/backend/cast.rs:20-21); SignedToFloat / UnsignedToFloat when dest is F32/F64 (src/backend/cast.rs:22-29). Ptr dest is unsigned per Ptr-as-U64/U32 (so to_u64 = dest is U64, or dest is Ptr on LP64). Domain excludes F128 (covered by native/reduction properties). Stronger oracles rejected as above.
+- Seed: (none)
+- Formal: ∀ from ∈ {F32,F64}, to ∈ integer IrType ∪ {Ptr}, native ∈ bool, ptr_size ∈ {4,8}. classify_cast_with_f128(from,to,native) = FloatToUnsigned { from_f64: from=F64, to_u64: to=U64 ∨ (to=Ptr ∧ ptr_size=8) } if to is unsigned or to=Ptr, else FloatToSigned { from_f64: from=F64 }. ∀ from ∈ integer IrType ∪ {Ptr}, to ∈ {F32,F64}. classify_cast_with_f128(from,to,native) = UnsignedToFloat { to_f64: to=F64, from_ty: u_of(from) } if from is unsigned or from=Ptr, else SignedToFloat { to_f64: to=F64, from_ty: from }.
+- Test file: src/backend/cast.rs
+- Status: failing
+- Counterexample: int_ty=Ptr, is_f64=false, native=false, ptr_size=4, int_to_float=false → FloatToUnsigned { from_f64: false, to_u64: true } != FloatToUnsigned { from_f64: false, to_u64: false }
+- Bug report: pbt-out/bug_reports/classify_cast_ptr_not_normalized_for_float.md
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [int_ty, is_f64, native, ptr_size, int_to_float]
+  domain: { int_ty: integer IrType or Ptr, is_f64: bool, native: bool, ptr_size: {4,8}, int_to_float: bool }
+  body: float_int_kind_matches(int_ty, is_f64, native, ptr_size, int_to_float)
+generators:
+  int_ty: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, Ptr] }
+  is_f64: { gen: bool }
+  native: { gen: bool }
+  ptr_size: { gen: oneof, options: [4, 8], type: usize }
+  int_to_float: { gen: bool }
+evidence: src/backend/cast.rs:18-29; src/backend/cast.rs:61; src/backend/cast.rs:88-89
+```
+
+## classify_cast_int_widen_narrow_same_size
+- Tier: 4
+- Rationale: Algebraic invariant from CastKind docs and README: IntWiden when dest is larger, IntNarrow when dest is smaller (src/backend/cast.rs:32-35; README:656-657); same-size signed-to-unsigned is SignedToUnsignedSameSize and unsigned-to-signed is UnsignedToSignedSameSize (src/backend/cast.rs:36-41; README:658-661). Domain is integer IrType pairs (not Ptr/Void/float). Documented size boundaries 1/2/4/8/16 sampled via the closed integer type set. Stronger oracles rejected as above.
+- Seed: (none)
+- Formal: ∀ from, to ∈ {I8,I16,I32,I64,I128,U8,U16,U32,U64,U128}, native ∈ bool. If from=to then Noop. Else if size(to)>size(from) then IntWiden { from, to }. Else if size(to)<size(from) then IntNarrow { to }. Else if from signed ∧ to unsigned then SignedToUnsignedSameSize { to }. Else if from unsigned ∧ to signed then UnsignedToSignedSameSize { to }.
+- Test file: src/backend/cast.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [from, to, native]
+  domain: { from: integer IrType, to: integer IrType, native: bool }
+  body: int_cast_kind_matches_sizes_and_signedness(from, to, native)
+generators:
+  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128] }
+  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128] }
+  native: { gen: bool }
+evidence: src/backend/cast.rs:32-41; src/backend/README.md:656-661
+```
+
+## classify_cast_float_to_float_widen
+- Tier: 4
+- Rationale: Contract-surface sweep. Algebraic invariant from CastKind::FloatToFloat "F32 <-> F64" (src/backend/cast.rs:30-31) and README:655. First batch never asserted the `widen` flag. Stronger oracles rejected as in identity property.
+- Seed: (none)
+- Formal: ∀ native ∈ bool. classify_cast_with_f128(F32, F64, native) = FloatToFloat { widen: true } ∧ classify_cast_with_f128(F64, F32, native) = FloatToFloat { widen: false }.
+- Test file: src/backend/cast.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [native]
+  domain: { native: bool }
+  body: classify(F32,F64,native)=FloatToFloat{widen:true} && classify(F64,F32,native)=FloatToFloat{widen:false}
+generators:
+  native: { gen: bool }
+evidence: src/backend/cast.rs:30-31; src/backend/README.md:655
+```
+
+## classify_cast_non_native_never_f128_libcall_kinds
+- Tier: 4
+- Rationale: Contract-surface sweep. Algebraic invariant — ARM backend treats F128 libcall kinds as unreachable from classify_cast() (src/backend/arm/codegen/cast_ops.rs:128), and classify_cast is classify_cast_with_f128(..., false) (src/backend/cast.rs:151-154). CastKind docs mark those variants as native-F128 softfloat (src/backend/cast.rs:42-54).
+- Seed: (none)
+- Formal: ∀ from, to ∈ IrType. classify_cast_with_f128(from, to, false) ∉ {SignedToF128, UnsignedToF128, F128ToSigned, F128ToUnsigned, FloatToF128, F128ToFloat}.
+- Test file: src/backend/cast.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [from, to]
+  domain: { from: IrType, to: IrType }
+  body: not is_f128_libcall_kind(classify_cast_with_f128(from, to, false))
+generators:
+  from: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
+  to: { gen: oneof, options: [I8, I16, I32, I64, I128, U8, U16, U32, U64, U128, F32, F64, F128, Ptr, Void] }
+evidence: src/backend/arm/codegen/cast_ops.rs:128; src/backend/cast.rs:151-154; src/backend/cast.rs:42-54
+```
+
+## classify_cast_ptr_pointer_width_is_noop
+- Tier: 4
+- Rationale: Contract-surface sweep. Algebraic invariant from CastKind::Noop "Ptr <-> I64/U64" (src/backend/cast.rs:16-17; README:652) plus Ptr ≡ U32 on ILP32 (src/backend/cast.rs:88-89). Isolates the integer-Ptr Noop exception from the failing float Ptr metamorphic. Documented bounds I32/U32 (ILP32) and I64/U64 (LP64) sampled exactly.
+- Seed: (none)
+- Formal: ∀ native ∈ bool, ptr_size ∈ {4,8}, signed ∈ bool. let int_ty = (I32|U32) if ptr_size=4 else (I64|U64). classify_cast_with_f128(Ptr, int_ty, native) = Noop ∧ classify_cast_with_f128(int_ty, Ptr, native) = Noop.
+- Test file: src/backend/cast.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: backend.cast.classify_cast_with_f128
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [native, ptr_size, signed]
+  domain: { native: bool, ptr_size: {4,8}, signed: bool }
+  body: classify(Ptr, pointer_width_int, native) = Noop
+generators:
+  native: { gen: bool }
+  ptr_size: { gen: oneof, options: [4, 8], type: usize }
+  signed: { gen: bool }
+evidence: src/backend/cast.rs:16-17; src/backend/cast.rs:88-89; src/backend/README.md:652
 ```
