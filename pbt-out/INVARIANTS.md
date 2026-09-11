@@ -30,17 +30,27 @@
 - NEON vector ADD/SUB Vd.T, Vn.T, Vm.T for T in {8b,16b,4h,8h,2s,4s,2d} matches llvm-mc.
 - Fewer than 3 operands always returns Err containing "requires 3 operands".
 - encode_add_sub([Rd,Rn,Imm(-N)], is_sub, s) equals encode_add_sub([Rd,Rn,Imm(N)], !is_sub, s) for valid positive N.
+- :lo12: Modifier and ModifierOffset produce WordWithReloc { AddAbsLo12, symbol, addend } with imm12 field 0 and ADD-immediate opcode bits (1000 cases).
+- :tprel_lo12_nc: / :tprel_hi12: produce TlsLeAddTprelLo12 / TlsLeAddTprelHi12 with sh bit 0 / 1 (1000 cases).
 
 ## Environment
 
 - Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
 - Immediate form register 31 is SP/WSP, never XZR/WZR (llvm-mc rejects `add Rd, XZR, #imm`).
+- ADDS/SUBS Rd cannot be SP/WSP (llvm-mc rejects `adds sp, ...`).
 - Known-answer: `add x0, x1, #42` encodes as 0x9100a820.
 
 ## Quirks
 
 - llvm-mc may disassemble `add w0, wsp, #0` as `mov w0, wsp`; the encoding word still matches.
+- llvm-mc may rewrite `add x0, x1, #4096, lsl #0` as `add x0, x1, #1, lsl #12`.
 - proptest `prop_assert_eq!` format strings cannot use implicit captures (`{asm}`); use `{}` + args.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (FP regs, ADDS Rd=SP, tprel modifiers).
+- explicit_shift is true only for lsl#12; other immediate-form shifts are ignored (see bugs).
+- sf is taken only from operand 0; mixed x/w is not rejected (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- ADDS/SUBS with Rd=SP encodes register 31 as XZR (see bugs).
 
 ---
 

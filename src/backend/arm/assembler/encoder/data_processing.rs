@@ -1552,6 +1552,214 @@ mod encode_add_sub_pbt {
                 .unwrap_or_else(|e| panic!("pos-imm form rejected n={n}: {e}"));
             prop_assert_eq!(a, b, "add #-N must match sub #N (n={} is_sub={})", n, is_sub);
         }
+
+        #[test]
+        fn encode_add_sub_neg_imm_bad_shift(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            imm in 0i64..=0xFFF,
+            class in 0u8..=3,
+            amt in 0u32..=63,
+        ) {
+            // ARM ADD/SUB (immediate) allows only LSL #0 or LSL #12 after #imm.
+            let (kind, amt) = match class {
+                0 => ("lsr", amt),
+                1 => ("asr", amt),
+                2 => ("ror", amt),
+                _ => {
+                    let a = if amt == 0 || amt == 12 { 1 + (amt % 11) } else { amt };
+                    prop_assume!(a != 0 && a != 12);
+                    ("lsl", a)
+                }
+            };
+            let rd_n = gpr(is_64, rd, false);
+            let rn_n = gpr(is_64, rn, false);
+            let ops = vec![
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(imm),
+                Operand::Shift { kind: kind.into(), amount: amt },
+            ];
+            prop_assert!(
+                encode_add_sub(&ops, is_sub, set_flags).is_err(),
+                "immediate form with {} #{} must Err, not ignore the shift", kind, amt
+            );
+        }
+
+        #[test]
+        fn encode_add_sub_neg_mixed_width(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+            rm64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            use_imm in any::<bool>(),
+            imm in 0i64..=0xFFF,
+        ) {
+            if use_imm {
+                prop_assume!(rd64 != rn64);
+                let ops = vec![
+                    Operand::Reg(gpr(rd64, rd, false)),
+                    Operand::Reg(gpr(rn64, rn, false)),
+                    Operand::Imm(imm),
+                ];
+                prop_assert!(
+                    encode_add_sub(&ops, is_sub, set_flags).is_err(),
+                    "mixed-width immediate form must Err (rd64={} rn64={})", rd64, rn64
+                );
+            } else {
+                prop_assume!(!(rd64 == rn64 && rn64 == rm64));
+                let ops = vec![
+                    Operand::Reg(gpr(rd64, rd, false)),
+                    Operand::Reg(gpr(rn64, rn, false)),
+                    Operand::Reg(gpr(rm64, rm, false)),
+                ];
+                prop_assert!(
+                    encode_add_sub(&ops, is_sub, set_flags).is_err(),
+                    "mixed-width shifted-register form must Err"
+                );
+            }
+        }
+
+        #[test]
+        fn encode_add_sub_reloc_lo12(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            use_offset in any::<bool>(),
+            off in -4096i64..=4096,
+            suffix in 0u32..=1000,
+        ) {
+            let rd_n = gpr(is_64, rd, false);
+            let rn_n = gpr(is_64, rn, false);
+            let sym = format!("foo{suffix}");
+            let ops = if use_offset {
+                vec![
+                    Operand::Reg(rd_n),
+                    Operand::Reg(rn_n),
+                    Operand::ModifierOffset {
+                        kind: "lo12".into(),
+                        symbol: sym.clone(),
+                        offset: off,
+                    },
+                ]
+            } else {
+                vec![
+                    Operand::Reg(rd_n),
+                    Operand::Reg(rn_n),
+                    Operand::Modifier {
+                        kind: "lo12".into(),
+                        symbol: sym.clone(),
+                    },
+                ]
+            };
+            let expected_addend = if use_offset { off } else { 0 };
+            let (word, reloc) = match encode_add_sub(&ops, is_sub, set_flags) {
+                Ok(EncodeResult::WordWithReloc { word, reloc }) => (word, reloc),
+                other => panic!("expected WordWithReloc for :lo12:{sym}, got {other:?}"),
+            };
+            prop_assert!(
+                matches!(reloc.reloc_type, super::super::RelocType::AddAbsLo12),
+                "reloc_type must be AddAbsLo12"
+            );
+            prop_assert_eq!(&reloc.symbol, &sym);
+            prop_assert_eq!(reloc.addend, expected_addend);
+            let sf = if is_64 { 1u32 } else { 0 };
+            let op = if is_sub { 1u32 } else { 0 };
+            let s = if set_flags { 1u32 } else { 0 };
+            prop_assert_eq!(word & 0x1F, rd);
+            prop_assert_eq!((word >> 5) & 0x1F, rn);
+            prop_assert_eq!((word >> 31) & 1, sf);
+            prop_assert_eq!((word >> 30) & 1, op);
+            prop_assert_eq!((word >> 29) & 1, s);
+            prop_assert_eq!((word >> 24) & 0x1F, 0b10001);
+            prop_assert_eq!((word >> 10) & 0xFFF, 0u32);
+        }
+
+        #[test]
+        fn encode_add_sub_neg_fp_reg(
+            which in 0u32..=2,
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in 0u32..=31,
+        ) {
+            let fp = format!("{prefix}{n}");
+            let mut ops = vec![
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+                Operand::Reg("x3".into()),
+            ];
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_add_sub(&ops, is_sub, set_flags).is_err(),
+                "FP/SIMD register {fp} at operand {which} must Err"
+            );
+        }
+
+        #[test]
+        fn encode_add_sub_neg_adds_sp_rd(
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            rn in 0u32..=30,
+            imm in 0i64..=0xFFF,
+        ) {
+            let rd = if is_64 { "sp" } else { "wsp" };
+            let rn_n = gpr(is_64, rn, false);
+            let ops = [
+                Operand::Reg(rd.into()),
+                Operand::Reg(rn_n),
+                Operand::Imm(imm),
+            ];
+            prop_assert!(
+                encode_add_sub(&ops, is_sub, true).is_err(),
+                "ADDS/SUBS with Rd=SP/WSP must Err (encodes as XZR/CMP otherwise)"
+            );
+        }
+
+        #[test]
+        fn encode_add_sub_reloc_tprel(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            is_64 in any::<bool>(),
+            is_sub in any::<bool>(),
+            set_flags in any::<bool>(),
+            hi in any::<bool>(),
+            suffix in 0u32..=1000,
+        ) {
+            let rd_n = gpr(is_64, rd, false);
+            let rn_n = gpr(is_64, rn, false);
+            let kind = if hi { "tprel_hi12" } else { "tprel_lo12_nc" };
+            let sym = format!("tls{suffix}");
+            let ops = vec![
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Modifier { kind: kind.into(), symbol: sym.clone() },
+            ];
+            let (word, reloc) = match encode_add_sub(&ops, is_sub, set_flags) {
+                Ok(EncodeResult::WordWithReloc { word, reloc }) => (word, reloc),
+                other => panic!("expected WordWithReloc for :{kind}:{sym}, got {other:?}"),
+            };
+            if hi {
+                prop_assert!(matches!(reloc.reloc_type, super::super::RelocType::TlsLeAddTprelHi12));
+                prop_assert_eq!((word >> 22) & 1, 1u32);
+            } else {
+                prop_assert!(matches!(reloc.reloc_type, super::super::RelocType::TlsLeAddTprelLo12));
+                prop_assert_eq!((word >> 22) & 1, 0u32);
+            }
+            prop_assert_eq!(&reloc.symbol, &sym);
+            prop_assert_eq!(reloc.addend, 0i64);
+            prop_assert_eq!(word & 0x1F, rd);
+            prop_assert_eq!((word >> 5) & 0x1F, rn);
+        }
     }
 
     #[test]
@@ -1595,6 +1803,59 @@ mod encode_add_sub_pbt {
         assert_eq!(
             sut, 0x0b2047e0,
             "SP/WSP as Rn with LSL #N (N<=4) must use extended-register form, not shifted-register (XZR)"
+        );
+    }
+
+    #[test]
+    fn test_encode_add_sub_regression_imm_lsr_ignored() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Imm(0),
+            Operand::Shift { kind: "lsr".into(), amount: 0 },
+        ];
+        assert!(
+            encode_add_sub(&ops, false, false).is_err(),
+            "ADD/SUB immediate form allows only LSL #0/#12; lsr #0 must Err (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_add_sub_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_add_sub(&ops, false, false).is_err(),
+            "mixed x/w ADD/SUB shifted-register form must Err (llvm-mc rejects add x0, w0, w0)"
+        );
+    }
+
+    #[test]
+    fn test_encode_add_sub_regression_fp_reg() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_add_sub(&ops, false, false).is_err(),
+            "FP/SIMD register d0 is not a GPR ADD operand; encoder must Err"
+        );
+    }
+
+    #[test]
+    fn test_encode_add_sub_regression_adds_sp_rd() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_add_sub(&ops, false, true).is_err(),
+            "ADDS wsp, w0, #0 must Err (Rd=SP with S=1 encodes as WZR)"
         );
     }
 }

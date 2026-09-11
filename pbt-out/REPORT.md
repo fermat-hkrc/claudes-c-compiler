@@ -1,51 +1,77 @@
-# PBT Campaign Report: encode_adc
+# PBT Campaign Report: encode_add_sub
 
 ## Summary
 
 **Date:** 2026-09-11
-**Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_adc
-**Tests:** 10 properties (plus 1 KAT + 4 regression witnesses)
-**Result:** 6 passing, 4 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-driven sweep round)
+**Repository:** claudes-c-compiler (/home/toan/github/claudes-c-compiler)
+**Modules tested:** encode_add_sub (src/backend/arm/assembler/encoder/data_processing.rs)
+**Tests:** 14 properties (plus KAT + 7 regression witnesses)
+**Result:** 7 passing, 7 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, ≥1 metamorphic/differential, 1 contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_adc | 10 properties | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_add_sub | 14 properties (7 passing, 7 failing) | 7 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **encode_adc silently ignores a trailing shift operand**
-   - Law: ARM ADC has no shifted-register form; extra Shift must Err.
-   - Minimal input: `[w0, w0, w0, lsl #0]`, set_flags=false
-   - Expected: Err. Actual: Ok(Word) — extra operand ignored.
-   - Severity: medium
-   - Bug report: pbt-out/bug_reports/encode_adc_extra_shift_ignored.md
+### encode_add_sub_diff_extended_and_sp
+- **Law:** SP/WSP as Rn with LSL #N (N≤4) must use extended-register encoding (bit 21=1) so register 31 is SP, not XZR.
+- **Shrunk counterexample:** rd=0, rn=0, rm=0, is_64=false, is_sub=false, set_flags=false, use_lsl_alias=true → asm=`add w0, wsp, w0, lsl #1`
+- **Expected:** Word(0x0b2047e0) (llvm-mc)
+- **Actual:** Word(0x0b0007e0)
+- **Severity:** high
+- **Report:** pbt-out/bug_reports/encode_add_sub_sp_lsl_shifted_form.md
 
-2. **encode_adc accepts mixed 32/64-bit register operands**
-   - Law: all three registers must be the same width.
-   - Minimal input: `[w0, w0, x0]`, set_flags=false
-   - Expected: Err. Actual: Ok(Word) using only Rd's sf bit.
-   - Severity: medium
-   - Bug report: pbt-out/bug_reports/encode_adc_mixed_width.md
+### encode_add_sub_neg_imm_out_of_range
+- **Law:** Explicit `lsl #12` requires the unshifted immediate in 0..=4095; overflow must Err, not mask.
+- **Shrunk counterexample:** rd=0, rn=0, is_64=false, is_sub=false, set_flags=false, imm=4097, explicit_lsl12=true
+- **Expected:** Err
+- **Actual:** Ok(Word) via `(imm_val as u32) & 0xFFF`
+- **Severity:** medium
+- **Report:** pbt-out/bug_reports/encode_add_sub_imm12_lsl12_mask.md
 
-3. **encode_adc treats SP/WSP as XZR/WZR**
-   - Law: register 31 in ADC is WZR/XZR, not WSP/SP; SP operands must Err.
-   - Minimal input: `[wsp, w0, w0]`, set_flags=false
-   - Expected: Err. Actual: Ok(Word) identical to `adc wzr, w0, w0`.
-   - Severity: high
-   - Bug report: pbt-out/bug_reports/encode_adc_sp_as_zr.md
+### encode_add_sub_neg_invalid_shift_extend
+- **Law:** ADD/SUB shifted-register allows only LSL/LSR/ASR; ROR must Err.
+- **Shrunk counterexample:** rd=0, rn=0, rm=0, is_64=false, is_sub=false, set_flags=false, class=0, extra=0 (ROR #0)
+- **Expected:** Err
+- **Actual:** Ok(Word) — unknown shift kind defaults to LSL
+- **Severity:** medium
+- **Report:** pbt-out/bug_reports/encode_add_sub_ror_accepted.md
 
-4. **encode_adc accepts FP/SIMD register names as GPRs**
-   - Law: ADC operands are W/X GPRs only.
-   - Minimal input: `[d0, x1, x2]`, set_flags=false
-   - Expected: Err. Actual: Ok(Word) treated as w0.
-   - Severity: medium
-   - Bug report: pbt-out/bug_reports/encode_adc_fp_reg.md
+### encode_add_sub_neg_imm_bad_shift
+- **Law:** ADD/SUB immediate form allows only LSL #0 or LSL #12 after #imm; lsr/asr/ror must Err.
+- **Shrunk counterexample:** rd=0, rn=0, is_64=false, is_sub=false, set_flags=false, imm=0, class=0, amt=0 (lsr #0)
+- **Expected:** Err
+- **Actual:** Ok(Word) — non-lsl#12 Shift on immediate form is ignored
+- **Severity:** medium
+- **Report:** pbt-out/bug_reports/encode_add_sub_imm_bad_shift_ignored.md
 
-All four reproduced serially (`PBT_TEST_JOBS=1`).
+### encode_add_sub_neg_mixed_width
+- **Law:** Immediate and shifted-register ADD/SUB require all registers the same width.
+- **Shrunk counterexample:** rd=0, rn=0, rm=0, rd64=true, rn64=false, rm64=false, is_sub=false, set_flags=false, use_imm=false → ops=[x0, w0, w0]
+- **Expected:** Err
+- **Actual:** Ok(Word) — sf taken only from Rd
+- **Severity:** medium
+- **Report:** pbt-out/bug_reports/encode_add_sub_mixed_width.md
+
+### encode_add_sub_neg_fp_reg
+- **Law:** GPR ADD/SUB operands are W/X registers; FP/SIMD names must Err.
+- **Shrunk counterexample:** which=0, is_sub=false, set_flags=false, prefix="d", n=0 → ops=[d0, x1, x2]
+- **Expected:** Err
+- **Actual:** Ok(Word) — parse_reg_num maps d0→0 as W0
+- **Severity:** medium
+- **Report:** pbt-out/bug_reports/encode_add_sub_fp_reg.md
+
+### encode_add_sub_neg_adds_sp_rd
+- **Law:** ADDS/SUBS Rd cannot be SP/WSP (that encoding is XZR/WZR = CMP/CMN).
+- **Shrunk counterexample:** is_64=false, is_sub=false, rn=0, imm=0 → ops=[wsp, w0, #0], set_flags=true
+- **Expected:** Err
+- **Actual:** Ok(Word)
+- **Severity:** high
+- **Report:** pbt-out/bug_reports/encode_add_sub_adds_sp_rd.md
 
 ## Design Caveats
 
@@ -55,38 +81,32 @@ All four reproduced serially (`PBT_TEST_JOBS=1`).
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_adc_pbt) | 10 properties + KAT + 4 regressions |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_add_sub_pbt) | 14 properties + KAT + 7 regression witnesses (extended existing module; prior 8 properties not rewritten) |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PROPERTIES.md — 14-property ledger
 - pbt-out/REPORT.md — this report
 - pbt-out/COVERAGE.md — coverage ledger
-- pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/INVARIANTS.md — confirmed invariants
-- pbt-out/bug_reports/encode_adc_extra_shift_ignored.md
-- pbt-out/bug_reports/encode_adc_mixed_width.md
-- pbt-out/bug_reports/encode_adc_sp_as_zr.md
-- pbt-out/bug_reports/encode_adc_fp_reg.md
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/FUNCTION_INDEX.md — function index (merged, unchanged)
+- pbt-out/INVARIANTS.md — confirmed invariants (encode_add_sub section updated)
+- pbt-out/bug_reports/encode_add_sub_sp_lsl_shifted_form.md
+- pbt-out/bug_reports/encode_add_sub_imm12_lsl12_mask.md
+- pbt-out/bug_reports/encode_add_sub_ror_accepted.md
+- pbt-out/bug_reports/encode_add_sub_imm_bad_shift_ignored.md
+- pbt-out/bug_reports/encode_add_sub_mixed_width.md
+- pbt-out/bug_reports/encode_add_sub_fp_reg.md
+- pbt-out/bug_reports/encode_add_sub_adds_sp_rd.md
 
-## Contract-surface sweep
-
-STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw (same environment quirk as prior campaigns). Manual ARM-field audit of encode_adc added `encode_adc_neg_invalid_reg_name` (passing) and `encode_adc_neg_fp_reg` (failing bug). Closed because the tier's 1 round is done.
-
-## SUT observations (not bugs)
-
-- Valid same-width GPR ADC/ADCS, including XZR/WZR (register 31), matches llvm-mc for 1000 random cases per property.
-- ADC vs ADCS encodings differ only by bit 29 (S).
-- ARM ARM field layout (sf, op=0, S, opcode 11010000, Rm/Rn/Rd, bits 15:10 zero) holds on the success path.
-- Fewer than 3 operands and a non-register in any of the three slots return Err.
-- Invalid register names (x32, empty, foo, r0) return Err via parse_reg_num.
+Contract-surface sweep: 1 round (standard tier). `coverage_gaps` had no LLVM profraw; sweep was a manual arm audit of untested documented paths (FP regs, ADDS Rd=SP, :lo12:/:tprel: modifiers). Close reason: tier's one sweep round completed.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-11 11:18 (campaign: coverage)
+> Last updated: 2026-09-11 11:32 (campaign: coverage)
 > Files: 3/3 scanned (100%) | Functions: 4/76 total | PBT candidates: 4 | Tested: 4 (100%) | 0 pass, 4 fail
 
 ## Summary
