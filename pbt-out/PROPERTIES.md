@@ -1,288 +1,311 @@
-# Properties: encode_cas
+# Properties: encode_cls
 
-## encode_cas_diff_llvm_mc
+## encode_cls_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree CAS decoder). encode_swp rejected as differential sibling (different LSE class, size 111000). encode_ldar_stlr rejected (bit21=0, no Rs). Doc evidence: assembler README.md:11 (same textual assembly as gas); README.md:242 lists cas variants; encoder/mod.rs:920-922 dispatch; ARM ARM CAS encoding.
-- Seed: load_store.rs encode_ldar_stlr_pbt llvm-mc differential
-- Formal: ∀ mnemonic ∈ {cas,casa,casal,casl}×{W,X} ∪ {casb,casab,casalb,caslb,cash,casah,casalh,caslh}×{W}, rs,rt ∈ 0..31, rn ∈ 0..31. encode_cas(mnemonic, [Reg(Rs), Reg(Rt), Mem{base:Xn|SP, offset:0}]) = Word(w) ∧ w = llvm-mc("-mattr=+lse " + "mnemonic Rs, Rt, [Rn]")
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree CLS decoder). encode_clz rejected as differential sibling (same-job gate: CLZ is count-leading-zeros, opcode 000100 not 000101). Doc evidence: assembler README.md:11 (same textual assembly as gas); README.md:240 lists cls; encoder/mod.rs:570-572 dispatch; ARM ARM CLS encoding.
+- Seed: bitfield.rs encode_bfi_pbt llvm-mc differential
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..31. encode_cls([Reg(Rd), Reg(Rn)]) = Word(w) ∧ w = llvm-mc("cls Rd, Rn") where Rd/Rn are Wd/Wn if ¬is_64 else Xd/Xn (31 spelled wzr/xzr)
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_cas
+function: encoder.bitfield.encode_cls
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnemonic, rs, rt, rn]
-  domain: { mnemonic: 12 cas* mnemonics with matching W/X, rs,rt,rn: 0..31 }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd,rn: 0..31 matching W or X }
   relation:
     op: eq
-    lhs: encode_cas(mnemonic, [Reg(Rs), Reg(Rt), Mem{Xn|SP, 0}])
-    rhs: llvm_mc("-mattr=+lse", "mnemonic Rs, Rt, [Rn]")
+    lhs: encode_cls([Reg(Rd), Reg(Rn)])
+    rhs: llvm_mc("cls Rd, Rn")
 generators:
-  mnemonic: { gen: oneof, values: ["cas","casa","casal","casl","casb","casab","casalb","caslb","cash","casah","casalh","caslh"] }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/arm/assembler/README.md:11; README.md:242; encoder/mod.rs:920-922; ARM ARM CAS
+evidence: src/backend/arm/assembler/README.md:11; README.md:240; encoder/mod.rs:570-572; ARM ARM CLS
 ```
 
-## encode_cas_arm_fields
+## encode_cls_arm_fields
 - Tier: 4d
-- Rationale: ARM ARM CAS encoding size 001000 1 L 1 Rs o0 11111 Rn Rt. Weaker than differential (already used). Invariant is the architectural field layout, unpacked independently of the producing statement.
-- Seed: load_store.rs encode_ldar_stlr_roundtrip_arm_fields
-- Formal: ∀ valid (mnemonic, rs, rt, rn). let w = encode_cas(...).Word. w[31:30]=size(mnemonic,Rs) ∧ w[29:24]=001000 ∧ w[23]=1 ∧ w[22]=L ∧ w[21]=1 ∧ w[20:16]=rs ∧ w[15]=o0 ∧ w[14:10]=11111 ∧ w[9:5]=rn ∧ w[4:0]=rt
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: ARM ARM Data-processing (1 source) CLS encoding sf 1 0 11010110 00000 000101 Rn Rd. Weaker than differential (already used). Invariant is the architectural field layout, unpacked independently of the producing statement.
+- Seed: bitfield.rs encode_bfi_arm_fields
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..31. let w = encode_cls([Reg(Rd), Reg(Rn)]).Word. w[31]=sf ∧ w[30]=1 ∧ w[29]=0 ∧ w[28:21]=11010110 ∧ w[20:16]=00000 ∧ w[15:10]=000101 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_cas
+function: encoder.bitfield.encode_cls
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mnemonic, rs, rt, rn]
-  domain: { valid CAS W/X/byte/half domain }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd,rn: 0..31 matching W or X }
   relation:
     op: holds
-    expr: arm_cas_fields(encode_cas(mnemonic, ops))
+    expr: arm_cls_fields(encode_cls([Reg(Rd), Reg(Rn)]))
 generators:
-  mnemonic: { gen: oneof, values: ["cas","casa","casal","casl","casb","casab","casalb","caslb","cash","casah","casalh","caslh"] }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM CAS encoding size 001000 1 L 1 Rs o0 11111 Rn Rt; assembler README.md:11
+evidence: ARM ARM Data-processing (1 source) CLS sf 1 0 11010110 00000 000101 Rn Rd; assembler README.md:11
 ```
 
-## encode_cas_metamorphic_regs_ao
+## encode_cls_metamorphic_rd_rn
 - Tier: 4c
-- Rationale: ARM encoding places Rt in bits[4:0], Rn in bits[9:5], Rs in bits[20:16]; L at bit 22; o0 at bit 15. Incrementing one register or flipping acquire/release must change only that field. Weaker than differential. Required metamorphic companion.
-- Seed: load_store.rs encode_ldar_stlr_metamorphic_l_bit
-- Formal: ∀ valid CAS with rs,rt,rn ∈ 0..30. encode_cas(...,rt+1,...) xor encode_cas(...,rt,...) has only bits[4:0] = rt+1; Rn+1 only bits[9:5]; Rs+1 only bits[20:16]; casa xor cas = 1<<22; casl xor cas = 1<<15; casal xor cas = (1<<22)|(1<<15); encode_cas("CAS", ...) = encode_cas("cas", ...).
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: ARM encoding places Rd in bits[4:0] and Rn in bits[9:5]; sf at bit 31. Incrementing one register or flipping W/X must change only that field. Weaker than differential. Required metamorphic companion.
+- Seed: bitfield.rs encode_bfi_metamorphic_rd_rn
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..30. encode_cls(rd+1,rn) xor encode_cls(rd,rn) has only bits[4:0] updated to rd+1; Rn+1 only bits[9:5]; encode_cls(X,X) xor encode_cls(W,W) = 1<<31
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_cas
+function: encoder.bitfield.encode_cls
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rs, rt, rn]
-  domain: { rs,rt,rn in 0..30 }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd,rn in 0..30 }
   relation:
     op: holds
-    expr: field_independence(encode_cas, rs, rt, rn) && (casa xor cas == 1<<22) && (casl xor cas == 1<<15) && encode_cas(Mem{off:0}) == encode_cas(Mem{off:0-omitted})
+    expr: field_independence(encode_cls, rd, rn) && (encode_cls(X) xor encode_cls(W) == 1<<31)
 generators:
-  rs: { gen: int, min: 0, max: 30, type: u32 }
-  rt: { gen: int, min: 0, max: 30, type: u32 }
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-evidence: ARM ARM CAS Rt bits[4:0] Rn bits[9:5] Rs bits[20:16] L bit22 o0 bit15; ARM {,#0}
+evidence: ARM ARM CLS Rd bits[4:0] Rn bits[9:5] sf bit 31
 ```
 
-## encode_cas_neg_extra_operand
+## encode_cls_neg_arity
 - Tier: 4e
-- Rationale: llvm-mc and gas reject a fourth operand. SUT checks operands.len() < 3 only. Documented error contract: extra operands are invalid assembly.
-- Seed: load_store.rs encode_ldar_stlr extra-operand regression
-- Formal: ∀ valid 3-operand CAS ops, extra ∈ Operand. encode_cas(mnemonic, ops ++ [extra]) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: v=0, rs=0, rt=0, rn=0, is_64=false, extra=Reg("x2") — cas w0, w0, [x0], x2
-- Bug report: pbt-out/bug_reports/encode_cas_extra_operand.md
-
-```property
-function: encoder.load_store.encode_cas
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnemonic, rs, rt, rn, extra]
-  domain: { valid 3-operand CAS, extra any Operand }
-  relation:
-    op: throws
-    expr: encode_cas(mnemonic, [Rs, Rt, Mem, extra])
-    error: String
-generators:
-  mnemonic: { gen: oneof, values: ["cas","casa","casb","cash"] }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: llvm-mc/gas reject extra CAS operands; README.md:11 gas contract
-```
-
-## encode_cas_neg_sp_zr_base
-- Tier: 4e
-- Rationale: ARM/gas/llvm-mc: Rs/Rt are integer ZR not SP; Rn is Xn|SP not W, not WSP, not XZR/x31. Invalid domain must Err.
-- Seed: load_store.rs encode_ldar_stlr_neg SP/W-base
-- Formal: ∀ mnemonic in cas*, kind ∈ {Rs=SP, Rt=SP, Rs=WSP, Rt=WSP, base=W, base=WSP, base=XZR, base=x31, base=wzr}. encode_cas(...) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: v=0, n=0, kind=0, is_64=false — cas sp, w1, [x2]
-- Bug report: pbt-out/bug_reports/encode_cas_sp_as_rs.md (related: encode_cas_xzr_as_base.md, encode_cas_w_base.md)
-
-```property
-function: encoder.load_store.encode_cas
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnemonic, kind]
-  domain: { SP/WSP as Rs/Rt; W/WSP/XZR/x31 as base }
-  relation:
-    op: throws
-    expr: encode_cas(mnemonic, invalid_ops)
-    error: String
-generators:
-  mnemonic: { gen: oneof, values: ["cas","casa","casal","casl","casb","cash"] }
-  kind: { gen: int, min: 0, max: 8, type: u32 }
-expected_error: String
-evidence: ARM ARM CAS Rs/Rt=ZR Rn=SP; llvm-mc/gas reject SP as Rs/Rt and XZR/W as base
-```
-
-## encode_cas_neg_mixed_fp_xbyte
-- Tier: 4e
-- Rationale: llvm-mc/gas reject mixed W/X Rs/Rt, FP/SIMD prefixes, and casb/cash with X registers. Invalid domain must Err.
-- Seed: neighbouring encode_*_pbt mixed-width / FP negatives
-- Formal: ∀ kind ∈ {mixed W/X, FP prefix s/d/q/v/h/b, casb|cash with X}. encode_cas(...) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: n=0, kind=0, fp='b' — cas x0, w0, [x1]
-- Bug report: pbt-out/bug_reports/encode_cas_mixed_width.md (related: encode_cas_fp_reg.md, encode_cas_casb_x_reg.md)
-
-```property
-function: encoder.load_store.encode_cas
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [kind, n]
-  domain: { mixed W/X; FP prefixes; casb/cash X-regs }
-  relation:
-    op: throws
-    expr: encode_cas(invalid_mixed_or_fp_or_xbyte)
-    error: String
-generators:
-  kind: { gen: int, min: 0, max: 10, type: u32 }
-  n: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: llvm-mc/gas operand mismatch for mixed W/X, FP, casb X; README.md:11
-```
-
-## encode_cas_neg_arity_and_shape
-- Tier: 4e
-- Rationale: CAS requires exactly 3 operands with the third a no-offset (or optional #0) Mem of Xn|SP. Fewer operands and pre/post/register-offset/non-mem forms are rejected by gas/llvm-mc.
-- Seed: load_store.rs encode_ldar_stlr_neg_arity_and_shape
-- Formal: ∀ shape ∈ {0 ops, 1 op, 2 ops, Imm/Symbol/Cond third, MemPreIndex, MemPostIndex, MemRegOffset}. encode_cas("cas", ops(shape)) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: llvm-mc reports "too few operands" for `cls w0`. ARM CLS is a two-operand instruction. get_reg on a missing slot must Err.
+- Seed: bitfield.rs encode_bfi_neg_arity
+- Formal: ∀ len ∈ 0..1, is_64, rd,rn ∈ 0..31. encode_cls(ops[0..len]) = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_cas
+function: encoder.bitfield.encode_cls
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [shape]
-  domain: { arity < 3 or third operand not bare Mem }
+  vars: [len, is_64, rd, rn]
+  domain: { len: 0..1, is_64: bool, rd,rn: 0..31 }
   relation:
-    op: throws
-    expr: encode_cas("cas", ops(shape))
-    error: String
+    op: holds
+    expr: encode_cls(ops.truncate(len)).is_err()
 generators:
-  shape: { gen: int, min: 0, max: 8, type: u32 }
-expected_error: String
-evidence: llvm-mc "too few operands" / "invalid operand"; gas "comma expected" / "invalid addressing mode"
-```
-
-## encode_cas_neg_nonzero_offset
-- Tier: 4e
-- Rationale: ARM ARM optional offset is only #0; gas: "the optional immediate offset can only be 0"; llvm-mc rejects any #imm. Nonzero Mem.offset must Err. Bounds sampled at ±1, ±8, i64::MIN/MAX.
-- Seed: (none) — ARM {,#0} and gas error text
-- Formal: ∀ mnemonic in cas*, rs,rt,rn ∈ 0..31, off ∈ Z\{0}. encode_cas(mnemonic, [Rs, Rt, Mem{base, offset:off}]) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: v=0, rs=0, rt=0, rn=0, is_64=false, off=-1 — cas w0, w0, [x0, #-1]
-- Bug report: pbt-out/bug_reports/encode_cas_nonzero_offset.md
-
-```property
-function: encoder.load_store.encode_cas
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnemonic, rs, rt, rn, off]
-  domain: { off != 0 }
-  relation:
-    op: throws
-    expr: encode_cas(mnemonic, [Rs, Rt, Mem{offset:off}])
-    error: String
-generators:
-  mnemonic: { gen: oneof, values: ["cas","casb","cash","casa"] }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  len: { gen: int, min: 0, max: 1, type: usize }
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  off: { gen: int, min: -8, max: 8, type: i64 }
 expected_error: String
-evidence: ARM ARM CAS {,#0}; gas "optional immediate offset can only be 0"; llvm-mc rejects #imm
+evidence: llvm-mc "too few operands for instruction"; ARM ARM CLS <Wd>, <Wn>
 ```
 
-## encode_cas_neg_invalid_name
+## encode_cls_neg_extra_operand
 - Tier: 4e
-- Rationale: Sweep — get_reg / parse_reg_num reject unparsable names. Documented by parse_reg_num (prefix x/w and 0..=31) and get_reg error "invalid register". Stronger oracles do not apply to the invalid-name domain.
-- Seed: neighbouring encode_bfxil_neg_invalid_name
-- Formal: ∀ slot ∈ {Rs, Rt, base}, name ∈ {foo, x32, w32, empty, r0, x-1, 31}. encode_cas("cas", ops with that slot = name) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Rationale: llvm-mc rejects `cls w0, w1, w2` ("invalid operand"). CLS has exactly two operands. Extra operand must Err.
+- Seed: bitfield.rs encode_bfi_neg_extra_operand
+- Formal: ∀ valid (is_64, rd, rn), extra ∈ Operand. encode_cls([Rd, Rn, extra]) = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: is_64=false, rd=0, rn=0, extra=Reg("x0")  (cls w0, w0, x0) -> Ok(Word(0x5ac01400))
+- Bug report: pbt-out/bug_reports/encode_cls_extra_operand.md
 
 ```property
-function: encoder.load_store.encode_cas
+function: encoder.bitfield.encode_cls
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [slot, name]
-  domain: { unparsable register/base names }
+  vars: [is_64, rd, rn, extra]
+  domain: { valid CLS GPR pair plus one extra Operand }
   relation:
-    op: throws
-    expr: encode_cas("cas", ops_with_invalid_name(slot, name))
-    error: String
+    op: holds
+    expr: encode_cls([Rd, Rn, extra]).is_err()
 generators:
-  slot: { gen: int, min: 0, max: 2, type: u32 }
-  name: { gen: oneof, values: ["foo","x32","w32","","r0","x-1","31"] }
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: oneof, values: ["Reg", "Imm", "Shift", "RegArrangement"] }
 expected_error: String
-evidence: encoder/mod.rs:131-147 parse_reg_num; get_reg invalid register
+evidence: llvm-mc rejects cls w0, w1, w2; ARM ARM CLS two-operand form
 ```
 
-## encode_cas_diff_alt_spellings
+## encode_cls_neg_sp
+- Tier: 4e
+- Rationale: ARM CLS register 31 is ZR not SP. llvm-mc rejects `cls wsp, w0` and `cls w0, sp`. SP/WSP must Err.
+- Seed: bitfield.rs encode_bfi_neg_sp
+- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, other GPR. encode_cls with slot which = SP/WSP = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: which=0, sp64=false, is_64=false, other=0  (cls wsp, w0) -> Ok(Word(0x5ac0141f))
+- Bug report: pbt-out/bug_reports/encode_cls_sp.md
+
+```property
+function: encoder.bitfield.encode_cls
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, sp64, is_64, other]
+  domain: { which: 0..1, sp64: bool, is_64: bool, other: 0..30 }
+  relation:
+    op: holds
+    expr: encode_cls(ops_with_sp_at(which)).is_err()
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  sp64: { gen: bool }
+  is_64: { gen: bool }
+  other: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: ARM ARM CLS register 31 is ZR not SP; llvm-mc rejects SP/WSP
+```
+
+## encode_cls_neg_mixed_width
+- Tier: 4e
+- Rationale: llvm-mc rejects `cls x0, w1`. ARM CLS requires matching W/W or X/X. Mixed width must Err.
+- Seed: bitfield.rs encode_bfi_neg_mixed_width
+- Formal: ∀ rd,rn ∈ 0..31, rd64 ≠ rn64. encode_cls([Reg(rd64?Xd:Wd), Reg(rn64?Xn:Wn)]) = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rd64=true, rn64=false  (cls x0, w0) -> Ok(Word(0xdac01400))
+- Bug report: pbt-out/bug_reports/encode_cls_mixed_width.md
+
+```property
+function: encoder.bitfield.encode_cls
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rd64, rn64]
+  domain: { rd,rn: 0..31, rd64 != rn64 }
+  relation:
+    op: holds
+    expr: encode_cls([Reg mixed W/X]).is_err()
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+expected_error: String
+evidence: llvm-mc rejects cls x0, w1; ARM ARM CLS Wd,Wn / Xd,Xn
+```
+
+## encode_cls_neg_fp
+- Tier: 4e
+- Rationale: llvm-mc rejects `cls d0, d1` / s/q/v/h/b. Scalar CLS is integer GPR only. FP/SIMD prefixes must Err.
+- Seed: bitfield.rs encode_bfi_neg_fp
+- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_cls with slot which = prefix+n = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: which=0, prefix="d", n=0  (cls d0, x1) -> Ok(Word(0x5ac01420))
+- Bug report: pbt-out/bug_reports/encode_cls_fp.md
+
+```property
+function: encoder.bitfield.encode_cls
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, prefix, n]
+  domain: { which: 0..1, prefix: d|s|q|v|h|b, n: 0..31 }
+  relation:
+    op: holds
+    expr: encode_cls(ops_with_fp_at(which)).is_err()
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  prefix: { gen: oneof, values: ["d","s","q","v","h","b"] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc rejects cls d0, d1; ARM ARM CLS integer GPR only
+```
+
+## encode_cls_diff_alt_spellings
 - Tier: 2
-- Rationale: Sweep — encode_cas lowercases the mnemonic; llvm-mc accepts CAS/Cas/CASB. Same differential contract as encode_cas_diff_llvm_mc over case variants.
-- Seed: neighbouring encode_bfxil_diff_alt_spellings
-- Formal: ∀ valid (v, rs, rt, rn, is_64), mode ∈ {upper, first-upper, lower}. encode_cas(case(mnemonic, mode), ops) = llvm-mc(case(mnemonic, mode) + " Rs, Rt, [Rn]")
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: Same differential contract as valid GPR, covering x31/w31, XZR/WZR, LR, and uppercase spellings that llvm-mc accepts. Strengthening / contract-surface sweep.
+- Seed: bitfield.rs encode_bfi_diff_alt_spellings
+- Formal: ∀ is_64, rd,rn ∈ 0..31, dest_spell,src_spell ∈ 0..4. encode_cls([Reg(spell(Rd)), Reg(spell(Rn))]) = llvm-mc("cls spell(Rd), spell(Rn)")
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_cas
+function: encoder.bitfield.encode_cls
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [v, rs, rt, rn, is_64, mode]
-  domain: { 12 cas* mnemonics, case variants, rs,rt,rn 0..31 }
+  vars: [is_64, rd, rn, dest_spell, src_spell]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31, dest_spell: 0..4, src_spell: 0..4 }
   relation:
     op: eq
-    lhs: encode_cas(cased_mnemonic, [Reg(Rs), Reg(Rt), Mem{Xn|SP, 0}])
-    rhs: llvm_mc("-mattr=+lse", cased_asm)
+    lhs: encode_cls([Reg(spell(Rd)), Reg(spell(Rn))])
+    rhs: llvm_mc("cls spell(Rd), spell(Rn)")
 generators:
-  v: { gen: int, min: 0, max: 11, type: u32 }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-  mode: { gen: int, min: 0, max: 2, type: u32 }
-evidence: load_store.rs:824 mnemonic.to_lowercase; llvm-mc accepts uppercase CAS
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
+  src_spell: { gen: int, min: 0, max: 4, type: u32 }
+evidence: llvm-mc accepts x31/w31/XZR/LR/uppercase; assembler README.md:11
+```
+
+## encode_cls_neg_nonreg
+- Tier: 4e
+- Rationale: get_reg requires Operand::Reg. Imm/Shift/Mem/Label/Symbol/Cond/RegArrangement at either slot must Err. Strengthening / contract-surface sweep.
+- Seed: bitfield.rs encode_bfi_neg_nonreg
+- Formal: ∀ which ∈ {0,1}, bad ∉ Reg. encode_cls with slot which = bad = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.bitfield.encode_cls
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, bad]
+  domain: { which: 0..1, bad: non-Reg Operand }
+  relation:
+    op: holds
+    expr: encode_cls(ops_with_nonreg_at(which)).is_err()
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  bad: { gen: oneof, values: ["Imm", "Shift", "Mem", "Label", "Symbol", "Cond", "RegArrangement"] }
+expected_error: String
+evidence: get_reg expected register; llvm-mc rejects non-register CLS operands
+```
+
+## encode_cls_neg_invalid_name
+- Tier: 4e
+- Rationale: parse_reg_num returns None for foo/x32/empty/r0. Invalid names must Err. Strengthening / contract-surface sweep.
+- Seed: bitfield.rs encode_bfi_neg_invalid_name
+- Formal: ∀ which ∈ {0,1}, name ∈ {foo,x32,w32,x,r0,"",x-1,x99,w}. encode_cls with slot which = Reg(name) = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.bitfield.encode_cls
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, name]
+  domain: { which: 0..1, name in invalid register names }
+  relation:
+    op: holds
+    expr: encode_cls(ops_with_name_at(which)).is_err()
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  name: { gen: oneof, values: ["foo","x32","w32","x","r0","","x-1","x99","w"] }
+expected_error: String
+evidence: parse_reg_num returns None for these names; llvm-mc rejects them
 ```

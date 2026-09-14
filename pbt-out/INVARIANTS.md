@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_cls)
+
+- Valid CLS Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `cls w0, w1` = 0x5ac01420.
+- Success-path word is ARM Data-processing (1 source) CLS: sf 1 0 11010110 00000 000101 Rn Rd. Equivalently w = (sf<<31)|(1<<30)|(0b011010110<<21)|(0b000101<<10)|(rn<<5)|rd. bits[30]=1; bits[29]=0; bits[28:21]=11010110; bits[20:16]=00000; bits[15:10]=000101.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; X vs W xor = 1<<31 (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `cls w0, w1` = 0x5ac01420; `cls x0, x1` = 0xdac01420; `cls wzr, wzr` = 0x5ac017ff; `cls xzr, xzr` = 0xdac017ff; `cls lr, x1` = 0xdac0143e; `cls x0, xzr` = 0xdac017e0.
+- Extra operand, SP/WSP, mixed W/X, and FP/SIMD prefixes currently encode instead of Err (see bugs).
+
+## Environment (encode_cls)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on `cls w0, w1` = 0x5ac01420.
+- ARM ARM Data-processing (1 source) CLS: CLS <Wd>, <Wn> / CLS <Xd>, <Xn>. Encoding sf 1 0 11010110 00000 000101 Rn Rd; register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:570-572 scalar cls => encode_cls; NEON RegArrangement => encode_neon_two_misc.
+- Callers: encoder dispatch only.
+- Sibling encode_clz is a different opcode (000100, count leading zeros) — not a differential sibling.
+- encode_cls does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_cls (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_cls_*.md.
+
 # Confirmed invariants (encode_cas)
 
 - Valid CAS/CASA/CASAL/CASL on matching W or X Rs/Rt with [Xn|SP], and CASB/CASH (plus acquire/release) on W Rs/Rt with [Xn|SP], including wzr/xzr and sp-as-base, matches llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). gas aarch64-linux-gnu-as -march=armv8-a+lse agrees on `cas x0, x1, [x2]` = 0xc8a07c41.

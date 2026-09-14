@@ -1,44 +1,31 @@
-# PBT Campaign Report: encode_cas
+# PBT Campaign Report: encode_cls
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_cas (src/backend/arm/assembler/encoder/load_store.rs)
-**Tests:** 10 properties (6 passing, 4 failing) + 8 passing KAT + 8 failing regression witnesses
-**Result:** 6 passing, 8 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-driven sweep round)
+**Modules tested:** encode_cls
+**Tests:** 11 properties + 6 KAT + 4 regression witnesses
+**Result:** 7 passing properties, 4 bugs
+**Effort tier:** standard (1 coverage-driven sweep round; generator runs = 1000)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_cas | 10 properties (6 pass / 4 fail) + 8 KAT + 8 regressions | 8 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_cls | 11 properties (7 passing, 4 failing) + 6 KAT + 4 regression | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-Four failing, shrunk PBT properties. Serial reconfirm: `PBT_TEST_JOBS=1` / `--test-threads=1`. Additional generator arms of the same properties that also fail are listed under the parent witness (each has a failing regression).
+1. **encode_cls ignores extra operands.** `cls w0, w0, x0` encodes as `cls w0, w0` (0x5ac01400) instead of Err. Law: two-operand CLS. Counterexample: [Reg("w0"), Reg("w0"), Reg("x0")]. Root cause: no `operands.len()` check; `get_reg` only reads indices 0 and 1. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_extra_operand.md`. Regression: `test_encode_cls_regression_extra_operand`.
 
-1. **encode_cas_neg_extra_operand** (Negative/Error Contract). Shrunk: v=0, rs=0, rt=0, rn=0, is_64=false, extra=Reg("x2") — `cas w0, w0, [x0], x2`. Expected Err; actual Ok(Word) of `cas w0, w0, [x0]`. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_extra_operand.md`. Regression: `test_encode_cas_regression_extra_operand` (fails).
-2. **encode_cas_neg_sp_zr_base** (Negative/Error Contract). Shrunk: v=0, n=0, kind=0, is_64=false — `cas sp, w1, [x2]`. Expected Err; actual Ok(Word) aliasing SP to ZR. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_sp_as_rs.md`. Regression: `test_encode_cas_regression_sp_as_rs` (fails).
-   - Same property, kind=6/7/8 (reproduce=`test_encode_cas_regression_xzr_as_base`): `cas x0, x1, [xzr]` encodes as `[sp]`. Report: `pbt-out/bug_reports/encode_cas_xzr_as_base.md`. Severity: high.
-   - Same property, kind=4 (reproduce=`test_encode_cas_regression_w_base`): `cas w0, w1, [w2]` encodes as `[x2]`. Report: `pbt-out/bug_reports/encode_cas_w_base.md`. Severity: medium.
-3. **encode_cas_neg_mixed_fp_xbyte** (Negative/Error Contract). Shrunk: n=0, kind=0, fp='b' — `cas x0, w0, [x1]`. Expected Err; actual Ok(Word) 64-bit CAS. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_mixed_width.md`. Regression: `test_encode_cas_regression_mixed_width` (fails).
-   - Same property, kind=2 (reproduce=`test_encode_cas_regression_fp_reg`): `cas s0, s1, [x2]` encodes as `cas w0, w1, [x2]`. Report: `pbt-out/bug_reports/encode_cas_fp_reg.md`.
-   - Same property, kind=4 (reproduce=`test_encode_cas_regression_casb_x_reg`): `casb x0, x1, [x2]` encodes as CASB W. Report: `pbt-out/bug_reports/encode_cas_casb_x_reg.md`.
-4. **encode_cas_neg_nonzero_offset** (Negative/Error Contract). Shrunk: v=0, rs=0, rt=0, rn=0, is_64=false, off=-1 — `cas w0, w0, [x0, #-1]`. Expected Err; actual Ok(Word) of `cas w0, w0, [x0]`. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_nonzero_offset.md`. Regression: `test_encode_cas_regression_nonzero_offset` (fails).
+2. **encode_cls accepts SP/WSP as register 31.** `cls wsp, w0` encodes as `cls wzr, w0` (0x5ac0141f) instead of Err. Law: ARM CLS register 31 is ZR not SP. Counterexample: [Reg("wsp"), Reg("w0")]. Root cause: `parse_reg_num` maps sp/wsp to 31; encode_cls does not reject SP. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_sp.md`. Regression: `test_encode_cls_regression_sp`.
 
-Results: 6 passed, 4 failed (property tests); 8 passed KAT; 8 failed regressions.
+3. **encode_cls accepts mixed W/X widths.** `cls x0, w0` encodes as `cls x0, x0` (0xdac01400) instead of Err. Law: matching W/W or X/X. Counterexample: [Reg("x0"), Reg("w0")]. Root cause: sf taken from Rd only; Rn width ignored. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_mixed_width.md`. Regression: `test_encode_cls_regression_mixed_width`.
 
-Failing tests:
-- encode_cas_neg_extra_operand: SUT bug — extra operand ignored (shrunk `cas w0, w0, [x0], x2`)
-- encode_cas_neg_sp_zr_base: SUT bug — SP as Rs (shrunk `cas sp, w1, [x2]`); related arms XZR-base / W-base
-- encode_cas_neg_mixed_fp_xbyte: SUT bug — mixed W/X (shrunk `cas x0, w0, [x1]`); related arms FP / casb-X
-- encode_cas_neg_nonzero_offset: SUT bug — nonzero offset discarded (shrunk off=-1)
+4. **encode_cls accepts FP/SIMD registers as GPRs.** `cls d0, x1` encodes as `cls w0, w1` (0x5ac01420) instead of Err. Law: scalar CLS is integer GPR only. Counterexample: [Reg("d0"), Reg("x1")]. Root cause: `parse_reg_num` accepts d/s/q/v/h/b; encode_cls does not call `is_fp_reg`. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_fp.md`. Regression: `test_encode_cls_regression_fp`.
 
-SUT observations (not bugs, but notable):
-- gas accepts optional `#0` offset (ARM `{,#0}`); llvm-mc 15 rejects it. At encode_cas, `[Xn]` and `[Xn, #0]` are the same `Mem{offset:0}`.
-- Valid encodings (all 12 mnemonics, W/X as specified, zr/sp) match llvm-mc 1000/1000.
+All four reproduced serially (`cargo test --lib encode_cls -- --test-threads=1`).
 
 ## Design Caveats
 
@@ -48,7 +35,7 @@ SUT observations (not bugs, but notable):
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/load_store.rs (mod encode_cas_pbt) | 10 properties + 8 KAT + 8 regressions |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_cls_pbt) | 11 properties (7 pass / 4 fail) + 6 KAT + 4 failing regression witnesses |
 
 ## Output Directories
 
@@ -59,21 +46,21 @@ SUT observations (not bugs, but notable):
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_cas_extra_operand.md
-- pbt-out/bug_reports/encode_cas_sp_as_rs.md
-- pbt-out/bug_reports/encode_cas_xzr_as_base.md
-- pbt-out/bug_reports/encode_cas_w_base.md
-- pbt-out/bug_reports/encode_cas_mixed_width.md
-- pbt-out/bug_reports/encode_cas_fp_reg.md
-- pbt-out/bug_reports/encode_cas_casb_x_reg.md
-- pbt-out/bug_reports/encode_cas_nonzero_offset.md
+- pbt-out/bug_reports/encode_cls_extra_operand.md
+- pbt-out/bug_reports/encode_cls_sp.md
+- pbt-out/bug_reports/encode_cls_mixed_width.md
+- pbt-out/bug_reports/encode_cls_fp.md
+
+## Sweep
+
+Round 1/1: `coverage_gaps` had no LLVM profraw; manual arm audit of encode_cls (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings). Added encode_cls_diff_alt_spellings, encode_cls_neg_nonreg, encode_cls_neg_invalid_name (all passing). Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 18:35 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 78/284 total | PBT candidates: 78 | Tested: 78 (100%) | 0 pass, 78 fail
+> Last updated: 2026-09-14 18:51 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 79/284 total | PBT candidates: 79 | Tested: 79 (100%) | 0 pass, 79 fail
 
 ## Summary
 
@@ -82,10 +69,10 @@ SUT observations (not bugs, but notable):
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 284 |
-| PBT candidates (from FUNCTION_INDEX) | 78 |
-| **Tested (of PBT candidates)** | **78 / 78 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 78 / 0 |
-| **Overall (tested / all functions)** | **78 / 284 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 79 |
+| **Tested (of PBT candidates)** | **79 / 79 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 79 / 0 |
+| **Overall (tested / all functions)** | **79 / 284 (28%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -93,13 +80,13 @@ SUT observations (not bugs, but notable):
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 78 | 78 | 0 | 100% |
+|  | 79 | 79 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 78 | 78 | 0 | 100% |
+| unknown | 79 | 79 | 0 | 100% |
 
 ## File Coverage
 
@@ -200,3 +187,4 @@ SUT observations (not bugs, but notable):
 | encode_bfi | bitfield.rs |
 | encode_bfxil | bitfield.rs |
 | encode_cas | load_store.rs |
+| encode_cls | bitfield.rs |
