@@ -79,3 +79,4 @@
 | encode_neon_aes | neon.rs | neon.rs | cargo test --lib | 4 passing / 4 failing properties (plus 2 passing KAT + 1 passing isolated invalid-name + 6 failing regression witnesses; 6 bugs; sweep nonreg-src passing, WSP dest failing) |
 | encode_bfi | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing) |
 | encode_bfxil | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing) |
+| encode_cas | load_store.rs | load_store.rs | cargo test --lib | 6 passing / 4 failing properties (plus 8 passing KAT + 8 failing regression witnesses; 8 bugs; sweep invalid-name/alt-spellings passing) |

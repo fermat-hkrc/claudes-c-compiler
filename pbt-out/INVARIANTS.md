@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_cas)
+
+- Valid CAS/CASA/CASAL/CASL on matching W or X Rs/Rt with [Xn|SP], and CASB/CASH (plus acquire/release) on W Rs/Rt with [Xn|SP], including wzr/xzr and sp-as-base, matches llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). gas aarch64-linux-gnu-as -march=armv8-a+lse agrees on `cas x0, x1, [x2]` = 0xc8a07c41.
+- Success-path word is ARM CAS: size 001000 1 L 1 Rs o0 11111 Rn Rt. size 00=byte 01=half 10=word 11=doubleword; L=1 for CASA/CASAL; o0=1 for CASL/CASAL; bits[29:24]=001000; bit23=1; bit21=1; bits[14:10]=11111. Equivalently w = (size<<30)|(0b001000<<24)|(1<<23)|(L<<22)|(1<<21)|(rs<<16)|(o0<<15)|(0b11111<<10)|(rn<<5)|rt.
+- Metamorphic: Rt+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; Rs+1 increments bits[20:16] only; CASA xor CAS = 1<<22; CASL xor CAS = 1<<15; CASAL xor CAS = (1<<22)|(1<<15); uppercase mnemonic matches lowercase (1000 cases).
+- Fewer than 3 operands, non-Mem third operand (Imm/Symbol/Cond/pre/post/reg-offset), and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `cas x0, x1, [x2]` = 0xC8A07C41; `cas w0, w1, [x2]` = 0x88A07C41; `casa w0, w1, [x2]` = 0x88E07C41; `casl w0, w1, [x2]` = 0x88A0FC41; `casal w0, w1, [x2]` = 0x88E0FC41; `casb w0, w1, [x2]` = 0x08A07C41; `cash w0, w1, [x2]` = 0x48A07C41; `cas xzr, xzr, [sp]` = 0xC8BF7FFF.
+- Extra operand, SP/WSP as Rs/Rt, XZR/x31/WZR as base, W/WSP as base, mixed W/X, FP/SIMD prefixes, CASB/CASH with X, and nonzero Mem offset currently encode instead of Err (see bugs).
+- gas accepts optional `#0` offset (ARM `{,#0}`); llvm-mc 15 rejects `#0`. At the encode_cas boundary `[Xn]` and `[Xn, #0]` are the same Operand::Mem{offset:0}, so the #0 form is not distinguishable here.
+
+## Environment (encode_cas)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+lse -show-encoding. gas aarch64-linux-gnu-as -march=armv8-a+lse agrees on `cas x0, x1, [x2]` = 0xc8a07c41.
+- ARM ARM Compare and Swap: size 001000 1 L 1 Rs o0 11111 Rn Rt. Rs/Rt are ZR not SP at 31; Rn is SP not ZR at 31. CASB/CASH require W registers.
+- Dispatch: encoder/mod.rs:920-922 cas/casa/casal/casl/casb/casab/casalb/caslb/cash/casah/casalh/caslh => encode_cas.
+- Callers: encoder dispatch only.
+- Sibling encode_swp is a different LSE class (not a differential sibling).
+- encode_cas checks operands.len() < 3 only (extra operands ignored); takes size from Rs (or b/h suffix) without checking Rt width or FP prefix; Mem offset is discarded (`base, ..`).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_cas (arity / extra / SP / XZR-base / W-base / mixed W-X / FP / casb-X / nonzero offset / non-mem / invalid-name / alt-spellings).
+- Eight failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_cas_*.md.
+
 # Confirmed invariants (encode_bfxil)
 
 - Valid BFXIL Wd,Wn / Xd,Xn with 0 <= lsb < R and 1 <= width <= R-lsb (R=32/64), including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `bfxil w0, w1, #0, #1` = 0x33000020.

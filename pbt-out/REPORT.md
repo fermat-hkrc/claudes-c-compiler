@@ -1,63 +1,44 @@
-# PBT Campaign Report: encode_bfxil
+# PBT Campaign Report: encode_cas
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bfxil
-**Tests:** 13 properties (8 passing, 5 failing) plus 6 passing KAT and 5 failing regression witnesses
-**Result:** 8 passing, 5 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening round, 1 coverage_gaps sweep)
+**Modules tested:** encode_cas (src/backend/arm/assembler/encoder/load_store.rs)
+**Tests:** 10 properties (6 passing, 4 failing) + 8 passing KAT + 8 failing regression witnesses
+**Result:** 6 passing, 8 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bfxil | 13 properties + 6 KAT + 5 regressions | 5 | differential (llvm-mc), algebraic.metamorphic (BFXIL alias of BFM; Rd/Rn fields), algebraic.invariant (ARM BFM layout), negative_error |
+| encode_cas | 10 properties (6 pass / 4 fail) + 8 KAT + 8 regressions | 8 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### 1. Extra operand ignored
-- **Law:** BFXIL takes exactly four operands; a fifth must be Err.
-- **Minimal input:** `[Reg("w0"), Reg("w0"), Imm(0), Imm(1), Reg("x0")]`
-- **Expected:** Err
-- **Actual:** Ok(Word) — get_reg/get_imm read only indices 0..3
-- **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfxil_extra_operand.md
+Four failing, shrunk PBT properties. Serial reconfirm: `PBT_TEST_JOBS=1` / `--test-threads=1`. Additional generator arms of the same properties that also fail are listed under the parent witness (each has a failing regression).
 
-### 2. SP/WSP encoded as ZR
-- **Law:** Register 31 is WZR/XZR, not SP/WSP.
-- **Minimal input:** `bfxil wsp, w0, #0, #1`
-- **Expected:** Err
-- **Actual:** Ok(Word) — parse_reg_num maps sp/wsp to 31
-- **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfxil_sp.md
+1. **encode_cas_neg_extra_operand** (Negative/Error Contract). Shrunk: v=0, rs=0, rt=0, rn=0, is_64=false, extra=Reg("x2") — `cas w0, w0, [x0], x2`. Expected Err; actual Ok(Word) of `cas w0, w0, [x0]`. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_extra_operand.md`. Regression: `test_encode_cas_regression_extra_operand` (fails).
+2. **encode_cas_neg_sp_zr_base** (Negative/Error Contract). Shrunk: v=0, n=0, kind=0, is_64=false — `cas sp, w1, [x2]`. Expected Err; actual Ok(Word) aliasing SP to ZR. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_sp_as_rs.md`. Regression: `test_encode_cas_regression_sp_as_rs` (fails).
+   - Same property, kind=6/7/8 (reproduce=`test_encode_cas_regression_xzr_as_base`): `cas x0, x1, [xzr]` encodes as `[sp]`. Report: `pbt-out/bug_reports/encode_cas_xzr_as_base.md`. Severity: high.
+   - Same property, kind=4 (reproduce=`test_encode_cas_regression_w_base`): `cas w0, w1, [w2]` encodes as `[x2]`. Report: `pbt-out/bug_reports/encode_cas_w_base.md`. Severity: medium.
+3. **encode_cas_neg_mixed_fp_xbyte** (Negative/Error Contract). Shrunk: n=0, kind=0, fp='b' — `cas x0, w0, [x1]`. Expected Err; actual Ok(Word) 64-bit CAS. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_mixed_width.md`. Regression: `test_encode_cas_regression_mixed_width` (fails).
+   - Same property, kind=2 (reproduce=`test_encode_cas_regression_fp_reg`): `cas s0, s1, [x2]` encodes as `cas w0, w1, [x2]`. Report: `pbt-out/bug_reports/encode_cas_fp_reg.md`.
+   - Same property, kind=4 (reproduce=`test_encode_cas_regression_casb_x_reg`): `casb x0, x1, [x2]` encodes as CASB W. Report: `pbt-out/bug_reports/encode_cas_casb_x_reg.md`.
+4. **encode_cas_neg_nonzero_offset** (Negative/Error Contract). Shrunk: v=0, rs=0, rt=0, rn=0, is_64=false, off=-1 — `cas w0, w0, [x0, #-1]`. Expected Err; actual Ok(Word) of `cas w0, w0, [x0]`. Severity: medium. Report: `pbt-out/bug_reports/encode_cas_nonzero_offset.md`. Regression: `test_encode_cas_regression_nonzero_offset` (fails).
 
-### 3. Out-of-range #lsb/#width panics or encodes
-- **Law:** 0 <= lsb < R and 1 <= width <= R-lsb; otherwise Err.
-- **Minimal input:** `bfxil w0, w0, #0, #0` (debug overflow at `lsb + width - 1`)
-- **Expected:** Err
-- **Actual:** panic in debug; other out-of-range values encode Ok(Word)
-- **Severity:** high
-- **Bug report:** pbt-out/bug_reports/encode_bfxil_lsb_width.md
+Results: 6 passed, 4 failed (property tests); 8 passed KAT; 8 failed regressions.
 
-### 4. Mixed W/X accepted
-- **Law:** Both registers must be the same width (Wd,Wn or Xd,Xn).
-- **Minimal input:** `bfxil x0, w0, #0, #1`
-- **Expected:** Err
-- **Actual:** Ok(Word) — is_64 taken only from Rd
-- **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfxil_mixed_width.md
+Failing tests:
+- encode_cas_neg_extra_operand: SUT bug — extra operand ignored (shrunk `cas w0, w0, [x0], x2`)
+- encode_cas_neg_sp_zr_base: SUT bug — SP as Rs (shrunk `cas sp, w1, [x2]`); related arms XZR-base / W-base
+- encode_cas_neg_mixed_fp_xbyte: SUT bug — mixed W/X (shrunk `cas x0, w0, [x1]`); related arms FP / casb-X
+- encode_cas_neg_nonzero_offset: SUT bug — nonzero offset discarded (shrunk off=-1)
 
-### 5. FP/SIMD registers accepted as GPR
-- **Law:** Rd/Rn must be W/X (or ZR), not S/D/Q/V/H/B.
-- **Minimal input:** `bfxil d0, x1, #0, #1`
-- **Expected:** Err
-- **Actual:** Ok(Word) — parse_reg_num accepts prefix d
-- **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfxil_fp.md
-
-All five reproduced serially with `PBT_TEST_JOBS=1`.
+SUT observations (not bugs, but notable):
+- gas accepts optional `#0` offset (ARM `{,#0}`); llvm-mc 15 rejects it. At encode_cas, `[Xn]` and `[Xn, #0]` are the same `Mem{offset:0}`.
+- Valid encodings (all 12 mnemonics, W/X as specified, zr/sp) match llvm-mc 1000/1000.
 
 ## Design Caveats
 
@@ -67,31 +48,32 @@ All five reproduced serially with `PBT_TEST_JOBS=1`.
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_bfxil_pbt) | 13 properties + 6 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/load_store.rs (mod encode_cas_pbt) | 10 properties + 8 KAT + 8 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger (appended encode_bfxil)
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/FUNCTION_INDEX.md — merged; encode_bfxil now a PBT candidate
-- pbt-out/INVARIANTS.md — confirmed encode_bfxil invariants
-- pbt-out/bug_reports/encode_bfxil_extra_operand.md
-- pbt-out/bug_reports/encode_bfxil_sp.md
-- pbt-out/bug_reports/encode_bfxil_lsb_width.md
-- pbt-out/bug_reports/encode_bfxil_mixed_width.md
-- pbt-out/bug_reports/encode_bfxil_fp.md
-
-Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm audit of encode_bfxil (arity / extra / SP / mixed W-X / FP / lsb-width / nonreg / invalid-name / alt-spellings). Tier round spent and documented surface covered.
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_cas_extra_operand.md
+- pbt-out/bug_reports/encode_cas_sp_as_rs.md
+- pbt-out/bug_reports/encode_cas_xzr_as_base.md
+- pbt-out/bug_reports/encode_cas_w_base.md
+- pbt-out/bug_reports/encode_cas_mixed_width.md
+- pbt-out/bug_reports/encode_cas_fp_reg.md
+- pbt-out/bug_reports/encode_cas_casb_x_reg.md
+- pbt-out/bug_reports/encode_cas_nonzero_offset.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 18:19 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 77/284 total | PBT candidates: 77 | Tested: 77 (100%) | 0 pass, 77 fail
+> Last updated: 2026-09-14 18:35 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 78/284 total | PBT candidates: 78 | Tested: 78 (100%) | 0 pass, 78 fail
 
 ## Summary
 
@@ -100,10 +82,10 @@ Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm aud
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 284 |
-| PBT candidates (from FUNCTION_INDEX) | 77 |
-| **Tested (of PBT candidates)** | **77 / 77 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 77 / 0 |
-| **Overall (tested / all functions)** | **77 / 284 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 78 |
+| **Tested (of PBT candidates)** | **78 / 78 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 78 / 0 |
+| **Overall (tested / all functions)** | **78 / 284 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -111,13 +93,13 @@ Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm aud
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 77 | 77 | 0 | 100% |
+|  | 78 | 78 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 77 | 77 | 0 | 100% |
+| unknown | 78 | 78 | 0 | 100% |
 
 ## File Coverage
 
@@ -129,7 +111,7 @@ Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm aud
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 4 | 5 | 125% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 9 | 9 | 100% | covered |
+| load_store.rs | 20 | 10 | 10 | 100% | covered |
 | neon.rs | 68 | 14 | 14 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -217,3 +199,4 @@ Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm aud
 | encode_neon_aes | neon.rs |
 | encode_bfi | bitfield.rs |
 | encode_bfxil | bitfield.rs |
+| encode_cas | load_store.rs |

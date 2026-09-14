@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 18:05 (campaign: English campaign)
-> Files: 10/10 scanned (100%) | Functions: 76/284 total | PBT candidates: 76 | Tested: 76 (100%) | 0 pass, 76 fail
+> Last updated: 2026-09-14 18:20 (campaign: English campaign)
+> Files: 10/10 scanned (100%) | Functions: 77/284 total | PBT candidates: 77 | Tested: 77 (100%) | 0 pass, 77 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 284 |
-| PBT candidates (from FUNCTION_INDEX) | 76 |
-| **Tested (of PBT candidates)** | **76 / 76 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 76 / 0 |
-| **Overall (tested / all functions)** | **76 / 284 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 77 |
+| **Tested (of PBT candidates)** | **77 / 77 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 77 / 0 |
+| **Overall (tested / all functions)** | **77 / 284 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 76 | 76 | 0 | 100% |
+|  | 77 | 77 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 76 | 76 | 0 | 100% |
+| unknown | 77 | 77 | 0 | 100% |
 
 ## File Coverage
 
@@ -126,3 +126,4 @@
 | encode_fcvt_precision | fp_scalar.rs |
 | encode_neon_aes | neon.rs |
 | encode_bfi | bitfield.rs |
+| encode_bfxil | bitfield.rs |
