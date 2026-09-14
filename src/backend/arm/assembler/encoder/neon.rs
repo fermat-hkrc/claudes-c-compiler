@@ -11210,3 +11210,723 @@ mod encode_neon_float_two_misc_pbt {
     }
 }
 
+#[cfg(test)]
+mod encode_neon_dup_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   README.md:234 NEON insert/move lists dup (element/GPR);
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:670 "dup" => encode_neon_dup;
+    //   neon.rs:496-527 purpose comments name ARM DUP (general) 0 Q 0 01110 000 imm5 000011 Rn Rd
+    //     and DUP (element) 0 Q 0 01110 000 imm5 000001 Rn Rd;
+    //   ARM ARM Advanced SIMD DUP (general) / DUP (element); T in {8B,16B,4H,8H,2S,4S,2D};
+    //   GPR source Wn for T!=2D, Xn for T=2D; element index b[0-15] h[0-7] s[0-3] d[0-1]
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_dup is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected as primary — no in-tree DUP decoder (UMOV is a different opcode)
+    //   - Differential vs encode_neon_umov / encode_neon_ins: rejected — same-job gate (UMOV 001111, INS 000111)
+    // Weaker available: algebraic.metamorphic (Rd, Rn, Q, opcode bit 11), algebraic.invariant (word layout),
+    //   negative_error (arity / extra / index / GPR width / T mismatch)
+    // Differential: candidate=encode_neon_dup, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[RegArrangement(Vd,T), Reg(Wn|Xn)] <-> `dup Vd.T, Wn|Xn`
+    //          and [RegArrangement(Vd,T), RegLane(Vn,Ts,i)] <-> `dup Vd.T, Vn.Ts[i]`
+
+    use super::encode_neon_dup;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn gpr_name(t: &str, n: u32) -> String {
+        if t == "2d" {
+            if n == 31 {
+                "xzr".to_string()
+            } else {
+                format!("x{}", n)
+            }
+        } else if n == 31 {
+            "wzr".to_string()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn elem_of(t: &str) -> &'static str {
+        match t {
+            "8b" | "16b" => "b",
+            "4h" | "8h" => "h",
+            "2s" | "4s" => "s",
+            "2d" => "d",
+            _ => "?",
+        }
+    }
+
+    fn imax(ts: &str) -> u32 {
+        match ts {
+            "b" => 15,
+            "h" => 7,
+            "s" => 3,
+            "d" => 1,
+            _ => 0,
+        }
+    }
+
+    fn q_of(t: &str) -> u32 {
+        match t {
+            "16b" | "8h" | "4s" | "2d" => 1,
+            _ => 0,
+        }
+    }
+
+    fn imm5_size(t: &str) -> u32 {
+        match t {
+            "8b" | "16b" => 0b00001,
+            "4h" | "8h" => 0b00010,
+            "2s" | "4s" => 0b00100,
+            "2d" => 0b01000,
+            _ => 0,
+        }
+    }
+
+    fn imm5_elem(ts: &str, i: u32) -> u32 {
+        match ts {
+            "b" => (i << 1) | 0b00001,
+            "h" => (i << 2) | 0b00010,
+            "s" => (i << 3) | 0b00100,
+            "d" => (i << 4) | 0b01000,
+            _ => 0,
+        }
+    }
+
+    fn pair_hi(t_lo: &str) -> &'static str {
+        match t_lo {
+            "8b" => "16b",
+            "4h" => "8h",
+            "2s" => "4s",
+            _ => "16b",
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_neon_dup(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn valid_t() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s", "2d"])
+    }
+
+    fn t_lo() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "4h", "2s"])
+    }
+
+    fn elem_triple() -> impl Strategy<Value = (&'static str, &'static str, u32)> {
+        valid_t().prop_flat_map(|t| {
+            let ts = elem_of(t);
+            let max = imax(ts);
+            (Just(t), Just(ts), 0u32..=max)
+        })
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection (GPR and element forms).
+    #[test]
+    fn encode_neon_dup_kat_llvm_mc() {
+        let want_8b = 0x0e010c20u32;
+        let mc_8b = llvm_mc_word("dup v0.8b, w1").expect("llvm-mc KAT 8b");
+        assert_eq!(mc_8b, want_8b, "llvm-mc KAT mapping broken for 8b");
+        let sut_8b = sut_word(&[neon_arr(0, "8b"), Operand::Reg("w1".into())]).expect("SUT KAT 8b");
+        assert_eq!(sut_8b, want_8b);
+
+        let want_16b = 0x4e010c20u32;
+        let mc_16b = llvm_mc_word("dup v0.16b, w1").expect("llvm-mc KAT 16b");
+        assert_eq!(mc_16b, want_16b, "llvm-mc KAT mapping broken for 16b");
+        let sut_16b = sut_word(&[neon_arr(0, "16b"), Operand::Reg("w1".into())]).expect("SUT KAT 16b");
+        assert_eq!(sut_16b, want_16b);
+
+        let want_4s = 0x4e040c20u32;
+        let mc_4s = llvm_mc_word("dup v0.4s, w1").expect("llvm-mc KAT 4s");
+        assert_eq!(mc_4s, want_4s, "llvm-mc KAT mapping broken for 4s");
+        let sut_4s = sut_word(&[neon_arr(0, "4s"), Operand::Reg("w1".into())]).expect("SUT KAT 4s");
+        assert_eq!(sut_4s, want_4s);
+
+        let want_2d = 0x4e080c20u32;
+        let mc_2d = llvm_mc_word("dup v0.2d, x1").expect("llvm-mc KAT 2d");
+        assert_eq!(mc_2d, want_2d, "llvm-mc KAT mapping broken for 2d");
+        let sut_2d = sut_word(&[neon_arr(0, "2d"), Operand::Reg("x1".into())]).expect("SUT KAT 2d");
+        assert_eq!(sut_2d, want_2d);
+
+        let want_elem = 0x4e010420u32;
+        let mc_elem = llvm_mc_word("dup v0.16b, v1.b[0]").expect("llvm-mc KAT elem");
+        assert_eq!(mc_elem, want_elem, "llvm-mc KAT mapping broken for element");
+        let sut_elem = sut_word(&[
+            neon_arr(0, "16b"),
+            Operand::RegLane {
+                reg: "v1".into(),
+                elem_size: "b".into(),
+                index: 0,
+            },
+        ])
+        .expect("SUT KAT elem");
+        assert_eq!(sut_elem, want_elem);
+
+        let want_s3 = 0x4e1c0420u32;
+        let mc_s3 = llvm_mc_word("dup v0.4s, v1.s[3]").expect("llvm-mc KAT s[3]");
+        assert_eq!(mc_s3, want_s3, "llvm-mc KAT mapping broken for s[3]");
+        let sut_s3 = sut_word(&[
+            neon_arr(0, "4s"),
+            Operand::RegLane {
+                reg: "v1".into(),
+                elem_size: "s".into(),
+                index: 3,
+            },
+        ])
+        .expect("SUT KAT s[3]");
+        assert_eq!(sut_s3, want_s3);
+
+        let want_d1 = 0x4e180420u32;
+        let mc_d1 = llvm_mc_word("dup v0.2d, v1.d[1]").expect("llvm-mc KAT d[1]");
+        assert_eq!(mc_d1, want_d1, "llvm-mc KAT mapping broken for d[1]");
+        let sut_d1 = sut_word(&[
+            neon_arr(0, "2d"),
+            Operand::RegLane {
+                reg: "v1".into(),
+                elem_size: "d".into(),
+                index: 1,
+            },
+        ])
+        .expect("SUT KAT d[1]");
+        assert_eq!(sut_d1, want_d1);
+
+        let want_wzr = 0x4e040fe0u32;
+        let mc_wzr = llvm_mc_word("dup v0.4s, wzr").expect("llvm-mc KAT wzr");
+        assert_eq!(mc_wzr, want_wzr, "llvm-mc KAT mapping broken for wzr");
+        let sut_wzr = sut_word(&[neon_arr(0, "4s"), Operand::Reg("wzr".into())]).expect("SUT KAT wzr");
+        assert_eq!(sut_wzr, want_wzr);
+
+        let want_upper = 0x4e040c20u32;
+        let mc_upper = llvm_mc_word("dup V0.4S, W1").expect("llvm-mc KAT uppercase");
+        assert_eq!(mc_upper, want_upper, "llvm-mc KAT mapping broken for uppercase");
+        let sut_upper = sut_word(&[
+            Operand::RegArrangement {
+                reg: "V0".into(),
+                arrangement: "4s".into(),
+            },
+            Operand::Reg("W1".into()),
+        ])
+        .expect("SUT KAT uppercase");
+        assert_eq!(sut_upper, want_upper);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_dup_diff_general(
+            rd in reg_num(),
+            rn in reg_num(),
+            t in valid_t(),
+        ) {
+            let gpr = gpr_name(t, rn);
+            let asm = format!("dup {}.{}, {}", vreg(rd), t, gpr);
+            let ops = [neon_arr(rd, t), Operand::Reg(gpr.clone())];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_dup_diff_element(
+            rd in reg_num(),
+            rn in reg_num(),
+            triple in elem_triple(),
+        ) {
+            let (t, ts, i) = triple;
+            let asm = format!("dup {}.{}, {}.{}[{}]", vreg(rd), t, vreg(rn), ts, i);
+            let ops = [
+                neon_arr(rd, t),
+                Operand::RegLane {
+                    reg: vreg(rn),
+                    elem_size: ts.to_string(),
+                    index: i,
+                },
+            ];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_dup_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            t in valid_t(),
+            triple in elem_triple(),
+        ) {
+            let gpr = gpr_name(t, rn);
+            let ops_g = [neon_arr(rd, t), Operand::Reg(gpr)];
+            let w = sut_word(&ops_g)
+                .unwrap_or_else(|e| panic!("SUT rejected valid GPR field unpack: {}", e));
+            let q = q_of(t);
+            let imm5 = imm5_size(t);
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 30) & 1, q, "Q bit (GPR)");
+            prop_assert_eq!((w >> 21) & 0x1ff, 0b001110000u32, "bits[29:21]=001110000");
+            prop_assert_eq!((w >> 16) & 0x1f, imm5, "imm5 size");
+            prop_assert_eq!((w >> 10) & 0x3f, 0b000011u32, "GPR opcode 000011");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+
+            let (et, ts, i) = triple;
+            let ops_e = [
+                neon_arr(rd, et),
+                Operand::RegLane {
+                    reg: vreg(rn),
+                    elem_size: ts.to_string(),
+                    index: i,
+                },
+            ];
+            let we = sut_word(&ops_e)
+                .unwrap_or_else(|e| panic!("SUT rejected valid element field unpack: {}", e));
+            prop_assert_eq!((we >> 31) & 1, 0u32, "bit 31 must be 0 (elem)");
+            prop_assert_eq!((we >> 30) & 1, q_of(et), "Q bit (elem)");
+            prop_assert_eq!((we >> 21) & 0x1ff, 0b001110000u32, "bits[29:21] (elem)");
+            prop_assert_eq!((we >> 16) & 0x1f, imm5_elem(ts, i), "imm5 index");
+            prop_assert_eq!((we >> 10) & 0x3f, 0b000001u32, "element opcode 000001");
+            prop_assert_eq!((we >> 5) & 0x1f, rn, "Rn (elem)");
+            prop_assert_eq!(we & 0x1f, rd, "Rd (elem)");
+        }
+
+        #[test]
+        fn encode_neon_dup_metamorphic_fields(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            t in t_lo(),
+        ) {
+            let gpr = gpr_name(t, rn);
+            let w = sut_word(&[neon_arr(rd, t), Operand::Reg(gpr.clone())])
+                .unwrap_or_else(|e| panic!("base: {}", e));
+            let w_rd = sut_word(&[neon_arr(rd + 1, t), Operand::Reg(gpr.clone())])
+                .unwrap_or_else(|e| panic!("rd+1: {}", e));
+            let gpr_n = gpr_name(t, rn + 1);
+            let w_rn = sut_word(&[neon_arr(rd, t), Operand::Reg(gpr_n)])
+                .unwrap_or_else(|e| panic!("rn+1: {}", e));
+            let t_hi = pair_hi(t);
+            let w_q = sut_word(&[neon_arr(rd, t_hi), Operand::Reg(gpr)])
+                .unwrap_or_else(|e| panic!("Q: {}", e));
+            let ts = elem_of(t);
+            let w_elem = sut_word(&[
+                neon_arr(rd, t),
+                Operand::RegLane {
+                    reg: vreg(rn),
+                    elem_size: ts.to_string(),
+                    index: 0,
+                },
+            ])
+            .unwrap_or_else(|e| panic!("elem: {}", e));
+            prop_assert_eq!(w_rd, w + 1, "Rd+1 increments bits[4:0] only");
+            prop_assert_eq!(w_rn, w + (1 << 5), "Rn+1 increments bits[9:5] only");
+            prop_assert_eq!(w_q ^ w, 1u32 << 30, "lo vs hi T flips only Q bit 30");
+            prop_assert_eq!(w_elem ^ w, 1u32 << 11, "GPR vs element flips only bit 11");
+        }
+
+        #[test]
+        fn encode_neon_dup_neg_arity_invalid(
+            n in 0usize..=1,
+            rd in reg_num(),
+            t in valid_t(),
+            bad in prop::sample::select(vec!["foo", "v32", "v", "", "v-1", "v99", "x32", "w32"]),
+            which in 0u32..=5,
+            t_bad in prop::sample::select(vec!["1d", "8s", "1s", "3s", "", "b", "h", "8b8"]),
+        ) {
+            let short: Vec<Operand> = match n {
+                0 => vec![],
+                _ => vec![neon_arr(rd, t)],
+            };
+            prop_assert!(
+                encode_neon_dup(&short).is_err(),
+                "len={} must Err (dup requires 2 operands)",
+                n
+            );
+            let bad_src = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem { base: "x0".into(), offset: 0 },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift { kind: "lsl".into(), amount: 0 },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            prop_assert!(
+                encode_neon_dup(&[neon_arr(rd, t), bad_src]).is_err(),
+                "non-register source which={} must Err",
+                which
+            );
+            prop_assert!(
+                encode_neon_dup(&[Operand::RegArrangement {
+                    reg: bad.to_string(),
+                    arrangement: t.to_string(),
+                }, Operand::Reg(gpr_name(t, 0))]).is_err(),
+                "invalid dest name {} must Err",
+                bad
+            );
+            prop_assert!(
+                encode_neon_dup(&[neon_arr(rd, t), Operand::Reg(bad.to_string())]).is_err(),
+                "invalid src name {} must Err",
+                bad
+            );
+            prop_assert!(
+                encode_neon_dup(&[neon_arr(rd, t_bad), Operand::Reg(gpr_name(t, 0))]).is_err(),
+                "unsupported T={} must Err",
+                t_bad
+            );
+            prop_assert!(
+                encode_neon_dup(&[Operand::Reg(vreg(rd)), Operand::Reg(gpr_name(t, 0))]).is_err(),
+                "dest Operand::Reg (no arrangement) must Err"
+            );
+        }
+
+        #[test]
+        fn encode_neon_dup_neg_extra_operands(
+            rd in reg_num(),
+            rn in reg_num(),
+            t in valid_t(),
+            extra_kind in 0u32..=2,
+        ) {
+            let gpr = gpr_name(t, rn);
+            let extra = match extra_kind {
+                0 => Operand::Reg(gpr_name(t, 0)),
+                1 => Operand::Imm(0),
+                _ => neon_arr(0, t),
+            };
+            let extra_asm = match extra_kind {
+                0 => gpr_name(t, 0),
+                1 => "#0".to_string(),
+                _ => format!("{}.{}", vreg(0), t),
+            };
+            let asm = format!("dup {}.{}, {}, {}", vreg(rd), t, gpr, extra_asm);
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted extra operand {}",
+                asm
+            );
+            let ops = [neon_arr(rd, t), Operand::Reg(gpr), extra];
+            prop_assert!(
+                encode_neon_dup(&ops).is_err(),
+                "extra operand must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_dup_neg_index_oor(
+            rd in reg_num(),
+            rn in reg_num(),
+            t in valid_t(),
+            i_extra in 1u32..=8,
+        ) {
+            let ts = elem_of(t);
+            let i_oor = imax(ts) + i_extra;
+            let asm_oor = format!("dup {}.{}, {}.{}[{}]", vreg(rd), t, vreg(rn), ts, i_oor);
+            prop_assert!(
+                llvm_mc_word(&asm_oor).is_err(),
+                "llvm-mc unexpectedly accepted OOR index {}",
+                asm_oor
+            );
+            let ops_oor = [
+                neon_arr(rd, t),
+                Operand::RegLane {
+                    reg: vreg(rn),
+                    elem_size: ts.to_string(),
+                    index: i_oor,
+                },
+            ];
+            prop_assert!(
+                encode_neon_dup(&ops_oor).is_err(),
+                "index {} out of range for .{} must Err (llvm-mc rejects {})",
+                i_oor,
+                ts,
+                asm_oor
+            );
+        }
+
+        #[test]
+        fn encode_neon_dup_neg_size_mismatch(
+            rd in reg_num(),
+            rn in reg_num(),
+            t in valid_t(),
+            ts_other in prop::sample::select(vec!["b", "h", "s", "d"]),
+            i_mis in 0u32..=3,
+        ) {
+            prop_assume!(elem_of(t) != ts_other);
+            let i = i_mis.min(imax(ts_other));
+            let asm_mis = format!(
+                "dup {}.{}, {}.{}[{}]",
+                vreg(rd), t, vreg(rn), ts_other, i
+            );
+            prop_assert!(
+                llvm_mc_word(&asm_mis).is_err(),
+                "llvm-mc unexpectedly accepted size mismatch {}",
+                asm_mis
+            );
+            let ops_mis = [
+                neon_arr(rd, t),
+                Operand::RegLane {
+                    reg: vreg(rn),
+                    elem_size: ts_other.to_string(),
+                    index: i,
+                },
+            ];
+            prop_assert!(
+                encode_neon_dup(&ops_mis).is_err(),
+                "dest T={} elem {} must Err (llvm-mc rejects {})",
+                t,
+                ts_other,
+                asm_mis
+            );
+        }
+
+        #[test]
+        fn encode_neon_dup_neg_gpr_width(
+            rd in reg_num(),
+            t in valid_t(),
+            n in reg_num(),
+            alias in prop::sample::select(vec!["sp", "wsp", "d0", "s0", "q0", "v0", "h0", "b0"]),
+        ) {
+            let wrong = if t == "2d" {
+                if n == 31 { "wzr".to_string() } else { format!("w{}", n) }
+            } else if n == 31 {
+                "xzr".to_string()
+            } else {
+                format!("x{}", n)
+            };
+            let asm_w = format!("dup {}.{}, {}", vreg(rd), t, wrong);
+            prop_assert!(
+                llvm_mc_word(&asm_w).is_err(),
+                "llvm-mc unexpectedly accepted wrong-width {}",
+                asm_w
+            );
+            prop_assert!(
+                encode_neon_dup(&[neon_arr(rd, t), Operand::Reg(wrong.clone())]).is_err(),
+                "wrong-width GPR {} must Err (llvm-mc rejects {})",
+                wrong,
+                asm_w
+            );
+
+            let asm_a = format!("dup {}.{}, {}", vreg(rd), t, alias);
+            prop_assert!(
+                llvm_mc_word(&asm_a).is_err(),
+                "llvm-mc unexpectedly accepted alias {}",
+                asm_a
+            );
+            prop_assert!(
+                encode_neon_dup(&[neon_arr(rd, t), Operand::Reg(alias.to_string())]).is_err(),
+                "non-GPR {} must Err (llvm-mc rejects {})",
+                alias,
+                asm_a
+            );
+
+            if t != "2d" {
+                let asm_lr = format!("dup {}.{}, lr", vreg(rd), t);
+                prop_assert!(
+                    llvm_mc_word(&asm_lr).is_err(),
+                    "llvm-mc unexpectedly accepted lr on 32-bit T {}",
+                    asm_lr
+                );
+                prop_assert!(
+                    encode_neon_dup(&[neon_arr(rd, t), Operand::Reg("lr".into())]).is_err(),
+                    "lr on T={} must Err (llvm-mc rejects {})",
+                    t,
+                    asm_lr
+                );
+            }
+        }
+
+        /// Coverage sweep: element-form parse_reg_num None and unsupported elem_size arms.
+        #[test]
+        fn encode_neon_dup_neg_elem_invalid(
+            rd in reg_num(),
+            t in valid_t(),
+            bad in prop::sample::select(vec!["foo", "v32", "v", "", "v-1", "v99"]),
+            bad_sz in prop::sample::select(vec!["q", "x", "8b", "16b", "", "w", "4s"]),
+            i in 0u32..=15,
+        ) {
+            let ops_name = [
+                neon_arr(rd, t),
+                Operand::RegLane {
+                    reg: bad.to_string(),
+                    elem_size: elem_of(t).to_string(),
+                    index: i.min(imax(elem_of(t))),
+                },
+            ];
+            prop_assert!(
+                encode_neon_dup(&ops_name).is_err(),
+                "invalid RegLane name {} must Err",
+                bad
+            );
+            let ops_sz = [
+                neon_arr(rd, t),
+                Operand::RegLane {
+                    reg: vreg(0),
+                    elem_size: bad_sz.to_string(),
+                    index: 0,
+                },
+            ];
+            prop_assert!(
+                encode_neon_dup(&ops_sz).is_err(),
+                "unsupported elem_size {} must Err",
+                bad_sz
+            );
+        }
+    }
+
+    /// Deterministic regression: extra 3rd operand (shrunk from neg_extra_operands).
+    #[test]
+    fn test_encode_neon_dup_regression_extra_operand() {
+        let ops = [
+            neon_arr(0, "8b"),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_neon_dup(&ops).is_err(),
+            "dup v0.8b, w0, w0 must Err (llvm-mc rejects a 3rd operand)"
+        );
+    }
+
+    /// Deterministic regression: X register on 8-bit T (shrunk from neg_gpr_width).
+    #[test]
+    fn test_encode_neon_dup_regression_wrong_width_x_on_8b() {
+        let ops = [neon_arr(0, "8b"), Operand::Reg("x0".into())];
+        assert!(
+            encode_neon_dup(&ops).is_err(),
+            "dup v0.8b, x0 must Err (llvm-mc requires Wn for T!=2d)"
+        );
+    }
+
+    /// Deterministic regression: SP as GPR source (from neg_gpr_width alias arm).
+    #[test]
+    fn test_encode_neon_dup_regression_sp() {
+        let ops = [neon_arr(0, "4s"), Operand::Reg("sp".into())];
+        assert!(
+            encode_neon_dup(&ops).is_err(),
+            "dup v0.4s, sp must Err (llvm-mc rejects SP as DUP GPR source)"
+        );
+    }
+
+    /// Deterministic regression: out-of-range lane index (shrunk from neg_index_oor).
+    #[test]
+    fn test_encode_neon_dup_regression_index_oor() {
+        let ops = [
+            neon_arr(0, "8b"),
+            Operand::RegLane {
+                reg: "v0".into(),
+                elem_size: "b".into(),
+                index: 16,
+            },
+        ];
+        assert!(
+            encode_neon_dup(&ops).is_err(),
+            "dup v0.8b, v0.b[16] must Err (llvm-mc range for .b is [0, 15])"
+        );
+    }
+
+    /// Deterministic regression: dest T vs element size mismatch (from neg_size_mismatch).
+    #[test]
+    fn test_encode_neon_dup_regression_size_mismatch() {
+        let ops = [
+            neon_arr(0, "4s"),
+            Operand::RegLane {
+                reg: "v1".into(),
+                elem_size: "h".into(),
+                index: 0,
+            },
+        ];
+        assert!(
+            encode_neon_dup(&ops).is_err(),
+            "dup v0.4s, v1.h[0] must Err (llvm-mc requires matching element size)"
+        );
+    }
+}
+

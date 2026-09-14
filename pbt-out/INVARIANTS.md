@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_dup)
+
+- Valid DUP GPR form (T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31, Wn including wzr for T≠2d, Xn including xzr for T=2d) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Valid DUP element form with matching T/size and in-range index matches llvm-mc (1000 cases).
+- Success-path word is ARM Advanced SIMD DUP: 0 Q 0 01110 000 imm5 opc Rn Rd. GPR opc=000011; element opc=000001. Q(16b/8h/4s/2d)=1 else 0. imm5 size 00001/00010/00100/01000; element imm5 encodes index in the high bits of the size marker.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; 8b vs 16b (4h vs 8h, 2s vs 4s) flips only Q bit 30; GPR vs element flips only bit 11 (1000 cases).
+- Fewer than 2 operands, non-register kinds, invalid names, unsupported T, dest without arrangement, invalid RegLane names, and unsupported elem_size always Err (1000 cases).
+- Known-answer: `dup v0.8b, w1` = 0x0e010c20; `dup v0.16b, w1` = 0x4e010c20; `dup v0.4s, w1` = 0x4e040c20; `dup v0.2d, x1` = 0x4e080c20; `dup v0.16b, v1.b[0]` = 0x4e010420; `dup v0.4s, v1.s[3]` = 0x4e1c0420; `dup v0.2d, v1.d[1]` = 0x4e180420; `dup v0.4s, wzr` = 0x4e040fe0; `dup V0.4S, W1` = 0x4e040c20.
+- Extra operand, wrong-width GPR (X on 32-bit T / W on .2d), SP/WSP/FP-as-GPR, out-of-range lane index, and dest T vs element-size mismatch currently encode instead of matching llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_dup)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD DUP (general): 0 Q 0 01110 000 imm5 000011 Rn Rd; DUP (element): opcode 000001. T in {8B,16B,4H,8H,2S,4S,2D}; GPR Wn for T!=2D, Xn for T=2D.
+- Dispatch: encoder/mod.rs:670 `"dup" => encode_neon_dup(operands)`.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_umov / encode_neon_ins are different opcodes (001111 / 000111), not same-job differentials.
+- encode_neon_dup checks only operands.len() < 2 (extra ignored); parse_reg_num accepts any x/w/d/s/q/v/h/b/sp prefix; element index is masked (`index & 0xF` etc.); dest T is used only for Q, elem_size independently encodes imm5.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid RegLane names / unsupported elem_size).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_dup_*.md.
+
 # Confirmed invariants (encode_fsqrt)
 
 - Valid scalar FSQRT (s0–s31 / d0–d31, including uppercase S/D) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

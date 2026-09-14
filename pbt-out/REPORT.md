@@ -1,27 +1,29 @@
-# PBT Campaign Report: encode_fsqrt
+# PBT Campaign Report: encode_neon_dup
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fsqrt
-**Tests:** 9 properties (plus 6 KAT + 3 regression witnesses)
-**Result:** 6 passing, 3 bugs
-**Tier:** standard
+**Modules tested:** encode_neon_dup
+**Tests:** 10 properties + 1 KAT + 5 regression witnesses
+**Result:** 6 passing, 4 failing (4 bugs)
+**Tier:** standard (1 contract-surface sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fsqrt | 9 properties (6 passing, 3 failing) + 6 KAT + 3 regressions | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_neon_dup | 10 properties (6 passing, 4 failing); 1 KAT passing; 5 regressions failing | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_fsqrt_neg_extra_operand** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, is_d=false, extra=Reg("s0")` → `fsqrt s0, s0, s0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_fsqrt_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
+1. **Extra operand ignored.** Failing property `encode_neon_dup_neg_extra_operands`. Shrunk counterexample: rd=0, rn=0, t="8b", extra_kind=0 — `dup v0.8b, w0, w0` encodes as the 2-operand form instead of Err. Law: GNU-style DUP is 2-operand; llvm-mc rejects a 3rd operand. Serial reconfirmation with `PBT_TEST_JOBS=1`. Report: `pbt-out/bug_reports/encode_neon_dup_extra_operand.md`.
 
-2. **encode_fsqrt_neg_wrong_types** (Negative/Error Contract). Shrunk counterexample: `dest="s0", src="d0"` → `fsqrt s0, d0`. Expected Err; actual Ok(Word) using dest ftype only. Report: pbt-out/bug_reports/encode_fsqrt_wrong_types.md. Serial: PBT_TEST_JOBS=1 failed.
+2. **Wrong-width GPR source accepted.** Failing property `encode_neon_dup_neg_gpr_width`. Shrunk counterexample: rd=0, t="8b", n=0, alias="sp" — `dup v0.8b, x0` encodes as `dup v0.8b, w0`. Law: ARM DUP (general) source is Wn for T≠2D and Xn for T=2D. Serial reconfirmation. Report: `pbt-out/bug_reports/encode_neon_dup_wrong_width_gpr.md`.
 
-3. **encode_fsqrt_diff_half** (Differential vs llvm-mc +fullfp16). Shrunk counterexample: `rd=0, rn=0` → `fsqrt h0, h0`. Expected Word(0x1ee1c000) ftype=11; actual Word(0x1e21c000) ftype=00. Report: pbt-out/bug_reports/encode_fsqrt_half_ftype.md. Serial: PBT_TEST_JOBS=1 failed.
+3. **Out-of-range lane index masked.** Failing property `encode_neon_dup_neg_index_oor`. Shrunk counterexample: rd=0, rn=0, t="8b", i_extra=1 — `dup v0.8b, v0.b[16]` encodes as `dup v0.8b, v0.b[0]` via `index & 0xF`. Law: ARM DUP (element) b-index range is [0,15]; llvm-mc rejects 16. Serial reconfirmation. Report: `pbt-out/bug_reports/encode_neon_dup_index_oor.md`.
+
+4. **Dest T vs element-size mismatch encoded as a different instruction.** Failing property `encode_neon_dup_neg_size_mismatch`. Shrunk counterexample: rd=0, rn=0, t="8b", ts_other="h", i_mis=0 — `dup v0.8b, v0.h[0]` encodes as Q=0 halfword DUP (`dup v0.4h, v0.h[0]`). Law: dest T must match element size. Serial reconfirmation. Report: `pbt-out/bug_reports/encode_neon_dup_size_mismatch.md`.
 
 ## Design Caveats
 
@@ -31,7 +33,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fsqrt_pbt) | 9 properties + 6 KAT + 3 regressions |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_dup_pbt) | 10 properties + 1 KAT + 5 regressions |
 
 ## Output Directories
 
@@ -39,20 +41,22 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/FUNCTION_INDEX.md (merged; encode_fsqrt now a candidate)
-- pbt-out/INVARIANTS.md (encode_fsqrt section)
-- pbt-out/bug_reports/encode_fsqrt_extra_operand.md
-- pbt-out/bug_reports/encode_fsqrt_wrong_types.md
-- pbt-out/bug_reports/encode_fsqrt_half_ftype.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_neon_dup_extra_operand.md
+- pbt-out/bug_reports/encode_neon_dup_wrong_width_gpr.md
+- pbt-out/bug_reports/encode_neon_dup_index_oor.md
+- pbt-out/bug_reports/encode_neon_dup_size_mismatch.md
 
-Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (passing). Closed: tier round spent and documented surface covered.
+Sweep close-out: coverage_gaps had no LLVM profraw; manual arm audit of encode_neon_dup added encode_neon_dup_neg_elem_invalid (passing). Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 23:23 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 99/289 total | PBT candidates: 99 | Tested: 99 (100%) | 0 pass, 99 fail
+> Last updated: 2026-09-14 23:44 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 100/289 total | PBT candidates: 100 | Tested: 100 (100%) | 0 pass, 100 fail
 
 ## Summary
 
@@ -61,10 +65,10 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 99 |
-| **Tested (of PBT candidates)** | **99 / 99 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 99 / 0 |
-| **Overall (tested / all functions)** | **99 / 289 (34%)** |
+| PBT candidates (from FUNCTION_INDEX) | 100 |
+| **Tested (of PBT candidates)** | **100 / 100 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 100 / 0 |
+| **Overall (tested / all functions)** | **100 / 289 (35%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -72,13 +76,13 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 99 | 99 | 0 | 100% |
+|  | 100 | 100 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 99 | 99 | 0 | 100% |
+| unknown | 100 | 100 | 0 | 100% |
 
 ## File Coverage
 
@@ -91,7 +95,7 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 10 | 10 | 100% | covered |
-| neon.rs | 68 | 15 | 15 | 100% | covered |
+| neon.rs | 68 | 16 | 16 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -200,3 +204,4 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | encode_fmadd_fmsub | fp_scalar.rs |
 | encode_fneg | fp_scalar.rs |
 | encode_fsqrt | fp_scalar.rs |
+| encode_neon_dup | neon.rs |
