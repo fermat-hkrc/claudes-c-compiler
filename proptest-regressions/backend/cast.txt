@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e629900d1cd210e6a8adcb85efcfed08c0238bd1e9ae90304fab33b7814b58c2 # shrinks to int_ty = Ptr, is_f64 = false, native = false, ptr_size = 4, int_to_float = false
+cc 43b89819658838b9bdce8b0e348d454575a510e61c4d50b46b0e7610d15a7992 # shrinks to from = I8, to = F32, native = false, ptr_size = 4, force_from_ptr = true, force_to_ptr = false
