@@ -1,68 +1,65 @@
-# PBT Campaign Report: encode_neg
+# PBT Campaign Report: encode_negs
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neg (src/backend/riscv/assembler/encoder/pseudo.rs)
-**Tests:** 9 properties + 1 KAT + 1 regression witness
-**Result:** 8 passing, 1 bug
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening/sweep round)
+**Modules tested:** encode_negs (src/backend/arm/assembler/encoder/data_processing.rs)
+**Tests:** 10 properties (7 passing, 3 failing groups covering 7 failing tests) plus 3 passing KAT and 7 failing regression witnesses
+**Result:** 7 passing properties, 6 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-gaps round; first batch did not all pass so no extra strengthening round beyond the sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neg | 9 properties (8 passing, 1 failing) + 1 KAT + 1 regression | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_negs | 10 properties + 3 KAT + 7 regression | 6 | differential (llvm-mc), algebraic.metamorphic (sf XOR, SUBS alias), algebraic.invariant (ARM fields), negative_error |
 
 ## Bugs Found
 
-### encode_neg silently ignores extra operands
-- **Law:** `neg` is a two-operand pseudoinstruction (`neg rd, rs`). Extra operands must be rejected.
-- **Shrunk counterexample:** `[Reg("zero"), Reg("zero"), Reg("zero")]`
-- **Expected:** Err (llvm-mc: "invalid operand for instruction")
-- **Actual:** Ok(Word(0x40000033)) — encodes as `neg zero, zero`
-- **Root cause:** `encode_neg` only calls `get_reg` on indices 0 and 1; trailing operands are never examined.
-- **Impact:** Assembler accepts `neg rd, rs, extra` and emits the two-operand encoding, silently disagreeing with llvm-mc / the documented form.
-- **Severity:** medium
-- **Fix:** Reject `operands.len() != 2` (or `operands.get(2).is_some()`).
-- **Bug report:** pbt-out/bug_reports/encode_neg_extra_operand.md
-- **Regression test:** `encode_neg_pbt::test_encode_neg_regression_extra_operand` (fails until fixed)
-- **Serial reconfirm:** reproduced with `PBT_TEST_JOBS=1`
+1. **encode_negs_neg_extra_operand** (also encode_negs_neg_trailing_after_shift). Law: NEGS is Rd, Rm{, shift} only. Shrunk counterexample: rd=0, rm=0, is_64=false, extra=Reg("x0") — `encode_negs([Reg("w0"), Reg("w0"), Reg("x0")])` returns Ok(Word) not Err. Second shrunk witness: extra after Shift{lsl,1}. Serial reconfirm: PBT_TEST_JOBS=1, `--test-threads=1` reproduced. Path: `pbt-out/bug_reports/encode_negs_extra_operand.md`
+2. **encode_negs_neg_mixed_width.** Law: Rd and Rm same width. Shrunk counterexample: rd=0, rm=0, rd64=false, rm64=true — `encode_negs([Reg("w0"), Reg("x0")])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_mixed_width.md`
+3. **encode_negs_neg_sp.** Law: register 31 is XZR/WZR, never SP/WSP. Shrunk counterexample: which=0, is_64=false, other=0 — `encode_negs([Reg("wsp"), Reg("w0")])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_sp.md`
+4. **encode_negs_neg_fp.** Law: NEGS operands are integer GPRs. Shrunk counterexample: which=0, prefix="d", n=0 — `encode_negs([Reg("d0"), Reg("x1")])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_fp_reg.md`
+5. **encode_negs_neg_shift_range.** Law: imm6 0..31 (sf=0) / 0..63 (sf=1). Shrunk counterexample: rd=0, rm=0, is_64=false, kind="lsl", amt_w=32 — `encode_negs([Reg("w0"), Reg("w0"), Shift{lsl,32}])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_shift_range.md`
+6. **encode_negs_neg_bad_shift_kind.** Law: shift ∈ {LSL,LSR,ASR}. Shrunk counterexample: rd=0, rm=0, is_64=false, kind="ror", amt=0 — `encode_negs([Reg("w0"), Reg("w0"), Shift{ror,0}])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_bad_shift_kind.md`
 
-## Design Caveats (if any)
+## Design Caveats
 
-- **Imm 0..=31 as a register number.** `get_reg` accepts `Operand::Imm(n)` for `0 <= n <= 31`. llvm-mc rejects textual `neg 10, 11`. This is an in-tree documented extension, not a bug.
-  - Doc evidence: `src/backend/riscv/assembler/encoder/mod.rs:351-352` — quote: `// GCC sometimes emits bare register numbers (0-31) in inline asm`
+(none)
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/pseudo.rs (mod encode_neg_pbt) | 9 properties + 1 KAT + 1 regression |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_negs_pbt) | 3 KAT + 15 proptest properties + 7 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger (encode_neg row appended)
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/FUNCTION_INDEX.md — merged index including pseudo.rs
-- pbt-out/INVARIANTS.md — encode_neg invariants prepended
-- pbt-out/bug_reports/encode_neg_extra_operand.md — extra-operand bug
-- pbt-out/build.log — pre-campaign `cargo check --lib` log
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_negs_extra_operand.md
+- pbt-out/bug_reports/encode_negs_mixed_width.md
+- pbt-out/bug_reports/encode_negs_sp.md
+- pbt-out/bug_reports/encode_negs_fp_reg.md
+- pbt-out/bug_reports/encode_negs_shift_range.md
+- pbt-out/bug_reports/encode_negs_bad_shift_kind.md
 
-**Contract-surface sweep:** 1 round (standard). `coverage_gaps` had no LLVM profraw; manual arm audit of `get_reg` (Reg / Imm 0..=31 / Imm OOB / other kinds / missing index) plus documented SUB expansion vs llvm-mc. Added `encode_neg_diff_llvm_mc_sub` and SymbolOffset/MemSymbol invalid kinds. Closed because the tier's one sweep round is done.
+## Contract-surface sweep
 
-**Skipped targets:** (none). In-scope symbol only.
+Round 1 of 1 (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_negs: get_reg(0)/get_reg(1) error paths (invalid name, non-Reg) were untested; added encode_negs_neg_invalid_name and encode_negs_neg_non_reg (both passing, 1000 cases). Remaining branches (Shift present vs absent, lsl/lsr/asr/default, sf) were already reached. Closed because the tier's one round is done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 10:13 (campaign: coverage)
-> Files: 7/7 scanned (100%) | Functions: 46/229 total | PBT candidates: 46 | Tested: 46 (100%) | 0 pass, 46 fail
+> Last updated: 2026-09-14 10:29 (campaign: coverage)
+> Files: 7/7 scanned (100%) | Functions: 47/229 total | PBT candidates: 47 | Tested: 47 (100%) | 0 pass, 47 fail
 
 ## Summary
 
@@ -71,10 +68,10 @@
 | Total source files | 7 |
 | Files scanned | 7 / 7 (100%) |
 | Total functions (all files) | 229 |
-| PBT candidates (from FUNCTION_INDEX) | 46 |
-| **Tested (of PBT candidates)** | **46 / 46 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 46 / 0 |
-| **Overall (tested / all functions)** | **46 / 229 (20%)** |
+| PBT candidates (from FUNCTION_INDEX) | 47 |
+| **Tested (of PBT candidates)** | **47 / 47 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 47 / 0 |
+| **Overall (tested / all functions)** | **47 / 229 (21%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -82,13 +79,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 46 | 46 | 0 | 100% |
+|  | 47 | 47 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 46 | 46 | 0 | 100% |
+| unknown | 47 | 47 | 0 | 100% |
 
 ## File Coverage
 
@@ -97,7 +94,7 @@
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 17 | 17 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 14 | 14 | 100% | covered |
+| data_processing.rs | 36 | 15 | 15 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 7 | 7 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
@@ -155,3 +152,4 @@
 | encode_mvn | data_processing.rs |
 | encode_neon_shift_right | neon.rs |
 | encode_neg | pseudo.rs |
+| encode_negs | data_processing.rs |

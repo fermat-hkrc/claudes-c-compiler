@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_negs)
+
+- Valid two-GPR same-width NEGS with Rd/Rm in x0–x30/xzr or w0–w30/wzr and optional LSL/LSR/ASR in range matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_negs(Rd, Rm, shift) equals llvm-mc `negs Rd, Rm, shift` and llvm-mc `subs Rd, ZR, Rm, shift` (1000 cases). Documented alias at data_processing.rs:728.
+- encode_negs(X-ops) XOR encode_negs(W-ops) at equal register numbers and amt in 0..31 = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path word: sf at 31, op=1 at 30, S=1 at 29, bits [28:24]=01011, shift at [23:22], bit 21=0, Rm at [20:16], imm6 at [15:10], Rn=31 at [9:5], Rd at [4:0].
+- `lr` in either slot encodes as X30 and matches llvm-mc (1000 cases).
+- Fewer than 2 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at Rd/Rm always Err.
+- Known-answer: `negs x0, x1` / `subs x0, xzr, x1` encode as 0xeb0103e0; `negs w0, w1` as 0x6b0103e0.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Add/subtract (shifted register) NEGS (alias of SUBS): `sf 1 1 01011 shift 0 Rm imm6 11111 Rd`. Register 31 is XZR/WZR, never SP/WSP. Rd and Rm same width. Exactly two registers plus optional shift. shift in {LSL,LSR,ASR} (not ROR). imm6 0..31 (sf=0) or 0..63 (sf=1).
+- `lr` is a 64-bit alias of X30 (llvm-mc and parse_reg_num).
+- Dispatch: encoder/mod.rs:279 `"negs" => encode_negs`. Sibling encode_neg is SUB (S=0), different job.
+- Callers: assembler README data-processing table; no codegen emission of `negs` found.
+
+## Quirks
+
+- Extra operands beyond the optional shift are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- Mixed X/W is accepted; sf is taken only from Rd (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- Unknown shift kind (including ROR) defaults to LSL (see bugs).
+- Shift amount is masked with 0x3F; 32-bit amounts 32..63 encode UNALLOCATED imm6<5>=1 (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg 0..1 / sf / Shift at 2 / shift-kind / imm6 / Rn=31 / invalid name / non-Reg).
+
+---
+
 # Confirmed invariants (encode_neg)
 
 - Valid two-GPR NEG with ABI names / x0–x31 / fp matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases).

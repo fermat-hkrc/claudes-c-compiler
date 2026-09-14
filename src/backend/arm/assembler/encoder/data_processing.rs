@@ -9936,3 +9936,675 @@ mod encode_mvn_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_negs_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:279 "negs" => encode_negs; ARM ARM Add/subtract (shifted register) NEGS alias of SUBS
+    // Stronger considered:
+    //   - State machine: rejected — encode_negs is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree NEGS/SUBS decoder
+    // Weaker available: algebraic.metamorphic (SUBS/ZR alias, sf XOR), algebraic.invariant (word layout),
+    //   negative_error (arity / extra operand / mixed width / SP / FP / shift range / ROR)
+    // Differential: candidate=encode_negs, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=operands <-> asm text `negs Rd, Rm{, shift}`
+
+    use super::encode_negs;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn zr(is_64: bool) -> &'static str {
+        if is_64 {
+            "xzr"
+        } else {
+            "wzr"
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_negs(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn shift_kind() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["lsl", "lsr", "asr"])
+    }
+
+    fn amt_bound() -> impl Strategy<Value = u32> {
+        prop_oneof![
+            Just(0u32),
+            Just(1u32),
+            Just(31u32),
+            Just(32u32),
+            Just(63u32),
+            0u32..=63,
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x0".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 8,
+            }),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::Extend {
+                kind: "uxtw".into(),
+                amount: 0,
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_negs_kat_llvm_mc_negs_x0_x1() {
+        let want = 0xeb0103e0u32;
+        let mc = llvm_mc_word("negs x0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_negs_kat_llvm_mc_negs_w0_w1() {
+        let want = 0x6b0103e0u32;
+        let mc = llvm_mc_word("negs w0, w1").expect("llvm-mc W KAT");
+        assert_eq!(mc, want, "llvm-mc W KAT mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("w1".into())];
+        let sut = sut_word(&ops).expect("SUT W KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_negs_kat_llvm_mc_subs_alias() {
+        let want = 0xeb0103e0u32;
+        let mc_negs = llvm_mc_word("negs x0, x1").expect("llvm-mc negs KAT");
+        let mc_subs = llvm_mc_word("subs x0, xzr, x1").expect("llvm-mc subs KAT");
+        assert_eq!(mc_negs, want);
+        assert_eq!(mc_subs, want, "subs Rd, ZR, Rm must alias negs");
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops).expect("SUT subs-alias KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_negs_diff_llvm_mc(
+            rd in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in amt_bound(),
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let rd_n = gpr(is_64, rd);
+            let rm_n = gpr(is_64, rm);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rm_n.clone()),
+            ];
+            let mut asm = format!("negs {}, {}", rd_n, rm_n);
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+                if !(kind == "lsl" && amt == 0) {
+                    asm.push_str(&format!(", {} #{}", kind, amt));
+                }
+            }
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_negs_diff_subs_alias(
+            rd in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in amt_bound(),
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let rd_n = gpr(is_64, rd);
+            let rm_n = gpr(is_64, rm);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rm_n.clone()),
+            ];
+            let mut negs_asm = format!("negs {}, {}", rd_n, rm_n);
+            let mut subs_asm = format!("subs {}, {}, {}", rd_n, zr(is_64), rm_n);
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+                if !(kind == "lsl" && amt == 0) {
+                    let sh = format!(", {} #{}", kind, amt);
+                    negs_asm.push_str(&sh);
+                    subs_asm.push_str(&sh);
+                }
+            }
+            let mc_negs = llvm_mc_word(&negs_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", negs_asm, e));
+            let mc_subs = llvm_mc_word(&subs_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", subs_asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", negs_asm, e));
+            prop_assert_eq!(mc_negs, mc_subs, "negs vs subs alias {} / {}", negs_asm, subs_asm);
+            prop_assert_eq!(sut, mc_subs, "SUT vs subs alias {}", subs_asm);
+        }
+
+        #[test]
+        fn encode_negs_metamorphic_sf_xor(
+            rd in reg_num(),
+            rm in reg_num(),
+            kind in shift_kind(),
+            amt in 0u32..=31,
+        ) {
+            let x_ops = [
+                Operand::Reg(gpr(true, rd)),
+                Operand::Reg(gpr(true, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let w_ops = [
+                Operand::Reg(gpr(false, rd)),
+                Operand::Reg(gpr(false, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let xw = sut_word(&x_ops).expect("64-bit NEGS must encode");
+            let ww = sut_word(&w_ops).expect("32-bit NEGS must encode");
+            prop_assert_eq!(xw ^ ww, 1u32 << 31, "sf must be the sole X/W difference (x={:#010x} w={:#010x})", xw, ww);
+        }
+
+        #[test]
+        fn encode_negs_invariant_arm_fields(
+            rd in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            amt in amt_bound(),
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = amt % (max + 1);
+            let st = match kind {
+                "lsl" => 0u32,
+                "lsr" => 1,
+                "asr" => 2,
+                _ => 0,
+            };
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let w = sut_word(&ops).expect("valid NEGS must encode");
+            let sf = if is_64 { 1u32 } else { 0 };
+            prop_assert_eq!((w >> 31) & 1, sf, "sf");
+            prop_assert_eq!((w >> 30) & 1, 1, "op (SUB)");
+            prop_assert_eq!((w >> 29) & 1, 1, "S");
+            prop_assert_eq!((w >> 24) & 0x1f, 0b01011, "opcode 01011");
+            prop_assert_eq!((w >> 22) & 3, st, "shift");
+            prop_assert_eq!((w >> 21) & 1, 0, "shifted-register bit21 must be 0");
+            prop_assert_eq!((w >> 16) & 0x1f, rm, "Rm");
+            prop_assert_eq!((w >> 10) & 0x3f, amt, "imm6");
+            prop_assert_eq!((w >> 5) & 0x1f, 31, "Rn must be ZR");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_negs_neg_too_few(
+            n in 0usize..=1,
+            is_64 in any::<bool>(),
+            r0 in 0u32..=31,
+        ) {
+            let all = [Operand::Reg(gpr(is_64, r0))];
+            let ops = &all[..n.min(1)];
+            prop_assert!(
+                encode_negs(ops).is_err(),
+                "fewer than 2 operands must Err, n={}",
+                n
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_extra_operand(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                extra,
+            ];
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "NEGS 3rd operand must be a shift; extra non-shift must Err"
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_mixed_width(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            rd64 in any::<bool>(),
+            rm64 in any::<bool>(),
+        ) {
+            prop_assume!(rd64 != rm64);
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rm64, rm)),
+            ];
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "mixed-width NEGS registers must Err (rd64={} rm64={})",
+                rd64,
+                rm64
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_sp(
+            which in 0u32..=1,
+            is_64 in any::<bool>(),
+            other in 0u32..=30,
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let mut names = [gpr(is_64, other), sp.to_string()];
+            names.swap(1, which as usize);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+            ];
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "SP/WSP is not a valid NEGS operand (which={} names={:?})",
+                which,
+                names
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_fp(
+            which in 0u32..=1,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+            ];
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "FP/SIMD register {} is not a valid NEGS operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_shift_range(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            amt_w in prop_oneof![Just(32u32), Just(33u32), Just(63u32), Just(64u32)],
+            amt_x in prop_oneof![Just(64u32), Just(65u32), Just(128u32)],
+        ) {
+            let amt = if is_64 { amt_x } else { amt_w };
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "shift amount {} out of range for {}-bit NEGS must Err",
+                amt,
+                if is_64 { 64 } else { 32 }
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_bad_shift_kind(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            kind in prop_oneof![
+                Just("ror".to_string()),
+                Just("foo".to_string()),
+                Just("lslv".to_string()),
+                Just("rrx".to_string()),
+                Just("".to_string()),
+                Just("uxtw".to_string()),
+            ],
+            amt in 0u32..=31,
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.clone(),
+                    amount: amt,
+                },
+            ];
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "shift kind {:?} is not in {{lsl,lsr,asr}}; must Err",
+                kind
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_trailing_after_shift(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 1,
+                },
+                extra,
+            ];
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "trailing operand after a valid shift must Err"
+            );
+        }
+
+        #[test]
+        fn encode_negs_diff_lr(
+            which in 0u32..=1,
+            other in 0u32..=30,
+            kind in shift_kind(),
+            amt in 0u32..=63,
+        ) {
+            let mut names = [gpr(true, other), "lr".to_string()];
+            names.swap(1, which as usize);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let mut asm = format!("negs {}, {}", names[0], names[1]);
+            if !(kind == "lsl" && amt == 0) {
+                asm.push_str(&format!(", {} #{}", kind, amt));
+            }
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid NEGS {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid NEGS {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {} (lr alias x30)", asm);
+        }
+
+        #[test]
+        fn encode_negs_neg_invalid_name(
+            which in 0u32..=1,
+            name in prop_oneof![
+                Just("foo".to_string()),
+                Just("x32".to_string()),
+                Just("w32".to_string()),
+                Just("x".to_string()),
+                Just("r0".to_string()),
+                Just("".to_string()),
+            ],
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+            ];
+            ops[which as usize] = Operand::Reg(name.clone());
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "invalid register name {:?} must Err (which={})",
+                name,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_negs_neg_non_reg(
+            which in 0u32..=1,
+            extra in prop_oneof![
+                Just(Operand::Imm(0)),
+                Just(Operand::Mem {
+                    base: "x0".into(),
+                    offset: 8,
+                }),
+                Just(Operand::Symbol("foo".into())),
+                Just(Operand::Cond("eq".into())),
+                Just(Operand::Label("L0".into())),
+                Just(Operand::Extend {
+                    kind: "uxtw".into(),
+                    amount: 0,
+                }),
+                Just(Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                }),
+            ],
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+            ];
+            ops[which as usize] = extra;
+            prop_assert!(
+                encode_negs(&ops).is_err(),
+                "non-register operand at slot {} must Err",
+                which
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_negs_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_negs(&ops).is_err(),
+            "NEGS w0, w0, x0 must Err; a 3rd non-shift operand is not valid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_negs_regression_mixed_width() {
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("x0".into())];
+        assert!(
+            encode_negs(&ops).is_err(),
+            "mixed-width NEGS w0, x0 must Err (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_negs_regression_sp() {
+        let ops = [Operand::Reg("wsp".into()), Operand::Reg("w0".into())];
+        assert!(
+            encode_negs(&ops).is_err(),
+            "NEGS wsp, w0 must Err; register 31 is WZR not WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_negs_regression_fp_reg() {
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("x1".into())];
+        assert!(
+            encode_negs(&ops).is_err(),
+            "NEGS d0, x1 must Err; FP/SIMD registers are not NEGS operands (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_negs_regression_shift_range() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lsl".into(),
+                amount: 32,
+            },
+        ];
+        assert!(
+            encode_negs(&ops).is_err(),
+            "NEGS w0, w0, lsl #32 must Err; 32-bit imm6 range is 0..31 (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_negs_regression_bad_shift_kind() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "ror".into(),
+                amount: 0,
+            },
+        ];
+        assert!(
+            encode_negs(&ops).is_err(),
+            "NEGS w0, w0, ror #0 must Err; ROR is not a valid NEGS shift (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_negs_regression_trailing_after_shift() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lsl".into(),
+                amount: 1,
+            },
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_negs(&ops).is_err(),
+            "NEGS w0, w0, lsl #1, x0 must Err; trailing operand after shift is not valid (llvm-mc rejects it)"
+        );
+    }
+}

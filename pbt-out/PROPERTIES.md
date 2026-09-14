@@ -1,241 +1,293 @@
-# Properties: encode_neg
+# Properties: encode_negs
 
-## encode_neg_diff_llvm_mc
+## encode_negs_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent RISC-V assembler). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree NEG/SUB decoder. encode_negw rejected (same-job gate: SUBW / OP-32). encode_alu_reg(sub) shares encode_r/get_reg so is not an independent differential. SUT-boundary: internal-helper of the RISC-V assembler; mapping operands <-> `neg rd, rs`.
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree NEGS/SUBS decoder. encode_neg rejected (same-job gate: SUB / S=0). encode_add_sub shares get_reg/sf_bit so is not an independent differential. SUT-boundary: internal-helper of the GNU-style AArch64 assembler; mapping operands <-> `negs Rd, Rm{, shift}`.
 - Seed: (none)
-- Formal: ∀ rd, rs ∈ GPRNames. encode_neg([Reg(rd), Reg(rs)]) = Word(w) ∧ llvm-mc(-triple=riscv64, "neg rd, rs") = w
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
+- Formal: ∀ rd, rm ∈ {0..31}, w ∈ {W,X}, sh ∈ {LSL,LSR,ASR} ∪ {ε}, amt ∈ [0, max_imm6(w)]. encode_negs([Reg(rd_w), Reg(rm_w), Shift?]) = Word(v) ∧ llvm-mc(-triple=aarch64, "negs Rd, Rm{, sh #amt}") = v
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neg
+function: encode_negs
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rs]
-  domain: { rd: gpr_name, rs: gpr_name }
+  vars: [rd, rm, is_64, kind, use_shift, amt]
+  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: lsl_lsr_asr, amt: 0..63 }
   relation:
     op: eq
-    lhs: encode_neg([Reg(rd), Reg(rs)])
-    rhs: llvm_mc_word("neg " + rd + ", " + rs)
-generators:
-  rd: { gen: oneof, items: ["zero","ra","sp","gp","tp","t0","t1","t2","s0","fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6","x0","x1","x8","x31"] }
-  rs: { gen: oneof, items: ["zero","ra","sp","gp","tp","t0","t1","t2","s0","fp","s1","a0","a1","a2","a3","a4","a5","a6","a7","s2","s3","s4","s5","s6","s7","s8","s9","s10","s11","t3","t4","t5","t6","x0","x1","x8","x31"] }
-evidence: src/backend/riscv/assembler/README.md:321 neg rd, rs = sub rd, x0, rs; encoder/mod.rs:749 "neg" => encode_neg
-```
-
-## encode_neg_diff_llvm_mc_sub
-- Tier: 2
-- Rationale: Contract-surface sweep. README.md:321 names the expansion `sub rd, x0, rs`; comparing encode_neg to llvm-mc's SUB (not the in-tree encode_alu_reg) is an independent differential of that expansion. Same stronger-oracle rejections as encode_neg_diff_llvm_mc.
-- Seed: README.md:321; encode_neg_kat_llvm_mc sub a0, x0, a1
-- Formal: ∀ rd, rs ∈ GPRNames. encode_neg([Reg(rd), Reg(rs)]) = llvm-mc(-triple=riscv64, "sub rd, x0, rs")
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_neg
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rs]
-  domain: { rd: gpr_name, rs: gpr_name }
-  relation:
-    op: eq
-    lhs: encode_neg([Reg(rd), Reg(rs)])
-    rhs: llvm_mc_word("sub " + rd + ", x0, " + rs)
+    lhs: encode_negs(ops)
+    rhs: llvm_mc_word("negs Rd, Rm{, kind #amt}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/README.md:321 neg rd, rs = sub rd, x0, rs
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
+  use_shift: { gen: bool }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: src/backend/arm/assembler/README.md:14 same textual assembly as gas; encoder/mod.rs:279 "negs" => encode_negs; ARM ARM NEGS alias of SUBS shifted-register
 ```
 
-## encode_neg_eq_sub_x0
-- Tier: 4c
-- Rationale: Documented expansion identity. Stronger differential vs llvm-mc is the sibling property above. This metamorphic uses the in-tree SUB encoder (encode_alu_reg) as the expansion target named by README.md:321. Shared encode_r/get_reg disclosed; still independently specified by the expansion table.
-- Seed: README.md:321
-- Formal: ∀ rd, rs ∈ GPRNames. encode_neg([Reg(rd), Reg(rs)]) = encode_alu_reg([Reg(rd), Reg("x0"), Reg(rs)], 0b000, 0b0100000)
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
+## encode_negs_diff_subs_alias
+- Tier: 2
+- Rationale: Documented alias NEGS Rd, Rm = SUBS Rd, ZR, Rm (data_processing.rs:728 purpose comment; llvm-mc canonicalizes subs Rd, ZR, Rm to negs). Independent differential vs llvm-mc SUBS, not in-tree encode_add_sub. Same stronger-oracle rejections as encode_negs_diff_llvm_mc. This is the required metamorphic/differential alias identity.
+- Seed: (none)
+- Formal: ∀ rd, rm ∈ {0..31}, w ∈ {W,X}, sh ∈ {LSL,LSR,ASR} ∪ {ε}, amt ∈ [0, max_imm6(w)]. encode_negs([Reg(rd_w), Reg(rm_w), Shift?]) = llvm-mc("negs …") = llvm-mc("subs Rd, ZR, Rm{, sh #amt}")
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neg
+function: encode_negs
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rm, is_64, kind, use_shift, amt]
+  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: lsl_lsr_asr, amt: in_range }
+  relation:
+    op: eq
+    lhs: encode_negs(ops)
+    rhs: llvm_mc_word("subs Rd, ZR, Rm{, kind #amt}")
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
+  use_shift: { gen: bool }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: data_processing.rs:728 NEGS -> SUBS Rd, XZR, Rm; llvm-mc canonicalizes the pair; ARM ARM C6 NEGS alias
+```
+
+## encode_negs_metamorphic_sf_xor
+- Tier: 4c
+- Rationale: ARM ARM sf is bit 31 of Add/subtract (shifted register). Same register numbers and in-range shift on X vs W must differ only in sf. Stronger differential already used on the valid domain; this is an independent field metamorphic.
+- Seed: (none)
+- Formal: ∀ rd, rm ∈ {0..31}, sh ∈ {LSL,LSR,ASR}, amt ∈ [0,31]. encode_negs(X-ops) XOR encode_negs(W-ops) = 1<<31
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_negs
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rs]
-  domain: { rd: gpr_name, rs: gpr_name }
+  vars: [rd, rm, kind, amt]
+  domain: { rd: 0..31, rm: 0..31, kind: lsl_lsr_asr, amt: 0..31 }
   relation:
     op: eq
-    lhs: encode_neg([Reg(rd), Reg(rs)])
-    rhs: encode_alu_reg([Reg(rd), Reg("x0"), Reg(rs)], 0b000, 0b0100000)
+    lhs: encode_negs(x_ops) XOR encode_negs(w_ops)
+    rhs: 1 << 31
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/README.md:321; pseudo.rs:242 comment sub rd, x0, rs2; encoder/mod.rs:502 "sub" => encode_alu_reg(..., 0b000, 0b0100000)
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
+  amt: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM Add/subtract (shifted register) sf at bit 31; DESIGN_DOC.md:338 fixed 32-bit encoding
 ```
 
-## encode_neg_isa_fields
+## encode_negs_invariant_arm_fields
 - Tier: 4d
-- Rationale: RISC-V R-type SUB field layout is an exact structural predicate on every success word. Stronger differential and expansion metamorphic are sibling properties; this pins opcode/funct3/funct7/rs1=x0 independently of llvm-mc.
-- Seed: encoder/mod.rs:272-276 R-type comment
-- Formal: ∀ rd, rs ∈ 0..31. let Word(w) = encode_neg([Reg("x"+rd), Reg("x"+rs)]). (w&0x7F)=0b0110011 ∧ ((w>>7)&0x1F)=rd ∧ ((w>>12)&7)=0 ∧ ((w>>15)&0x1F)=0 ∧ ((w>>20)&0x1F)=rs ∧ ((w>>25)&0x7F)=0b0100000
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
+- Rationale: ARM ARM field layout of NEGS (shifted register): sf op=1 S=1 01011 shift 0 Rm imm6 Rn=31 Rd. Weaker than differential (does not check agreement with an independent assembler) but pins each field.
+- Seed: (none)
+- Formal: ∀ valid NEGS ops. let w = encode_negs(ops). (w>>31)&1=sf ∧ (w>>30)&1=1 ∧ (w>>29)&1=1 ∧ (w>>24)&0x1f=0b01011 ∧ (w>>22)&3=st ∧ (w>>21)&1=0 ∧ (w>>16)&0x1f=rm ∧ (w>>10)&0x3f=amt ∧ (w>>5)&0x1f=31 ∧ w&0x1f=rd
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neg
+function: encode_negs
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rs]
-  domain: { rd: u32_0_31, rs: u32_0_31 }
-  body: let Word(w) = encode_neg([Reg(xN(rd)), Reg(xN(rs))]). (w & 0x7F) == 0b0110011 && ((w >> 7) & 0x1F) == rd && ((w >> 12) & 7) == 0 && ((w >> 15) & 0x1F) == 0 && ((w >> 20) & 0x1F) == rs && ((w >> 25) & 0x7F) == 0b0100000
+  vars: [rd, rm, is_64, kind, amt]
+  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: lsl_lsr_asr, amt: in_range }
+  relation:
+    op: holds
+    expr: fields(encode_negs(ops)) match ARM ARM NEGS layout with Rn=31
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:272-276 R-type layout; encoder/mod.rs:329 OP_OP=0b0110011; RISC-V ISA SUB funct7=0100000 funct3=000; README.md:321 rs1=x0
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: ARM ARM Add/subtract (shifted register) NEGS; data_processing.rs:728 Rn=XZR
 ```
 
-## encode_neg_abi_xn_alias
-- Tier: 4c
-- Rationale: ABI names and xN names (plus fp/s0) are documented aliases of the same 5-bit encoding in reg_num. Encoding must be invariant under renaming to an alias of the same number.
-- Seed: encoder/mod.rs:147-182 reg_num
-- Formal: ∀ n, m ∈ 0..31. ∀ rd ∈ names(n), rs ∈ names(m). encode_neg([Reg(rd), Reg(rs)]) = encode_neg([Reg("x"+n), Reg("x"+m)])
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
+## encode_negs_neg_too_few
+- Tier: 4e
+- Rationale: llvm-mc rejects `negs x0` ("too few operands"); ARM ARM NEGS requires Rd and Rm. get_reg(1) is the SUT error path. Negative/error contract from the public assembler (gas/llvm-mc) contract in README.md:14.
+- Seed: (none)
+- Formal: ∀ ops with |ops| < 2. encode_negs(ops) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neg
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [n, m]
-  domain: { n: u32_0_31, m: u32_0_31 }
-  relation:
-    op: eq
-    lhs: encode_neg([Reg(abi_name(n)), Reg(abi_name(m))])
-    rhs: encode_neg([Reg("x" + n), Reg("x" + m)])
-generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:147-182 ABI names and x0-x31; s0 | fp => 8
-```
-
-## encode_neg_neg_arity
-- Tier: 5
-- Rationale: Documented form is two operands (`neg rd, rs`). llvm-mc rejects too few operands. get_reg on missing index returns Err. Negative/error contract for the arity precondition.
-- Seed: README.md:321 two-operand form
-- Formal: ∀ ops. |ops| < 2 ⇒ is_err(encode_neg(ops))
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_neg
+function: encode_negs
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops]
-  domain: { ops: operand_list_len_0_or_1 }
+  vars: [n, is_64, r0]
+  domain: { n: 0..1, is_64: bool, r0: 0..31 }
   relation:
     op: throws
-    expr: encode_neg(ops)
-generators:
-  ops: { gen: list, elem: { gen: string }, maxLen: 1 }
+    expr: encode_negs(ops[..n])
 expected_error: String
-evidence: src/backend/riscv/assembler/README.md:321 neg rd, rs; encoder/mod.rs:347-355 get_reg missing index Err; llvm-mc too few operands
+generators:
+  n: { gen: int, min: 0, max: 1, type: usize }
+  is_64: { gen: bool }
+  r0: { gen: int, min: 0, max: 31, type: u32 }
+evidence: llvm-mc "too few operands for instruction"; ARM ARM NEGS two-register form; README.md:14 gas-compatible
 ```
 
-## encode_neg_neg_invalid
-- Tier: 5
-- Rationale: get_reg requires an integer register (or Imm 0..31). FP/vector/unknown names and non-Reg non-in-range-Imm kinds are documented as invalid. llvm-mc rejects FP regs and immediates-as-text.
-- Seed: encoder/mod.rs:347-355 get_reg
-- Formal: ∀ ops of length ≥ 2 where operand 0 or 1 is not a valid integer register and not Imm in 0..31. is_err(encode_neg(ops))
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_neg
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [bad0, bad1]
-  domain: { bad0: invalid_int_reg_operand, bad1: invalid_int_reg_operand }
-  relation:
-    op: throws
-    expr: encode_neg([bad0, bad1])
-generators:
-  bad0: { gen: oneof, items: ["fa0","ft0","f0","v0","x32","x","foo",""] }
-  bad1: { gen: oneof, items: ["fa1","fs0","f31","v31","x32","bar","spx"] }
-expected_error: String
-evidence: encoder/mod.rs:347-355 get_reg; encoder/mod.rs:147-182 reg_num None outside ABI/x0-x31; llvm-mc invalid operand for fa0
-```
-
-## encode_neg_neg_extra
-- Tier: 5
-- Rationale: Documented form is exactly two operands. llvm-mc rejects a third operand (`invalid operand for instruction`). Extra operands must be rejected, not silently ignored.
-- Seed: README.md:321 two-operand form
-- Formal: ∀ rd, rs ∈ GPRNames. ∀ extra. is_err(encode_neg([Reg(rd), Reg(rs), extra]))
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
+## encode_negs_neg_extra_operand
+- Tier: 4e
+- Rationale: llvm-mc rejects a third operand that is not lsl/lsr/asr (including extra GPR, extend, trailing after shift). GNU-style NEGS is Rd, Rm{, shift} only.
+- Seed: (none)
+- Formal: ∀ rd, rm ∈ GPR, extra ∉ Shift(lsl|lsr|asr, in-range). encode_negs([Rd, Rm, extra, …]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: rd = "zero", rs = "zero", extra = Reg("zero")
-- Bug report: pbt-out/bug_reports/encode_neg_extra_operand.md
+- Counterexample: rd=0, rm=0, is_64=false, extra=Reg("x0")
+- Bug report: pbt-out/bug_reports/encode_negs_extra_operand.md
 
 ```property
-function: encode_neg
+function: encode_negs
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rs, extra]
-  domain: { rd: gpr_name, rs: gpr_name, extra: Operand }
+  vars: [rd, rm, is_64, extra]
+  domain: { rd: 0..30, rm: 0..30, extra: non_shift_or_trailing }
   relation:
     op: throws
-    expr: encode_neg([Reg(rd), Reg(rs), extra])
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: int, min: 0, max: 31, type: u32 }
+    expr: encode_negs([Rd, Rm, extra])
 expected_error: String
-evidence: src/backend/riscv/assembler/README.md:321 neg rd, rs (exactly two operands); llvm-mc rejects `neg a0, a1, a2`
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  is_64: { gen: bool }
+  extra: { gen: oneof, items: ["Reg", "Imm", "Mem", "Symbol", "Cond", "Label"] }
+evidence: llvm-mc "expected 'lsl', 'lsr' or 'asr'"; ARM ARM NEGS optional shift only; README.md:14
 ```
 
-## encode_neg_imm_regnum
-- Tier: 4c
-- Rationale: get_reg documents that GCC inline asm may emit bare register numbers 0-31 as Imm. encode_neg must treat Imm(n) for n in 0..31 as register xN. Not a llvm-mc differential (llvm-mc rejects `neg 10, 11`); this is the in-tree documented extension.
-- Seed: encoder/mod.rs:351-352
-- Formal: ∀ n, m ∈ 0..31. encode_neg([Imm(n), Imm(m)]) = encode_neg([Reg("x"+n), Reg("x"+m)])
-- Test file: src/backend/riscv/assembler/encoder/pseudo.rs
+## encode_negs_neg_mixed_width
+- Tier: 4e
+- Rationale: llvm-mc rejects `negs x0, w1` and `negs w0, x1`. ARM ARM requires Rd and Rm the same width.
+- Seed: (none)
+- Formal: ∀ rd, rm ∈ {0..30}, rd64 ≠ rm64. encode_negs([Reg(rd_w), Reg(rm_w')]) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rm=0, rd64=false, rm64=true
+- Bug report: pbt-out/bug_reports/encode_negs_mixed_width.md
+
+```property
+function: encode_negs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rm, rd64, rm64]
+  domain: { rd: 0..30, rm: 0..30, rd64: bool, rm64: bool }
+  relation:
+    op: throws
+    expr: encode_negs([Reg(rd), Reg(rm)])
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  rd64: { gen: bool }
+  rm64: { gen: bool }
+evidence: llvm-mc "invalid operand for instruction" on mixed X/W; ARM ARM Rd/Rm same width
+```
+
+## encode_negs_neg_sp_fp_shift
+- Tier: 4e
+- Rationale: Combined documented invalid domain: (1) register 31 is XZR/WZR never SP/WSP; (2) FP/SIMD prefixes are not NEGS operands; (3) imm6 range 0..31 (sf=0) / 0..63 (sf=1), and ROR/unknown shift kinds are not in {LSL,LSR,ASR}. Bounds sampled at 32, 31, 63, 64.
+- Seed: (none)
+- Formal: ∀ ops in {SP in either slot} ∪ {FP prefix in either slot} ∪ {shift amt out of range} ∪ {shift kind ∉ {lsl,lsr,asr}}. encode_negs(ops) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: SP=[Reg("wsp"), Reg("w0")]; FP=[Reg("d0"), Reg("x1")]; range=[Reg("w0"), Reg("w0"), Shift{lsl,32}]; kind=[Reg("w0"), Reg("w0"), Shift{ror,0}]
+- Bug report: pbt-out/bug_reports/encode_negs_sp.md; pbt-out/bug_reports/encode_negs_fp_reg.md; pbt-out/bug_reports/encode_negs_shift_range.md; pbt-out/bug_reports/encode_negs_bad_shift_kind.md
+
+```property
+function: encode_negs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, prefix, amt_w, amt_x, kind]
+  domain: { which: 0..1, prefix: fp_prefix, amt_w: out_of_range_w, amt_x: out_of_range_x, kind: invalid_shift }
+  relation:
+    op: throws
+    expr: encode_negs(ops)
+expected_error: String
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  prefix: { gen: oneof, items: ["d", "s", "q", "v", "h", "b"] }
+  amt_w: { gen: oneof, items: [32, 33, 63, 64] }
+  amt_x: { gen: oneof, items: [64, 65, 128] }
+  kind: { gen: oneof, items: ["ror", "foo", "lslv", "rrx", "empty", "uxtw"] }
+evidence: llvm-mc rejects SP/FP/ROR/out-of-range; ARM ARM register 31 is ZR, shift in LSL/LSR/ASR, imm6 range by sf
+```
+
+## encode_negs_diff_lr
+- Tier: 2
+- Rationale: `lr` is a documented 64-bit alias of X30 (parse_reg_num and llvm-mc). Folded into the valid-domain differential.
+- Seed: (none)
+- Formal: ∀ which ∈ {Rd,Rm}, other ∈ {0..30}, sh ∈ {LSL,LSR,ASR}, amt ∈ [0,63]. encode_negs(ops with lr in that slot) = llvm-mc("negs … lr …")
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neg
-oracle: algebraic.metamorphic
+function: encode_negs
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [n, m]
-  domain: { n: i64_0_31, m: i64_0_31 }
+  vars: [which, other, kind, amt]
+  domain: { which: 0..1, other: 0..30, kind: lsl_lsr_asr, amt: 0..63 }
   relation:
     op: eq
-    lhs: encode_neg([Imm(n), Imm(m)])
-    rhs: encode_neg([Reg("x" + n), Reg("x" + m)])
+    lhs: encode_negs(ops_with_lr)
+    rhs: llvm_mc_word("negs ... lr ...")
 generators:
-  n: { gen: int, min: 0, max: 31, type: i64 }
-  m: { gen: int, min: 0, max: 31, type: i64 }
-evidence: encoder/mod.rs:351-352 GCC sometimes emits bare register numbers (0-31) in inline asm
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  other: { gen: int, min: 0, max: 30, type: u32 }
+  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: encoder/mod.rs:136 "lr" => 30; llvm-mc encodes lr as x30
+```
+
+## encode_negs_neg_invalid_reg
+- Tier: 4e
+- Rationale: Contract-surface sweep (coverage_gaps had no profraw; manual arm audit of get_reg). parse_reg_num returns None for foo/x32/w32/x/r0/empty; get_reg Errs on non-Reg kinds. llvm-mc rejects these. Documented error path of get_reg (encoder/mod.rs:956-965) not reached by too_few (None vs Some invalid).
+- Seed: (none)
+- Formal: ∀ which ∈ {0,1}, name ∉ valid GPR names ∪ extra ∉ Reg. encode_negs(ops with that slot replaced) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_negs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, name, extra]
+  domain: { which: 0..1, name: invalid_gpr, extra: non_reg }
+  relation:
+    op: throws
+    expr: encode_negs(ops_with_slot_replaced)
+expected_error: String
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  name: { gen: oneof, items: ["foo", "x32", "w32", "x", "r0", "empty"] }
+evidence: encoder/mod.rs:956-965 get_reg expected register; parse_reg_num None for invalid names; llvm-mc rejects them
 ```
