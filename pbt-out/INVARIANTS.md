@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_csinv)
+
+- Same-width GPR CSINV (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond16 including al/nv and hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_csinv(ops) XOR encode_csel(ops) = 1<<30 (ARM ARM CSINV op=1 vs CSEL op=0) (1000 cases).
+- encode_csinv([Rd, Rn, Rn, invert(cond)]) equals encode_cinv([Rd, Rn, cond]) over Cond14 (ARM ARM CINV alias of CSINV) (1000 cases).
+- Success-path word: sf at 31 from Rd width, op=1 at 30, S=0 at 29, bits [28:21]=0b11010100, Rm at [20:16], cond at [15:12], op2=00 at [11:10], Rn at [9:5], Rd at [4:0].
+- Fewer than 4 operands always Err.
+- Unknown condition names (zz, foo, eqq, empty, "eq ", always) always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1, x99) always Err.
+- Non-register/non-cond (Imm/Mem/Symbol/Shift/Label) in any of the four slots always Err.
+- Known-answer: `csinv x0, x1, x2, eq` encodes as 0xda820020; `csinv w0, w1, w2, ne` as 0x5a821020; `csinv x0, x1, x2, al` as 0xda82e020; `csinv x0, x1, x1, ne` as 0xda811020 (CINV alias).
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- CSINV register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `csinv sp, ...`).
+- CSINV takes Wt/Xt only (llvm-mc rejects `csinv d0, ...`).
+- Cond AL and NV are valid for architectural CSINV (unlike CINV/CSETM aliases).
+- llvm-mc rejects mixed x/w and a fifth operand.
+- llvm-mc disassembles `csinv x0, x1, x1, ne` as `cinv x0, x1, eq` with the same encoding.
+
+## Quirks
+
+- Extra operands beyond index 3 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `csinv sp, ...` encodes as `csinv xzr, ...` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- sf is taken only from operand 0; Rn/Rm widths are never checked, so mixed x/w encodes (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (encode_cond None / parse_reg_num None / get_reg non-Reg / cond-not-Cond).
+
+---
+
 # Confirmed invariants (encode_csinc)
 
 - Same-width GPR CSINC (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond16 including al/nv and hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
