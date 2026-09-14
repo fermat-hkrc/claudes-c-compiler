@@ -41,3 +41,4 @@
 | encode_madd | data_processing.rs | data_processing.rs | cargo test --lib | 8 passing / 4 failing properties (plus 3 passing KAT + 4 failing regression witnesses; 4 bugs) |
 | encode_movk | data_processing.rs | data_processing.rs | cargo test --lib | 9 passing / 5 failing properties (plus 3 passing KAT + 5 failing regression witnesses; 5 bugs) |
 | encode_movn | data_processing.rs | data_processing.rs | cargo test --lib | 7 passing / 5 failing properties (plus 3 passing KAT + 5 failing regression witnesses; 5 bugs) |
+| encode_movz | data_processing.rs | data_processing.rs | cargo test --lib | 8 passing / 5 failing properties (plus 1 passing KAT + 5 failing regression witnesses; 5 bugs) |

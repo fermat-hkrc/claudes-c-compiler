@@ -7378,3 +7378,548 @@ mod encode_movn_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_movz_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:220 movz dispatch; ARM ARM Move wide (immediate) MOVZ
+    //   sf 10 100101 hw imm16 Rd; codegen emit.rs:911-922 movz Rd, #imm16 [, lsl #N]
+    // Stronger considered:
+    //   - State machine: rejected — encode_movz is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree MOVZ decoder
+    //   - encode_movk / encode_movn as differential sibling: rejected — same-job gate fails
+    //     (opc 11/00 vs 10; MOVK keeps other halfwords, MOVN inverts)
+    // Weaker available: algebraic.metamorphic (sf bit), algebraic.invariant (ARM fields),
+    //   negative_error (imm16 range / shift / extra operand / SP / FP / arity)
+    // Differential: candidate=encode_movz, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=operands <-> asm text `movz Rd, #imm16 [, lsl #N]`
+
+    use super::encode_movz;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_movz(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn movz_asm(rd: &str, imm: i64, hw: u32) -> String {
+        if hw == 0 {
+            format!("movz {}, #{}", rd, imm)
+        } else {
+            format!("movz {}, #{}, lsl #{}", rd, imm, hw * 16)
+        }
+    }
+
+    fn ops_imm(rd: &str, imm: i64, hw: u32) -> Vec<Operand> {
+        let mut ops = vec![Operand::Reg(rd.to_string()), Operand::Imm(imm)];
+        if hw != 0 {
+            ops.push(Operand::Shift {
+                kind: "lsl".into(),
+                amount: hw * 16,
+            });
+        }
+        ops
+    }
+
+    fn imm16() -> impl Strategy<Value = i64> {
+        prop_oneof![Just(0i64), Just(1i64), Just(65535i64), 0i64..=65535]
+    }
+
+    fn valid_width_hw() -> impl Strategy<Value = (bool, u32)> {
+        prop_oneof![
+            (Just(true), prop_oneof![Just(0u32), Just(1u32), Just(2u32), Just(3u32)]),
+            (Just(false), prop_oneof![Just(0u32), Just(1u32)]),
+        ]
+    }
+
+    fn oob_imm() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(-1i64),
+            Just(65536i64),
+            Just(65537i64),
+            Just(-65535i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            (65536i64..=0x1_0000_0),
+            (i64::MIN..=-1),
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 16,
+            }),
+        ]
+    }
+
+    fn abs_g_shift(kind: &str) -> u32 {
+        match kind {
+            "abs_g0" | "abs_g0_nc" => 0,
+            "abs_g1" | "abs_g1_nc" => 16,
+            "abs_g2" | "abs_g2_nc" => 32,
+            "abs_g3" => 48,
+            _ => 0,
+        }
+    }
+
+    fn invalid_shift_case() -> impl Strategy<Value = (bool, String, u32)> {
+        prop_oneof![
+            (
+                any::<bool>(),
+                prop::sample::select(vec!["lsr", "asr", "ror", "lslx", ""]),
+                prop_oneof![Just(0u32), Just(16u32), Just(32u32), 0u32..=64],
+            )
+                .prop_map(|(b, k, a)| (b, k.to_string(), a)),
+            (
+                any::<bool>(),
+                prop::sample::select(vec![1u32, 8, 15, 17, 31, 33, 47, 49, 63, 64]),
+            )
+                .prop_map(|(b, a)| (b, "lsl".into(), a)),
+            prop::sample::select(vec![32u32, 48]).prop_map(|a| (false, "lsl".into(), a)),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_movz_kat_llvm_mc() {
+        let want_x = 0xd2800540u32;
+        let mc_x = llvm_mc_word("movz x0, #42").expect("llvm-mc KAT x");
+        assert_eq!(mc_x, want_x, "llvm-mc KAT mapping broken for 64-bit");
+        let ops_x = [Operand::Reg("x0".into()), Operand::Imm(42)];
+        let sut_x = sut_word(&ops_x).expect("SUT KAT x");
+        assert_eq!(sut_x, want_x);
+
+        let want_w = 0x52800540u32;
+        let mc_w = llvm_mc_word("movz w0, #42").expect("llvm-mc KAT w");
+        assert_eq!(mc_w, want_w, "llvm-mc KAT mapping broken for 32-bit");
+        let ops_w = [Operand::Reg("w0".into()), Operand::Imm(42)];
+        let sut_w = sut_word(&ops_w).expect("SUT KAT w");
+        assert_eq!(sut_w, want_w);
+
+        let want_lsl = 0xd2a00540u32;
+        let mc_lsl = llvm_mc_word("movz x0, #42, lsl #16").expect("llvm-mc KAT lsl");
+        assert_eq!(mc_lsl, want_lsl, "llvm-mc KAT mapping broken for lsl #16");
+        let ops_lsl = [
+            Operand::Reg("x0".into()),
+            Operand::Imm(42),
+            Operand::Shift {
+                kind: "lsl".into(),
+                amount: 16,
+            },
+        ];
+        let sut_lsl = sut_word(&ops_lsl).expect("SUT KAT lsl");
+        assert_eq!(sut_lsl, want_lsl);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_movz_diff_imm_shift(
+            rd in 0u32..=31,
+            (is_64, hw) in valid_width_hw(),
+            imm in imm16(),
+            explicit_lsl0 in any::<bool>(),
+        ) {
+            let rd_n = gpr(is_64, rd);
+            let mut ops = vec![Operand::Reg(rd_n.clone()), Operand::Imm(imm)];
+            let asm = if hw == 0 && !explicit_lsl0 {
+                format!("movz {}, #{}", rd_n, imm)
+            } else {
+                ops.push(Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: hw * 16,
+                });
+                format!("movz {}, #{}, lsl #{}", rd_n, imm, hw * 16)
+            };
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_movz_metamorphic_sf(
+            rd in 0u32..=31,
+            imm in imm16(),
+            hw in 0u32..=1,
+        ) {
+            let x_ops = ops_imm(&gpr(true, rd), imm, hw);
+            let w_ops = ops_imm(&gpr(false, rd), imm, hw);
+            let xw = sut_word(&x_ops)
+                .unwrap_or_else(|e| panic!("64-bit MOVZ rejected: {e}"));
+            let ww = sut_word(&w_ops)
+                .unwrap_or_else(|e| panic!("32-bit MOVZ rejected: {e}"));
+            prop_assert_eq!(
+                xw ^ ww,
+                1u32 << 31,
+                "X vs W MOVZ must differ only by sf bit 31 (x={:#010x} w={:#010x})",
+                xw,
+                ww
+            );
+        }
+
+        #[test]
+        fn encode_movz_invariant_arm_fields(
+            rd in 0u32..=31,
+            (is_64, hw) in valid_width_hw(),
+            imm in imm16(),
+        ) {
+            let ops = ops_imm(&gpr(is_64, rd), imm, hw);
+            let w = sut_word(&ops).unwrap_or_else(|e| panic!("MOVZ rejected: {e}"));
+            let sf = if is_64 { 1u32 } else { 0 };
+            prop_assert_eq!(w & 0x1F, rd, "Rd field");
+            prop_assert_eq!((w >> 5) & 0xFFFF, imm as u32, "imm16 field");
+            prop_assert_eq!((w >> 21) & 0x3, hw, "hw field");
+            prop_assert_eq!((w >> 23) & 0xFF, 0b10100101u32, "bits 30:23 must be 10100101 (opc=10, 100101)");
+            prop_assert_eq!((w >> 31) & 1, sf, "sf bit");
+        }
+
+        #[test]
+        fn encode_movz_diff_abs_g(
+            rd in 0u32..=31,
+            is_64 in any::<bool>(),
+            val in any::<i64>(),
+            kind in prop::sample::select(vec![
+                "abs_g0", "abs_g0_nc", "abs_g1", "abs_g1_nc",
+                "abs_g2", "abs_g2_nc", "abs_g3",
+            ]),
+        ) {
+            let kind = if !is_64 && abs_g_shift(kind) >= 32 {
+                if kind.contains('1') { "abs_g1" } else { "abs_g0" }
+            } else {
+                kind
+            };
+            let shift = abs_g_shift(kind);
+            let hw = shift / 16;
+            let chunk = ((val as u64) >> shift) as i64 & 0xFFFF;
+            let rd_n = gpr(is_64, rd);
+            let ops = [
+                Operand::Reg(rd_n.clone()),
+                Operand::Modifier {
+                    kind: kind.to_string(),
+                    symbol: val.to_string(),
+                },
+            ];
+            let asm = movz_asm(&rd_n, chunk, hw);
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected resolved {asm}: {e}"));
+            let sut = sut_word(&ops).unwrap_or_else(|e| {
+                panic!("SUT rejected abs_g {kind} val={val} -> {asm}: {e}")
+            });
+            prop_assert_eq!(
+                sut, mc,
+                "abs_g {} val={} must match resolved {}",
+                kind,
+                val,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_movz_neg_imm_oob(
+            rd in 0u32..=31,
+            is_64 in any::<bool>(),
+            imm in oob_imm(),
+        ) {
+            let ops = [Operand::Reg(gpr(is_64, rd)), Operand::Imm(imm)];
+            prop_assert!(
+                encode_movz(&ops).is_err(),
+                "imm {} outside [0, 65535] must Err (llvm-mc rejects it)",
+                imm
+            );
+        }
+
+        #[test]
+        fn encode_movz_neg_invalid_shift(
+            rd in 0u32..=31,
+            imm in imm16(),
+            (is_64, kind, amount) in invalid_shift_case(),
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Imm(imm),
+                Operand::Shift {
+                    kind: kind.clone(),
+                    amount,
+                },
+            ];
+            prop_assert!(
+                encode_movz(&ops).is_err(),
+                "movz with shift {} #{} on {} must Err",
+                kind,
+                amount,
+                gpr(is_64, rd)
+            );
+        }
+
+        #[test]
+        fn encode_movz_neg_extra_operand(
+            rd in 0u32..=31,
+            (is_64, hw) in valid_width_hw(),
+            imm in imm16(),
+            extra in extra_operand(),
+        ) {
+            let mut ops = ops_imm(&gpr(is_64, rd), imm, hw);
+            ops.push(extra);
+            prop_assert!(
+                encode_movz(&ops).is_err(),
+                "MOVZ has no operand after optional lsl; extra operand must Err"
+            );
+        }
+
+        #[test]
+        fn encode_movz_neg_sp(
+            is_64 in any::<bool>(),
+            imm in imm16(),
+            hw in 0u32..=1,
+        ) {
+            let name = if is_64 { "sp" } else { "wsp" };
+            let ops = ops_imm(name, imm, hw);
+            prop_assert!(
+                encode_movz(&ops).is_err(),
+                "MOVZ {} must Err; register 31 is ZR not SP (llvm-mc rejects it)",
+                name
+            );
+        }
+
+        #[test]
+        fn encode_movz_diff_lr(
+            imm in imm16(),
+            hw in 0u32..=3,
+        ) {
+            let ops = ops_imm("lr", imm, hw);
+            let asm = movz_asm("lr", imm, hw);
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {} (lr alias x30)", asm);
+        }
+
+        #[test]
+        fn encode_movz_neg_too_few(
+            n in 0usize..=1,
+            rd in 0u32..=31,
+            is_64 in any::<bool>(),
+            imm in imm16(),
+        ) {
+            let all = [Operand::Reg(gpr(is_64, rd)), Operand::Imm(imm)];
+            let ops = &all[..n];
+            prop_assert!(
+                encode_movz(ops).is_err(),
+                "fewer than 2 operands must Err, n={}",
+                n
+            );
+        }
+
+        #[test]
+        fn encode_movz_neg_fp(
+            fp in prop_oneof![
+                (0u32..=31).prop_map(|n| format!("d{n}")),
+                (0u32..=31).prop_map(|n| format!("s{n}")),
+                (0u32..=31).prop_map(|n| format!("q{n}")),
+                (0u32..=31).prop_map(|n| format!("v{n}")),
+                (0u32..=31).prop_map(|n| format!("h{n}")),
+                (0u32..=31).prop_map(|n| format!("b{n}")),
+            ],
+            imm in imm16(),
+        ) {
+            let ops = [Operand::Reg(fp.clone()), Operand::Imm(imm)];
+            prop_assert!(
+                encode_movz(&ops).is_err(),
+                "MOVZ {} must Err; FP/SIMD names are not GPRs (llvm-mc rejects it)",
+                fp
+            );
+        }
+
+        #[test]
+        fn encode_movz_neg_invalid_name(
+            name in prop::sample::select(vec![
+                "foo".to_string(),
+                "x32".into(),
+                "w32".into(),
+                "x".into(),
+                "r0".into(),
+                "".into(),
+            ]),
+            imm in imm16(),
+        ) {
+            let ops = [Operand::Reg(name.clone()), Operand::Imm(imm)];
+            prop_assert!(
+                encode_movz(&ops).is_err(),
+                "invalid register name {:?} must Err",
+                name
+            );
+        }
+
+        #[test]
+        fn encode_movz_neg_bad_second(
+            rd in 0u32..=31,
+            is_64 in any::<bool>(),
+            second in prop_oneof![
+                Just(Operand::Modifier {
+                    kind: "lo12".into(),
+                    symbol: "0".into(),
+                }),
+                Just(Operand::Modifier {
+                    kind: "abs_g0".into(),
+                    symbol: "foo".into(),
+                }),
+                Just(Operand::Symbol("sym".into())),
+                Just(Operand::Label("L0".into())),
+                Just(Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                }),
+                Just(Operand::Reg("x1".into())),
+            ],
+        ) {
+            let ops = [Operand::Reg(gpr(is_64, rd)), second];
+            prop_assert!(
+                encode_movz(&ops).is_err(),
+                "second operand must be imm16 or a resolvable abs_g modifier"
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_movz_regression_imm_oob() {
+        let ops = [Operand::Reg("w0".into()), Operand::Imm(-1)];
+        assert!(
+            encode_movz(&ops).is_err(),
+            "MOVZ w0, #-1 must Err; imm16 range is [0, 65535] (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_movz_regression_invalid_shift() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Imm(0),
+            Operand::Shift {
+                kind: "lsr".into(),
+                amount: 0,
+            },
+        ];
+        assert!(
+            encode_movz(&ops).is_err(),
+            "MOVZ w0, #0, lsr #0 must Err; only lsl with 0/16 (W) or 0/16/32/48 (X) is valid"
+        );
+    }
+
+    #[test]
+    fn test_encode_movz_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Imm(0),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_movz(&ops).is_err(),
+            "MOVZ x0, #0, x0 must Err; extra operand is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_movz_regression_sp() {
+        let ops = [Operand::Reg("wsp".into()), Operand::Imm(0)];
+        assert!(
+            encode_movz(&ops).is_err(),
+            "MOVZ wsp, #0 must Err; register 31 is WZR not WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_movz_regression_fp() {
+        let ops = [Operand::Reg("d0".into()), Operand::Imm(0)];
+        assert!(
+            encode_movz(&ops).is_err(),
+            "MOVZ d0, #0 must Err; FP/SIMD registers are not MOVZ operands (llvm-mc rejects it)"
+        );
+    }
+}
