@@ -86,3 +86,4 @@
 | encode_fmov | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 5 failing properties (plus 9 passing KAT + 7 failing regression witnesses; 5 bugs; sweep nonreg/invalid-name passing, V.D[1] failing) |
 | encode_fp_arith | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 8 passing KAT + 5 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
 | encode_rbit | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 4 failing properties (plus 6 passing KAT + 4 failing regression witnesses; 4 bugs; sweep invalid-name/nonreg/alt-spellings/neon passing) |
+| encode_rev16 | bitfield.rs | bitfield.rs | cargo test --lib | 7 passing / 4 failing properties (plus 6 passing KAT + 4 failing regression witnesses; 4 bugs; sweep invalid-name/nonreg/alt-spellings passing) |

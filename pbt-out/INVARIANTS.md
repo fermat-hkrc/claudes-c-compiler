@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_rev16)
+
+- Valid REV16 Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `rev16 w0, w1` = 0x5ac00420.
+- Success-path word is ARM Data-processing (1 source) REV16: sf 1 0 11010110 00000 000001 Rn Rd. Equivalently w = (sf<<31)|(1<<30)|(0b011010110<<21)|(0b000001<<10)|(rn<<5)|rd. bits[30]=1; bits[29]=0; bits[28:21]=11010110; bits[20:16]=00000; bits[15:10]=000001.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; X vs W xor = 1<<31 (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `rev16 w0, w1` = 0x5ac00420; `rev16 x0, x1` = 0xdac00420; `rev16 wzr, wzr` = 0x5ac007ff; `rev16 xzr, xzr` = 0xdac007ff; `rev16 lr, x1` = 0xdac0043e; `rev16 x0, xzr` = 0xdac007e0.
+- Extra operand, SP/WSP, mixed W/X, and FP/SIMD prefixes currently encode instead of Err (see bugs).
+
+## Environment (encode_rev16)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on `rev16 w0, w1` = 0x5ac00420.
+- ARM ARM Data-processing (1 source) REV16: REV16 <Wd>, <Wn> / REV16 <Xd>, <Xn>. Encoding sf 1 0 11010110 00000 000001 Rn Rd; register 31 is ZR not SP. Vector form is Advanced SIMD two-register miscellaneous REV16, dispatched to encode_neon_two_misc, not encode_rev16.
+- Dispatch: encoder/mod.rs:576-578 scalar rev16 => encode_rev16; NEON RegArrangement => encode_neon_two_misc.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_two_misc is the vector form (not a differential sibling for scalar). Sibling encode_rev/encode_rev32/encode_rbit/encode_clz/encode_cls are different opcodes.
+- encode_rev16 does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_rev16 (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_rev16_*.md.
+
 # Confirmed invariants (encode_rbit)
 
 - Valid RBIT Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `rbit w0, w1` = 0x5ac00020.

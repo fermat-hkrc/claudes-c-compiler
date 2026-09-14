@@ -1,29 +1,29 @@
-# PBT Campaign Report: encode_rbit
+# PBT Campaign Report: encode_rev16
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_rbit (src/backend/arm/assembler/encoder/bitfield.rs)
-**Tests:** 12 properties (8 passing, 4 failing) plus 6 passing KAT and 4 failing regression witnesses
-**Result:** 8 passing properties, 4 bugs
+**Modules tested:** encode_rev16 (src/backend/arm/assembler/encoder/bitfield.rs)
+**Tests:** 11 properties (7 passing, 4 failing) plus 6 passing KAT and 4 failing regression witnesses
+**Result:** 7 passing properties, 4 bugs
 **Effort tier:** standard (1 coverage-driven sweep round; generator runs set to 1000; ≥1 metamorphic and ≥1 differential)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_rbit | 12 properties (8 pass / 4 fail) + 6 KAT + 4 regressions | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_rev16 | 11 properties (7 pass / 4 fail) + 6 KAT + 4 regressions | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_rbit ignores extra operands** — `rbit w0, w0, x0` encodes as `rbit w0, w0` (0x5ac00000). llvm-mc/gas reject a 3rd operand. Law: RBIT takes exactly two registers. Shrunk: `[Reg("w0"), Reg("w0"), Reg("x0")]`. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rbit_extra_operand.md`
+1. **encode_rev16 ignores extra operands** — `rev16 w0, w0, x0` encodes as `rev16 w0, w0`. llvm-mc/gas reject a 3rd operand. Law: REV16 takes exactly two registers. Shrunk: `[Reg("w0"), Reg("w0"), Reg("x0")]`. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rev16_extra_operand.md`
 
-2. **encode_rbit accepts SP/WSP as a GPR** — `rbit wsp, w0` encodes as `rbit wzr, w0` (0x5ac0001f). llvm-mc rejects SP/WSP. Law: ARM register 31 is ZR not SP. Shrunk: which=0, sp=wsp, other=0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rbit_sp.md`
+2. **encode_rev16 accepts SP/WSP as a GPR** — `rev16 wsp, w0` encodes as `rev16 wzr, w0`. llvm-mc rejects SP/WSP. Law: ARM register 31 is ZR not SP. Shrunk: which=0, sp=wsp, other=0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rev16_sp.md`
 
-3. **encode_rbit accepts mixed W/X register widths** — `rbit x0, w0` encodes as `rbit x0, x0` (0xdac00000); sf is taken from Rd only. llvm-mc rejects mixed width. Law: matching W/W or X/X. Shrunk: rd=0, rn=0, rd64=true, rn64=false. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rbit_mixed_width.md`
+3. **encode_rev16 accepts mixed W/X register widths** — `rev16 x0, w0` encodes with sf taken from Rd only. llvm-mc rejects mixed width. Law: matching W/W or X/X. Shrunk: rd=0, rn=0, rd64=true, rn64=false. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rev16_mixed_width.md`
 
-4. **encode_rbit accepts FP/SIMD registers as scalar operands** — `rbit d0, x1` encodes as `rbit w0, w1` (0x5ac00020). llvm-mc rejects FP prefixes. Law: scalar RBIT operands are GPRs only. Shrunk: which=0, prefix="d", n=0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rbit_fp.md`
+4. **encode_rev16 accepts FP/SIMD registers as scalar operands** — `rev16 d0, x1` encodes as `rev16 w0, w1`. llvm-mc rejects FP prefixes. Law: scalar REV16 operands are GPRs only. Shrunk: which=0, prefix="d", n=0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_rev16_fp.md`
 
 ## Design Caveats
 
@@ -33,30 +33,30 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_rbit_pbt) | 12 properties + 6 KAT + 4 regressions |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_rev16_pbt) | 11 properties + 6 KAT + 4 regressions |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger row for encode_rbit
+- pbt-out/COVERAGE.md — coverage ledger row for encode_rev16
 - pbt-out/COVERAGE_STATUS.md — campaign coverage stats
-- pbt-out/FUNCTION_INDEX.md — encode_rbit marked yes
-- pbt-out/INVARIANTS.md — confirmed encode_rbit invariants
-- pbt-out/bug_reports/encode_rbit_extra_operand.md
-- pbt-out/bug_reports/encode_rbit_sp.md
-- pbt-out/bug_reports/encode_rbit_mixed_width.md
-- pbt-out/bug_reports/encode_rbit_fp.md
+- pbt-out/FUNCTION_INDEX.md — encode_rev16 marked yes
+- pbt-out/INVARIANTS.md — confirmed encode_rev16 invariants
+- pbt-out/bug_reports/encode_rev16_extra_operand.md
+- pbt-out/bug_reports/encode_rev16_sp.md
+- pbt-out/bug_reports/encode_rev16_mixed_width.md
+- pbt-out/bug_reports/encode_rev16_fp.md
 
-Sweep round 1/1 closed: `coverage_gaps` had no LLVM profraw; manual arm audit added `encode_rbit_diff_alt_spellings`, `encode_rbit_neg_nonreg`, `encode_rbit_neg_invalid_name`, `encode_rbit_diff_valid_neon` (all passing). Documented contract surface covered; tier round spent.
+Sweep round 1/1 closed: `coverage_gaps` had no LLVM profraw; manual arm audit added `encode_rev16_diff_alt_spellings`, `encode_rev16_neg_nonreg`, `encode_rev16_neg_invalid_name` (all passing). Documented contract surface covered; tier round spent.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 20:09 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 84/284 total | PBT candidates: 84 | Tested: 84 (100%) | 0 pass, 84 fail
+> Last updated: 2026-09-14 20:21 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 85/284 total | PBT candidates: 85 | Tested: 85 (100%) | 0 pass, 85 fail
 
 ## Summary
 
@@ -65,10 +65,10 @@ Sweep round 1/1 closed: `coverage_gaps` had no LLVM profraw; manual arm audit ad
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 284 |
-| PBT candidates (from FUNCTION_INDEX) | 84 |
-| **Tested (of PBT candidates)** | **84 / 84 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 84 / 0 |
-| **Overall (tested / all functions)** | **84 / 284 (30%)** |
+| PBT candidates (from FUNCTION_INDEX) | 85 |
+| **Tested (of PBT candidates)** | **85 / 85 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 85 / 0 |
+| **Overall (tested / all functions)** | **85 / 284 (30%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -76,13 +76,13 @@ Sweep round 1/1 closed: `coverage_gaps` had no LLVM profraw; manual arm audit ad
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 84 | 84 | 0 | 100% |
+|  | 85 | 85 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 84 | 84 | 0 | 100% |
+| unknown | 85 | 85 | 0 | 100% |
 
 ## File Coverage
 
@@ -189,3 +189,4 @@ Sweep round 1/1 closed: `coverage_gaps` had no LLVM profraw; manual arm audit ad
 | encode_fmov | fp_scalar.rs |
 | encode_fp_arith | fp_scalar.rs |
 | encode_rbit | bitfield.rs |
+| encode_rev16 | bitfield.rs |
