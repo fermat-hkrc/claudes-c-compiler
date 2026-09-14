@@ -1,253 +1,338 @@
-# Properties: encode_fp_arith
+# Properties: encode_rbit
 
-## encode_fp_arith_diff_valid
+## encode_rbit_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree FP 2-source decoder). Same-job sibling gate fails for encode_neon_float_three_same (vector), encode_fmadd_fmsub (4-operand fused), encode_fp_1src / encode_fneg (1-source). Doc evidence: README.md:11 GNU-style gas contract; README.md:223 lists the eight scalar mnemonics; encoder/mod.rs:377-404 dispatch; ARM ARM FP data-processing (2 source).
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_diff_valid
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_d ∈ Bool, idx ∈ {0..7}, dest_kind,src_kind,rm_kind ∈ {0,1}. let mnem,opcode = ARITH[idx]; let Rd = fp_spelling(is_d,rd,dest_kind); Rn = fp_spelling(is_d,rn,src_kind); Rm = fp_spelling(is_d,rm,rm_kind). llvm-mc(mnem Rd, Rn, Rm) = encode_fp_arith([Reg(Rd),Reg(Rn),Reg(Rm)], opcode) as Word.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree RBIT decoder). Sibling encode_neon_rbit rejected for scalar (vector class; dispatch splits). Sibling encode_clz/encode_cls/encode_rev rejected (different opcode). Doc evidence: README.md:11 GNU-style assembly; README.md:240 lists rbit; encoder/mod.rs:902-909 dispatch; ARM ARM Data-processing (1 source) RBIT.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_diff_valid_gpr
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..31. encode_rbit([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]) = Word(llvm-mc("rbit gpr(is_64,rd), gpr(is_64,rn)"))
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_d, idx]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_d: bool, idx: 0..7 }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31 }
   relation:
     op: eq
-    lhs: encode_fp_arith([Reg(fp(is_d,rd)), Reg(fp(is_d,rn)), Reg(fp(is_d,rm))], ARITH[idx].opcode)
-    rhs: llvm_mc(ARITH[idx].mnem + " " + fp(is_d,rd) + ", " + fp(is_d,rn) + ", " + fp(is_d,rm))
+    lhs: encode_rbit([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))])
+    rhs: llvm_mc("rbit " + gpr(is_64,rd) + ", " + gpr(is_64,rn))
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_d: { gen: bool }
-  idx: { gen: int, min: 0, max: 7, type: usize }
-evidence: README.md:11 GNU-style gas contract; encoder/mod.rs:377-404; ARM ARM FP 2-source
+evidence: README.md:11 GNU-style assembly; ARM ARM RBIT sf 1 0 11010110 00000 000000 Rn Rd
 ```
 
-## encode_fp_arith_arm_fields
+## encode_rbit_arm_fields
 - Tier: 4
-- Rationale: Algebraic invariant of the ARM ARM 2-source field layout. Stronger differential already used on the valid domain; this pins each bit-field independently so a coincidental 32-bit match cannot hide a swapped Rn/Rm.
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_arm_fields
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_d ∈ Bool, idx ∈ {0..7}. let opcode = ARITH[idx].opcode; ftype = is_d ? 0b01 : 0b00; w = encode_fp_arith([S/D rd,rn,rm], opcode). Then w = (0b00011110<<24)|(ftype<<22)|(1<<21)|(rm<<16)|(opcode<<12)|(0b10<<10)|(rn<<5)|rd, and bits[31:24]=00011110, bits[23:22]=ftype, bit21=1, bits[20:16]=rm, bits[15:12]=opcode, bits[11:10]=10, bits[9:5]=rn, bits[4:0]=rd.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Algebraic invariant from ARM ARM encoding, weaker than differential (already used above) but pins each field independently. Stronger rejected as above. Doc evidence: ARM ARM Data-processing (1 source) RBIT opcode=000000.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_arm_fields
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..31. let w = encode_rbit([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]). w = (sf<<31)|(1<<30)|(0b011010110<<21)|(rn<<5)|rd ∧ w[31]=sf ∧ w[30]=1 ∧ w[29]=0 ∧ w[28:21]=11010110 ∧ w[20:16]=00000 ∧ w[15:10]=000000 ∧ w[9:5]=rn ∧ w[4:0]=rd where sf = [is_64]
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_d, idx]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_d: bool, idx: 0..7 }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31 }
   relation:
     op: eq
-    lhs: encode_fp_arith([Reg(fp(is_d,rd)), Reg(fp(is_d,rn)), Reg(fp(is_d,rm))], ARITH[idx].opcode)
-    rhs: (0b00011110u32 << 24) | (ftype << 22) | (1 << 21) | (rm << 16) | (opcode << 12) | (0b10 << 10) | (rn << 5) | rd
+    lhs: encode_rbit([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))])
+    rhs: (sf(is_64)<<31)|(1<<30)|(0b011010110<<21)|(rn<<5)|rd
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_d: { gen: bool }
-  idx: { gen: int, min: 0, max: 7, type: usize }
-evidence: ARM ARM Floating-point data-processing (2 source); fp_scalar.rs:76 comment
+evidence: ARM ARM Data-processing (1 source) RBIT opcode=000000
 ```
 
-## encode_fp_arith_metamorphic_fields
-- Tier: 4
-- Rationale: Algebraic metamorphic: independent field updates must flip only the corresponding bits. Documented bounds 0..31 sampled at 30 and 31 via rd in 0..30 plus +1. Weaker than differential; used to isolate field packing bugs.
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_metamorphic_fields
-- Formal: ∀ rd,rn,rm ∈ {0..30}, is_d ∈ Bool. let w = encode_fp_arith(S/D rd,rn,rm, FADD). Then encode(rd+1,rn,rm)=w+1; encode(rd,rn+1,rm)=w+(1<<5); encode(rd,rn,rm+1)=w+(1<<16); encode(S↔D) xor w = 1<<22; encode(FSUB) xor w = 1<<12.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+## encode_rbit_metamorphic_rd_rn_sf
+- Tier: 3
+- Rationale: Algebraic metamorphic — Rd/Rn occupy disjoint 5-bit fields; W vs X flips only sf. Stronger rejected as above. Doc evidence: ARM ARM field layout Rd[4:0] Rn[9:5] sf[31].
+- Seed: bitfield.rs encode_clz_pbt encode_clz_metamorphic_rd_rn
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..30. let b = encode_rbit(Rd,Rn). encode_rbit(Rd+1,Rn)[4:0]=rd+1 ∧ other bits equal to b; encode_rbit(Rd,Rn+1)[9:5]=rn+1 ∧ other bits equal to b; encode_rbit(!is_64,Rd,Rn) xor b = 1<<31
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_d]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30, is_d: bool }
-  body: encode(rd+1)=w+1 AND encode(rn+1)=w+(1<<5) AND encode(rm+1)=w+(1<<16) AND (S xor D)=1<<22 AND (FADD xor FSUB)=1<<12
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd: 0..30, rn: 0..30 }
+  body: encode_rbit(rd+1,rn) updates only bits[4:0] and encode_rbit(rd,rn+1) updates only bits[9:5] and W-vs-X xor is 1<<31
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_d: { gen: bool }
-evidence: ARM ARM FP 2-source field positions Rd[4:0] Rn[9:5] Rm[20:16] opcode[15:12] ftype[23:22]
+evidence: ARM ARM RBIT Rd bits[4:0] Rn bits[9:5] sf bit31
 ```
 
-## encode_fp_arith_neg_arity
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc/gas reject fewer than 3 operands ("too few operands"). get_reg on missing index must Err. Documented 3-operand form in ARM ARM and README.md:223.
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_neg_arity
-- Formal: ∀ len ∈ {0,1,2}, n ∈ {0..31}. encode_fp_arith(ops of length len using S-regs, FADD) is Err.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+## encode_rbit_neg_arity
+- Tier: 5
+- Rationale: Negative/error contract — llvm-mc rejects too few operands ("too few operands for instruction"). Stronger oracles do not cover the invalid-arity domain.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_neg_arity
+- Formal: ∀ len ∈ 0..1, is_64 ∈ {false,true}, rd,rn ∈ 0..31. encode_rbit(prefix of [Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))] of length len) is Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [len, n]
-  domain: { len: 0..2, n: 0..31 }
+  vars: [len, is_64, rd, rn]
+  domain: { len: 0..1, is_64: bool, rd: 0..31, rn: 0..31 }
   relation:
-    op: throws
-    expr: encode_fp_arith(ops[0..len], 0b0010)
-expected_error: String
+    op: holds
+    expr: encode_rbit(ops[..len]).is_err()
 generators:
-  len: { gen: int, min: 0, max: 2, type: usize }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc/gas reject too few operands; ARM ARM FADD Sd, Sn, Sm is 3-operand
+  len: { gen: int, min: 0, max: 1, type: usize }
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc "too few operands for instruction" for `rbit w0`
 ```
 
-## encode_fp_arith_neg_extra_operand
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc/gas reject a 4th operand. The GNU-style assembler contract (README.md:11) requires the same rejection. encode_fp_arith currently ignores extras via get_reg by index only.
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_neg_extra_operand
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_d ∈ Bool, extra ∈ ExtraOperand. encode_fp_arith([S/D rd,rn,rm, extra], FADD) is Err.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+## encode_rbit_neg_extra_operand
+- Tier: 5
+- Rationale: Negative/error contract — llvm-mc rejects a 3rd operand ("invalid operand for instruction"). RBIT is a 2-operand instruction. Stronger oracles do not cover extra operands.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_neg_extra_operand
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..31, extra ∈ ExtraOperand. encode_rbit([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), extra]) is Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, is_d=false, extra=Reg("s0") — encode_fp_arith([s0,s0,s0,s0], FADD) is Ok(Word); serial reconfirm PBT_TEST_JOBS=1
-- Bug report: pbt-out/bug_reports/encode_fp_arith_extra_operand.md
+- Counterexample: is_64=false, rd=0, rn=0, extra=Reg("x0")  (rbit w0, w0, x0)
+- Bug report: pbt-out/bug_reports/encode_rbit_extra_operand.md
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_d, extra]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_d: bool, extra: ExtraOperand }
+  vars: [is_64, rd, rn, extra]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31, extra: ExtraOperand }
   relation:
-    op: throws
-    expr: encode_fp_arith([Reg(fp(is_d,rd)), Reg(fp(is_d,rn)), Reg(fp(is_d,rm)), extra], 0b0010)
+    op: holds
+    expr: encode_rbit([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), extra]).is_err()
+generators:
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: oneof, items: [Reg, Imm, Shift, RegArrangement] }
 expected_error: String
+evidence: llvm-mc rejects `rbit w0, w1, w2` and `rbit x0, x1, #0`
+```
+
+## encode_rbit_neg_sp
+- Tier: 5
+- Rationale: Negative/error contract — ARM ARM register 31 is ZR not SP; llvm-mc rejects SP/WSP as RBIT operands. Stronger oracles do not cover this invalid domain.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_neg_sp
+- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, is_64 ∈ {false,true}, other ∈ 0..30. encode_rbit(ops with slot which = Reg(sp)) is Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: which=0, sp64=false, is_64=false, other=0  (rbit wsp, w0)
+- Bug report: pbt-out/bug_reports/encode_rbit_sp.md
+
+```property
+function: encoder.bitfield.encode_rbit
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, sp, is_64, other]
+  domain: { which: 0..1, sp: {sp,wsp}, is_64: bool, other: 0..30 }
+  relation:
+    op: holds
+    expr: encode_rbit(ops_with_slot(which, Reg(sp))).is_err()
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  sp: { gen: oneof, items: ["sp", "wsp"] }
+  is_64: { gen: bool }
+  other: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: llvm-mc rejects `rbit sp, x0` and `rbit wsp, w0`; ARM ARM Rd/Rn are ZR not SP at 31
+```
+
+## encode_rbit_neg_mixed_width
+- Tier: 5
+- Rationale: Negative/error contract — llvm-mc rejects mixed W/X (`rbit x0, w1` / `rbit w0, x1`). ARM ARM requires matching 32-bit or 64-bit pair.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_neg_mixed_width
+- Formal: ∀ rd,rn ∈ 0..31, rd64 ≠ rn64. encode_rbit([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn))]) is Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rd64=true, rn64=false  (rbit x0, w0)
+- Bug report: pbt-out/bug_reports/encode_rbit_mixed_width.md
+
+```property
+function: encoder.bitfield.encode_rbit
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rd64, rn64]
+  domain: { rd: 0..31, rn: 0..31, rd64: bool, rn64: bool }
+  relation:
+    op: holds
+    expr: encode_rbit([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn))]).is_err()
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_d: { gen: bool }
-  extra: { gen: oneof, options: [Reg(sN), Imm(0), Imm(1), Imm(32), Shift, RegArrangement] }
-evidence: llvm-mc/gas reject extra operands for scalar FADD; README.md:11
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+expected_error: String
+evidence: llvm-mc rejects `rbit x0, w1` and `rbit w0, x1`
 ```
 
-## encode_fp_arith_neg_wrong_types
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc/gas reject mixed S/D, GPR, Q/V/B, and SP/WSP for scalar FP 2-source. ARM ARM requires matching Sd,Sn,Sm or Dd,Dn,Dm (or Hd,Hn,Hm).
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_neg_wrong_types
-- Formal: ∀ (Rd,Rn,Rm) drawn from mixed-S/D, GPR, Q/V/B, or SP/WSP triples. encode_fp_arith([Reg(Rd),Reg(Rn),Reg(Rm)], FADD) is Err.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+## encode_rbit_neg_fp
+- Tier: 5
+- Rationale: Negative/error contract — llvm-mc rejects FP/SIMD prefixes as scalar RBIT operands (`rbit d0, d1`). Scalar RBIT is GPR-only.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_neg_fp
+- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_rbit(ops with slot which = Reg(prefix+n)) is Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: dest="d0", src="s0", src2="s0" — mixed S/D encodes instead of Err; serial reconfirm PBT_TEST_JOBS=1. Also GPR (x0,s1,s2) and SP (sp,s1,s2).
-- Bug report: pbt-out/bug_reports/encode_fp_arith_wrong_types.md
+- Counterexample: which=0, prefix="d", n=0  (rbit d0, x1)
+- Bug report: pbt-out/bug_reports/encode_rbit_fp.md
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { (rd,rn,rm): mixed_sd | gpr | qvb | sp }
+  vars: [which, prefix, n]
+  domain: { which: 0..1, prefix: {d,s,q,v,h,b}, n: 0..31 }
   relation:
-    op: throws
-    expr: encode_fp_arith([Reg(rd), Reg(rn), Reg(rm)], 0b0010)
-expected_error: String
+    op: holds
+    expr: encode_rbit(ops_with_slot(which, Reg(prefix+n))).is_err()
 generators:
-  triple: { gen: oneof, options: [mixed_sd, gpr_slot, qvb_slot, sp_slot] }
-evidence: ARM ARM FADD matching-type 3-reg; llvm-mc rejects mixed/GPR/QVB/SP
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  prefix: { gen: oneof, items: ["d", "s", "q", "v", "h", "b"] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc rejects `rbit d0, d1` and `rbit s0, s1`
 ```
 
-## encode_fp_arith_diff_half
+## encode_rbit_diff_alt_spellings
 - Tier: 2
-- Rationale: Differential vs llvm-mc +fullfp16 for the documented H form (ARM ftype=11). README.md:11 gas contract; ARM ARM ftype 11=H. SUT currently treats any non-d prefix as ftype=00 (S), so H is a documented-valid path that must match llvm-mc, not a crash-only check.
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_diff_half
-- Formal: ∀ rd,rn,rm ∈ {0..31}, idx ∈ {0..7}. llvm-mc -mattr=+fullfp16 (mnem Hd, Hn, Hm) = encode_fp_arith([Reg(h{rd}),Reg(h{rn}),Reg(h{rm})], opcode) as Word.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, idx=0 — fmul h0,h0,h0: SUT 0x1e200800 (ftype=00) vs llvm-mc 0x1ee00800 (ftype=11); serial reconfirm PBT_TEST_JOBS=1
-- Bug report: pbt-out/bug_reports/encode_fp_arith_half_ftype.md
+- Rationale: Differential vs llvm-mc on x31/w31, XZR/WZR, LR, and uppercase aliases. Strengthening/sweep of the valid-GPR differential. Same rejection chain as encode_rbit_diff_valid_gpr.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_diff_alt_spellings
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..31, dest_spell,src_spell ∈ 0..4. encode_rbit([Reg(spell(is_64,rd,dest_spell)), Reg(spell(is_64,rn,src_spell))]) = Word(llvm-mc("rbit " + spell + ", " + spell))
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, idx]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, idx: 0..7 }
+  vars: [is_64, rd, rn, dest_spell, src_spell]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31, dest_spell: 0..4, src_spell: 0..4 }
   relation:
     op: eq
-    lhs: encode_fp_arith([Reg("h"+rd), Reg("h"+rn), Reg("h"+rm)], ARITH[idx].opcode)
-    rhs: llvm_mc_fp16(ARITH[idx].mnem + " h" + rd + ", h" + rn + ", h" + rm)
+    lhs: encode_rbit([Reg(spell(is_64,rd,dest_spell)), Reg(spell(is_64,rn,src_spell))])
+    rhs: llvm_mc("rbit " + spell(is_64,rd,dest_spell) + ", " + spell(is_64,rn,src_spell))
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: usize }
-evidence: ARM ARM ftype 11=H; llvm-mc -mattr=+fullfp16; README.md:11
+  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
+  src_spell: { gen: int, min: 0, max: 4, type: u32 }
+evidence: README.md:11; llvm-mc accepts x31/XZR/LR/uppercase as ZR/X30 aliases
 ```
 
-## encode_fp_arith_neg_nonreg
-- Tier: 4e
-- Rationale: Negative/error contract. Non-register operand kinds (Imm/Symbol/Label/Mem/Cond/Shift) at any of the three slots must Err. get_reg already returns Err for non-Reg; this pins the contract rather than crash-only.
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_neg_nonreg
-- Formal: ∀ which ∈ {0,1,2}, kind ∈ {Imm,Symbol,Label,Mem,Cond,Shift}. encode_fp_arith(S-reg triple with slot `which` replaced by kind, FADD) is Err.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+## encode_rbit_neg_nonreg
+- Tier: 5
+- Rationale: Negative/error contract — non-register kinds at Rd/Rn must Err (get_reg / llvm-mc). Sweep of operand-kind error path.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_neg_nonreg
+- Formal: ∀ which ∈ {0,1}, bad ∈ {Imm, Shift, Mem, Label, Symbol, Cond}. encode_rbit(ops with slot which = bad) is Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, kind]
-  domain: { which: 0..2, kind: {Imm,Symbol,Label,Mem,Cond,Shift} }
+  vars: [which, bad]
+  domain: { which: 0..1, bad: NonRegOperand }
   relation:
-    op: throws
-    expr: encode_fp_arith(s_triple_with_slot(which, kind), 0b0010)
-expected_error: String
+    op: holds
+    expr: encode_rbit(ops_with_slot(which, bad)).is_err()
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  kind: { gen: int, min: 0, max: 5, type: u32 }
-evidence: get_reg expected-register error; llvm-mc rejects non-register operands
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  bad: { gen: oneof, items: [Imm, Shift, Mem, Label, Symbol, Cond] }
+expected_error: String
+evidence: get_reg requires Operand::Reg; llvm-mc rejects non-register RBIT operands
 ```
 
-## encode_fp_arith_neg_invalid_name
-- Tier: 4e
-- Rationale: Sweep of the parse_reg_num failure arm (documented invalid names s32/empty/foo). Negative/error contract: llvm-mc rejects these as invalid operands. Stronger oracles do not apply to the invalid-name domain.
-- Seed: fp_scalar.rs encode_fp_1src_pbt::encode_fp_1src_neg_invalid_name
-- Formal: ∀ which ∈ {0,1,2}, name ∈ {foo,s32,d32,h32,x32,r0,s,d,""}. encode_fp_arith(S-reg triple with slot `which` = Reg(name), FADD) is Err.
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+## encode_rbit_neg_invalid_name
+- Tier: 5
+- Rationale: Negative/error contract — parse_reg_num rejects foo/x32/empty/r0. Sweep of the parse_reg_num failure arm.
+- Seed: bitfield.rs encode_clz_pbt encode_clz_neg_invalid_name
+- Formal: ∀ which ∈ {0,1}, name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_rbit(ops with slot which = Reg(name)) is Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_fp_arith
+function: encoder.bitfield.encode_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, name]
-  domain: { which: 0..2, name: {foo,s32,d32,h32,x32,r0,s,d,""} }
+  domain: { which: 0..1, name: InvalidName }
   relation:
-    op: throws
-    expr: encode_fp_arith(s_triple_with_slot(which, Reg(name)), 0b0010)
-expected_error: String
+    op: holds
+    expr: encode_rbit(ops_with_slot(which, Reg(name))).is_err()
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  name: { gen: oneof, options: [foo, s32, d32, h32, x32, r0, s, d, empty] }
-evidence: parse_reg_num returns None for these names; llvm-mc rejects them
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  name: { gen: oneof, items: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
+expected_error: String
+evidence: parse_reg_num returns None for non w/x/d/s/q/v/h/b names and numbers > 31
+```
+
+## encode_rbit_diff_valid_neon
+- Tier: 2
+- Rationale: Differential vs llvm-mc for the in-function NEON arm (RegArrangement 8b/16b). Sweep to reach the documented vector encoding in encode_rbit. Sibling encode_neon_rbit is the dispatch path for this form (not a same-job differential for scalar); here we exercise encode_rbit directly. State machine / round-trip rejected as above.
+- Seed: neon.rs encode_neon_rbit_pbt (vector RBIT KAT)
+- Formal: ∀ q16 ∈ {false,true}, rd,rn ∈ 0..31. encode_rbit([RegArrangement(v{rd}, T), RegArrangement(v{rn}, T)]) = Word(llvm-mc("rbit v{rd}.T, v{rn}.T")) where T = 16b if q16 else 8b
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.bitfield.encode_rbit
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [q16, rd, rn]
+  domain: { q16: bool, rd: 0..31, rn: 0..31 }
+  relation:
+    op: eq
+    lhs: encode_rbit([RegArrangement(v{rd}, T), RegArrangement(v{rn}, T)])
+    rhs: llvm_mc("rbit v{rd}.T, v{rn}.T")
+generators:
+  q16: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+evidence: bitfield.rs:168-176 NEON vector form comment; ARM ARM Advanced SIMD two-register miscellaneous RBIT T in {8B,16B}
 ```

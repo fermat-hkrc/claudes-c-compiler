@@ -2982,3 +2982,487 @@ mod encode_extr_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_rbit_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md:11 "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:902-909 "rbit" => encode_neon_rbit (RegArrangement) / encode_rbit (scalar);
+    //   README.md:240 lists rbit under Bit manipulation;
+    //   ARM ARM Data-processing (1 source) RBIT: sf 1 0 11010110 00000 000000 Rn Rd;
+    //   register 31 is ZR not SP.
+    // Stronger considered:
+    //   - State machine: rejected — encode_rbit is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree RBIT decoder
+    //   - encode_neon_rbit as differential sibling: rejected — same-job gate fails
+    //     (vector/RegArrangement, different ARM class; dispatch already splits the two)
+    //   - encode_clz / encode_cls / encode_rev: rejected — different opcode 000100 / 000101 / 000010
+    // Weaker available: algebraic.metamorphic (Rd/Rn field independence; W vs X sf),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / SP / mixed / FP)
+    // Differential: candidate=encode_rbit, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(Rd), Reg(Rn)] <-> `rbit Rd, Rn`
+
+    use super::encode_rbit;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if is_64 {
+            if n == 31 {
+                "xzr".into()
+            } else {
+                format!("x{n}")
+            }
+        } else if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{n}")
+        }
+    }
+
+    fn ops2(is_64: bool, rd: u32, rn: u32) -> [Operand; 2] {
+        [Operand::Reg(gpr(is_64, rd)), Operand::Reg(gpr(is_64, rn))]
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_rbit(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(-1)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8h".into(),
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_rbit_kat_llvm_mc_w0_w1() {
+        let want = 0x5ac00020u32;
+        let mc = llvm_mc_word("rbit w0, w1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(false, 0, 1)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rbit_kat_llvm_mc_x0_x1() {
+        let want = 0xdac00020u32;
+        let mc = llvm_mc_word("rbit x0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(true, 0, 1)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rbit_kat_llvm_mc_wzr_wzr() {
+        let want = 0x5ac003ffu32;
+        let mc = llvm_mc_word("rbit wzr, wzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(false, 31, 31)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rbit_kat_llvm_mc_xzr_xzr() {
+        let want = 0xdac003ffu32;
+        let mc = llvm_mc_word("rbit xzr, xzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(true, 31, 31)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rbit_kat_llvm_mc_lr_x1() {
+        let want = 0xdac0003eu32;
+        let mc = llvm_mc_word("rbit lr, x1").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [Operand::Reg("lr".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rbit_kat_llvm_mc_x0_xzr() {
+        let want = 0xdac003e0u32;
+        let mc = llvm_mc_word("rbit x0, xzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(true, 0, 31)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_rbit_diff_valid_gpr(is_64 in any::<bool>(), rd in 0u32..=31, rn in 0u32..=31) {
+            let dest = gpr(is_64, rd);
+            let src = gpr(is_64, rn);
+            let asm = format!("rbit {}, {}", dest, src);
+            let ops = ops2(is_64, rd, rn);
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "RBIT mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_rbit_arm_fields(is_64 in any::<bool>(), rd in 0u32..=31, rn in 0u32..=31) {
+            let sf = if is_64 { 1u32 } else { 0 };
+            let w = sut_word(&ops2(is_64, rd, rn)).expect("SUT");
+            let want = (sf << 31)
+                | (1u32 << 30)
+                | (0b011010110 << 21)
+                | (rn << 5)
+                | rd;
+            prop_assert_eq!(w, want, "ARM ARM RBIT field layout");
+            prop_assert_eq!(w >> 31, sf, "sf");
+            prop_assert_eq!((w >> 30) & 1, 1, "bit30=1");
+            prop_assert_eq!((w >> 29) & 1, 0, "S=0");
+            prop_assert_eq!((w >> 21) & 0xff, 0b11010110, "bits[28:21]");
+            prop_assert_eq!((w >> 16) & 0x1f, 0, "opcode2=00000");
+            prop_assert_eq!((w >> 10) & 0x3f, 0, "opcode=000000 RBIT");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_rbit_metamorphic_rd_rn_sf(
+            is_64 in any::<bool>(),
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+        ) {
+            let base = sut_word(&ops2(is_64, rd, rn)).expect("base");
+            let w_rd = sut_word(&ops2(is_64, rd + 1, rn)).expect("rd+1");
+            let w_rn = sut_word(&ops2(is_64, rd, rn + 1)).expect("rn+1");
+            prop_assert_eq!(w_rd & 0x1f, rd + 1, "Rd+1 updates Rd field");
+            prop_assert_eq!(w_rd & !0x1fu32, base & !0x1fu32, "Rd+1 leaves other fields unchanged");
+            prop_assert_eq!((w_rn >> 5) & 0x1f, rn + 1, "Rn+1 updates Rn field");
+            prop_assert_eq!(w_rn & !(0x1fu32 << 5), base & !(0x1fu32 << 5), "Rn+1 leaves other fields unchanged");
+            let w_sf = sut_word(&ops2(!is_64, rd, rn)).expect("sf flip");
+            prop_assert_eq!(w_sf ^ base, 1u32 << 31, "W vs X flips only sf");
+        }
+
+        #[test]
+        fn encode_rbit_neg_arity(
+            len in 0usize..=1,
+            is_64 in any::<bool>(),
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+        ) {
+            let mut ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+            ];
+            ops.truncate(len);
+            prop_assert!(
+                encode_rbit(&ops).is_err(),
+                "RBIT with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_rbit_neg_extra_operand(
+            is_64 in any::<bool>(),
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            extra in extra_operand(),
+        ) {
+            let mut ops = ops2(is_64, rd, rn).to_vec();
+            ops.push(extra);
+            prop_assert!(
+                encode_rbit(&ops).is_err(),
+                "RBIT has no 3rd operand; extra operand must Err (llvm-mc rejects it)"
+            );
+        }
+
+        #[test]
+        fn encode_rbit_neg_sp(
+            which in 0u32..=1,
+            sp64 in any::<bool>(),
+            is_64 in any::<bool>(),
+            other in 0u32..=30,
+        ) {
+            let sp = if sp64 { "sp" } else { "wsp" };
+            let mut ops = ops2(is_64, other, other);
+            ops[which as usize] = Operand::Reg(sp.to_string());
+            prop_assert!(
+                encode_rbit(&ops).is_err(),
+                "SP/WSP is not a valid RBIT operand (which={} sp={})",
+                which,
+                sp
+            );
+        }
+
+        #[test]
+        fn encode_rbit_neg_mixed_width(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+        ) {
+            prop_assume!(rd64 != rn64);
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+            ];
+            prop_assert!(
+                encode_rbit(&ops).is_err(),
+                "RBIT mixed W/X (rd64={} rn64={}) must Err (llvm-mc rejects it)",
+                rd64,
+                rn64
+            );
+        }
+
+        #[test]
+        fn encode_rbit_neg_fp(
+            which in 0u32..=1,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in 0u32..=31,
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = ops2(true, 0, 1);
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_rbit(&ops).is_err(),
+                "FP/SIMD register {} is not a valid RBIT operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_rbit_diff_alt_spellings(
+            is_64 in any::<bool>(),
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_spell in 0u32..=4,
+            src_spell in 0u32..=4,
+        ) {
+            let dest = spell(is_64, rd, dest_spell);
+            let src = spell(is_64, rn, src_spell);
+            let asm = format!("rbit {}, {}", dest, src);
+            let ops = [Operand::Reg(dest), Operand::Reg(src)];
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "RBIT alt-spelling mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_rbit_neg_nonreg(
+            which in 0u32..=1,
+            bad in non_reg_operand(),
+        ) {
+            let mut ops = ops2(false, 0, 1).to_vec();
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_rbit(&ops).is_err(),
+                "wrong operand kind at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_rbit_neg_invalid_name(
+            which in 0u32..=1,
+            name in invalid_name(),
+        ) {
+            let mut ops = ops2(false, 0, 1);
+            ops[which as usize] = Operand::Reg(name.clone());
+            prop_assert!(
+                encode_rbit(&ops).is_err(),
+                "invalid register name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_rbit_diff_valid_neon(
+            q16 in any::<bool>(),
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+        ) {
+            let t = if q16 { "16b" } else { "8b" };
+            let asm = format!("rbit v{}.{}, v{}.{}", rd, t, rn, t);
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{rd}"),
+                    arrangement: t.into(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{rn}"),
+                    arrangement: t.into(),
+                },
+            ];
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "RBIT NEON mismatch for {}", asm);
+        }
+    }
+
+    fn spell(is_64: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 if n == 31 => {
+                if is_64 {
+                    "x31".into()
+                } else {
+                    "w31".into()
+                }
+            }
+            1 if n == 31 => {
+                if is_64 {
+                    "XZR".into()
+                } else {
+                    "WZR".into()
+                }
+            }
+            2 if n == 30 && is_64 => "LR".into(),
+            3 => gpr(is_64, n).to_uppercase(),
+            _ => gpr(is_64, n),
+        }
+    }
+
+    fn invalid_name() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "foo".into(),
+            "x32".into(),
+            "w32".into(),
+            "x".into(),
+            "r0".into(),
+            "".into(),
+            "x-1".into(),
+            "x99".into(),
+            "w".into(),
+        ])
+    }
+
+    fn non_reg_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            any::<i64>().prop_map(Operand::Imm),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            }),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Cond("eq".into())),
+        ]
+    }
+
+    #[test]
+    fn test_encode_rbit_regression_extra_operand() {
+        let mut ops = ops2(false, 0, 0).to_vec();
+        ops.push(Operand::Reg("x0".into()));
+        assert!(
+            encode_rbit(&ops).is_err(),
+            "RBIT w0, w0, x0 must Err; extra operand is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rbit_regression_sp() {
+        let ops = [Operand::Reg("wsp".into()), Operand::Reg("w0".into())];
+        assert!(
+            encode_rbit(&ops).is_err(),
+            "RBIT wsp, w0 must Err; register 31 is ZR not SP/WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rbit_regression_mixed_width() {
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("w0".into())];
+        assert!(
+            encode_rbit(&ops).is_err(),
+            "RBIT x0, w0 must Err; mixed W/X is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rbit_regression_fp() {
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("x1".into())];
+        assert!(
+            encode_rbit(&ops).is_err(),
+            "RBIT d0, x1 must Err; FP/SIMD registers are not RBIT operands (llvm-mc rejects it)"
+        );
+    }
+}

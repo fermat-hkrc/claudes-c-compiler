@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_rbit)
+
+- Valid RBIT Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `rbit w0, w1` = 0x5ac00020.
+- Direct-call NEON path RBIT Vd.8b/16b, Vn.8b/16b matches llvm-mc (1000 cases). Dispatch routes RegArrangement to encode_neon_rbit, not encode_rbit.
+- Success-path scalar word is ARM Data-processing (1 source) RBIT: sf 1 0 11010110 00000 000000 Rn Rd. Equivalently w = (sf<<31)|(1<<30)|(0b011010110<<21)|(rn<<5)|rd. bits[30]=1; bits[29]=0; bits[28:21]=11010110; bits[20:16]=00000; bits[15:10]=000000.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; X vs W xor = 1<<31 (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `rbit w0, w1` = 0x5ac00020; `rbit x0, x1` = 0xdac00020; `rbit wzr, wzr` = 0x5ac003ff; `rbit xzr, xzr` = 0xdac003ff; `rbit lr, x1` = 0xdac0003e; `rbit x0, xzr` = 0xdac003e0; `rbit v0.8b, v1.8b` = 0x2e605820; `rbit v0.16b, v1.16b` = 0x6e605820.
+- Extra operand, SP/WSP, mixed W/X, and FP/SIMD prefixes currently encode instead of Err (see bugs).
+
+## Environment (encode_rbit)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on `rbit w0, w1` = 0x5ac00020.
+- ARM ARM Data-processing (1 source) RBIT: RBIT <Wd>, <Wn> / RBIT <Xd>, <Xn>. Encoding sf 1 0 11010110 00000 000000 Rn Rd; register 31 is ZR not SP. Vector form is Advanced SIMD two-register miscellaneous RBIT, T in {8B,16B}.
+- Dispatch: encoder/mod.rs:902-909 scalar rbit => encode_rbit; NEON RegArrangement => encode_neon_rbit.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_rbit is the vector form (not a differential sibling for scalar). Sibling encode_clz/encode_cls/encode_rev are different opcodes.
+- encode_rbit does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_rbit (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / neon).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_rbit_*.md.
+
 # Confirmed invariants (encode_fp_arith)
 
 - Valid FADD/FSUB/FMUL/FDIV/FMAX/FMIN/FMAXNM/FMINNM Sd,Sn,Sm / Dd,Dn,Dm including s31/d31 and uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `fadd s0, s1, s2` = 0x1e222820.
