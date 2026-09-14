@@ -7183,3 +7183,632 @@ mod encode_cneg_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_csel_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler (CSEL Rd, Rn, Rm, cond);
+    //   algebraic.metamorphic (CSEL vs CSINC XOR bit 10; CSEL vs CSINV XOR bit 30);
+    //   algebraic.invariant (CSEL field layout); negative_error (arity / extra /
+    //   SP-FP-mixed-invalid / bad kind).
+    // Evidence: src/backend/arm/assembler/README.md:5-14 gas-compat;
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:308 csel dispatch;
+    //   codegen/comparison.rs:71 csel x0, x2, x1, ne;
+    //   ARM ARM Conditional Select (architectural): sf 0 0 11010100 Rm cond 00 Rn Rd;
+    //   AL/NV valid (unlike CINC/CINV/CNEG aliases); register 31 is XZR/WZR, Wt/Xt only.
+    // Stronger considered:
+    //   - State machine: rejected — encode_csel is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no CSEL decoder
+    //   - encode_csinc / encode_csinv as differential siblings: rejected — different
+    //     jobs (CSINC op2=01 / CSINV op=1); used only as metamorphic XOR transforms
+    // Weaker available: algebraic.invariant (opcode/Rm/cond/op2/Rn/Rd fields),
+    //   algebraic.metamorphic (vs encode_csinc / encode_csinv), negative_error
+    //   (arity/extra/SP/FP/mixed/bad kind)
+    // Differential: candidate=encode_csel, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(rd), Reg(rn), Reg(rm), Cond(c)] <-> asm text `csel rd, rn, rm, c`
+
+    use super::{encode_csel, encode_csinc, encode_csinv};
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    /// Canonical cond names whose encodings are 0..=15 (AL=14 / NV=15 included).
+    const COND16: [&str; 16] = [
+        "eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc",
+        "hi", "ls", "ge", "lt", "gt", "le", "al", "nv",
+    ];
+    const COND16_WITH_ALIASES: [&str; 18] = [
+        "eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl",
+        "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al", "nv",
+    ];
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    /// n=0..30 -> xN; 31 -> xzr; 32 -> lr.
+    fn x_name(n: u32) -> String {
+        match n {
+            31 => "xzr".to_string(),
+            32 => "lr".to_string(),
+            n => format!("x{}", n.min(30)),
+        }
+    }
+
+    /// n=0..30 -> wN; 31 -> wzr. wsp is not in the valid CSEL domain.
+    fn w_name(n: u32) -> String {
+        match n {
+            31 => "wzr".to_string(),
+            n => format!("w{}", n.min(30)),
+        }
+    }
+
+    fn x_name_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("x0".to_string()),
+            Just("x30".to_string()),
+            Just("xzr".to_string()),
+            Just("lr".to_string()),
+            Just("X0".to_string()),
+            (0u32..=32).prop_map(x_name),
+        ]
+    }
+
+    fn w_name_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("w0".to_string()),
+            Just("w30".to_string()),
+            Just("wzr".to_string()),
+            (0u32..=31).prop_map(w_name),
+        ]
+    }
+
+    fn same_width_triple() -> impl Strategy<Value = (String, String, String)> {
+        prop_oneof![
+            (x_name_strat(), x_name_strat(), x_name_strat()),
+            (w_name_strat(), w_name_strat(), w_name_strat()),
+        ]
+    }
+
+    fn cond16_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("eq".to_string()),
+            Just("al".to_string()),
+            Just("nv".to_string()),
+            Just("hs".to_string()),
+            Just("lo".to_string()),
+            Just("le".to_string()),
+            prop::sample::select(
+                COND16_WITH_ALIASES.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            ),
+        ]
+    }
+
+    fn extra_operand(which: u32) -> Operand {
+        match which {
+            0 => Operand::Reg("x3".into()),
+            1 => Operand::Imm(0),
+            2 => Operand::Symbol("bar".into()),
+            _ => Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        }
+    }
+
+    fn gpr_name(n: u32, is_64: bool) -> String {
+        if is_64 {
+            if n == 31 {
+                "xzr".to_string()
+            } else {
+                format!("x{}", n.min(30))
+            }
+        } else if n == 31 {
+            "wzr".to_string()
+        } else {
+            format!("w{}", n.min(30))
+        }
+    }
+
+    fn bad_ops(kind: u32, n: u32) -> [Operand; 4] {
+        let n = n.min(31);
+        let eq = Operand::Cond("eq".into());
+        let xn = Operand::Reg(format!("x{}", n.min(30)));
+        let wn = Operand::Reg(format!("w{}", n.min(30)));
+        match kind {
+            0 => [Operand::Reg("sp".into()), xn.clone(), xn, eq],
+            1 => [xn.clone(), Operand::Reg("sp".into()), xn, eq],
+            2 => [xn.clone(), xn, Operand::Reg("sp".into()), eq],
+            3 => [Operand::Reg("wsp".into()), wn.clone(), wn, eq],
+            4 => [xn.clone(), wn, xn, eq],
+            5 => [
+                Operand::Reg(format!("d{}", n)),
+                Operand::Reg(format!("d{}", n)),
+                Operand::Reg(format!("d{}", n)),
+                eq,
+            ],
+            6 => [
+                Operand::Reg(format!("s{}", n)),
+                Operand::Reg("w0".into()),
+                Operand::Reg("w1".into()),
+                eq,
+            ],
+            7 => [
+                Operand::Reg(format!("q{}", n)),
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                eq,
+            ],
+            _ => {
+                let name = match n % 8 {
+                    0 => "x32".to_string(),
+                    1 => "w32".to_string(),
+                    2 => "foo".to_string(),
+                    3 => "".to_string(),
+                    4 => "r0".to_string(),
+                    5 => "x".to_string(),
+                    6 => "x-1".to_string(),
+                    _ => "x99".to_string(),
+                };
+                [
+                    Operand::Reg(name),
+                    Operand::Reg("x0".into()),
+                    Operand::Reg("x1".into()),
+                    eq,
+                ]
+            }
+        }
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_csel_kat_llvm_mc_x0_x1_x2_eq() {
+        let want = 0x9a820020u32;
+        let mc = llvm_mc_word("csel x0, x1, x2, eq").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Cond("eq".into()),
+        ];
+        match encode_csel(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for csel x0, x1, x2, eq, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_csel_kat_llvm_mc_w0_w1_w2_ne() {
+        let want = 0x1a821020u32;
+        let mc = llvm_mc_word("csel w0, w1, w2, ne").expect("llvm-mc KAT w-form");
+        assert_eq!(mc, want, "llvm-mc KAT w-form mapping broken");
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Reg("w2".into()),
+            Operand::Cond("ne".into()),
+        ];
+        match encode_csel(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for csel w0, w1, w2, ne, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_csel_kat_llvm_mc_al() {
+        let want = 0x9a82e020u32;
+        let mc = llvm_mc_word("csel x0, x1, x2, al").expect("llvm-mc KAT al");
+        assert_eq!(mc, want, "llvm-mc KAT al mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Cond("al".into()),
+        ];
+        match encode_csel(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for csel x0, x1, x2, al, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_diff_llvm_mc(
+            (rd, rn, rm) in same_width_triple(),
+            cond in cond16_strat(),
+        ) {
+            let asm = format!("csel {}, {}, {}, {}", rd, rn, rm, cond);
+            let ops = [
+                Operand::Reg(rd.clone()),
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                Operand::Cond(cond.clone()),
+            ];
+            let sut = match encode_csel(&ops) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "SUT rejected valid CSEL {}: {:?}",
+                        asm, other
+                    )));
+                }
+            };
+            let mc = llvm_mc_word(&asm)
+                .map_err(|e| TestCaseError::fail(format!(
+                    "llvm-mc rejected valid CSEL {}: {}",
+                    asm, e
+                )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_meta_vs_csinc(
+            (rd, rn, rm) in same_width_triple(),
+            cond in cond16_strat(),
+        ) {
+            let ops = [
+                Operand::Reg(rd.clone()),
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                Operand::Cond(cond.clone()),
+            ];
+            let left = encode_csel(&ops).map_err(|e| TestCaseError::fail(e))?;
+            let right = encode_csinc(&ops).map_err(|e| TestCaseError::fail(e))?;
+            match (left, right) {
+                (EncodeResult::Word(w_csel), EncodeResult::Word(w_csinc)) => {
+                    prop_assert_eq!(
+                        w_csel ^ w_csinc,
+                        1u32 << 10,
+                        "CSEL XOR CSINC must be bit 10 (csel={:#010x} csinc={:#010x}) for {}, {}, {}, {}",
+                        w_csel, w_csinc, rd, rn, rm, cond
+                    );
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "expected Word pair, got {:?}",
+                        other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_meta_vs_csinv(
+            (rd, rn, rm) in same_width_triple(),
+            cond in cond16_strat(),
+        ) {
+            let ops = [
+                Operand::Reg(rd.clone()),
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                Operand::Cond(cond.clone()),
+            ];
+            let left = encode_csel(&ops).map_err(|e| TestCaseError::fail(e))?;
+            let right = encode_csinv(&ops).map_err(|e| TestCaseError::fail(e))?;
+            match (left, right) {
+                (EncodeResult::Word(w_csel), EncodeResult::Word(w_csinv)) => {
+                    prop_assert_eq!(
+                        w_csel ^ w_csinv,
+                        1u32 << 30,
+                        "CSEL XOR CSINV must be bit 30 (csel={:#010x} csinv={:#010x}) for {}, {}, {}, {}",
+                        w_csel, w_csinv, rd, rn, rm, cond
+                    );
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "expected Word pair, got {:?}",
+                        other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_word_layout(
+            rd_n in 0u32..=31u32,
+            rn_n in 0u32..=31u32,
+            rm_n in 0u32..=31u32,
+            is_64 in any::<bool>(),
+            cond_enc in 0u32..=15u32,
+        ) {
+            let rd = gpr_name(rd_n, is_64);
+            let rn = gpr_name(rn_n, is_64);
+            let rm = gpr_name(rm_n, is_64);
+            let cond = COND16[cond_enc as usize];
+            let ops = [
+                Operand::Reg(rd),
+                Operand::Reg(rn),
+                Operand::Reg(rm),
+                Operand::Cond(cond.to_string()),
+            ];
+            match encode_csel(&ops) {
+                Ok(EncodeResult::Word(w)) => {
+                    let sf = if is_64 { 1u32 } else { 0u32 };
+                    prop_assert_eq!((w >> 31) & 1, sf, "sf bit 31");
+                    prop_assert_eq!((w >> 30) & 1, 0u32, "op bit 30");
+                    prop_assert_eq!((w >> 29) & 1, 0u32, "S bit 29");
+                    prop_assert_eq!((w >> 21) & 0xFF, 0b11010100u32, "bits[28:21]");
+                    prop_assert_eq!((w >> 16) & 0x1F, rm_n, "Rm [20:16]");
+                    prop_assert_eq!((w >> 12) & 0xF, cond_enc, "cond [15:12]");
+                    prop_assert_eq!((w >> 10) & 0x3, 0b00u32, "op2 [11:10]");
+                    prop_assert_eq!((w >> 5) & 0x1F, rn_n, "Rn [9:5]");
+                    prop_assert_eq!(w & 0x1F, rd_n, "Rd [4:0]");
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "expected Word, got {:?}",
+                        other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_neg_arity(arity in 0u32..=3u32) {
+            let ops: Vec<Operand> = match arity {
+                0 => vec![],
+                1 => vec![Operand::Reg("x0".into())],
+                2 => vec![Operand::Reg("x0".into()), Operand::Reg("x1".into())],
+                _ => vec![
+                    Operand::Reg("x0".into()),
+                    Operand::Reg("x1".into()),
+                    Operand::Reg("x2".into()),
+                ],
+            };
+            prop_assert!(
+                encode_csel(&ops).is_err(),
+                "csel with {} operand(s) must Err (llvm-mc: too few operands)",
+                arity
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_neg_extra_operand(
+            (rd, rn, rm) in same_width_triple(),
+            cond in cond16_strat(),
+            which in 0u32..=3u32,
+        ) {
+            let extra = extra_operand(which);
+            let ops = [
+                Operand::Reg(rd.clone()),
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                Operand::Cond(cond.clone()),
+                extra,
+            ];
+            prop_assert!(
+                encode_csel(&ops).is_err(),
+                "csel {}, {}, {}, {}, extra (which={}) must Err (llvm-mc: invalid operand)",
+                rd, rn, rm, cond, which
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_neg_wrong_reg(kind in 0u32..=8u32, n in 0u32..=31u32) {
+            let ops = bad_ops(kind, n);
+            prop_assert!(
+                encode_csel(&ops).is_err(),
+                "csel with wrong-reg kind={} n={} must Err (llvm-mc rejects SP/FP/mixed/invalid)",
+                kind, n
+            );
+        }
+
+        // Oracle: negative_error (coverage sweep: encode_cond None arm)
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_neg_unknown_cond(
+            (rd, rn, rm) in same_width_triple(),
+            which in 0u32..=5u32,
+        ) {
+            let cond = match which {
+                0 => "zz",
+                1 => "foo",
+                2 => "eqq",
+                3 => "",
+                4 => "eq ",
+                _ => "always",
+            };
+            let ops = [
+                Operand::Reg(rd),
+                Operand::Reg(rn),
+                Operand::Reg(rm),
+                Operand::Cond(cond.to_string()),
+            ];
+            prop_assert!(
+                encode_csel(&ops).is_err(),
+                "csel with unknown cond '{}' must Err",
+                cond
+            );
+        }
+
+        // Oracle: negative_error (coverage sweep: get_reg parse_reg_num None arm)
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_neg_invalid_name(which in 0u32..=7u32) {
+            let name = match which {
+                0 => "x32",
+                1 => "w32",
+                2 => "foo",
+                3 => "",
+                4 => "r0",
+                5 => "x",
+                6 => "x-1",
+                _ => "x99",
+            };
+            let ops = [
+                Operand::Reg(name.to_string()),
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Cond("eq".into()),
+            ];
+            prop_assert!(
+                encode_csel(&ops).is_err(),
+                "csel {} , x0, x1, eq must Err (not a valid register name)",
+                name
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_csel
+        #[test]
+        fn encode_csel_neg_bad_operand_kind(slot in 0u32..=3u32, which in 0u32..=4u32) {
+            let bad = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem { base: "x0".into(), offset: 0 },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift { kind: "lsl".into(), amount: 0 },
+                _ => Operand::Label("foo".into()),
+            };
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+                Operand::Cond("eq".into()),
+            ];
+            ops[slot as usize] = bad;
+            prop_assert!(
+                encode_csel(&ops).is_err(),
+                "csel with non-Reg/non-Cond at slot {} which={} must Err",
+                slot, which
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_csel_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Cond("eq".into()),
+            Operand::Reg("x3".into()),
+        ];
+        assert!(
+            encode_csel(&ops).is_err(),
+            "csel x0, x1, x2, eq, x3 must Err; llvm-mc rejects a fifth operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_csel_regression_sp() {
+        let ops = [
+            Operand::Reg("sp".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_csel(&ops).is_err(),
+            "csel sp, x0, x1, eq must Err; llvm-mc rejects SP (register 31 is XZR)"
+        );
+    }
+
+    #[test]
+    fn test_encode_csel_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_csel(&ops).is_err(),
+            "csel x0, w1, x2, eq must Err; llvm-mc rejects mixed x/w"
+        );
+    }
+
+    #[test]
+    fn test_encode_csel_regression_fp_reg() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("d1".into()),
+            Operand::Reg("d2".into()),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_csel(&ops).is_err(),
+            "csel d0, d1, d2, eq must Err; llvm-mc rejects FP/SIMD registers"
+        );
+    }
+}

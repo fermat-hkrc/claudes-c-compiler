@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_csel)
+
+- Same-width GPR CSEL (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond16 including al/nv and hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_csel(ops) XOR encode_csinc(ops) = 1<<10 (ARM ARM CSEL op2=00 vs CSINC op2=01) (1000 cases).
+- encode_csel(ops) XOR encode_csinv(ops) = 1<<30 (ARM ARM CSEL op=0 vs CSINV op=1) (1000 cases).
+- Success-path word: sf at 31 from Rd width, op=0 at 30, S=0 at 29, bits [28:21]=0b11010100, Rm at [20:16], cond at [15:12], op2=00 at [11:10], Rn at [9:5], Rd at [4:0].
+- Fewer than 4 operands always Err.
+- Unknown condition names (zz, foo, eqq, empty, "eq ", always) always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1, x99) always Err.
+- Non-register/non-cond (Imm/Mem/Symbol/Shift/Label) in any of the four slots always Err.
+- Known-answer: `csel x0, x1, x2, eq` encodes as 0x9a820020; `csel w0, w1, w2, ne` as 0x1a821020; `csel x0, x1, x2, al` as 0x9a82e020.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- CSEL register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `csel sp, ...`).
+- CSEL takes Wt/Xt only (llvm-mc rejects `csel d0, ...`).
+- Cond AL and NV are valid for architectural CSEL (unlike CINC/CINV/CNEG aliases).
+- llvm-mc rejects mixed x/w and a fifth operand.
+
+## Quirks
+
+- Extra operands beyond index 3 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `csel sp, ...` encodes as `csel xzr, ...` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- sf is taken only from operand 0; Rn/Rm widths are never checked, so mixed x/w encodes (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (encode_cond None / parse_reg_num None / get_reg non-Reg / cond-not-Cond).
+
+---
+
 # Confirmed invariants (encode_cneg)
 
 - Same-width GPR CNEG (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond14 including hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

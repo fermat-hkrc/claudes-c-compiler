@@ -1,184 +1,191 @@
-# Properties: encode_cneg
+# Properties: encode_csel
 
-## encode_cneg_diff_llvm_mc
+## encode_csel_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (gas-compat README). State machine rejected (pure function, no lifecycle). Round-trip rejected (no CNEG decoder). encode_csneg fails the same-job sibling gate as a differential reference (4-operand architectural CSNEG, no invert); used only as a metamorphic transform. encode_cinc / encode_cinv are different jobs (CSINC / CSINV aliases).
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (gas-compat README). State machine rejected (pure function, no lifecycle). Round-trip rejected (no CSEL decoder). encode_csinc / encode_csinv fail the same-job sibling gate as differential references (different mnemonics and op2/op bits); used only as metamorphic transforms.
 - Seed: encode_cinc_pbt encode_cinc_diff_llvm_mc (compare_branch.rs)
-- Formal: ∀ (rd, rn) same-width GPR (x0–x30/xzr/lr or w0–w30/wzr), ∀ cond ∈ Cond14∪{hs,lo}. llvm-mc("cneg rd, rn, cond") succeeds ⇒ encode_cneg([Reg(rd), Reg(rn), Cond(cond)]) = Word(llvm-mc word).
+- Formal: ∀ (rd, rn, rm) same-width GPR (x0–x30/xzr/lr or w0–w30/wzr), ∀ cond ∈ Cond16∪{hs,lo}. llvm-mc("csel rd, rn, rm, cond") succeeds ⇒ encode_csel([Reg(rd), Reg(rn), Reg(rm), Cond(cond)]) = Word(llvm-mc word).
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, cond]
-  domain: { rd: gpr, rn: same_width_gpr, cond: cond14 }
+  vars: [rd, rn, rm, cond]
+  domain: { rd: gpr, rn: same_width_gpr, rm: same_width_gpr, cond: cond16 }
   relation:
     op: eq
-    lhs: encode_cneg([Reg(rd), Reg(rn), Cond(cond)])
-    rhs: llvm_mc_word("cneg " + rd + ", " + rn + ", " + cond)
+    lhs: encode_csel([Reg(rd), Reg(rn), Reg(rm), Cond(cond)])
+    rhs: llvm_mc_word("csel " + rd + ", " + rn + ", " + rm + ", " + cond)
 generators:
   rd: { gen: string }
   rn: { gen: string }
+  rm: { gen: string }
   cond: { gen: string }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compat; encoder/mod.rs:897 cneg dispatch; compare_branch.rs:275 CNEG->CSNEG invert(cond)
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compat; encoder/mod.rs:308 csel dispatch; ARM ARM CSEL sf 0 0 11010100 Rm cond 00 Rn Rd
 ```
 
-## encode_cneg_meta_vs_csneg
+## encode_csel_meta_vs_csinc
 - Tier: 4
-- Rationale: ARM ARM defines CNEG as the CSNEG alias with Rm=Rn and invert(cond). encode_csneg is independently implemented (compare_branch.rs:127) and is a same-job architectural expansion, not a copy of encode_cneg. Stronger differential vs llvm-mc is already property 1; this is the required metamorphic angle.
+- Rationale: ARM ARM CSEL and CSINC share the Conditional Select encoding class and differ only in op2[11:10] (00 vs 01). encode_csinc is independently implemented (compare_branch.rs:99) and is a different mnemonic, so it fails the same-job sibling gate as a differential reference; the XOR-bit-10 relation is the required metamorphic angle. Stronger differential vs llvm-mc is already property 1.
 - Seed: encode_cinc_pbt encode_cinc_meta_vs_csinc
-- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ Cond14∪{hs,lo}. encode_cneg([Rd, Rn, cond]) = encode_csneg([Rd, Rn, Rn, invert(cond)]). invert(eq)=ne, invert(hs)=lo, invert(al)=nv, etc. (XOR 1 on the 4-bit cond encoding).
+- Formal: ∀ (rd, rn, rm) same-width GPR, ∀ cond ∈ Cond16∪{hs,lo}. encode_csel([Rd, Rn, Rm, cond]) XOR encode_csinc([Rd, Rn, Rm, cond]) = 1<<10.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, cond]
-  domain: { rd: gpr, rn: same_width_gpr, cond: cond14 }
+  vars: [rd, rn, rm, cond]
+  domain: { rd: gpr, rn: same_width_gpr, rm: same_width_gpr, cond: cond16 }
   relation:
     op: eq
-    lhs: encode_cneg([Reg(rd), Reg(rn), Cond(cond)])
-    rhs: encode_csneg([Reg(rd), Reg(rn), Reg(rn), Cond(invert(cond))])
+    lhs: encode_csel([Reg(rd), Reg(rn), Reg(rm), Cond(cond)]) XOR encode_csinc([Reg(rd), Reg(rn), Reg(rm), Cond(cond)])
+    rhs: 1 << 10
 generators:
   rd: { gen: string }
   rn: { gen: string }
+  rm: { gen: string }
   cond: { gen: string }
-evidence: compare_branch.rs:275 CNEG Rd, Rn, cond -> CSNEG Rd, Rn, Rn, invert(cond); ARM ARM Conditional Negate alias of CSNEG
+evidence: ARM ARM CSEL op2=00 vs CSINC op2=01; compare_branch.rs:99 encode_csinc independently implemented; llvm-mc csel x0,x1,x2,eq=0x9a820020 csinc=0x9a820420
 ```
 
-## encode_cneg_word_layout
+## encode_csel_meta_vs_csinv
 - Tier: 4
-- Rationale: ARM ARM CSNEG field layout is an exact structural invariant on every success-path word. Weaker than differential/metamorphic but pins each field independently (sf, op=1, S=0, bits[28:21]=11010100, Rm=Rn, invert(cond), op2=01, Rd).
-- Seed: encode_cinc_pbt encode_cinc_word_layout
-- Formal: ∀ rd_n, rn_n ∈ 0..31, ∀ is_64 ∈ {0,1}, ∀ cond_enc ∈ 0..13. encode_cneg([gpr(rd_n,is_64), gpr(rn_n,is_64), Cond14[cond_enc]]) = Word(w) where w[31]=is_64, w[30]=1, w[29]=0, w[28:21]=0b11010100, w[20:16]=rn_n, w[15:12]=cond_enc XOR 1, w[11:10]=0b01, w[9:5]=rn_n, w[4:0]=rd_n.
+- Rationale: ARM ARM CSEL and CSINV share the Conditional Select encoding class and differ only in op[30] (0 vs 1). encode_csinv is independently implemented (compare_branch.rs:113). Stronger differential vs llvm-mc is already property 1; this is a second metamorphic angle covering the op bit.
+- Seed: encode_cinc_pbt encode_cinc_meta_vs_csinc
+- Formal: ∀ (rd, rn, rm) same-width GPR, ∀ cond ∈ Cond16∪{hs,lo}. encode_csel([Rd, Rn, Rm, cond]) XOR encode_csinv([Rd, Rn, Rm, cond]) = 1<<30.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, cond]
+  domain: { rd: gpr, rn: same_width_gpr, rm: same_width_gpr, cond: cond16 }
+  relation:
+    op: eq
+    lhs: encode_csel([Reg(rd), Reg(rn), Reg(rm), Cond(cond)]) XOR encode_csinv([Reg(rd), Reg(rn), Reg(rm), Cond(cond)])
+    rhs: 1 << 30
+generators:
+  rd: { gen: string }
+  rn: { gen: string }
+  rm: { gen: string }
+  cond: { gen: string }
+evidence: ARM ARM CSEL op=0 vs CSINV op=1; compare_branch.rs:113 encode_csinv independently implemented; llvm-mc csel x0,x1,x2,eq=0x9a820020 csinv=0xda820020
+```
+
+## encode_csel_word_layout
+- Tier: 4
+- Rationale: ARM ARM CSEL field layout is an exact structural invariant on every success-path word. Weaker than differential/metamorphic but pins each field independently (sf, op=0, S=0, bits[28:21]=11010100, Rm, cond, op2=00, Rn, Rd). Documented bounds 0..31 for Rd/Rn/Rm and 0..15 for cond are sampled exactly.
+- Seed: encode_cinc_pbt encode_cinc_word_layout
+- Formal: ∀ rd_n, rn_n, rm_n ∈ 0..31, ∀ is_64 ∈ {0,1}, ∀ cond_enc ∈ 0..15. encode_csel([gpr(rd_n,is_64), gpr(rn_n,is_64), gpr(rm_n,is_64), Cond16[cond_enc]]) = Word(w) where w[31]=is_64, w[30]=0, w[29]=0, w[28:21]=0b11010100, w[20:16]=rm_n, w[15:12]=cond_enc, w[11:10]=0b00, w[9:5]=rn_n, w[4:0]=rd_n.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_csel
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd_n, rn_n, is_64, cond_enc]
-  domain: { rd_n: 0..31, rn_n: 0..31, is_64: bool, cond_enc: 0..13 }
+  vars: [rd_n, rn_n, rm_n, is_64, cond_enc]
+  domain: { rd_n: 0..31, rn_n: 0..31, rm_n: 0..31, is_64: bool, cond_enc: 0..15 }
   relation:
     op: holds
-    expr: word_fields_match_csneg_alias(encode_cneg([gpr(rd_n, is_64), gpr(rn_n, is_64), Cond14[cond_enc]]))
+    expr: word_fields_match_csel(encode_csel([gpr(rd_n, is_64), gpr(rn_n, is_64), gpr(rm_n, is_64), Cond16[cond_enc]]))
 generators:
   rd_n: { gen: int, min: 0, max: 31, type: u32 }
   rn_n: { gen: int, min: 0, max: 31, type: u32 }
+  rm_n: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-  cond_enc: { gen: int, min: 0, max: 13, type: u32 }
-evidence: compare_branch.rs:283-286 CSNEG sf 1 0 11010100 Rm cond 0 1 Rn Rd with Rm=Rn; ARM ARM CSNEG
+  cond_enc: { gen: int, min: 0, max: 15, type: u32 }
+evidence: ARM ARM CSEL encoding sf 0 0 11010100 Rm cond 00 Rn Rd; encoder/mod.rs:1-7 32-bit AArch64 words
 ```
 
-## encode_cneg_neg_arity
+## encode_csel_neg_arity
 - Tier: 4
-- Rationale: llvm-mc rejects CNEG with fewer than 3 operands ("too few operands"). Documented error contract of the gas-compat assembler. Bounds 0, 1, 2 sampled exactly.
+- Rationale: llvm-mc rejects CSEL with fewer than 4 operands ("too few operands"). Negative/error contract from the gas-compat README. Stronger oracles do not apply to the invalid-arity domain.
 - Seed: encode_cinc_pbt encode_cinc_neg_arity
-- Formal: ∀ arity ∈ {0,1,2}. encode_cneg(ops) is Err when |ops| = arity.
+- Formal: ∀ arity ∈ {0,1,2,3}. encode_csel(ops) is Err when |ops| = arity (missing Rd/Rn/Rm/cond).
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [arity]
-  domain: { arity: 0..2 }
+  domain: { arity: 0..3 }
   relation:
     op: throws
-    expr: encode_cneg(ops_of_len(arity))
+    lhs: encode_csel(ops_of_len(arity))
+    error: String
 generators:
-  arity: { gen: int, min: 0, max: 2, type: u32 }
+  arity: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects bare cneg / cneg x0 / cneg x0, x1 (too few operands)
+evidence: llvm-mc "too few operands for instruction"; README.md:5-14 gas-compat
 ```
 
-## encode_cneg_neg_extra_operand
+## encode_csel_neg_extra_operand
 - Tier: 4
-- Rationale: llvm-mc rejects a fourth operand ("invalid operand"). Gas-compat contract. Extra kinds: Reg/Imm/Symbol/Mem.
+- Rationale: llvm-mc rejects a fifth operand ("invalid operand"). Gas-compat contract requires Err. Stronger oracles do not apply to the extra-operand domain.
 - Seed: encode_cinc_pbt encode_cinc_neg_extra_operand
-- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ Cond14, ∀ extra ∈ {Reg, Imm, Symbol, Mem}. encode_cneg([Rd, Rn, Cond, extra]) is Err.
+- Formal: ∀ (rd, rn, rm) same-width GPR, ∀ cond ∈ Cond16∪{hs,lo}, ∀ extra ∈ {Reg, Imm, Symbol, Mem}. encode_csel([Rd, Rn, Rm, cond, extra]) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: [Reg("x0"), Reg("x0"), Cond("eq"), Reg("x2")]  (rd="x0", rn="x0", cond="eq", which=0)
-- Bug report: pbt-out/bug_reports/encode_cneg_extra_operand.md
+- Counterexample: [Reg("x0"), Reg("x1"), Reg("x2"), Cond("eq"), Reg("x3")]
+- Bug report: pbt-out/bug_reports/encode_csel_extra_operand.md
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, cond, extra]
-  domain: { rd: gpr, rn: same_width_gpr, cond: cond14, extra: extra_operand }
+  vars: [rd, rn, rm, cond, extra]
+  domain: { rd: gpr, rn: same_width_gpr, rm: same_width_gpr, cond: cond16, extra: Operand }
   relation:
     op: throws
-    expr: encode_cneg([Reg(rd), Reg(rn), Cond(cond), extra])
+    lhs: encode_csel([Reg(rd), Reg(rn), Reg(rm), Cond(cond), extra])
+    error: String
 generators:
   rd: { gen: string }
   rn: { gen: string }
+  rm: { gen: string }
   cond: { gen: string }
   extra: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects cneg x0, x1, eq, x2 (invalid operand)
+evidence: llvm-mc "invalid operand" for csel x0, x1, x2, eq, x3; README.md:5-14 gas-compat
 ```
 
-## encode_cneg_neg_al_nv
+## encode_csel_neg_wrong_reg
 - Tier: 4
-- Rationale: ARM ARM and llvm-mc: condition codes AL and NV are invalid for CNEG. Bounds al and nv sampled exactly.
-- Seed: encode_cinc_pbt encode_cinc_neg_al_nv
-- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ {al, nv}. encode_cneg([Rd, Rn, Cond(cond)]) is Err.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: [Reg("x0"), Reg("x0"), Cond("al")]  (rd="x0", rn="x0", which=0)
-- Bug report: pbt-out/bug_reports/encode_cneg_al_nv.md
-
-```property
-function: encoder.compare_branch.encode_cneg
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, cond]
-  domain: { rd: gpr, rn: same_width_gpr, cond: {al, nv} }
-  relation:
-    op: throws
-    expr: encode_cneg([Reg(rd), Reg(rn), Cond(cond)])
-generators:
-  rd: { gen: string }
-  rn: { gen: string }
-  cond: { gen: string }
-expected_error: String
-evidence: llvm-mc -triple=aarch64 "condition codes AL and NV are invalid for this instruction"; ARM ARM CNEG not valid for AL/NV
-```
-
-## encode_cneg_neg_wrong_reg
-- Tier: 4
-- Rationale: llvm-mc rejects SP/WSP (register 31 is XZR/WZR), mixed x/w, FP/SIMD (d/s/q/v), and invalid names (x32, w32, foo, empty, r0, x, x-1, x99). Gas-compat contract.
+- Rationale: llvm-mc rejects SP/WSP (register 31 is XZR/WZR), mixed x/w widths, FP/SIMD names, and invalid register names. Gas-compat contract requires Err. Documented bounds: x0..x30/xzr, w0..w30/wzr; SP and FP are outside the valid domain.
 - Seed: encode_cinc_pbt encode_cinc_neg_wrong_reg
-- Formal: ∀ kind ∈ {sp-rd, sp-rn, wsp-rd, mixed-x-w, d-reg, s-reg, q-reg, v-reg, invalid-name}, ∀ n ∈ 0..31. encode_cneg(bad_ops(kind, n)) is Err.
+- Formal: ∀ kind ∈ {sp-Rd, sp-Rn, sp-Rm, wsp-Rd, mixed-x/w, d-reg, s-reg, q-reg, invalid-name}. encode_csel(ops(kind)) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: kind=0, n=0  ([Reg("sp"), Reg("x0"), Cond("eq")]); also mixed [Reg("x0"), Reg("w0"), Cond("eq")] and FP [Reg("d0"), Reg("d0"), Cond("eq")]
-- Bug report: pbt-out/bug_reports/encode_cneg_sp_as_zr.md; pbt-out/bug_reports/encode_cneg_mixed_width.md; pbt-out/bug_reports/encode_cneg_fp_reg.md
+- Counterexample: kind=0 n=0 → [Reg("sp"), Reg("x0"), Reg("x0"), Cond("eq")]; also mixed [Reg("x0"), Reg("w1"), Reg("x2"), Cond("eq")]; also FP [Reg("d0"), Reg("d1"), Reg("d2"), Cond("eq")]
+- Bug report: pbt-out/bug_reports/encode_csel_sp_as_zr.md; pbt-out/bug_reports/encode_csel_mixed_width.md; pbt-out/bug_reports/encode_csel_fp_reg.md
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -186,91 +193,96 @@ predicate:
   domain: { kind: 0..8, n: 0..31 }
   relation:
     op: throws
-    expr: encode_cneg(bad_ops(kind, n))
+    lhs: encode_csel(bad_ops(kind, n))
+    error: String
 generators:
   kind: { gen: int, min: 0, max: 8, type: u32 }
   n: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects cneg sp, x0, eq; cneg x0, w1, eq; cneg d0, d1, eq
+evidence: llvm-mc rejects csel sp / mixed x/w / d0; ARM ARM CSEL Wt/Xt only, register 31 is XZR/WZR
 ```
 
-## encode_cneg_neg_bad_operand_kind
+## encode_csel_neg_bad_operand_kind
 - Tier: 4
-- Rationale: get_reg requires Operand::Reg at slots 0 and 1; slot 2 must be Operand::Cond. Non-Reg/non-Cond kinds (Imm/Mem/Symbol/Shift/Label) must Err. Coverage of the match-arm error paths.
+- Rationale: get_reg requires Operand::Reg at slots 0..2; slot 3 must be Operand::Cond. Imm/Mem/Symbol/Shift/Label in any of the four slots is outside the CSEL grammar. llvm-mc rejects non-GPR / missing-cond forms. Stronger oracles do not apply to this invalid-kind domain.
 - Seed: encode_cinc_pbt encode_cinc_neg_bad_operand_kind
-- Formal: ∀ slot ∈ {0,1,2}, ∀ kind ∈ {Imm, Mem, Symbol, Shift, Label}. encode_cneg(ops with slot replaced by that kind) is Err.
+- Formal: ∀ slot ∈ {0,1,2,3}, ∀ which ∈ {Imm, Mem, Symbol, Shift, Label}. encode_csel(ops with that kind at slot) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [slot, which]
-  domain: { slot: 0..2, which: 0..4 }
+  domain: { slot: 0..3, which: 0..4 }
   relation:
     op: throws
-    expr: encode_cneg(ops_with_bad_kind(slot, which))
+    lhs: encode_csel(ops_with_bad_kind(slot, which))
+    error: String
 generators:
-  slot: { gen: int, min: 0, max: 2, type: u32 }
+  slot: { gen: int, min: 0, max: 3, type: u32 }
   which: { gen: int, min: 0, max: 4, type: u32 }
 expected_error: String
-evidence: encoder/mod.rs:956-966 get_reg requires Operand::Reg; compare_branch.rs:279-281 third operand must be Cond
+evidence: encoder/mod.rs:956 get_reg expected register; compare_branch.rs:91 csel requires condition; README.md:5-14 gas-compat
 ```
 
-## encode_cneg_neg_unknown_cond
+## encode_csel_neg_unknown_cond
 - Tier: 4
-- Rationale: Coverage sweep of encode_cond None arm. Unknown condition names must Err (llvm-mc and encode_cond both reject them). Documented error path at compare_branch.rs:279.
+- Rationale: Coverage sweep — encode_cond None arm ("invalid cond") is a documented error path. bad_operand_kind hits the non-Cond `_` arm, not encode_cond None. Stronger oracles do not apply to unknown cond names.
 - Seed: encode_cinc_pbt encode_cinc_neg_unknown_cond
-- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ {zz, foo, eqq, "", "eq ", always}. encode_cneg([Rd, Rn, Cond(cond)]) is Err.
+- Formal: ∀ (rd, rn, rm) same-width GPR, ∀ cond ∈ {zz, foo, eqq, "", "eq ", always}. encode_csel([Rd, Rn, Rm, Cond(cond)]) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, which]
-  domain: { rd: gpr, rn: same_width_gpr, which: 0..5 }
+  vars: [rd, rn, rm, cond]
+  domain: { rd: gpr, rn: same_width_gpr, rm: same_width_gpr, cond: unknown_cond }
   relation:
     op: throws
-    expr: encode_cneg([Reg(rd), Reg(rn), Cond(unknown_cond(which))])
+    lhs: encode_csel([Reg(rd), Reg(rn), Reg(rm), Cond(cond)])
+    error: String
 generators:
   rd: { gen: string }
   rn: { gen: string }
-  which: { gen: int, min: 0, max: 5, type: u32 }
+  rm: { gen: string }
+  cond: { gen: string }
 expected_error: String
-evidence: compare_branch.rs:279 encode_cond(c).ok_or_else unknown condition
+evidence: encoder/mod.rs:169-190 encode_cond returns None for unknown names; compare_branch.rs:90 invalid cond
 ```
 
-## encode_cneg_neg_invalid_name
+## encode_csel_neg_invalid_name
 - Tier: 4
-- Rationale: Coverage sweep of get_reg parse_reg_num None arm. Invalid register names (x32, w32, foo, empty, r0, x, x-1, x99) must Err. Bound x32 is 31+1.
+- Rationale: Coverage sweep — parse_reg_num None arm. wrong_reg fails on SP first so the invalid-name kinds never get a passing verdict. Dedicated generator over x32/w32/foo/empty/r0/x/x-1/x99 reaches get_reg's invalid-register error.
 - Seed: encode_cinc_pbt encode_cinc_neg_invalid_name
-- Formal: ∀ name ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_cneg([Reg(name), Reg("x0"), Cond("eq")]) is Err.
+- Formal: ∀ name ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_csel([Reg(name), Reg("x0"), Reg("x1"), Cond("eq")]) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cneg
+function: encoder.compare_branch.encode_csel
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which]
-  domain: { which: 0..7 }
+  vars: [name]
+  domain: { name: invalid_reg }
   relation:
     op: throws
-    expr: encode_cneg([Reg(invalid_name(which)), Reg("x0"), Cond("eq")])
+    lhs: encode_csel([Reg(name), Reg("x0"), Reg("x1"), Cond("eq")])
+    error: String
 generators:
-  which: { gen: int, min: 0, max: 7, type: u32 }
+  name: { gen: string }
 expected_error: String
-evidence: encoder/mod.rs:131-148 parse_reg_num returns None for x32/non-prefix; get_reg maps that to Err
+evidence: encoder/mod.rs:131-148 parse_reg_num None; encoder/mod.rs:959 invalid register
 ```
