@@ -8047,3 +8047,665 @@ mod encode_neon_shll_pbt {
     }
 }
 
+#[cfg(test)]
+mod encode_neon_sqshrun_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md:1-14 "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:649-650 sqrshrun/sqrshrun2 => encode_neon_sqshrun;
+    //   encoder/mod.rs:841-842 sqshrun/sqshrun2 => encode_neon_sqshrun;
+    //   neon.rs:117-155 Format 0 Q 1 011110 immh:immb opcode Rn Rd; opcode 100001 / 100011;
+    //   ARM ARM Advanced SIMD shift by immediate SQSHRUN/SQRSHRUN;
+    //   sibling encode_neon_shrn neon.rs:1443-1444 half_bits = source/2 (dest element size)
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_sqshrun is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree SQSHRUN decoder
+    //   - Differential vs encode_neon_shrn / encode_neon_qshrn / encode_neon_scalar_qshrn:
+    //     rejected — different opcode / saturation / scalar vs vector (same-job gate)
+    // Weaker available: algebraic.metamorphic (Q/rounding bits), algebraic.invariant (word layout),
+    //   negative_error (arity / Ta / Tb / shift range / extra / non-reg)
+    // Differential: candidate=encode_neon_sqshrun, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[RegArrangement(Vd,Tb), RegArrangement(Vn,Ta), Imm(shift)] + (is_rounding, is_high)
+    //     <-> `{sq,sqr}shrun{2?} Vd.Tb, Vn.Ta, #shift`
+
+    use super::encode_neon_sqshrun;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn mandated_tb(ta: &str, is_high: bool) -> &'static str {
+        match (ta, is_high) {
+            ("8h", false) => "8b",
+            ("8h", true) => "16b",
+            ("4s", false) => "4h",
+            ("4s", true) => "8h",
+            ("2d", false) => "2s",
+            ("2d", true) => "4s",
+            _ => "8b",
+        }
+    }
+
+    fn src_esize(ta: &str) -> u32 {
+        match ta {
+            "8h" => 16,
+            "4s" => 32,
+            "2d" => 64,
+            _ => 0,
+        }
+    }
+
+    fn dest_esize(ta: &str) -> u32 {
+        src_esize(ta) / 2
+    }
+
+    fn mnemonic(is_rounding: bool, is_high: bool) -> &'static str {
+        match (is_rounding, is_high) {
+            (false, false) => "sqshrun",
+            (false, true) => "sqshrun2",
+            (true, false) => "sqrshrun",
+            (true, true) => "sqrshrun2",
+        }
+    }
+
+    fn opcode_bits(is_rounding: bool) -> u32 {
+        if is_rounding {
+            0b100011
+        } else {
+            0b100001
+        }
+    }
+
+    fn sut_word(ops: &[Operand], is_rounding: bool, is_high: bool) -> Result<u32, String> {
+        match encode_neon_sqshrun(ops, is_rounding, is_high)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn ta_arr() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8h", "4s", "2d"])
+    }
+
+    /// Co-generate Ta with a shift in [1, dest_esize], pinning 1 and dest_esize.
+    fn valid_ta_shift() -> impl Strategy<Value = (&'static str, i64)> {
+        ta_arr().prop_flat_map(|ta| {
+            let d = dest_esize(ta) as i64;
+            prop_oneof![Just(1i64), Just(d), 1i64..=d].prop_map(move |s| (ta, s))
+        })
+    }
+
+    /// Out-of-range shift, pinning -1, 0, dest_esize+1, src_esize, src_esize+1.
+    fn oob_ta_shift() -> impl Strategy<Value = (&'static str, i64)> {
+        ta_arr().prop_flat_map(|ta| {
+            let d = dest_esize(ta) as i64;
+            let src = src_esize(ta) as i64;
+            prop_oneof![
+                Just(-1i64),
+                Just(0i64),
+                Just(d + 1),
+                Just(src),
+                Just(src + 1),
+                Just(256i64),
+                (-16i64..=-1),
+                (d + 1)..=src,
+                (src + 1)..=(src + 16),
+            ]
+            .prop_map(move |s| (ta, s))
+        })
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_neon_sqshrun_kat_llvm_mc_sqshrun_v0_8b_v1_8h() {
+        let want = 0x2f0f8420u32;
+        let mc = llvm_mc_word("sqshrun v0.8b, v1.8h, #1").expect("llvm-mc KAT #1");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for sqshrun #1");
+        let ops = [neon_arr(0, "8b"), neon_arr(1, "8h"), Operand::Imm(1)];
+        let sut = sut_word(&ops, false, false).expect("SUT KAT #1");
+        assert_eq!(sut, want);
+
+        let want8 = 0x2f088420u32;
+        let mc8 = llvm_mc_word("sqshrun v0.8b, v1.8h, #8").expect("llvm-mc KAT #8");
+        assert_eq!(mc8, want8, "llvm-mc KAT mapping broken for sqshrun #8");
+        let ops8 = [neon_arr(0, "8b"), neon_arr(1, "8h"), Operand::Imm(8)];
+        assert_eq!(sut_word(&ops8, false, false).expect("SUT KAT #8"), want8);
+    }
+
+    /// Known-answer: Q / rounding / 2d / 4s bounds.
+    #[test]
+    fn encode_neon_sqshrun_kat_llvm_mc_variants() {
+        let want_2 = 0x6f0f8420u32;
+        let mc_2 = llvm_mc_word("sqshrun2 v0.16b, v1.8h, #1").expect("llvm-mc KAT sqshrun2");
+        assert_eq!(mc_2, want_2, "llvm-mc KAT mapping broken for sqshrun2");
+        let ops_2 = [neon_arr(0, "16b"), neon_arr(1, "8h"), Operand::Imm(1)];
+        assert_eq!(sut_word(&ops_2, false, true).expect("SUT KAT sqshrun2"), want_2);
+
+        let want_r = 0x2f0f8c20u32;
+        let mc_r = llvm_mc_word("sqrshrun v0.8b, v1.8h, #1").expect("llvm-mc KAT sqrshrun");
+        assert_eq!(mc_r, want_r, "llvm-mc KAT mapping broken for sqrshrun");
+        let ops_r = [neon_arr(0, "8b"), neon_arr(1, "8h"), Operand::Imm(1)];
+        assert_eq!(sut_word(&ops_r, true, false).expect("SUT KAT sqrshrun"), want_r);
+
+        let want_r2 = 0x6f208c20u32;
+        let mc_r2 = llvm_mc_word("sqrshrun2 v0.4s, v1.2d, #32").expect("llvm-mc KAT sqrshrun2");
+        assert_eq!(mc_r2, want_r2, "llvm-mc KAT mapping broken for sqrshrun2");
+        let ops_r2 = [neon_arr(0, "4s"), neon_arr(1, "2d"), Operand::Imm(32)];
+        assert_eq!(
+            sut_word(&ops_r2, true, true).expect("SUT KAT sqrshrun2"),
+            want_r2
+        );
+
+        let want_4h = 0x2f108420u32;
+        let mc_4h = llvm_mc_word("sqshrun v0.4h, v1.4s, #16").expect("llvm-mc KAT 4h #16");
+        assert_eq!(mc_4h, want_4h, "llvm-mc KAT mapping broken for 4h #16");
+        let ops_4h = [neon_arr(0, "4h"), neon_arr(1, "4s"), Operand::Imm(16)];
+        assert_eq!(
+            sut_word(&ops_4h, false, false).expect("SUT KAT 4h"),
+            want_4h
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_sqshrun_diff_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            ta_shift in valid_ta_shift(),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let tb = mandated_tb(ta, is_high);
+            let mnem = mnemonic(is_rounding, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}",
+                mnem, vreg(rd), tb, vreg(rn), ta, shift
+            );
+            let ops = [neon_arr(rd, tb), neon_arr(rn, ta), Operand::Imm(shift)];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops, is_rounding, is_high)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_metamorphic_q(
+            rd in reg_num(),
+            rn in reg_num(),
+            ta_shift in valid_ta_shift(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let tb = mandated_tb(ta, false);
+            let ops = [neon_arr(rd, tb), neon_arr(rn, ta), Operand::Imm(shift)];
+            let lo = sut_word(&ops, is_rounding, false)
+                .unwrap_or_else(|e| panic!("SUT Q=0 rejected: {}", e));
+            let hi = sut_word(&ops, is_rounding, true)
+                .unwrap_or_else(|e| panic!("SUT Q=1 rejected: {}", e));
+            prop_assert_eq!(lo ^ hi, 1u32 << 30, "is_high must toggle only Q (bit 30)");
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_metamorphic_round(
+            rd in reg_num(),
+            rn in reg_num(),
+            ta_shift in valid_ta_shift(),
+            is_high in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let tb = mandated_tb(ta, is_high);
+            let ops = [neon_arr(rd, tb), neon_arr(rn, ta), Operand::Imm(shift)];
+            let r0 = sut_word(&ops, false, is_high)
+                .unwrap_or_else(|e| panic!("SUT round=0 rejected: {}", e));
+            let r1 = sut_word(&ops, true, is_high)
+                .unwrap_or_else(|e| panic!("SUT round=1 rejected: {}", e));
+            prop_assert_eq!(r0 ^ r1, 1u32 << 11, "is_rounding must toggle only opcode bit 11");
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_invariant_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            ta_shift in valid_ta_shift(),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let tb = mandated_tb(ta, is_high);
+            let ops = [neon_arr(rd, tb), neon_arr(rn, ta), Operand::Imm(shift)];
+            let w = sut_word(&ops, is_rounding, is_high)
+                .unwrap_or_else(|e| panic!("SUT rejected valid layout: {}", e));
+            let q = if is_high { 1u32 } else { 0 };
+            let immhb = src_esize(ta) - shift as u32;
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 30) & 1, q, "Q bit");
+            prop_assert_eq!((w >> 29) & 1, 1u32, "U bit must be 1");
+            prop_assert_eq!((w >> 23) & 0b111111, 0b011110u32, "bits[28:23]=011110");
+            prop_assert_eq!((w >> 19) & 0b1111, immhb >> 3, "immh");
+            prop_assert_eq!((w >> 16) & 0b111, immhb & 7, "immb");
+            prop_assert_eq!((w >> 10) & 0b111111, opcode_bits(is_rounding), "opcode");
+            prop_assert_eq!((w >> 5) & 0b11111, rn, "Rn");
+            prop_assert_eq!(w & 0b11111, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_neg_shift_oob(
+            rd in reg_num(),
+            rn in reg_num(),
+            ta_shift in oob_ta_shift(),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let d = dest_esize(ta) as i64;
+            prop_assume!(shift < 1 || shift > d);
+            let tb = mandated_tb(ta, is_high);
+            let mnem = mnemonic(is_rounding, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}",
+                mnem, vreg(rd), tb, vreg(rn), ta, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted OOB shift {}",
+                asm
+            );
+            let ops = [neon_arr(rd, tb), neon_arr(rn, ta), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_sqshrun(&ops, is_rounding, is_high).is_err(),
+                "shift {} for Ta={} dest_esize={} must Err (llvm-mc rejects {})",
+                shift,
+                ta,
+                d,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_neg_dest_tb(
+            rd in reg_num(),
+            rn in reg_num(),
+            ta_shift in valid_ta_shift(),
+            tb in prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s", "1d", "2d"]),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            prop_assume!(tb != mandated_tb(ta, is_high));
+            let mnem = mnemonic(is_rounding, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}",
+                mnem, vreg(rd), tb, vreg(rn), ta, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted mismatched Tb {}",
+                asm
+            );
+            let ops = [neon_arr(rd, tb), neon_arr(rn, ta), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_sqshrun(&ops, is_rounding, is_high).is_err(),
+                "mismatched dest Tb={} for Ta={} is_high={} must Err (llvm-mc rejects {})",
+                tb,
+                ta,
+                is_high,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_neg_gpr_dest(
+            prefix in prop::sample::select(vec!["x", "w", "d", "s", "q", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+            rn in reg_num(),
+            ta_shift in valid_ta_shift(),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let dest = format!("{}{}", prefix, n);
+            let mnem = mnemonic(is_rounding, is_high);
+            let asm = format!(
+                "{} {}, {}.{}, #{}",
+                mnem, dest, vreg(rn), ta, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted GPR/FP dest {}",
+                asm
+            );
+            let ops = [
+                Operand::Reg(dest.clone()),
+                neon_arr(rn, ta),
+                Operand::Imm(shift),
+            ];
+            prop_assert!(
+                encode_neon_sqshrun(&ops, is_rounding, is_high).is_err(),
+                "GPR/FP dest {} is not a NEON Vd.Tb and must Err (llvm-mc rejects {})",
+                dest,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_neg_extra_operand(
+            rd in reg_num(),
+            rn in reg_num(),
+            extra in reg_num(),
+            ta_shift in valid_ta_shift(),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let tb = mandated_tb(ta, is_high);
+            let mnem = mnemonic(is_rounding, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}, {}",
+                mnem, vreg(rd), tb, vreg(rn), ta, shift, vreg(extra)
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted 4-operand {}",
+                asm
+            );
+            let ops = [
+                neon_arr(rd, tb),
+                neon_arr(rn, ta),
+                Operand::Imm(shift),
+                neon_arr(extra, tb),
+            ];
+            prop_assert!(
+                encode_neon_sqshrun(&ops, is_rounding, is_high).is_err(),
+                "4 operands must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_sqshrun_neg_extra_arity_kinds(
+            n in 0usize..=2,
+            rd in reg_num(),
+            rn in reg_num(),
+            ta in prop::sample::select(vec!["8b", "16b", "4h", "2s", "1d", "16h", "8s", "4d", "", "b", "h"]),
+            slot in 0usize..=2,
+            which in 0u32..=5,
+            is_rounding in any::<bool>(),
+            is_high in any::<bool>(),
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("v99".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v-1".to_string()),
+            ],
+        ) {
+            // Too few operands.
+            let all = [neon_arr(rd, "8b"), neon_arr(rn, "8h")];
+            let ops: Vec<Operand> = all.iter().take(n).cloned().collect();
+            prop_assert!(
+                encode_neon_sqshrun(&ops, is_rounding, is_high).is_err(),
+                "len={} must Err (requires 3 operands)",
+                n
+            );
+
+            // Unsupported source Ta.
+            let ops_ta = [
+                neon_arr(rd, "8b"),
+                neon_arr(rn, ta),
+                Operand::Imm(1),
+            ];
+            prop_assert!(
+                encode_neon_sqshrun(&ops_ta, is_rounding, is_high).is_err(),
+                "source Ta={} is not 8h/4s/2d and must Err",
+                ta
+            );
+
+            // Non-register / non-imm at a slot.
+            let bad_op = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let mut ops_kind = vec![
+                neon_arr(rd, "8b"),
+                neon_arr(rn, "8h"),
+                Operand::Imm(1),
+            ];
+            ops_kind[slot] = bad_op;
+            prop_assert!(
+                encode_neon_sqshrun(&ops_kind, is_rounding, is_high).is_err(),
+                "non-matching kind at slot {} which={} must Err",
+                slot,
+                which
+            );
+
+            // Invalid register name.
+            let mut ops_bad = vec![
+                neon_arr(rd, "8b"),
+                neon_arr(rn, "8h"),
+                Operand::Imm(1),
+            ];
+            if slot < 2 {
+                ops_bad[slot] = Operand::RegArrangement {
+                    reg: bad.clone(),
+                    arrangement: if slot == 1 {
+                        "8h".into()
+                    } else {
+                        "8b".into()
+                    },
+                };
+                prop_assert!(
+                    encode_neon_sqshrun(&ops_bad, is_rounding, is_high).is_err(),
+                    "invalid NEON register {} at slot {} must Err",
+                    bad,
+                    slot
+                );
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        /// Coverage sweep: i64 immediates whose low 32 bits look like a valid shift
+        /// (the SUT does `*v as u32`) must still Err when the i64 is not in [1, dest_esize].
+        #[test]
+        fn encode_neon_sqshrun_neg_shift_i64_trunc(
+            rd in reg_num(),
+            rn in reg_num(),
+            ta_shift in valid_ta_shift(),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+            k in prop_oneof![Just(1i64), Just(-1i64), Just(2i64), -4i64..=4i64],
+        ) {
+            let (ta, shift) = ta_shift;
+            prop_assume!(k != 0);
+            let wide = shift.wrapping_add(k.wrapping_mul(1i64 << 32));
+            prop_assume!(wide != shift);
+            let tb = mandated_tb(ta, is_high);
+            let ops = [neon_arr(rd, tb), neon_arr(rn, ta), Operand::Imm(wide)];
+            prop_assert!(
+                encode_neon_sqshrun(&ops, is_rounding, is_high).is_err(),
+                "Imm({}) truncates to shift {} but is not in [1, dest_esize]; must Err",
+                wide,
+                shift
+            );
+        }
+
+        /// Coverage sweep: source must be Vn.Ta, not a bare GPR/FP register.
+        #[test]
+        fn encode_neon_sqshrun_neg_reg_source(
+            rd in reg_num(),
+            prefix in prop::sample::select(vec!["x", "w", "d", "s", "q", "h", "b", "v"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+            ta_shift in valid_ta_shift(),
+            is_high in any::<bool>(),
+            is_rounding in any::<bool>(),
+        ) {
+            let (ta, shift) = ta_shift;
+            let tb = mandated_tb(ta, is_high);
+            let src = format!("{}{}", prefix, n);
+            let ops = [
+                neon_arr(rd, tb),
+                Operand::Reg(src.clone()),
+                Operand::Imm(shift),
+            ];
+            prop_assert!(
+                encode_neon_sqshrun(&ops, is_rounding, is_high).is_err(),
+                "source {} is not Vn.Ta and must Err",
+                src
+            );
+        }
+    }
+
+    /// Deterministic regression: shift must be in 1..=dest_esize (shrunk from neg_shift_oob).
+    #[test]
+    fn test_encode_neon_sqshrun_regression_shift_oob_dest_esize() {
+        let ops = [neon_arr(0, "8b"), neon_arr(0, "8h"), Operand::Imm(9)];
+        assert!(
+            encode_neon_sqshrun(&ops, false, false).is_err(),
+            "sqshrun v0.8b, v0.8h, #9 must Err (shift 9 > dest esize 8; llvm-mc range [1, 8])"
+        );
+    }
+
+    /// Deterministic regression: dest Tb must match Ta and the 2-suffix (shrunk from neg_dest_tb).
+    #[test]
+    fn test_encode_neon_sqshrun_regression_mismatched_dest_tb() {
+        let ops = [neon_arr(0, "4h"), neon_arr(0, "8h"), Operand::Imm(1)];
+        assert!(
+            encode_neon_sqshrun(&ops, false, false).is_err(),
+            "sqshrun v0.4h, v0.8h, #1 must Err (dest Tb=4h is not 8b)"
+        );
+    }
+
+    /// Deterministic regression: dest must be Vd.Tb, not a GPR (shrunk from neg_gpr_dest).
+    #[test]
+    fn test_encode_neon_sqshrun_regression_gpr_dest() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            neon_arr(0, "8h"),
+            Operand::Imm(1),
+        ];
+        assert!(
+            encode_neon_sqshrun(&ops, false, false).is_err(),
+            "sqshrun x0, v0.8h, #1 must Err (GPR dest is not Vd.Tb)"
+        );
+    }
+
+    /// Deterministic regression: exactly 3 operands (shrunk from neg_extra_operand).
+    #[test]
+    fn test_encode_neon_sqshrun_regression_extra_operand() {
+        let ops = [
+            neon_arr(0, "8b"),
+            neon_arr(0, "8h"),
+            Operand::Imm(1),
+            neon_arr(0, "8b"),
+        ];
+        assert!(
+            encode_neon_sqshrun(&ops, false, false).is_err(),
+            "sqshrun v0.8b, v0.8h, #1, v0.8b must Err (exactly 3 operands)"
+        );
+    }
+
+    /// Deterministic regression: i64 Imm must not be truncated via `as u32`.
+    #[test]
+    fn test_encode_neon_sqshrun_regression_shift_i64_trunc() {
+        let ops = [neon_arr(0, "8b"), neon_arr(0, "8h"), Operand::Imm(4294967297)];
+        assert!(
+            encode_neon_sqshrun(&ops, false, false).is_err(),
+            "sqshrun v0.8b, v0.8h, #4294967297 must Err (not in [1, 8]; must not truncate to #1)"
+        );
+    }
+}
+

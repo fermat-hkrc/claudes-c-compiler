@@ -1,73 +1,33 @@
-# PBT Campaign Report: encode_neon_shll
+# PBT Campaign Report: encode_neon_sqshrun
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_shll (src/backend/arm/assembler/encoder/neon.rs)
-**Tests:** 11 properties + 2 KAT + 6 regression witnesses
-**Result:** 6 passing properties, 5 failing properties (5 bugs); 2 KAT passing; 6 regression witnesses failing as intended
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 metamorphic/differential required, 1 strengthening/coverage-sweep round)
+**Modules tested:** encode_neon_sqshrun
+**Tests:** 11 properties + 2 KAT + 5 regression witnesses
+**Result:** 6 passing, 5 bugs
+**Effort tier:** standard (1 coverage-driven sweep round; ≥1000 generator runs; ≥1 metamorphic/differential required)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_shll | 11 properties (6 pass / 5 fail), 2 KAT, 6 regressions | 5 | differential (llvm-mc aarch64), algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_sqshrun | 11 properties (6 pass / 5 fail) + 2 KAT + 5 failing regression witnesses | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### 1. encode_neon_shll_neg_extra_operand — extra operands ignored
-- **Failing property:** encode_neon_shll_neg_extra_operand (negative_error)
-- **Shrunk counterexample:** rd=0, rn=0, extra=0, tb=8b, shift=0, u_bit=0 → `sshll v0.8h, v0.8b, #0, v0.8h`
-- **Expected:** Err (llvm-mc: invalid operand)
-- **Actual:** Ok(Word) — body only checks `operands.len() < 3`
-- **Severity:** medium
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced.
-- **Bug report:** pbt-out/bug_reports/encode_neon_shll_extra_operand.md
-- **Regression test:** `test_encode_neon_shll_regression_extra_operand`
+1. **Shift above dest_esize is accepted and silently recoded.** `sqshrun v0.8b, v0.8h, #9` must Err (ARM/llvm-mc range [1, 8]); SUT checks against source size 16 and encodes #9 as #1 via `immh = (immhb >> 3) | immh_base`. Law: encode_neon_sqshrun_neg_shift_oob. Minimal input: Imm(9), Ta=8h. Severity: high. Report: `pbt-out/bug_reports/encode_neon_sqshrun_shift_oob.md`. Serial reconfirmed (PBT_TEST_JOBS=1).
 
-### 2. encode_neon_shll_neg_dest_tb — destination arrangement ignored
-- **Failing property:** encode_neon_shll_neg_dest_tb (negative_error)
-- **Shrunk counterexample:** rd=0, rn=0, tb=8b, ta=8b, shift=0, u_bit=0 → `sshll v0.8b, v0.8b, #0`
-- **Expected:** Err (llvm-mc: invalid operand)
-- **Actual:** Ok(Word) — dest arrangement discarded
-- **Severity:** medium
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced.
-- **Bug report:** pbt-out/bug_reports/encode_neon_shll_mismatched_dest_ta.md
-- **Regression test:** `test_encode_neon_shll_regression_mismatched_dest_ta`
+2. **Destination arrangement Tb is ignored.** `sqshrun v0.4h, v0.8h, #1` must Err (Tb must be 8b); SUT binds `_arr_d` and never consults it. Law: encode_neon_sqshrun_neg_dest_tb. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_sqshrun_mismatched_dest_tb.md`. Serial reconfirmed.
 
-### 3. encode_neon_shll_neg_shift_oob — out-of-range shift accepted / Imm(-1) overflow
-- **Failing property:** encode_neon_shll_neg_shift_oob (negative_error)
-- **Shrunk counterexample:** rd=0, rn=0, tb=8b, shift=-1, u_bit=0 (debug `attempt to add with overflow`). Related bound+1: shift=8 → `sshll v0.8h, v0.8b, #8` encodes as 16-bit esize.
-- **Expected:** Err (llvm-mc: immediate in range [0, 7])
-- **Actual:** panic on #-1; Ok(Word) with wrong immh on #8
-- **Severity:** high
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced.
-- **Bug report:** pbt-out/bug_reports/encode_neon_shll_shift_oob.md
-- **Regression test:** `test_encode_neon_shll_regression_shift_neg` and `test_encode_neon_shll_regression_shift_oob`
+3. **GPR/scalar-FP dest encodes as NEON Rd.** `sqshrun x0, v0.8h, #1` must Err; `get_neon_reg` accepts `Operand::Reg` and `parse_reg_num("x0")` returns 0. Law: encode_neon_sqshrun_neg_gpr_dest. Severity: high. Report: `pbt-out/bug_reports/encode_neon_sqshrun_gpr_dest.md`. Serial reconfirmed.
 
-### 4. encode_neon_shll_neg_gpr_dest — GPR/FP dest encoded as Vd
-- **Failing property:** encode_neon_shll_neg_gpr_dest (negative_error)
-- **Shrunk counterexample:** prefix=x, n=0, rn=0, tb=8b, shift=0, u_bit=0 → `sshll x0, v0.8b, #0`
-- **Expected:** Err (llvm-mc: invalid operand)
-- **Actual:** Ok(Word) encoding Rd=0 via parse_reg_num
-- **Severity:** medium
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced.
-- **Bug report:** pbt-out/bug_reports/encode_neon_shll_gpr_dest.md
-- **Regression test:** `test_encode_neon_shll_regression_gpr_dest`
+4. **Operands beyond index 2 are ignored.** `sqshrun v0.8b, v0.8h, #1, v0.8b` must Err (exactly 3 operands); SUT only checks `len < 3`. Law: encode_neon_sqshrun_neg_extra_operand. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_sqshrun_extra_operand.md`. Serial reconfirmed.
 
-### 5. encode_neon_shll_neg_src_vs_high — Q / Tb mismatch accepted
-- **Failing property:** encode_neon_shll_neg_src_vs_high (negative_error)
-- **Shrunk counterexample:** rd=0, rn=0, tb=8b, shift=0, u_bit=0, is_high=true → `sshll2 v0.8h, v0.8b, #0`
-- **Expected:** Err (llvm-mc: invalid operand)
-- **Actual:** Ok(Word) with Q=1 and 8-bit immh
-- **Severity:** medium
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced.
-- **Bug report:** pbt-out/bug_reports/encode_neon_shll_src_vs_high.md
-- **Regression test:** `test_encode_neon_shll_regression_src_vs_high`
+5. **i64 shift is truncated with `as u32`.** Imm(4294967297) (= 2^32+1) encodes as shift #1. Law: encode_neon_sqshrun_neg_shift_i64_trunc (coverage sweep). Severity: medium. Report: `pbt-out/bug_reports/encode_neon_sqshrun_shift_i64_trunc.md`. Serial reconfirmed.
 
-## Design Caveats
+## Design Caveats (if any)
 
 (none)
 
@@ -75,7 +35,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_shll_pbt) | 11 properties, 2 KAT, 6 regressions |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_sqshrun_pbt) | 11 properties + 2 KAT + 5 regression witnesses |
 
 ## Output Directories
 
@@ -83,32 +43,24 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_shll_extra_operand.md
-- pbt-out/bug_reports/encode_neon_shll_mismatched_dest_ta.md
-- pbt-out/bug_reports/encode_neon_shll_shift_oob.md
-- pbt-out/bug_reports/encode_neon_shll_gpr_dest.md
-- pbt-out/bug_reports/encode_neon_shll_src_vs_high.md
+- pbt-out/bug_reports/encode_neon_sqshrun_shift_oob.md
+- pbt-out/bug_reports/encode_neon_sqshrun_mismatched_dest_tb.md
+- pbt-out/bug_reports/encode_neon_sqshrun_gpr_dest.md
+- pbt-out/bug_reports/encode_neon_sqshrun_extra_operand.md
+- pbt-out/bug_reports/encode_neon_sqshrun_shift_i64_trunc.md
 
-## Contract-surface sweep
+## Sweep close-out
 
-STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw; sweep was a manual arm audit of encode_neon_shll (arity < 3, unsupported Tb, non-matching kinds, invalid names, GPR dest, Q vs Tb). Added `encode_neon_shll_neg_gpr_dest` (failing), `encode_neon_shll_neg_src_vs_high` (failing), and `encode_neon_shll_neg_arity_kinds` (passing). Close: tier round done.
-
-## Harness
-
-- **Test layout:** inline `#[cfg(test)] mod encode_neon_shll_pbt` in neon.rs
-- **Buildability probe:** `cargo test --lib test_ascii_passthrough` → 1 passed, 1521 filtered out
-- **Harness placement:** rung 1 — extend existing `cargo test --lib` (proptest already in Cargo.toml)
-- **Build contract:** `cargo check --lib` (user-supplied); tests via `cargo test --lib encode_neon_shll_pbt`
+Contract-surface sweep: 1 round (standard tier). `coverage_gaps` had no LLVM profraw; manual arm audit of arity < 3, unsupported Ta, Imm vs other, 8h/4s/2d, shift==0 / shift > source_esize, is_high, is_rounding, `*v as u32`, get_neon_reg Reg dest+source, extra operands, mismatched Tb. Added `neg_shift_i64_trunc` (failing, bug 5) and `neg_reg_source` (passing). Closed because the tier's one sweep round is done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 12:18 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 54/253 total | PBT candidates: 54 | Tested: 54 (100%) | 0 pass, 54 fail
+> Last updated: 2026-09-14 12:35 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 55/253 total | PBT candidates: 55 | Tested: 55 (100%) | 0 pass, 55 fail
 
 ## Summary
 
@@ -117,10 +69,10 @@ STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw; sweep was a manual a
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 54 |
-| **Tested (of PBT candidates)** | **54 / 54 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 54 / 0 |
-| **Overall (tested / all functions)** | **54 / 253 (21%)** |
+| PBT candidates (from FUNCTION_INDEX) | 55 |
+| **Tested (of PBT candidates)** | **55 / 55 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 55 / 0 |
+| **Overall (tested / all functions)** | **55 / 253 (22%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -128,13 +80,13 @@ STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw; sweep was a manual a
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 54 | 54 | 0 | 100% |
+|  | 55 | 55 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 54 | 54 | 0 | 100% |
+| unknown | 55 | 55 | 0 | 100% |
 
 ## File Coverage
 
@@ -146,7 +98,7 @@ STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw; sweep was a manual a
 | data_processing.rs | 36 | 17 | 17 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
-| neon.rs | 68 | 10 | 10 | 100% | covered |
+| neon.rs | 68 | 11 | 11 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -210,3 +162,4 @@ STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw; sweep was a manual a
 | encode_ret | compare_branch.rs |
 | encode_sbc | data_processing.rs |
 | encode_neon_shll | neon.rs |
+| encode_neon_sqshrun | neon.rs |

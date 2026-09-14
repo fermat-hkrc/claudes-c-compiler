@@ -1644,3 +1644,33 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity < 3, unsupported Tb, kinds, invalid names, GPR dest, Q vs Tb).
 
+---
+
+# Confirmed invariants (encode_neon_sqshrun)
+
+- Valid vector SQSHRUN/SQRSHRUN (+2) with Ta in {8h,4s,2d}, Tb matching Ta and the 2-suffix, Vd/Vn in v0–v31, shift in [1, dest_esize] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode(..., is_high=false) XOR encode(..., is_high=true) = 1<<30 (ARM ARM Q bit) (1000 cases).
+- encode(..., is_rounding=false) XOR encode(..., is_rounding=true) = 1<<11 (opcode 100001 vs 100011) (1000 cases).
+- Success-path word: bit 31=0, Q at 30, U=1 at 29, bits [28:23]=011110, immh:immb at [22:16]=src_esize-shift, opcode at [15:10]=100001/100011, Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands, unsupported source Ta (not 8h/4s/2d), non-RegArrangement/non-Imm kinds, invalid names (v32, foo, empty, v, v-1), and bare Operand::Reg source always Err.
+- Known-answer: `sqshrun v0.8b, v1.8h, #1` encodes as 0x2f0f8420; `#8` as 0x2f088420; `sqshrun2 v0.16b, v1.8h, #1` as 0x6f0f8420; `sqrshrun v0.8b, v1.8h, #1` as 0x2f0f8c20; `sqrshrun2 v0.4s, v1.2d, #32` as 0x6f208c20; `sqshrun v0.4h, v1.4s, #16` as 0x2f108420.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD shift by immediate SQSHRUN/SQRSHRUN: `0 Q 1 011110 immh immb opcode Rn Rd`. opcode 100001 non-rounding / 100011 rounding. U=1 always (signed-to-unsigned saturating narrow). Q=0 lower half / Q=1 (`2` suffix) upper half. dest_esize = 8<<HighestSetBit(immh); shift = 2*esize - UInt(immh:immb) in [1, dest_esize]. Ta/Tb: 8H→8B/16B (1..8), 4S→4H/8H (1..16), 2D→2S/4S (1..32).
+- Dispatch: encoder/mod.rs:649-650 sqrshrun/sqrshrun2; encoder/mod.rs:841-842 sqshrun/sqshrun2.
+- Sibling encode_neon_shrn neon.rs:1443-1444 checks `shift > half_bits` with half_bits = source/2. encode_neon_qshrn / encode_neon_scalar_qshrn fail the same-job gate.
+- Callers: assembler README NEON narrow table; no codegen emission of sqshrun found.
+
+## Quirks
+
+- Shift range uses source element size (16/32/64), so dest_esize+1 through source_esize encode (see bugs).
+- Dest arrangement is discarded (see bugs).
+- Extra operands beyond index 2 are ignored (see bugs).
+- get_neon_reg accepts Operand::Reg, so GPR/FP dest encodes as Vd (see bugs).
+- Shift is `*v as u32`, so Imm(1+2^32) encodes as #1 (see bugs).
+- Bare Operand::Reg source Errs via empty arrangement (not a bug).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / Ta / *v as u32 / get_neon_reg Reg dest+source / extra / mismatched Tb).
+
