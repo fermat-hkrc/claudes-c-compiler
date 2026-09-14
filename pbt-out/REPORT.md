@@ -1,29 +1,29 @@
-# PBT Campaign Report: encode_ret
+# PBT Campaign Report: encode_sbc
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ret
-**Tests:** 10
-**Result:** 6 passing, 4 bugs
-**Effort tier:** standard (1 coverage-driven sweep round; coverage_gaps had no profraw — manual arm audit of empty-default / get_reg success / get_reg None / get_reg other / extra / W / SP / FP)
+**Modules tested:** encode_sbc
+**Tests:** 13
+**Result:** 9 passing, 4 bugs
+**Effort tier:** standard (1 coverage-driven sweep round; coverage_gaps had no profraw — manual arm audit of get_reg success / None / other / extra / mixed width / SP / FP / lr)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ret | 10 properties + 3 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_sbc | 13 properties + 3 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **Extra operand ignored.** Failing property `encode_ret_neg_extra_operand`. Shrunk witness: n=0, which=0 — `ret x0, x1` encodes as Word(0xd65f0000) instead of Err. llvm-mc: invalid operand. Law: ARM ARM RET takes at most one Xn; README.md:14 gas-compat. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_extra_operand.md`.
+1. **Extra shift operand ignored.** Failing property `encode_sbc_neg_extra_shift`. Shrunk witness: rd=0, rn=0, rm=0, is_64=false, kind="lsl", amt=0 — `sbc w0, w0, w0, lsl #0` encodes as Word(0x5a000000) instead of Err. llvm-mc: invalid operand. Law: ARM ARM Add/subtract (with carry) has no shift field (bits 15:10 fixed 000000); README.md:14 gas-compat. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_extra_shift_ignored.md`.
 
-2. **W-form Rn accepted.** Failing property `encode_ret_neg_w_reg`. Shrunk witness: n=0 — `ret w0` encodes as Word(0xd65f0000) instead of Err. llvm-mc rejects W-form; ARM ARM Rn is Xn. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_w_reg.md`.
+2. **Mixed X/W widths accepted.** Failing property `encode_sbc_neg_mixed_width`. Shrunk witness: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=true — `sbc w0, w0, x0` encodes as Word(0x5a000000) instead of Err. llvm-mc rejects mixed width; ARM ARM Rd/Rn/Rm same width; sf is taken only from Rd. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_mixed_width.md`.
 
-3. **SP encoded as XZR.** Failing property `encode_ret_neg_wrong_reg_class`. Shrunk witness: which=0, n=0 — `ret sp` encodes as Word(0xd65f03e0) instead of Err. llvm-mc rejects SP; ARM ARM register 31 is XZR never SP. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_sp.md`.
+3. **SP/WSP encoded as ZR.** Failing property `encode_sbc_neg_sp`. Shrunk witness: which=0, is_64=false, a=0, b=0 — `sbc wsp, w0, w0` encodes as Word(0x5a00001f) instead of Err. llvm-mc rejects SP; ARM ARM register 31 is XZR/WZR never SP. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_sp_as_zr.md`.
 
-4. **FP/SIMD names encoded as GPRs.** Failing property `encode_ret_neg_fp_reg`. Shrunk witness: which=0, n=0 — `ret d0` encodes as Word(0xd65f0000) instead of Err. llvm-mc rejects FP Rn; ARM ARM Rn is Xn. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_fp_reg.md`.
+4. **FP/SIMD names encoded as GPRs.** Failing property `encode_sbc_neg_fp_reg`. Shrunk witness: which=0, prefix="d", n=0 — `sbc d0, x1, x2` encodes as Word(0x5a020020) instead of Err. llvm-mc rejects FP operands; ARM ARM Rd/Rn/Rm are GPRs. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_fp_reg.md`.
 
 All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 
@@ -35,28 +35,28 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/compare_branch.rs (mod encode_ret_pbt) | 3 KAT + 10 properties + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_sbc_pbt) | 3 KAT + 13 properties + 4 regression witnesses |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/REPORT.md — this report
-- pbt-out/FUNCTION_INDEX.md — encode_ret marked yes
-- pbt-out/COVERAGE.md — encode_ret row appended
+- pbt-out/FUNCTION_INDEX.md — encode_sbc marked yes
+- pbt-out/COVERAGE.md — encode_sbc row appended
 - pbt-out/COVERAGE_STATUS.md — updated
-- pbt-out/INVARIANTS.md — encode_ret section prepended
-- pbt-out/bug_reports/encode_ret_extra_operand.md
-- pbt-out/bug_reports/encode_ret_w_reg.md
-- pbt-out/bug_reports/encode_ret_sp.md
-- pbt-out/bug_reports/encode_ret_fp_reg.md
+- pbt-out/INVARIANTS.md — encode_sbc section prepended
+- pbt-out/bug_reports/encode_sbc_extra_shift_ignored.md
+- pbt-out/bug_reports/encode_sbc_mixed_width.md
+- pbt-out/bug_reports/encode_sbc_sp_as_zr.md
+- pbt-out/bug_reports/encode_sbc_fp_reg.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 11:29 (campaign: coverage)
-> Files: 7/7 scanned (100%) | Functions: 51/229 total | PBT candidates: 51 | Tested: 51 (100%) | 0 pass, 51 fail
+> Last updated: 2026-09-14 11:43 (campaign: coverage)
+> Files: 7/7 scanned (100%) | Functions: 52/229 total | PBT candidates: 52 | Tested: 52 (100%) | 0 pass, 52 fail
 
 ## Summary
 
@@ -65,10 +65,10 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 | Total source files | 7 |
 | Files scanned | 7 / 7 (100%) |
 | Total functions (all files) | 229 |
-| PBT candidates (from FUNCTION_INDEX) | 51 |
-| **Tested (of PBT candidates)** | **51 / 51 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 51 / 0 |
-| **Overall (tested / all functions)** | **51 / 229 (22%)** |
+| PBT candidates (from FUNCTION_INDEX) | 52 |
+| **Tested (of PBT candidates)** | **52 / 52 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 52 / 0 |
+| **Overall (tested / all functions)** | **52 / 229 (23%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -76,13 +76,13 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 51 | 51 | 0 | 100% |
+|  | 52 | 52 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 51 | 51 | 0 | 100% |
+| unknown | 52 | 52 | 0 | 100% |
 
 ## File Coverage
 
@@ -91,7 +91,7 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 16 | 16 | 100% | covered |
+| data_processing.rs | 36 | 17 | 17 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 9 | 9 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
@@ -154,3 +154,4 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 | encode_neon_tbl | neon.rs |
 | encode_orn | data_processing.rs |
 | encode_ret | compare_branch.rs |
+| encode_sbc | data_processing.rs |

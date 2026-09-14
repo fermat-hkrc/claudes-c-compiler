@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_sbc)
+
+- Valid three-GPR same-width SBC/SBCS with Rd/Rn/Rm in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_sbc XOR encode_sbc(set_flags=true) = 1<<29 (ARM ARM S bit) (1000 cases).
+- encode_sbc XOR encode_adc at equal operands = 1<<30 (ARM ARM op SBC=1 vs ADC=0) (1000 cases).
+- encode_sbc(Rd, ZR, Rm, set_flags) equals llvm-mc `ngc`/`ngcs` Rd, Rm (ARM ARM NGC alias) (1000 cases).
+- `lr` in any slot encodes as X30 and matches llvm-mc (1000 cases).
+- Success-path word: sf at 31, op=1 at 30, S at 29, bits [28:21]=11010000, Rm at [20:16], bits [15:10]=000000, Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at GPR slots always Err.
+- Known-answer: `sbc x0, x1, x2` encodes as 0xda020020; `sbcs w0, w1, w2` as 0x7a020020; `ngc x0, x1` / `sbc x0, xzr, x1` as 0xda0103e0.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Add/subtract (with carry) SBC: `sf 1 S 11010000 Rm 000000 Rn Rd`. Register 31 is XZR/WZR, never SP/WSP. Rd/Rn/Rm same width. No shifted-register form. NGC Rd, Rm is alias of SBC Rd, ZR, Rm.
+- `lr` is a 64-bit alias of X30 (llvm-mc and parse_reg_num).
+- Dispatch: encoder/mod.rs:283-284 `"sbc" => encode_sbc(operands, false)`, `"sbcs" => encode_sbc(operands, true)`. Sibling encode_adc is ADC (op=0), different job.
+- Callers: assembler README data-processing table lists sbc/sbcs; codegen/i128_ops.rs:73 emits `sbc x1, x3, x5`.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- Mixed X/W is accepted; sf is taken only from Rd (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg 0..2 / sf / S / extra / mixed / SP / FP / lr / invalid name / non-Reg).
+
+---
+
 # Confirmed invariants (encode_ret)
 
 - Valid RET with omitted Rn or Rn in {x0–x30, xzr, lr} (including uppercase X0) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

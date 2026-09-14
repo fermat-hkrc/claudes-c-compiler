@@ -1,263 +1,378 @@
-# Properties: encode_ret
+# Properties: encode_sbc
 
-## encode_ret_diff_xn_llvm_mc
+## encode_sbc_diff_gpr_same_width
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler of the same GNU-style RET text). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree RET decoder. encode_br rejected (same-job gate: BR / opc=0000). encode_blr rejected (same-job gate: BLR / opc=0001). SUT-boundary: internal-helper of the GNU-style AArch64 assembler; mapping [] <-> `ret`, [Reg("xN"|"xzr"|"lr")] <-> `ret xN`.
-- Seed: src/backend/arm/codegen/prologue.rs:319 emits bare `ret`; peephole.rs:1028 classifies it
-- Formal: ∀ name ∈ {⊥} ∪ {x0..x30, xzr, lr, X0}. encode_ret(ops(name)) = Word(v) ∧ llvm-mc(-triple=aarch64, asm(name)) = v, where ops(⊥)=[] and asm(⊥)="ret"
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler of the same GNU-style SBC/SBCS text). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree SBC decoder. encode_adc rejected (same-job gate: ADC / op=0). SUT-boundary: internal-helper of the GNU-style AArch64 assembler; mapping [Reg(Rd),Reg(Rn),Reg(Rm)]+set_flags <-> `sbc`/`sbcs` Rd, Rn, Rm.
+- Seed: src/backend/arm/codegen/i128_ops.rs:73 emits `sbc x1, x3, x5`
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ Bool, set_flags ∈ Bool. encode_sbc([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm))], set_flags) = Word(v) ∧ llvm-mc(-triple=aarch64, asm) = v where asm is `sbc`/`sbcs` with matching X/W names (31 = xzr/wzr)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ret
+function: encode_sbc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [name]
-  domain: { name: optional X-register name or omitted }
+  vars: [rd, rn, rm, is_64, set_flags]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool, set_flags: bool }
   relation:
     op: eq
-    lhs: encode_ret(ops)
+    lhs: encode_sbc(ops, set_flags)
     rhs: llvm_mc_word(asm)
 generators:
-  name: { gen: optional, elem: { gen: string } }
-evidence: src/backend/arm/assembler/README.md:14 same textual assembly as gas; README.md:220 ret under Branches; compare_branch.rs:232 RET 1101011 0010 11111 Rn; ARM ARM Unconditional branch (register) RET opc=0010, omitted Xn defaults to X30
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+evidence: "README.md:14 gas-compat; README.md:214 sbc/sbcs; encoder/mod.rs:283-284 dispatch; ARM ARM SBC sf op=1 S 11010000 Rm 000000 Rn Rd"
 ```
 
-## encode_ret_word_layout
+## encode_sbc_meta_s_bit
 - Tier: 4
-- Rationale: Algebraic invariant from ARM ARM / body comment: bits[31:25]=1101011, opc[24:21]=0010, op2=11111, op3=000000, Rn[9:5], op4=00000. Differential is stronger and used on the X-reg domain; this pins the field layout independently of llvm-mc.
+- Rationale: ARM ARM S bit at 29 distinguishes SBC (S=0) from SBCS (S=1); otherwise identical. Metamorphic: XOR of the two encodings equals 1<<29. Differential is stronger on the X/W domain; this pins the flag bit independently of llvm-mc.
 - Seed: (none)
-- Formal: ∀ n ∈ {0..31}. encode_ret([Reg(xn)]) = Word(w) ⇒ w = 0xd65f0000 | (n << 5) ∧ (w>>25)=0b1101011 ∧ ((w>>21)&0xF)=0b0010 ∧ (w&0x1F)=0 ∧ ((w>>5)&0x1F)=n
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ Bool. encode_sbc(ops, false) XOR encode_sbc(ops, true) = 1<<29
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ret
+function: encode_sbc
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool }
+  relation:
+    op: eq
+    lhs: encode_sbc(ops, false) XOR encode_sbc(ops, true)
+    rhs: 1u32 << 29
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+evidence: "ARM ARM S bit at 29; data_processing.rs:788-790; encoder/mod.rs:283-284 sbc vs sbcs"
+```
+
+## encode_sbc_meta_vs_adc
+- Tier: 4
+- Rationale: ARM ARM Add/subtract (with carry): SBC op=1 vs ADC op=0, otherwise identical (same sf, S, opcode 11010000, Rm, Rn, Rd). For the same operands, SBC XOR ADC = bit 30. encode_adc is a different-job sibling used only as a metamorphic companion, not a differential reference.
+- Seed: (none)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ Bool, set_flags ∈ Bool. encode_sbc(ops, set_flags) XOR encode_adc(ops, set_flags) = 1<<30
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_sbc
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, is_64, set_flags]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool, set_flags: bool }
+  relation:
+    op: eq
+    lhs: encode_sbc(ops, set_flags) XOR encode_adc(ops, set_flags)
+    rhs: 1u32 << 30
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+evidence: "data_processing.rs:778 ADC no bit30; data_processing.rs:790 SBC sets bit30; ARM ARM op ADC=0 SBC=1"
+```
+
+## encode_sbc_invariant_arm_fields
+- Tier: 4
+- Rationale: Algebraic invariant from ARM ARM: sf at 31, op=1 at 30, S at 29, bits[28:21]=11010000, Rm at [20:16], bits[15:10]=000000, Rn at [9:5], Rd at [4:0]. Differential is stronger on the GPR domain; this pins the field layout independently of llvm-mc.
+- Seed: (none)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ Bool, set_flags ∈ Bool. encode_sbc(ops, set_flags) = Word(w) ⇒ (w&0x1F)=rd ∧ ((w>>5)&0x1F)=rn ∧ ((w>>16)&0x1F)=rm ∧ ((w>>31)&1)=sf ∧ ((w>>29)&1)=S ∧ ((w>>30)&1)=1 ∧ ((w>>21)&0xFF)=0b11010000 ∧ ((w>>10)&0x3F)=0
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_sbc
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [n]
-  domain: { n: 0..31 }
+  vars: [rd, rn, rm, is_64, set_flags]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool, set_flags: bool }
   relation:
     op: eq
-    lhs: encode_ret([Reg(xn)])
-    rhs: Word(0xd65f0000 | (n << 5))
+    lhs: encode_sbc(ops, set_flags)
+    rhs: Word((sf<<31)|(1<<30)|(s<<29)|(0b11010000<<21)|(rm<<16)|(rn<<5)|rd)
 generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-evidence: compare_branch.rs:232 RET 1101011 0010 11111 000000 Rn 00000; ARM ARM Unconditional branch (register) RET opc=0010
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+evidence: "ARM ARM SBC sf 1 S 11010000 Rm 000000 Rn Rd; data_processing.rs:790"
 ```
 
-## encode_ret_meta_default_x30_lr
+## encode_sbc_meta_ngc_alias
 - Tier: 4
-- Rationale: ARM ARM / body comment: omitted Xn defaults to X30 (LR). GNU as / llvm-mc alias `ret` ≡ `ret x30` ≡ `ret lr`. Metamorphic equality of the three operand forms.
-- Seed: prologue.rs:319 bare `ret`; compare_branch.rs:227-228 default Rn=30
-- Formal: ∀. encode_ret([]) = encode_ret([Reg("x30")]) = encode_ret([Reg("lr")]) = Word(0xd65f03c0)
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Rationale: ARM ARM / GNU as / llvm-mc alias: NGC Rd, Rm encodes as SBC Rd, ZR, Rm (and NGCS as SBCS Rd, ZR, Rm). Metamorphic equality of encode_sbc(Rd, ZR, Rm) with llvm-mc `ngc`/`ngcs`.
+- Seed: (none)
+- Formal: ∀ rd,rm ∈ {0..31}, is_64 ∈ Bool, set_flags ∈ Bool. encode_sbc([Reg(Rd), Reg(ZR), Reg(Rm)], set_flags) = llvm-mc(`ngc`/`ngcs` Rd, Rm)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ret
+function: encode_sbc
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [dummy]
-  domain: { dummy: unit }
+  vars: [rd, rm, is_64, set_flags]
+  domain: { rd: 0..31, rm: 0..31, is_64: bool, set_flags: bool }
   relation:
     op: eq
-    lhs: encode_ret([])
-    rhs: encode_ret([Reg("x30")])
+    lhs: encode_sbc([Reg(Rd), Reg(ZR), Reg(Rm)], set_flags)
+    rhs: llvm_mc_word(ngc_asm)
 generators:
-  dummy: { gen: int, min: 0, max: 0, type: u32 }
-evidence: compare_branch.rs:227-228 empty operands default to x30 (LR); ARM ARM RET omitted Xn is X30; llvm-mc ret / ret x30 / ret lr all encode 0xd65f03c0
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+evidence: "ARM ARM NGC alias of SBC Rd ZR Rm; llvm-mc sbc x0 xzr x1 equals ngc x0 x1"
 ```
 
-## encode_ret_meta_vs_br
+## encode_sbc_meta_lr_alias
 - Tier: 4
-- Rationale: ARM ARM Unconditional branch (register): RET opc=0010 vs BR opc=0000, otherwise identical. For the same Rn, RET XOR BR = bit 22. encode_br is a different-job sibling used only as a metamorphic companion, not a differential reference.
+- Rationale: Coverage sweep of the documented lr alias. parse_reg_num maps lr to 30; is_64bit_reg treats lr as X. llvm-mc `sbc lr, x0, x1` equals `sbc x30, x0, x1`. Metamorphic plus differential.
 - Seed: (none)
-- Formal: ∀ n ∈ {0..31}. encode_ret([Reg(xn)]) XOR encode_br([Reg(xn)]) = 1<<22
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Formal: ∀ which ∈ {0,1,2}, a,b ∈ {0..30}, set_flags ∈ Bool. encode_sbc(ops with slot which = lr) = encode_sbc(ops with slot which = x30) = llvm-mc(asm with lr)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ret
+function: encode_sbc
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n]
-  domain: { n: 0..31 }
+  vars: [which, a, b, set_flags]
+  domain: { which: 0..2, a: 0..30, b: 0..30, set_flags: bool }
   relation:
     op: eq
-    lhs: encode_ret([Reg(xn)]) XOR encode_br([Reg(xn)])
-    rhs: 1u32 << 22
+    lhs: encode_sbc(ops_lr, set_flags)
+    rhs: encode_sbc(ops_x30, set_flags)
 generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-evidence: compare_branch.rs:214 BR 1101011 0000 11111 Rn; compare_branch.rs:232 RET 1101011 0010 11111 Rn; ARM ARM opc BR=0000 RET=0010 (bit 22)
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  a: { gen: int, min: 0, max: 30, type: u32 }
+  b: { gen: int, min: 0, max: 30, type: u32 }
+  set_flags: { gen: bool }
+evidence: "parse_reg_num encoder/mod.rs:136 lr maps to 30; llvm-mc sbc lr equals sbc x30"
 ```
 
-## encode_ret_neg_w_reg
+## encode_sbc_neg_too_few_operands
 - Tier: 4
-- Rationale: ARM ARM Rn is Xn (64-bit GPR). llvm-mc rejects `ret wN`. README.md:14 gas-compat. Negative/error contract: W-form Rn must Err.
+- Rationale: ARM ARM SBC takes three registers. llvm-mc rejects `sbc x0, x1` (too few operands). README.md:14 gas-compat. Must Err.
 - Seed: (none)
-- Formal: ∀ n ∈ {0..32}. encode_ret([Reg(wn)]) is Err, where w32 maps to wzr/wsp
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: n=0 (ret w0 encodes as ret x0 / 0xd65f0000)
-- Bug report: pbt-out/bug_reports/encode_ret_w_reg.md
-
-```property
-function: encode_ret
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n]
-  domain: { n: 0..32 }
-  relation:
-    op: throws
-    expr: encode_ret([Reg(wn)])
-generators:
-  n: { gen: int, min: 0, max: 32, type: u32 }
-expected_error: String
-evidence: ARM ARM RET Rn is Xn; llvm-mc rejects ret w0; README.md:14 same textual assembly as gas
-```
-
-## encode_ret_neg_extra_operand
-- Tier: 4
-- Rationale: llvm-mc rejects `ret xN, extra`. ARM ARM RET takes at most one Xn. README.md:14 gas-compat. Extra operand must Err.
-- Seed: (none)
-- Formal: ∀ n ∈ {0..30}, extra ∈ {Reg, Imm, Symbol, Mem}. encode_ret([Reg(xn), extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: n=0, which=0 (ret x0, x1 encodes as ret x0 / 0xd65f0000)
-- Bug report: pbt-out/bug_reports/encode_ret_extra_operand.md
-
-```property
-function: encode_ret
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, extra]
-  domain: { n: 0..30, extra: one of Reg Imm Symbol Mem }
-  relation:
-    op: throws
-    expr: encode_ret([Reg(xn), extra])
-generators:
-  n: { gen: int, min: 0, max: 30, type: u32 }
-  extra: { gen: int, min: 0, max: 3, type: u32 }
-expected_error: String
-evidence: llvm-mc rejects ret x0, x1; ARM ARM RET takes at most one Xn; README.md:14 gas-compat
-```
-
-## encode_ret_neg_bad_operand
-- Tier: 4
-- Rationale: RET takes a GPR or nothing. Imm/Mem/Shift/Extend/RegArrangement/Modifier/Symbol/Label are not valid RET operands (llvm-mc / ARM ARM). Must Err.
-- Seed: (none)
-- Formal: ∀ bad ∈ {Imm, Mem, Shift, Extend, RegArrangement, Modifier, Symbol, Label}. encode_ret([bad]) is Err
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Formal: ∀ n ∈ {0,1,2}, set_flags ∈ Bool. encode_sbc(ops[:n], set_flags) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ret
+function: encode_sbc
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which]
-  domain: { which: 0..7 }
+  vars: [n, set_flags]
+  domain: { n: 0..2, set_flags: bool }
   relation:
     op: throws
-    expr: encode_ret([bad(which)])
+    expr: encode_sbc(ops[:n], set_flags)
 generators:
-  which: { gen: int, min: 0, max: 7, type: u32 }
+  n: { gen: int, min: 0, max: 2, type: usize }
+  set_flags: { gen: bool }
 expected_error: String
-evidence: ARM ARM RET operand is optional Xn; get_reg at encoder/mod.rs:956 expected register; llvm-mc rejects non-GPR
+evidence: "llvm-mc rejects sbc x0 x1 too few operands; ARM ARM three GPRs; get_reg encoder/mod.rs:956"
 ```
 
-## encode_ret_neg_wrong_reg_class
+## encode_sbc_neg_non_register
 - Tier: 4
-- Rationale: ARM ARM register 31 is XZR not SP; Rn is GPR not FP/SIMD. llvm-mc rejects `ret sp` / `ret d0` / invalid names. Must Err.
+- Rationale: SBC operands are GPRs. Imm/Symbol/Mem/Shift/Cond at any of the three slots are not valid (llvm-mc / ARM ARM). Must Err.
 - Seed: (none)
-- Formal: ∀ name ∈ {sp, wsp, dN, sN, qN, vN, hN, bN, x32, w32, foo, "", r0, x, x-1, x99}. encode_ret([Reg(name)]) is Err
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: which=0, n=0 (ret sp encodes as ret xzr / 0xd65f03e0)
-- Bug report: pbt-out/bug_reports/encode_ret_sp.md
-
-```property
-function: encode_ret
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [name]
-  domain: { name: SP or FP or invalid GPR names }
-  relation:
-    op: throws
-    expr: encode_ret([Reg(name)])
-generators:
-  name: { gen: string }
-expected_error: String
-evidence: ARM ARM RET Rn is Xn, register 31 is XZR never SP; parse_reg_num encoder/mod.rs:131; llvm-mc rejects ret sp / ret d0
-```
-
-## encode_ret_neg_fp_reg
-- Tier: 4
-- Rationale: ARM ARM RET Rn is Xn. llvm-mc rejects `ret d0` and other FP/SIMD names. Dedicated generator over {d,s,q,v,h,b} so a failure shrinks to an FP witness (distinct from SP).
-- Seed: (none)
-- Formal: ∀ prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_ret([Reg(prefix||n)]) is Err
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: which=0, n=0 (ret d0 encodes as ret x0 / 0xd65f0000)
-- Bug report: pbt-out/bug_reports/encode_ret_fp_reg.md
-
-```property
-function: encode_ret
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, n]
-  domain: { which: 0..5, n: 0..31 }
-  relation:
-    op: throws
-    expr: encode_ret([Reg(fp_name(which, n))])
-generators:
-  which: { gen: int, min: 0, max: 5, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: ARM ARM RET Rn is Xn; llvm-mc rejects ret d0; parse_reg_num encoder/mod.rs:141 accepts d/s/q/v/h/b
-```
-
-## encode_ret_neg_invalid_name
-- Tier: 4
-- Rationale: Coverage sweep of get_reg parse_reg_num None arm. Names that are not a valid register encoding (x32, w32, foo, empty, r0, x, x-1, x99) must Err with invalid register. Distinct from SP/FP which parse_reg_num accepts.
-- Seed: (none)
-- Formal: ∀ name ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_ret([Reg(name)]) is Err
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Formal: ∀ which ∈ {0,1,2}, bad ∈ {Imm, Symbol, Mem, Shift, Cond}. encode_sbc(ops with slot `which` = bad, set_flags) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ret
+function: encode_sbc
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which]
-  domain: { which: 0..7 }
+  vars: [which, bad, set_flags]
+  domain: { which: 0..2, bad: non-Reg Operand, set_flags: bool }
   relation:
     op: throws
-    expr: encode_ret([Reg(invalid_name(which))])
+    expr: encode_sbc(ops, set_flags)
 generators:
-  which: { gen: int, min: 0, max: 7, type: u32 }
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  set_flags: { gen: bool }
 expected_error: String
-evidence: get_reg encoder/mod.rs:956-961 parse_reg_num None returns invalid register; ARM ARM RET Rn is a GPR number 0-31
+evidence: "ARM ARM SBC operands are GPRs; get_reg encoder/mod.rs:956 expected register; llvm-mc rejects non-GPR"
+```
+
+## encode_sbc_neg_invalid_reg_name
+- Tier: 4
+- Rationale: Names that parse_reg_num rejects (x32, w32, foo, empty, r0, x, x-1, x99) must Err with invalid register.
+- Seed: (none)
+- Formal: ∀ which ∈ {0,1,2}, name ∈ {x32, w32, x99, w99, "", foo, r0, x, x-1}. encode_sbc(ops with slot `which` = Reg(name)) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_sbc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, name, set_flags]
+  domain: { which: 0..2, name: invalid GPR names, set_flags: bool }
+  relation:
+    op: throws
+    expr: encode_sbc(ops, set_flags)
+generators:
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: "get_reg encoder/mod.rs:956-961 parse_reg_num None; ARM ARM SBC Rd Rn Rm are GPR 0-31"
+```
+
+## encode_sbc_neg_fp_reg
+- Tier: 4
+- Rationale: ARM ARM SBC Rd/Rn/Rm are GPRs. llvm-mc rejects `sbc d0, x1, x2`. Dedicated generator over {d,s,q,v,h,b} so a failure shrinks to an FP witness.
+- Seed: (none)
+- Formal: ∀ which ∈ {0,1,2}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_sbc(ops with slot `which` = Reg(prefix||n)) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, set_flags=false, prefix="d", n=0 (sbc d0, x1, x2 encodes as sbc w0, w1, w2 / 0x5a020020)
+- Bug report: pbt-out/bug_reports/encode_sbc_fp_reg.md
+
+```property
+function: encode_sbc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, prefix, n, set_flags]
+  domain: { which: 0..2, prefix: FP/SIMD prefix, n: 0..31, set_flags: bool }
+  relation:
+    op: throws
+    expr: encode_sbc(ops, set_flags)
+generators:
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: "ARM ARM SBC GPRs; llvm-mc rejects sbc d0; parse_reg_num encoder/mod.rs:141 accepts d s q v h b"
+```
+
+## encode_sbc_neg_extra_shift
+- Tier: 4
+- Rationale: ARM ARM Add/subtract (with carry) has no shift field (bits 15:10 fixed 000000). llvm-mc rejects `sbc x0, x1, x2, lsl #0`. Extra operand must Err.
+- Seed: (none)
+- Formal: ∀ rd,rn,rm ∈ {0..30}, is_64 ∈ Bool, set_flags ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ {0..63}. encode_sbc([Rd,Rn,Rm,Shift(kind,amt)], set_flags) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, is_64=false, set_flags=false, kind="lsl", amt=0 (sbc w0, w0, w0, lsl #0 encodes as sbc w0, w0, w0 / 0x5a000000)
+- Bug report: pbt-out/bug_reports/encode_sbc_extra_shift_ignored.md
+
+```property
+function: encode_sbc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, is_64, set_flags, kind, amt]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30, is_64: bool, set_flags: bool, kind: shift kind, amt: 0..63 }
+  relation:
+    op: throws
+    expr: encode_sbc([Rd, Rn, Rm, Shift], set_flags)
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+expected_error: String
+evidence: "llvm-mc rejects sbc with lsl; ARM ARM bits 15-10 fixed 000000; README.md:14 gas-compat"
+```
+
+## encode_sbc_neg_mixed_width
+- Tier: 4
+- Rationale: ARM ARM Rd/Rn/Rm must be the same width (all X or all W). llvm-mc rejects `sbc w0, w1, x2`. Mixed X/W must Err.
+- Seed: (none)
+- Formal: ∀ rd,rn,rm ∈ {0..30}, rd64,rn64,rm64 ∈ Bool not all equal, set_flags ∈ Bool. encode_sbc([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm)], set_flags) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=true, set_flags=false (sbc w0, w0, x0 encodes as sbc w0, w0, w0 / 0x5a000000)
+- Bug report: pbt-out/bug_reports/encode_sbc_mixed_width.md
+
+```property
+function: encode_sbc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, rd64, rn64, rm64, set_flags]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30, mixed widths, set_flags: bool }
+  relation:
+    op: throws
+    expr: encode_sbc(ops, set_flags)
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+  rm64: { gen: bool }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: "ARM ARM SBC same width; llvm-mc rejects mixed X W; README.md:14 gas-compat"
+```
+
+## encode_sbc_neg_sp
+- Tier: 4
+- Rationale: ARM ARM register 31 is XZR/WZR, never SP/WSP. llvm-mc rejects `sbc sp, x0, x1`. SP/WSP at any slot must Err.
+- Seed: (none)
+- Formal: ∀ which ∈ {0,1,2}, is_64 ∈ Bool, set_flags ∈ Bool. encode_sbc(ops with slot `which` = SP/WSP) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, is_64=false, set_flags=false, a=0, b=0 (sbc wsp, w0, w0 encodes as sbc wzr, w0, w0 / 0x5a00001f)
+- Bug report: pbt-out/bug_reports/encode_sbc_sp_as_zr.md
+
+```property
+function: encode_sbc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, is_64, set_flags]
+  domain: { which: 0..2, is_64: bool, set_flags: bool }
+  relation:
+    op: throws
+    expr: encode_sbc(ops, set_flags)
+generators:
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  is_64: { gen: bool }
+  set_flags: { gen: bool }
+expected_error: String
+evidence: "ARM ARM register 31 is ZR never SP; llvm-mc rejects sbc sp; parse_reg_num encoder/mod.rs:134 maps sp to 31"
 ```
