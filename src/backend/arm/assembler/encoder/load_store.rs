@@ -7449,3 +7449,836 @@ mod encode_ldtr_sized_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_prfm_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:917 "prfm" => encode_prfm;
+    //   ARM ARM PRFM (immediate): size=11 V=0 opc=10; 1111 1001 10 imm12 Rn Rt; pimm=imm12*8 in [0,32760];
+    //   ARM ARM PRFM (register): 11 111 0 00 10 1 Rm option S 10 Rn Rt; option UXTW/LSL/SXTW/SXTX; S amount 0 or 3;
+    //   Rt is 5-bit prfop (named or #0..31), not a GPR dest; Rn is Xn|SP (not W, not XZR).
+    // Stronger considered:
+    //   - State machine: rejected — encode_prfm is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no PRFM decoder
+    //   - encode_ldr_str as differential sibling: rejected — different job (GPR/SIMD dest, not prfop Rt)
+    // Weaker available: algebraic.invariant (ARM field unpack), algebraic.metamorphic (Rt/Rn/imm12),
+    //   negative_error (arity / extra / unknown prfop / W-base / XZR-base / SIMD / range / form)
+    // Differential: candidate=encode_prfm, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Symbol(prfop)|Imm(0..31), Mem{Xn|SP, pimm}] <-> `prfm <prfop>|#imm5, [Xn|SP{, #pimm}]`
+
+    use super::encode_prfm;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const PIMM_MAX: i64 = 32760;
+
+    const PRFOP_NAMES: &[&str] = &[
+        "pldl1keep", "pldl1strm", "pldl2keep", "pldl2strm", "pldl3keep", "pldl3strm",
+        "plil1keep", "plil1strm", "plil2keep", "plil2strm", "plil3keep", "plil3strm",
+        "pstl1keep", "pstl1strm", "pstl2keep", "pstl2strm", "pstl3keep", "pstl3strm",
+    ];
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn rn_name(n: u32) -> String {
+        if n == 31 {
+            "sp".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn xm_name(n: u32) -> String {
+        if n == 31 {
+            "xzr".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn wm_name(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn asm_mem(rn: &str, offset: i64) -> String {
+        if offset == 0 {
+            format!("[{}]", rn)
+        } else {
+            format!("[{}, #{}]", rn, offset)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_prfm(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    /// Unpack PRFM (immediate) fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_prfm_imm(word: u32) -> (u32, u32, u32, u32, u32, u32) {
+        let size = (word >> 30) & 0b11;
+        let bits29_24 = (word >> 24) & 0b111111;
+        let opc = (word >> 22) & 0b11;
+        let imm12 = (word >> 10) & 0xfff;
+        let rn = (word >> 5) & 0x1f;
+        let rt = word & 0x1f;
+        (size, bits29_24, opc, imm12, rn, rt)
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn pimm_in_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(8i64),
+            Just(16i64),
+            Just(PIMM_MAX - 8),
+            Just(PIMM_MAX),
+            (0u32..=4095u32).prop_map(|imm12| (imm12 as i64) * 8),
+        ]
+    }
+
+    fn pimm_out_of_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(-1i64),
+            Just(-8i64),
+            Just(1i64),
+            Just(4i64),
+            Just(7i64),
+            Just(PIMM_MAX + 1),
+            Just(PIMM_MAX + 8),
+            Just(32768i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            (i64::MIN..=-1),
+            (0i64..=PIMM_MAX).prop_filter("unaligned pimm", |x: &i64| *x % 8 != 0),
+            (PIMM_MAX + 1..=i64::MAX),
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x2".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x3".into(),
+                offset: 0
+            }),
+        ]
+    }
+
+    fn fp_kind() -> impl Strategy<Value = char> {
+        prop_oneof![Just('b'), Just('h'), Just('s'), Just('d'), Just('q'), Just('v')]
+    }
+
+    fn named_prfop_idx() -> impl Strategy<Value = usize> {
+        0usize..PRFOP_NAMES.len()
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_prfm_kat_llvm_mc_pldl1keep_x0() {
+        let want = 0xF9800000u32;
+        let mc = llvm_mc_word("prfm pldl1keep, [x0]").expect("llvm-mc KAT pldl1keep [x0]");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Symbol("pldl1keep".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT pldl1keep [x0]");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_prfm_kat_llvm_mc_pldl1keep_x1_imm8() {
+        let want = 0xF9800420u32;
+        let mc = llvm_mc_word("prfm pldl1keep, [x1, #8]").expect("llvm-mc KAT [x1,#8]");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Symbol("pldl1keep".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 8,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT [x1,#8]");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_prfm_kat_llvm_mc_pldl1strm_sp_imm16() {
+        let want = 0xF9800BE1u32;
+        let mc = llvm_mc_word("prfm pldl1strm, [sp, #16]").expect("llvm-mc KAT [sp,#16]");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Symbol("pldl1strm".into()),
+            Operand::Mem {
+                base: "sp".into(),
+                offset: 16,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT [sp,#16]");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_prfm_kat_llvm_mc_imm31_x0() {
+        let want = 0xF980001Fu32;
+        let mc = llvm_mc_word("prfm #31, [x0]").expect("llvm-mc KAT #31");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Imm(31),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT #31");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_prfm_kat_llvm_mc_regoff_x0_x1() {
+        // ARM ARM / llvm-mc: PRFM (register) base 0xF8A00800, option=LSL, Rm=1, Rn=0, Rt=0
+        let want = 0xF8A16800u32;
+        let mc = llvm_mc_word("prfm pldl1keep, [x0, x1]").expect("llvm-mc KAT regoff");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for PRFM register form");
+        let ops = [
+            Operand::Symbol("pldl1keep".into()),
+            Operand::MemRegOffset {
+                base: "x0".into(),
+                index: "x1".into(),
+                extend: None,
+                shift: None,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT regoff");
+        assert_eq!(sut, want, "SUT PRFM (register) must match ARM ARM / llvm-mc");
+    }
+
+    #[test]
+    fn encode_prfm_kat_llvm_mc_max_pimm() {
+        let want = 0xF9BFFC00u32;
+        let mc = llvm_mc_word("prfm pldl1keep, [x0, #32760]").expect("llvm-mc KAT max pimm");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Symbol("pldl1keep".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 32760,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT max pimm");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_diff_imm_llvm_mc(
+            prfop in 0u32..=31,
+            rn in reg_edge(),
+            pimm in pimm_in_range(),
+            use_named in any::<bool>(),
+            upper in any::<bool>(),
+        ) {
+            let (opnd, asm_prfop) = if use_named && (prfop as usize) < PRFOP_NAMES.len() {
+                let mut name = PRFOP_NAMES[prfop as usize].to_string();
+                if upper {
+                    name = name.to_uppercase();
+                }
+                (Operand::Symbol(name.clone()), name)
+            } else {
+                (Operand::Imm(prfop as i64), format!("#{}", prfop))
+            };
+            let base = if rn == 31 {
+                if upper { "SP".to_string() } else { "sp".to_string() }
+            } else if upper {
+                format!("X{}", rn)
+            } else {
+                format!("x{}", rn)
+            };
+            let mem = asm_mem(&base, pimm);
+            let asm = format!("prfm {}, {}", asm_prfop, mem);
+            let ops = [
+                opnd,
+                Operand::Mem {
+                    base: base.clone(),
+                    offset: pimm,
+                },
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid PRFM {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid PRFM {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_diff_regoff_llvm_mc(
+            idx in named_prfop_idx(),
+            rn in reg_edge(),
+            rm in reg_edge(),
+            ext_kind in 0u32..=3u32,
+            use_shift in any::<bool>(),
+        ) {
+            let prfop = PRFOP_NAMES[idx];
+            let amount: u8 = if use_shift { 3 } else { 0 };
+            let (index, extend) = match ext_kind {
+                0 => (xm_name(rm), "lsl"),
+                1 => (xm_name(rm), "sxtx"),
+                2 => (wm_name(rm), "uxtw"),
+                _ => (wm_name(rm), "sxtw"),
+            };
+            let rn_s = rn_name(rn);
+            let mem = if amount == 0 && extend == "lsl" {
+                format!("[{}, {}]", rn_s, index)
+            } else if amount == 0 {
+                format!("[{}, {}, {}]", rn_s, index, extend)
+            } else {
+                format!("[{}, {}, {} #{}]", rn_s, index, extend, amount)
+            };
+            let asm = format!("prfm {}, {}", prfop, mem);
+            let ops = [
+                Operand::Symbol(prfop.into()),
+                Operand::MemRegOffset {
+                    base: rn_s.clone(),
+                    index: index.clone(),
+                    extend: Some(extend.into()),
+                    shift: if amount == 0 { None } else { Some(amount) },
+                },
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid PRFM regoff {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid PRFM regoff {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_arm_fields(
+            prfop in 0u32..=31,
+            rn in 0u32..=31,
+            imm12 in prop_oneof![Just(0u32), Just(1u32), Just(4094u32), Just(4095u32), 0u32..=4095],
+        ) {
+            let ops = [
+                Operand::Imm(prfop as i64),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: (imm12 as i64) * 8,
+                },
+            ];
+            let word = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected in-range PRFM imm: {}", e));
+            let (size, bits29_24, opc, got_imm12, got_rn, rt) = unpack_prfm_imm(word);
+            prop_assert_eq!(size, 0b11, "PRFM size must be 11, word={:#010x}", word);
+            prop_assert_eq!(bits29_24, 0b111001, "PRFM bits[29:24] must be 111001, word={:#010x}", word);
+            prop_assert_eq!(opc, 0b10, "PRFM opc must be 10, word={:#010x}", word);
+            prop_assert_eq!(got_imm12, imm12, "imm12 mismatch word={:#010x}", word);
+            prop_assert_eq!(got_rn, rn, "Rn mismatch word={:#010x}", word);
+            prop_assert_eq!(rt, prfop, "Rt/prfop mismatch word={:#010x}", word);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_metamorphic_fields(
+            prfop in 0u32..=30,
+            rn in 0u32..=30,
+            imm12 in 0u32..=4094,
+        ) {
+            let enc = |p: u32, n: u32, i: u32| {
+                sut_word(&[
+                    Operand::Imm(p as i64),
+                    Operand::Mem {
+                        base: rn_name(n),
+                        offset: (i as i64) * 8,
+                    },
+                ])
+                .unwrap_or_else(|e| panic!("SUT rejected PRFM metamorphic: {}", e))
+            };
+            let w = enc(prfop, rn, imm12);
+            let w_p = enc(prfop + 1, rn, imm12);
+            let w_n = enc(prfop, rn + 1, imm12);
+            let w_i = enc(prfop, rn, imm12 + 1);
+            prop_assert_eq!(w_p & 0x1f, prfop + 1, "prfop+1 must increment Rt");
+            prop_assert_eq!(w_p & !0x1f, w & !0x1f, "prfop+1 must not change other fields");
+            prop_assert_eq!((w_n >> 5) & 0x1f, rn + 1, "Rn+1 must increment Rn field");
+            prop_assert_eq!(w_n & !(0x1f << 5), w & !(0x1f << 5), "Rn+1 must not change other fields");
+            prop_assert_eq!((w_i >> 10) & 0xfff, imm12 + 1, "imm12+1 must increment imm12");
+            prop_assert_eq!(w_i & !(0xfff << 10), w & !(0xfff << 10), "imm12+1 must not change other fields");
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_neg_arity(
+            kind in 0u32..=2u32,
+            prfop in 0u32..=31,
+            rn in reg_edge(),
+        ) {
+            let ops = match kind {
+                0 => vec![],
+                1 => vec![Operand::Symbol("pldl1keep".into())],
+                _ => vec![Operand::Imm(prfop as i64)],
+            };
+            let _ = rn;
+            prop_assert!(
+                encode_prfm(&ops).is_err(),
+                "arity < 2 must Err, kind={}",
+                kind
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_neg_extra_operand(
+            prfop in 0u32..=31,
+            rn in reg_edge(),
+            pimm in pimm_in_range(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Imm(prfop as i64),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: pimm,
+                },
+                extra,
+            ];
+            prop_assert!(
+                encode_prfm(&ops).is_err(),
+                "third operand must Err; llvm-mc rejects extra operands on prfm"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_neg_invalid_base(
+            prfop in 0u32..=31,
+            kind in 0u32..=5u32,
+            n in 0u32..=31u32,
+            fp in fp_kind(),
+        ) {
+            let base = match kind {
+                0 => format!("w{}", if n == 31 { 0 } else { n }),
+                1 => "wzr".into(),
+                2 => "wsp".into(),
+                3 => "xzr".into(),
+                4 => "x31".into(),
+                _ => format!("{}{}", fp, n.min(31)),
+            };
+            let ops = [
+                Operand::Imm(prfop as i64),
+                Operand::Mem {
+                    base,
+                    offset: 0,
+                },
+            ];
+            prop_assert!(
+                encode_prfm(&ops).is_err(),
+                "invalid base must Err; llvm-mc rejects W/XZR/x31/WSP/SIMD base kind={}",
+                kind
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_prfm
+        #[test]
+        fn encode_prfm_neg_offset_and_form(
+            rn in reg_edge(),
+            use_offset in any::<bool>(),
+            bad_offset in pimm_out_of_range(),
+            form in 0u32..=6u32,
+            prfop in 0u32..=31,
+        ) {
+            let base = rn_name(rn);
+            let ops = if use_offset {
+                vec![
+                    Operand::Imm(prfop as i64),
+                    Operand::Mem {
+                        base,
+                        offset: bad_offset,
+                    },
+                ]
+            } else {
+                match form {
+                    0 => vec![
+                        Operand::Imm(prfop as i64),
+                        Operand::MemPreIndex {
+                            base,
+                            offset: 0,
+                        },
+                    ],
+                    1 => vec![
+                        Operand::Imm(prfop as i64),
+                        Operand::MemPostIndex {
+                            base,
+                            offset: 0,
+                        },
+                    ],
+                    2 => vec![
+                        Operand::Imm(prfop as i64),
+                        Operand::Imm(0),
+                    ],
+                    3 => vec![
+                        Operand::Imm(prfop as i64),
+                        Operand::Label("l".into()),
+                    ],
+                    4 => vec![
+                        Operand::Imm(prfop as i64),
+                        Operand::Cond("eq".into()),
+                    ],
+                    5 => vec![
+                        Operand::Symbol("not_a_prfop".into()),
+                        Operand::Mem {
+                            base,
+                            offset: 0,
+                        },
+                    ],
+                    _ => {
+                        let bad_imm = if prfop % 2 == 0 { 32i64 } else { -1i64 };
+                        vec![
+                            Operand::Imm(bad_imm),
+                            Operand::Mem {
+                                base,
+                                offset: 0,
+                            },
+                        ]
+                    }
+                }
+            };
+            prop_assert!(
+                encode_prfm(&ops).is_err(),
+                "out-of-range pimm, non-Mem form, unknown prfop, or imm5 out of 0..31 must Err"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_prfm
+        // Sweep: ARM ARM W-index requires UXTW/SXTW; llvm-mc rejects bare [Xn, Wm].
+        #[test]
+        fn encode_prfm_neg_w_index(
+            idx in named_prfop_idx(),
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+        ) {
+            let prfop = PRFOP_NAMES[idx];
+            let ops = [
+                Operand::Symbol(prfop.into()),
+                Operand::MemRegOffset {
+                    base: format!("x{}", rn),
+                    index: format!("w{}", rm),
+                    extend: None,
+                    shift: None,
+                },
+            ];
+            prop_assert!(
+                encode_prfm(&ops).is_err(),
+                "W index without uxtw/sxtw must Err; llvm-mc: expected uxtw or sxtw"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_prfm
+        // Sweep: llvm-mc requires shift amount 0 or 3 for PRFM (register).
+        #[test]
+        fn encode_prfm_neg_bad_shift(
+            idx in named_prfop_idx(),
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            amount in prop_oneof![Just(1u8), Just(2u8), Just(4u8), Just(5u8), 1u8..=7],
+        ) {
+            prop_assume!(amount != 0 && amount != 3);
+            let prfop = PRFOP_NAMES[idx];
+            let ops = [
+                Operand::Symbol(prfop.into()),
+                Operand::MemRegOffset {
+                    base: format!("x{}", rn),
+                    index: format!("x{}", rm),
+                    extend: Some("lsl".into()),
+                    shift: Some(amount),
+                },
+            ];
+            prop_assert!(
+                encode_prfm(&ops).is_err(),
+                "shift amount {{1,2,4,..}} must Err; llvm-mc requires #0 or #3"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_prfm
+        // Sweep: non-Symbol/Imm prfop, invalid base/index names, PRFM literal Symbol.
+        #[test]
+        fn encode_prfm_neg_bad_prfop_and_name(
+            kind in 0u32..=4u32,
+            n in 0u32..=31,
+        ) {
+            let ops = match kind {
+                0 => vec![
+                    Operand::Reg(format!("x{}", n.min(30))),
+                    Operand::Mem {
+                        base: "x0".into(),
+                        offset: 0,
+                    },
+                ],
+                1 => vec![
+                    Operand::Imm(0),
+                    Operand::Mem {
+                        base: "foo".into(),
+                        offset: 0,
+                    },
+                ],
+                2 => vec![
+                    Operand::Imm(0),
+                    Operand::Mem {
+                        base: "x32".into(),
+                        offset: 0,
+                    },
+                ],
+                3 => vec![
+                    Operand::Symbol("pldl1keep".into()),
+                    Operand::MemRegOffset {
+                        base: "x0".into(),
+                        index: "foo".into(),
+                        extend: None,
+                        shift: None,
+                    },
+                ],
+                _ => vec![
+                    Operand::Symbol("pldl1keep".into()),
+                    Operand::Symbol("label".into()),
+                ],
+            };
+            prop_assert!(
+                encode_prfm(&ops).is_err(),
+                "Reg prfop / invalid name / PRFM literal must Err, kind={}",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_regoff_encoding() {
+        let ops = [
+            Operand::Symbol("pldl1keep".into()),
+            Operand::MemRegOffset {
+                base: "x0".into(),
+                index: "x1".into(),
+                extend: None,
+                shift: None,
+            },
+        ];
+        let sut = sut_word(&ops).expect("valid PRFM register form");
+        assert_eq!(
+            sut, 0xF8A16800,
+            "PRFM (register) must encode 11 111 0 00 10 1 Rm option S 10 Rn Rt"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_extra_operand() {
+        let ops = [
+            Operand::Imm(0),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "third operand must Err; llvm-mc rejects extra operands on prfm"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_w_base() {
+        let ops = [
+            Operand::Imm(0),
+            Operand::Mem {
+                base: "w0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "W base must Err; llvm-mc rejects prfm pldl1keep, [w0]"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_wsp_base() {
+        let ops = [
+            Operand::Imm(0),
+            Operand::Mem {
+                base: "wsp".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "WSP base must Err; llvm-mc rejects prfm pldl1keep, [wsp]"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_xzr_base() {
+        let ops = [
+            Operand::Imm(0),
+            Operand::Mem {
+                base: "xzr".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "XZR base must Err; llvm-mc rejects prfm pldl1keep, [xzr]"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_x31_base() {
+        let ops = [
+            Operand::Imm(0),
+            Operand::Mem {
+                base: "x31".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "x31 base must Err (Rn=31 is SP, not XZR); llvm-mc rejects [x31]"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_fp_base() {
+        let ops = [
+            Operand::Imm(0),
+            Operand::Mem {
+                base: "d0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "FP/SIMD base must Err; llvm-mc rejects prfm pldl1keep, [d0]"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_w_index() {
+        let ops = [
+            Operand::Symbol("pldl1keep".into()),
+            Operand::MemRegOffset {
+                base: "x0".into(),
+                index: "w0".into(),
+                extend: None,
+                shift: None,
+            },
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "W index without uxtw/sxtw must Err; llvm-mc rejects [x0, w0]"
+        );
+    }
+
+    #[test]
+    fn test_encode_prfm_regression_bad_shift() {
+        let ops = [
+            Operand::Symbol("pldl1keep".into()),
+            Operand::MemRegOffset {
+                base: "x0".into(),
+                index: "x1".into(),
+                extend: Some("lsl".into()),
+                shift: Some(1),
+            },
+        ];
+        assert!(
+            encode_prfm(&ops).is_err(),
+            "lsl #1 must Err; llvm-mc requires #0 or #3"
+        );
+    }
+}

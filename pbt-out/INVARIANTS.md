@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_prfm)
+
+- Valid PRFM (immediate) with named prfop or #imm5 in 0..31, base Xn|SP, pimm = imm12*8 in [0, 32760] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Uppercase prfop/Xn/SP spellings match llvm-mc (1000 cases).
+- Success-path unsigned word: size=11 V=0 opc=10; 1111 1001 10 imm12 Rn Rt. Equivalently w = 0xF9800000 | (imm12<<10) | (rn<<5) | prfop.
+- Metamorphic: prfop+1 increments Rt only; Rn+1 increments Rn field only; imm12+1 increments imm12 only (1000 cases).
+- Fewer than 2 operands, unaligned/negative/too-large pimm, pre/post-index, Imm/Label/Cond address, unknown prfop name, #imm5 outside 0..31, Reg-as-prfop, base foo/x32, invalid index name, and PRFM literal Symbol always Err (1000 cases).
+- Known-answer: `prfm pldl1keep, [x0]` = 0xF9800000; `prfm pldl1keep, [x1, #8]` = 0xF9800420; `prfm pldl1strm, [sp, #16]` = 0xF9800BE1; `prfm #31, [x0]` = 0xF980001F; `prfm pldl1keep, [x0, #32760]` = 0xF9BFFC00; llvm-mc `prfm pldl1keep, [x0, x1]` = 0xF8A16800 (SUT currently 0xF9216800, see bugs).
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM PRFM (immediate): 1111 1001 10 imm12 Rn Rt; pimm multiple of 8 in [0,32760]. PRFM (register): 11 111 0 00 10 1 Rm option S 10 Rn Rt; option UXTW/LSL/SXTW/SXTX; S amount 0 or 3. Rt is 5-bit prfop. Rn is Xn|SP (31=SP, not XZR).
+- Dispatch: encoder/mod.rs:917 "prfm" => encode_prfm.
+- Callers: encoder dispatch; inline_asm.rs mentions prfm/prefetch.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- parse_reg_num maps w/wsp/xzr/x31/FP prefixes, so invalid bases encode (see bugs).
+- PRFM (register) uses `(0b10 << 23)` instead of `(0b10 << 22)` (see bugs).
+- Bare W-index defaults to UXTW (see bugs).
+- Shift amount > 0 is encoded as S=1 regardless of 1 vs 3 (see bugs).
+- PRFM (literal) Symbol returns Err("not yet supported") — Doc evidence load_store.rs:759-761.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_prfm (arity / extra / W-base / XZR / x31 / FP / offset range / pre/post / unknown prfop / imm5 range / W-index / bad shift / Reg-prfop / invalid names / literal).
+- Seven failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_prfm_*.md.
+
 # Confirmed invariants (encode_ldtr_sized)
 
 - Valid LDTRB/LDTRH/STTRB/STTRH Wt, [Xn|SP{, #simm}] with simm in [-256, 255] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Uppercase Wt/Xn/SP/WZR spellings match llvm-mc (1000 cases).

@@ -1,47 +1,72 @@
-# PBT Campaign Report: encode_ldtr_sized
+# PBT Campaign Report: encode_prfm
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ldtr_sized
-**Tests:** 10 properties (6 passing, 4 failing) plus 5 passing KATs and 7 failing regression witnesses
-**Result:** 6 passing properties, 7 bugs
-**Effort tier:** standard (1 coverage-gaps sweep round; closed because the tier round was spent and the documented surface of encode_ldtr_sized was covered)
+**Modules tested:** encode_prfm
+**Tests:** 11 properties (plus 6 KAT + 9 regression witnesses)
+**Result:** 6 passing properties, 5 failing properties, 7 bugs
+**Effort tier:** standard (5–8 properties, ≥1000 cases, 1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ldtr_sized | 10 properties + 5 KAT + 7 regressions | 7 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_prfm | 6 passing / 5 failing properties (5 passing KAT, 1 failing KAT, 9 failing regressions) | 7 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **Extra operand ignored** — `sttrb w0, [x0, #-256], x2` encodes as the first two operands. Law: exactly two operands. Detected by encode_ldtr_sized_neg_extra_operand. Counterexample: rt=0, rn=0, simm=-256, extra=Reg("x2"). Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldtr_sized_extra_operand.md`. Regression: `test_encode_ldtr_sized_regression_extra_operand`.
+1. **PRFM (register) wrong opcode bits** — `encode_prfm` uses `(0b10 << 23)` instead of `(0b10 << 22)`. `prfm pldl1keep, [x0, x1]` encodes as 0xF9216800 vs llvm-mc/ARM ARM 0xF8A16800.
+   - Law: ARM ARM / load_store.rs:764 `11 111 0 00 10 1 Rm option S 10 Rn Rt`
+   - Minimal input: `prfm pldl1keep, [x0, x1]` (also shrunk `[x0, x0]`)
+   - Expected: 0xF8A16800 — Actual: 0xF9216800
+   - Severity: high
+   - Report: pbt-out/bug_reports/encode_prfm_regoff_encoding.md
 
-2. **Xt dest accepted** — `sttrb x0, [x0, #-256]` encodes as Wt Rt=0 because get_reg discards is_64. Law: dest is Wt. Detected by encode_ldtr_sized_neg_xt_dest. Counterexample: rt=0, rn=0, simm=-256. Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldtr_sized_xt_dest.md`. Regression: `test_encode_ldtr_sized_regression_xt_dest`.
+2. **Extra operands ignored** — `operands.len() < 2` does not reject a third operand. `prfm #0, [x0]` plus `Reg("x2")` encodes as 0xF9800000.
+   - Expected: Err — Actual: Ok(Word)
+   - Severity: medium
+   - Report: pbt-out/bug_reports/encode_prfm_extra_operand.md
 
-3. **SP/WSP dest encoded as WZR** — `sttrb sp, [x0, #-256]` uses parse_reg_num("sp")=31. Report: `pbt-out/bug_reports/encode_ldtr_sized_sp_as_rt.md`. Regression: `test_encode_ldtr_sized_regression_sp_as_rt`.
+3. **W/WSP base accepted** — `prfm #0, [w0]` encodes as `[x0]`; `[wsp]` as `[sp]`.
+   - Expected: Err — Actual: Ok(Word)
+   - Severity: medium
+   - Report: pbt-out/bug_reports/encode_prfm_w_base.md
 
-4. **SIMD/FP dest accepted** — `ldtrb d0, [x0]` encodes Rt=0. Report: `pbt-out/bug_reports/encode_ldtr_sized_fp_dest.md`. Regression: `test_encode_ldtr_sized_regression_fp_dest`.
+4. **XZR/x31 base accepted** — `prfm #0, [xzr]` and `[x31]` encode as `[sp]`.
+   - Expected: Err — Actual: Ok(Word)
+   - Severity: medium
+   - Report: pbt-out/bug_reports/encode_prfm_xzr_base.md
 
-5. **W base accepted** — `ldtrb w0, [w0]` encodes as `[x0]`. Report: `pbt-out/bug_reports/encode_ldtr_sized_w_base.md`. Regression: `test_encode_ldtr_sized_regression_w_base`.
+5. **FP/SIMD base accepted** — `prfm #0, [d0]` encodes as `[x0]`.
+   - Expected: Err — Actual: Ok(Word)
+   - Severity: medium
+   - Report: pbt-out/bug_reports/encode_prfm_fp_base.md
 
-6. **XZR base encoded as SP** — `ldtrb w0, [xzr]` encodes Rn=31. Report: `pbt-out/bug_reports/encode_ldtr_sized_xzr_base.md`. Regression: `test_encode_ldtr_sized_regression_xzr_base`.
+6. **Bare W-index accepted** — `prfm pldl1keep, [x0, w0]` encodes as UXTW; llvm-mc requires explicit uxtw/sxtw.
+   - Expected: Err — Actual: Ok(Word)
+   - Severity: medium
+   - Report: pbt-out/bug_reports/encode_prfm_w_index.md
 
-7. **Out-of-range offset truncated** — `#-257` encodes imm9=255 (`(-257 as u32) & 0x1FF == 0xFF`). High severity silent wrong address. Detected by encode_ldtr_sized_neg_offset_and_form. Counterexample: rt=0, rn=0, bad_offset=-257. Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldtr_sized_imm9_range.md`. Regression: `test_encode_ldtr_sized_regression_imm9_range`.
+7. **Illegal shift amount accepted** — `lsl #1` encodes as S=1 (same as `lsl #3`). llvm-mc requires #0 or #3.
+   - Expected: Err — Actual: Ok(Word)
+   - Severity: medium
+   - Report: pbt-out/bug_reports/encode_prfm_bad_shift.md
 
-All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_ldtr_sized_neg -- --test-threads=1`.
+Serial reconfirm: all seven reproduced with `PBT_TEST_JOBS=1` / `--test-threads=1`.
 
-## Design Caveats
+## Design Caveats (if any)
 
-(none)
+- **PRFM (literal) is not implemented.** `Operand::Symbol` as the address operand returns `Err("prfm with symbol/label operand not yet supported")`.
+  Doc evidence: load_store.rs:759-761 — quote: `// PRFM (literal) with symbol reference is not yet supported` / `Err("prfm with symbol/label operand not yet supported")`.
+  Property `encode_prfm_neg_bad_prfop_and_name` (kind=Symbol address) asserts this Err and passes. README.md:11 gas-compatibility would include `prfm pldl1keep, label` (llvm-mc emits a PC-relative fixup); that is a documented gap, not a silent wrong encoding.
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldtr_sized_pbt) | 10 properties, 5 KAT, 7 regressions |
+| src/backend/arm/assembler/encoder/load_store.rs (mod encode_prfm_pbt) | 11 properties + 6 KAT + 9 regressions |
 
 ## Output Directories
 
@@ -49,23 +74,24 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_ldtr_sized_extra_operand.md
-- pbt-out/bug_reports/encode_ldtr_sized_xt_dest.md
-- pbt-out/bug_reports/encode_ldtr_sized_sp_as_rt.md
-- pbt-out/bug_reports/encode_ldtr_sized_fp_dest.md
-- pbt-out/bug_reports/encode_ldtr_sized_w_base.md
-- pbt-out/bug_reports/encode_ldtr_sized_xzr_base.md
-- pbt-out/bug_reports/encode_ldtr_sized_imm9_range.md
+- pbt-out/bug_reports/encode_prfm_regoff_encoding.md
+- pbt-out/bug_reports/encode_prfm_extra_operand.md
+- pbt-out/bug_reports/encode_prfm_w_base.md
+- pbt-out/bug_reports/encode_prfm_xzr_base.md
+- pbt-out/bug_reports/encode_prfm_fp_base.md
+- pbt-out/bug_reports/encode_prfm_w_index.md
+- pbt-out/bug_reports/encode_prfm_bad_shift.md
+
+Sweep close: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual arm audit added encode_prfm_neg_w_index (failing), encode_prfm_neg_bad_shift (failing), and encode_prfm_neg_bad_prfop_and_name (passing). Documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 15:45 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 67/253 total | PBT candidates: 67 | Tested: 67 (100%) | 0 pass, 67 fail
+> Last updated: 2026-09-14 16:03 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 68/253 total | PBT candidates: 68 | Tested: 68 (100%) | 0 pass, 68 fail
 
 ## Summary
 
@@ -74,10 +100,10 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 67 |
-| **Tested (of PBT candidates)** | **67 / 67 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 67 / 0 |
-| **Overall (tested / all functions)** | **67 / 253 (26%)** |
+| PBT candidates (from FUNCTION_INDEX) | 68 |
+| **Tested (of PBT candidates)** | **68 / 68 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 68 / 0 |
+| **Overall (tested / all functions)** | **68 / 253 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -85,13 +111,13 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 67 | 67 | 0 | 100% |
+|  | 68 | 68 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 67 | 67 | 0 | 100% |
+| unknown | 68 | 68 | 0 | 100% |
 
 ## File Coverage
 
@@ -102,7 +128,7 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 24 | 24 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 8 | 8 | 100% | covered |
+| load_store.rs | 20 | 9 | 9 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -180,3 +206,4 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 | encode_ldaxr_stlxr | load_store.rs |
 | encode_ldrsw | load_store.rs |
 | encode_ldtr_sized | load_store.rs |
+| encode_prfm | load_store.rs |

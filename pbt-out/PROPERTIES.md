@@ -1,292 +1,290 @@
-# Properties: encode_ldtr_sized
+# Properties: encode_prfm
 
-## encode_ldtr_sized_diff_llvm_mc
+## encode_prfm_diff_imm_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree LDTRB decoder). Same-job siblings encode_ldur_stur / encode_ldr_str rejected (LDUR/STUR/LDTR auto-size from W/X/SIMD vs explicit byte/half unprivileged; LDRB/STRB different addressing). Doc evidence: assembler README.md:11 "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:340-343 dispatch of ldtrh/sttrh/ldtrb/sttrb; ARM ARM LDTRB/LDTRH/STTRB/STTRH (unprivileged unscaled immediate).
-- Seed: load_store.rs encode_ldur_stur_pbt encode_ldur_stur_diff_gpr_llvm_mc
-- Formal: ∀ rt, rn ∈ {0..31}, simm ∈ [-256,255], is_load ∈ {0,1}, size ∈ {0,1}. encode_ldtr_sized([Reg(Wt), Mem{Xn|SP, simm}], is_load, size) = llvm-mc("{ldtrb|ldtrh|sttrb|sttrh} Wt, [Xn|SP{, #simm}]") as LE u32, where W31 dest is wzr, Rn=31 is sp.
+- Rationale: Strongest applicable oracle is differential vs llvm-mc, which implements the same GNU-style PRFM (immediate) contract the assembler README claims. State machine rejected (pure function). Round-trip rejected (no in-tree PRFM decoder). encode_ldr_str rejected as sibling (different job: GPR/SIMD dest, not prfop Rt).
+- Seed: load_store.rs encode_ldtr_sized_pbt llvm-mc differential
+- Formal: ∀ prfop ∈ named∪{0..31}, ∀ rn ∈ {0..31} with 31=SP, ∀ pimm ∈ {0,8,...,32760}. encode_prfm([prfop, Mem(Xn|SP, pimm)]) = llvm-mc("prfm prfop, [Xn|SP{, #pimm}]")
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
+function: encoder.load_store.encode_prfm
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rt, rn, simm, is_load, size]
-  domain: { rt: "0..=31", rn: "0..=31", simm: "-256..=255", is_load: "bool", size: "{0b00,0b01}" }
+  vars: [prfop, rn, pimm]
   relation:
     op: eq
-    lhs: encode_ldtr_sized(ops_wt_mem(rt, rn, simm), is_load, size)
-    rhs: llvm_mc_word(asm_ldtr_sized)
+    lhs: encode_prfm([prfop, Mem(rn, pimm)])
+    rhs: llvm_mc(prfm_imm_asm(prfop, rn, pimm))
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  prfop: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: src/backend/arm/assembler/README.md:11; encoder/mod.rs:340-343; ARM ARM LDTRB/LDTRH/STTRB/STTRH size 111 0 00 opc 0 imm9 10 Rn Rt, simm9 in [-256,255]
+  pimm: { gen: int, min: 0, max: 32760, type: i64 }
+evidence: README.md:11 GNU gas compatibility; ARM ARM PRFM (immediate) 1111 1001 10 imm12 Rn Rt; encoder/mod.rs:917
 ```
 
-## encode_ldtr_sized_arm_fields
+## encode_prfm_diff_regoff_llvm_mc
+- Tier: 2
+- Rationale: Same differential contract for PRFM (register). ARM ARM and the SUT comment at load_store.rs:764 both specify 11 111 0 00 10 1 Rm option S 10 Rn Rt. llvm-mc is an independent assembler of that encoding.
+- Seed: load_store.rs encode_ldrsw_pbt register-offset differential
+- Formal: ∀ prfop ∈ named, ∀ rn ∈ {0..30}∪SP, ∀ rm ∈ {0..31} with 31=XZR, ∀ (index_width, extend, amount) ∈ valid PRFM extend set. encode_prfm([prfop, MemRegOffset(Xn|SP, Xm|Wm, extend, amount)]) = llvm-mc of the same assembly.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: prfm pldl1keep, [x0, x0] — SUT 0xF9206800 vs llvm-mc 0xF8A06800 (idx=0, rn=0, rm=0, ext_kind=0, use_shift=false)
+- Bug report: pbt-out/bug_reports/encode_prfm_regoff_encoding.md
+
+```property
+function: encoder.load_store.encode_prfm
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [prfop, rn, rm, extend, amount]
+  relation:
+    op: eq
+    lhs: encode_prfm([prfop, MemRegOffset(rn, rm, extend, amount)])
+    rhs: llvm_mc(prfm_regoff_asm(prfop, rn, rm, extend, amount))
+generators:
+  prfop: { gen: int, min: 0, max: 17, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extend: { gen: int, min: 0, max: 3, type: u32 }
+  amount: { gen: int, min: 0, max: 1, type: u32 }
+evidence: ARM ARM PRFM (register) 11 111 0 00 10 1 Rm option S 10 Rn Rt; load_store.rs:764 purpose comment; llvm-mc
+```
+
+## encode_prfm_arm_fields
 - Tier: 4
-- Rationale: ARM ARM field layout is an independent invariant over the success path. Stronger differential covers the same valid domain vs llvm-mc; this unpacks size/V/opc/imm9/op2/Rn/Rt without copying the SUT packer. Stronger rejected as in encode_ldtr_sized_diff_llvm_mc. Documented simm9 bounds -256 and 255 sampled exactly.
-- Seed: load_store.rs encode_ldur_stur_pbt unpack_ldur
-- Formal: ∀ rt, rn ∈ {0..31}, simm ∈ [-256,255], is_load ∈ {0,1}, size ∈ {0,1}. Let w = encode_ldtr_sized([Reg(Wt), Mem{Xn|SP, simm}], is_load, size) as Word. Then bits[31:30]=size, bits[29:27]=111, V=0, bits[25:24]=00, bits[23:22]=(is_load?01:00), bit21=0, bits[20:12]=simm as i9, bits[11:10]=10, bits[9:5]=rn, bits[4:0]=rt.
+- Rationale: Algebraic invariant from ARM ARM PRFM (immediate) bitfields. Stronger differential is also written; this unpacks the word independently of llvm-mc so a reference-connection failure cannot hide a packing bug. Not a copy of the SUT packer.
+- Seed: load_store.rs encode_ldtr_sized_arm_fields
+- Formal: ∀ prfop ∈ 0..31, ∀ rn ∈ 0..31, ∀ imm12 ∈ 0..4095. let w = encode_prfm([#prfop, Mem(Xn|SP, imm12*8)]). unpack(w) = (size=0b11, bits[29:24]=0b111001, opc=0b10, imm12, rn, rt=prfop)
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
+function: encoder.load_store.encode_prfm
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rt, rn, simm, is_load, size]
-  domain: { rt: "0..=31", rn: "0..=31", simm: "-256..=255", is_load: "bool", size: "{0b00,0b01}" }
+  vars: [prfop, rn, imm12]
   relation:
     op: holds
-    expr: unpack_ldtr(w) == (size, 0, opc, simm, 0b10, rn, rt) && fixed_ldtr_bits(w)
+    expr: unpack_prfm_imm(encode_prfm([Imm(prfop), Mem(rn, imm12*8)])) == (0b11, 0b111001, 0b10, imm12, rn, prfop)
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  prfop: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM LDTRB/LDTRH/STTRB/STTRH encoding size 111 V=0 00 opc 0 imm9 10 Rn Rt; encoder/mod.rs:1-7
+  imm12: { gen: int, min: 0, max: 4095, type: u32 }
+evidence: ARM ARM PRFM (immediate) encoding 1111 1001 10 imm12 Rn Rt; load_store.rs:723-725
 ```
 
-## encode_ldtr_sized_metamorphic_fields
+## encode_prfm_metamorphic_fields
 - Tier: 4
-- Rationale: ARM ARM places size at [31:30], opc at [23:22], Rt at [4:0], Rn at [9:5], imm9 at [20:12]. Independent of the SUT packer. Stronger differential already used; this checks field independence. Same-job sibling encode_ldur_stur rejected (different size selection).
-- Seed: load_store.rs encode_ldrsw_pbt metamorphic Rt/Rn/imm
-- Formal: ∀ rt ∈ {0..30}, rn ∈ {0..30}, simm ∈ [-256,254], is_load ∈ {0,1}. Let E(rt,rn,simm,load,sz) = encode_ldtr_sized Word. Then E(..., size=01) XOR E(..., size=00) = 1<<30; E(load=1) XOR E(load=0) = 1<<22; E(rt+1) - E(rt) = 1; E(rn+1) - E(rn) = 32; E(simm+1) XOR E(simm) has only bits[20:12] differing by +1 in the signed imm9 field.
+- Rationale: Metamorphic independence of Rt (prfop), Rn, and imm12. Stronger round-trip rejected (no decoder). Documented field positions imply XOR/add relations.
+- Seed: load_store.rs encode_ldtr_sized_metamorphic_fields
+- Formal: ∀ prfop ∈ 0..30, ∀ rn ∈ 0..30, ∀ imm12 ∈ 0..4094. let w = encode(prfop, rn, imm12*8). encode(prfop+1) differs only in Rt (=prfop+1); encode(rn+1) differs only in Rn (=rn+1); encode(imm12+1) differs only in imm12 (=imm12+1)
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
+function: encoder.load_store.encode_prfm
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rt, rn, simm, is_load]
-  domain: { rt: "0..=30", rn: "0..=30", simm: "-256..=254", is_load: "bool" }
+  vars: [prfop, rn, imm12]
   relation:
     op: holds
-    expr: (E(sz=1) ^ E(sz=0) == 1<<30) && (E(load=1) ^ E(load=0) == 1<<22) && (E(rt+1) - E(rt) == 1) && (E(rn+1) - E(rn) == 32)
+    expr: encode(p+1,rn,i) ^ encode(p,rn,i) == 1 && encode(p,rn+1,i) ^ encode(p,rn,i) == 32 && encode(p,rn,i+1) ^ encode(p,rn,i) == (1<<10)
 generators:
-  rt: { gen: int, min: 0, max: 30, type: u32 }
+  prfop: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-  simm: { gen: int, min: -256, max: 254, type: i64 }
-  is_load: { gen: bool }
-evidence: ARM ARM LDTRB/LDTRH size at [31:30], opc at [23:22], imm9 at [20:12], Rn at [9:5], Rt at [4:0]
+  imm12: { gen: int, min: 0, max: 4094, type: u32 }
+evidence: ARM ARM PRFM (immediate) Rt at [4:0], Rn at [9:5], imm12 at [21:10]
 ```
 
-## encode_ldtr_sized_neg_arity
-- Tier: 4
-- Rationale: ARM syntax requires Wt and a memory operand. llvm-mc rejects fewer than 2 operands. Negative/error contract: encode_ldtr_sized must return Err. Stronger oracles do not apply to the invalid-arity domain.
-- Seed: load_store.rs encode_ldur_stur_pbt arity checks
-- Formal: ∀ ops with |ops| < 2, is_load ∈ {0,1}, size ∈ {0,1}. encode_ldtr_sized(ops, is_load, size) = Err.
+## encode_prfm_neg_arity
+- Tier: 4e
+- Rationale: Documented 2-operand syntax (load_store.rs:723, error string "prfm requires 2 operands"). llvm-mc rejects missing operands.
+- Seed: load_store.rs encode_ldtr_sized_neg_arity
+- Formal: ∀ ops with |ops| < 2. encode_prfm(ops) is Err
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
+function: encoder.load_store.encode_prfm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops, is_load, size]
-  domain: { ops: "|ops|<2", is_load: "bool", size: "{0b00,0b01}" }
+  vars: [ops]
   relation:
     op: throws
-    expr: encode_ldtr_sized(ops, is_load, size)
+    expr: encode_prfm(ops)
 expected_error: String
 generators:
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM LDTRB Wt, [Xn|SP{, #simm}]; llvm-mc rejects missing operands; encoder docstring "ldtr/sttr requires 2 operands"
+  ops: { gen: list, elem: { gen: int, min: 0, max: 3, type: u32 }, maxLen: 1 }
+evidence: load_store.rs:723 Format PRFM prfop, [Xn|SP{, #pimm}]; load_store.rs:728 prfm requires 2 operands
 ```
 
-## encode_ldtr_sized_neg_extra_operand
-- Tier: 4
-- Rationale: llvm-mc / gas reject a third operand on ldtrb/ldtrh/sttrb/sttrh. README.md:11 same textual assembly as gas. Negative contract: extra operand => Err. Documented arity is exactly 2.
-- Seed: load_store.rs encode_ldur_stur_pbt test_encode_ldur_stur_regression_extra_operand
-- Formal: ∀ rt, rn ∈ {0..31}, simm ∈ [-256,255], extra ∈ Operand, is_load ∈ {0,1}, size ∈ {0,1}. encode_ldtr_sized([Reg(Wt), Mem{Xn|SP, simm}, extra], is_load, size) = Err.
+## encode_prfm_neg_extra_operand
+- Tier: 4e
+- Rationale: Two-operand GNU syntax; llvm-mc rejects a third operand. Extra operands must Err, not be ignored.
+- Seed: load_store.rs encode_ldtr_sized_neg_extra_operand
+- Formal: ∀ valid 2-operand PRFM immediate ops, ∀ extra. encode_prfm(ops ++ [extra]) is Err
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: rt=0, rn=0, simm=-256, is_load=false, size=0, extra=Reg("x2") — sttrb w0, [x0, #-256], x2
-- Bug report: pbt-out/bug_reports/encode_ldtr_sized_extra_operand.md
+- Counterexample: prfop=#0, rn=x0, pimm=0, extra=Reg("x2")
+- Bug report: pbt-out/bug_reports/encode_prfm_extra_operand.md
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
+function: encoder.load_store.encode_prfm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rt, rn, simm, extra, is_load, size]
-  domain: { rt: "0..=31", rn: "0..=31", simm: "-256..=255", extra: Operand, is_load: "bool", size: "{0b00,0b01}" }
+  vars: [prfop, rn, pimm, extra]
   relation:
     op: throws
-    expr: encode_ldtr_sized([Reg(Wt), Mem, extra], is_load, size)
+    expr: encode_prfm([prfop, Mem(rn, pimm), extra])
 expected_error: String
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  prfop: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: README.md:11 gas-compatible assembly; llvm-mc "invalid operand" on ldtrb w0, [x1], x2
+  pimm: { gen: int, min: 0, max: 32760, type: i64 }
+  extra: { gen: int, min: 0, max: 3, type: u32 }
+evidence: README.md:11 gas compatibility; llvm-mc rejects extra operands on prfm
 ```
 
-## encode_ldtr_sized_neg_xt_dest
-- Tier: 4
-- Rationale: ARM ARM LDTRB/LDTRH/STTRB/STTRH dest/src is Wt only. llvm-mc rejects Xt/lr. Negative contract: X dest => Err. Stronger differential does not apply on this invalid domain.
-- Seed: load_store.rs encode_ldrsw_pbt W-dest negative (inverse width)
-- Formal: ∀ rt ∈ {0..31} with Xt/lr spelling, rn ∈ {0..31}, simm ∈ [-256,255], is_load ∈ {0,1}, size ∈ {0,1}. encode_ldtr_sized([Reg(Xt|lr), Mem{Xn|SP, simm}], is_load, size) = Err.
+## encode_prfm_neg_invalid_base
+- Tier: 4e
+- Rationale: ARM ARM PRFM base is Xn|SP only. llvm-mc rejects W-base, XZR/x31, WSP, and SIMD/FP names.
+- Seed: load_store.rs encode_ldtr_sized_neg_invalid_regs
+- Formal: ∀ prfop, ∀ invalid base ∈ {Wn, wzr, wsp, xzr, x31, [bhsdqv]n}. encode_prfm([prfop, Mem(base, 0)]) is Err
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: rt=0, rn=0, simm=-256, is_load=false, size=0, use_lr=false — sttrb x0, [x0, #-256]
-- Bug report: pbt-out/bug_reports/encode_ldtr_sized_xt_dest.md
+- Counterexample: prfop=#0, kind=0, n=0 — base w0 (also xzr/x31/wsp/d0)
+- Bug report: pbt-out/bug_reports/encode_prfm_w_base.md
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
+function: encoder.load_store.encode_prfm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rt, rn, simm, is_load, size]
-  domain: { rt: "Xt|lr", rn: "0..=31", simm: "-256..=255", is_load: "bool", size: "{0b00,0b01}" }
+  vars: [prfop, base]
   relation:
     op: throws
-    expr: encode_ldtr_sized([Reg(Xt), Mem], is_load, size)
+    expr: encode_prfm([prfop, Mem(base, 0)])
 expected_error: String
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM LDTRB <Wt>, [<Xn|SP>{, #<simm>}] ; llvm-mc "invalid operand" on ldtrb x0, [x1] and ldtrb lr, [x1]
+  prfop: { gen: int, min: 0, max: 31, type: u32 }
+  base: { gen: int, min: 0, max: 5, type: u32 }
+evidence: ARM ARM PRFM Rn is Xn|SP; llvm-mc rejects [w0], [xzr], [x31]
 ```
 
-## encode_ldtr_sized_neg_invalid_regs
-- Tier: 4
-- Rationale: llvm-mc rejects SP/WSP as Rt, SIMD/FP as Rt, W as base, XZR as base (Rn=31 is SP). README.md:11 gas-compatible. Negative contract: those register choices => Err.
-- Seed: load_store.rs encode_ldur_stur_pbt SP / W-base / XZR / SIMD regressions
-- Formal: ∀ kind ∈ {sp_rt, wsp_rt, fp_rt, w_base, xzr_base}, simm ∈ [-256,255], is_load ∈ {0,1}, size ∈ {0,1}. encode_ldtr_sized(ops(kind), is_load, size) = Err.
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: kind=0, n=0, simm=-256, is_load=false, size=0 — sttrb sp, [x0, #-256] (also WSP, SIMD Rt, W base, XZR base)
-- Bug report: pbt-out/bug_reports/encode_ldtr_sized_sp_as_rt.md; pbt-out/bug_reports/encode_ldtr_sized_fp_dest.md; pbt-out/bug_reports/encode_ldtr_sized_w_base.md; pbt-out/bug_reports/encode_ldtr_sized_xzr_base.md
-
-```property
-function: encoder.load_store.encode_ldtr_sized
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [kind, simm, is_load, size]
-  domain: { kind: "sp_rt|wsp_rt|fp_rt|w_base|xzr_base", simm: "-256..=255", is_load: "bool", size: "{0b00,0b01}" }
-  relation:
-    op: throws
-    expr: encode_ldtr_sized(ops_invalid_reg(kind), is_load, size)
-expected_error: String
-generators:
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM Rt is Wt (31=WZR) never SP/SIMD; Rn is Xn|SP never W/XZR; llvm-mc rejects ldtrb sp/wsp/d0, [x1], ldtrb w0, [w1], ldtrb w0, [xzr]
-```
-
-## encode_ldtr_sized_neg_offset_and_form
-- Tier: 4
-- Rationale: ARM ARM simm9 in [-256, 255]; only unscaled [Xn{, #simm}]. llvm-mc rejects #256/#-257 and pre/post/reg-offset. Negative contract: out-of-range offset or non-Mem addressing => Err. Documented bounds -256 and 255 sampled at bound±1.
-- Seed: load_store.rs encode_ldur_stur_pbt test_encode_ldur_stur_regression_imm9_range
-- Formal: ∀ rt, rn ∈ {0..31}, is_load ∈ {0,1}, size ∈ {0,1}. (simm ∉ [-256,255] ⇒ encode_ldtr_sized([Reg(Wt), Mem{Xn|SP, simm}], ...) = Err) ∧ (addr ∈ {MemPreIndex, MemPostIndex, MemRegOffset, Imm, Symbol, Cond, Barrier} ⇒ encode_ldtr_sized([Reg(Wt), addr], ...) = Err).
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: rt=0, rn=0, is_load=false, size=0, use_offset=true, bad_offset=-257 — sttrb w0, [x0, #-257] (non-Mem form correctly Errs; offset wrap is the bug)
-- Bug report: pbt-out/bug_reports/encode_ldtr_sized_imm9_range.md
-
-```property
-function: encoder.load_store.encode_ldtr_sized
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt, rn, bad_offset, bad_form, is_load, size]
-  domain: { rt: "0..=31", rn: "0..=31", bad_offset: "i64 \\ [-256,255]", bad_form: "pre|post|regoff|Imm|Symbol", is_load: "bool", size: "{0b00,0b01}" }
-  relation:
-    op: throws
-    expr: encode_ldtr_sized(ops_bad_addr, is_load, size)
-expected_error: String
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  bad_offset: { gen: int, min: -257, max: 256, type: i64 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM simm9 in [-256,255], unscaled form only; llvm-mc "index must be an integer in range [-256, 255]" and "invalid operand" on pre/post/reg-offset
-```
-
-## encode_ldtr_sized_neg_bad_form
-- Tier: 4
-- Rationale: Sweep of documented unscaled-only addressing. ARM ARM LDTRB has no pre/post/register-offset form. llvm-mc rejects those. Isolated from the failing imm9-wrap property so the error path is independently evidenced.
-- Seed: encode_ldtr_sized_neg_offset_and_form (form arm)
-- Formal: ∀ rt, rn ∈ {0..31}, is_load ∈ {0,1}, size ∈ {0,1}, addr ∈ {MemPreIndex, MemPostIndex, MemRegOffset, Imm, Symbol, Label}. encode_ldtr_sized([Reg(Wt), addr], is_load, size) = Err.
+## encode_prfm_neg_offset_and_form
+- Tier: 4e
+- Rationale: ARM unsigned PRFM offset is multiple of 8 in [0, 32760]; llvm-mc error "index must be a multiple of 8 in range [0, 32760]". Pre/post-index are not PRFM forms (PRFUM is a different mnemonic). Unknown prfop and #imm5 outside 0..31 must Err.
+- Seed: load_store.rs encode_ldtr_sized_neg_offset_and_form
+- Formal: ∀ (bad_offset ∉ {0,8,...,32760} on Mem) ∨ (addr ∈ {MemPreIndex, MemPostIndex, Imm, Label, Cond}) ∨ (unknown prfop name) ∨ (imm5 ∉ 0..31). encode_prfm is Err
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
+function: encoder.load_store.encode_prfm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rt, rn, form, is_load, size]
-  domain: { rt: "0..=31", rn: "0..=31", form: "pre|post|regoff|Imm|Symbol|Label", is_load: "bool", size: "{0b00,0b01}" }
+  vars: [kind]
   relation:
     op: throws
-    expr: encode_ldtr_sized([Reg(Wt), bad_form], is_load, size)
+    expr: encode_prfm(ops(kind))
 expected_error: String
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  form: { gen: int, min: 0, max: 5, type: u32 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM LDTRB unscaled [Xn|SP{, #simm}] only; llvm-mc invalid operand on pre/post/reg-offset
+  kind: { gen: int, min: 0, max: 6, type: u32 }
+evidence: ARM ARM PRFM pimm multiple of 8 in [0,32760]; llvm-mc same; load_store.rs:736-737 imm5 range; encode_prfop unknown name Err
 ```
 
-## encode_ldtr_sized_diff_w31_alias
-- Tier: 2
-- Rationale: Sweep of documented register-31 alias. ARM ARM / llvm-mc treat w31 as wzr. Differential vs llvm-mc plus equality of the two SUT spellings.
-- Seed: encode_ldtr_sized_diff_llvm_mc
-- Formal: ∀ rn ∈ {0..31}, simm ∈ [-256,255], is_load ∈ {0,1}, size ∈ {0,1}. encode_ldtr_sized([Reg("w31"), Mem{Xn|SP, simm}], ...) = encode_ldtr_sized([Reg("wzr"), Mem{Xn|SP, simm}], ...) = llvm-mc("{ldtrb|...} wzr, [Xn|SP{, #simm}]").
+## encode_prfm_neg_w_index
+- Tier: 4e
+- Rationale: Sweep. ARM ARM W-index for PRFM (register) requires UXTW or SXTW; llvm-mc rejects bare `[Xn, Wm]`.
+- Seed: (none) — coverage sweep of MemRegOffset W-index default
+- Formal: ∀ prfop ∈ named, ∀ rn,rm ∈ 0..30. encode_prfm([prfop, MemRegOffset(Xn, Wm, extend=None)]) is Err
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: prfm pldl1keep, [x0, w0] (idx=0, rn=0, rm=0)
+- Bug report: pbt-out/bug_reports/encode_prfm_w_index.md
+
+```property
+function: encoder.load_store.encode_prfm
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [prfop, rn, rm]
+  relation:
+    op: throws
+    expr: encode_prfm([prfop, MemRegOffset(xn, wm, None, None)])
+expected_error: String
+generators:
+  prfop: { gen: int, min: 0, max: 17, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+evidence: ARM ARM PRFM (register) option UXTW/SXTW for Wm; llvm-mc expected uxtw or sxtw
+```
+
+## encode_prfm_neg_bad_shift
+- Tier: 4e
+- Rationale: Sweep. llvm-mc requires PRFM (register) shift amount in {0, 3}; ARM S bit encodes amount 0 or 3 only.
+- Seed: (none) — coverage sweep of shift_amount > 0 path
+- Formal: ∀ amount ∉ {0,3}. encode_prfm([prfop, MemRegOffset(Xn, Xm, lsl, amount)]) is Err
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: prfm pldl1keep, [x0, x0, lsl #1] (idx=0, rn=0, rm=0, amount=1)
+- Bug report: pbt-out/bug_reports/encode_prfm_bad_shift.md
+
+```property
+function: encoder.load_store.encode_prfm
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [prfop, rn, rm, amount]
+  relation:
+    op: throws
+    expr: encode_prfm([prfop, MemRegOffset(xn, xm, lsl, amount)])
+expected_error: String
+generators:
+  amount: { gen: int, min: 1, max: 7, type: u8 }
+evidence: ARM ARM PRFM (register) S amount 0 or 3; llvm-mc expected lsl or sxtx with #0 or #3
+```
+
+## encode_prfm_neg_bad_prfop_and_name
+- Tier: 4e
+- Rationale: Sweep. First operand must be Symbol(prfop) or Imm(0..31); base/index must parse as registers; PRFM literal is documented as not yet supported (Err).
+- Seed: (none) — coverage sweep of error arms at load_store.rs:740, 746, 761, 766
+- Formal: ∀ kind ∈ {Reg-as-prfop, base foo, base x32, index foo, addr Symbol}. encode_prfm is Err
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldtr_sized
-oracle: differential
+function: encoder.load_store.encode_prfm
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rn, simm, is_load, size]
-  domain: { rn: "0..=31", simm: "-256..=255", is_load: "bool", size: "{0b00,0b01}" }
+  vars: [kind]
   relation:
-    op: eq
-    lhs: encode_ldtr_sized([Reg("w31"), Mem], is_load, size)
-    rhs: llvm_mc_word(asm_wzr)
+    op: throws
+    expr: encode_prfm(ops(kind))
+expected_error: String
 generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM register 31 is WZR; llvm-mc accepts w31 as wzr
+  kind: { gen: int, min: 0, max: 4, type: u32 }
+evidence: load_store.rs:740 expected prefetch operation name; 746 invalid base; 761 not yet supported; 766 invalid index
 ```
