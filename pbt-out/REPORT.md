@@ -1,27 +1,33 @@
-# PBT Campaign Report: encode_fcvt_precision
+# PBT Campaign Report: encode_neon_aes
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fcvt_precision
-**Tests:** 9 properties (6 passing, 3 failing) plus 8 KAT + 6 failing regression witnesses
-**Result:** 6 passing, 3 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 metamorphic/differential required, 1 coverage_gaps sweep round)
+**Modules tested:** encode_neon_aes
+**Tests:** 8 properties (plus 2 KAT, 1 isolated invalid-name, 1 sweep, 6 regression witnesses)
+**Result:** 4 passing, 4 failing properties; 6 SUT bugs
+**Effort tier:** standard (5–8 properties, ≥1000 cases, 1 contract-surface sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fcvt_precision | 9 properties (6 pass / 3 fail) | 3 | differential (llvm-mc), algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_neon_aes | 8 properties (4 passing / 4 failing) | 6 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **Extra operand ignored** — a 3rd operand is dropped. Shrunk: `[Reg("s0"), Reg("d0"), Reg("s0")]` → Word(0x1e624000) (`fcvt s0, d0`). llvm-mc rejects `fcvt d0, s1, s2` ("invalid operand"). Serial reconfirm with PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_fcvt_precision_extra_operand.md`
+1. **Extra operand ignored.** Law: AES takes exactly two operands. Shrunk input: `aese v0.16b, v0.16b, v0.16b`. Expected Err; actual Ok(Word(0x4e284800)) because arity is `len() < 2`. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_extra_operand.md`. Regression: `test_encode_neon_aes_regression_extra_operand`. Serial reconfirm: `PBT_TEST_JOBS=1 cargo test --lib encode_neon_aes -- --test-threads=1`.
 
-2. **Same-precision FCVT encoded (unallocated)** — ARM ARM FCVT with ftype==opc is unallocated. Shrunk: `[Reg("s0"), Reg("s0")]` → Word(0x1e224000). llvm-mc rejects `fcvt s0, s1` / `d,d` / `h,h`. The word would SIGILL on hardware. Serial reconfirm. Report: `pbt-out/bug_reports/encode_fcvt_precision_same_precision.md`
+2. **Arrangement other than .16B accepted.** Law: ARM ARM Cryptographic AES is only Vd.16B, Vn.16B. Shrunk input: `aese v0.8b, v0.8b`. Expected Err; actual Ok(Word(0x4e284800)) because arrangement is discarded. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_bad_arrangement.md`. Regression: `test_encode_neon_aes_regression_8b_arrangement`.
 
-3. **SP treated as an S register** — parse_reg_num maps `"sp"` to 31 and dest/src first char `'s'` selects S precision, so `fcvt sp, d0` encodes as `fcvt s31, d0`. llvm-mc rejects SP in either slot. Property shrink `(sp, s0)`; dest and src regressions. Serial reconfirm. Report: `pbt-out/bug_reports/encode_fcvt_precision_sp_as_s.md`
+3. **Mismatched dest/src arrangement accepted.** Law: dest and src T must both be .16B. Shrunk input: `aese v0.16b, v0.8b`. Expected Err; actual Ok(Word(0x4e284800)). Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_mismatch_arrangement.md`. Regression: `test_encode_neon_aes_regression_mismatch_arr`.
+
+4. **Bare Vn without arrangement accepted.** Law: source must be Vn.16B. Input: `[RegArrangement{v0,"16b"}, Reg("v0")]`. Expected Err; actual Ok(Word(0x4e284800)) because `get_neon_reg` accepts `Operand::Reg`. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_bare_src.md`. Regression: `test_encode_neon_aes_regression_bare_src`.
+
+5. **Non-V register prefix accepted.** Law: operands are SIMD Vd/Vn. Shrunk input: `aese x0.16b, x0.16b`. Expected Err; actual Ok(Word(0x4e284800)) because `parse_reg_num` accepts x/w/d/s/q/h/b. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_non_v_prefix.md`. Regression: `test_encode_neon_aes_regression_x_prefix`.
+
+6. **SP/WSP encoded as V31.** Law: SP is not an AES operand. Input: `aese sp.16b, v0.16b` (sweep also `wsp`). Expected Err; actual Ok with Rd=31. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_sp_as_neon.md`. Regression: `test_encode_neon_aes_regression_sp`.
 
 ## Design Caveats
 
@@ -31,29 +37,36 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fcvt_precision_pbt) | 9 properties + 8 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_aes_pbt) | 8 properties + 2 KAT + 1 isolated invalid-name + 1 sweep + 6 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign checklist (Scan/Plan/Test/Review complete; sweep 1/1)
-- pbt-out/PROPERTIES.md — 9 properties (6 passing, 3 failing)
-- pbt-out/REPORT.md — this file
-- pbt-out/COVERAGE.md — encode_fcvt_precision row appended
-- pbt-out/COVERAGE_STATUS.md — candidates 74, tested 74
-- pbt-out/FUNCTION_INDEX.md — encode_fcvt_precision marked yes
-- pbt-out/INVARIANTS.md — encode_fcvt_precision section prepended
-- pbt-out/bug_reports/encode_fcvt_precision_extra_operand.md
-- pbt-out/bug_reports/encode_fcvt_precision_same_precision.md
-- pbt-out/bug_reports/encode_fcvt_precision_sp_as_s.md
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_neon_aes_extra_operand.md
+- pbt-out/bug_reports/encode_neon_aes_bad_arrangement.md
+- pbt-out/bug_reports/encode_neon_aes_mismatch_arrangement.md
+- pbt-out/bug_reports/encode_neon_aes_bare_src.md
+- pbt-out/bug_reports/encode_neon_aes_non_v_prefix.md
+- pbt-out/bug_reports/encode_neon_aes_sp_as_neon.md
 
-Sweep closed because the tier's one coverage_gaps-driven round was spent (tool had no LLVM profraw; manual arm audit of arity / extra / same-precision S,D,H / GPR / QVB / WSP / SP dest+src / half ftype / nonreg / invalid-name) and every documented behavior of encode_fcvt_precision has a property.
+## Contract-surface sweep
+
+Round 1/1: `coverage_gaps` had no LLVM profraw; manual arm audit of encode_neon_aes. Added `encode_neon_aes_neg_src_nonreg_dest_reg_wsp` (non-register src passes; WSP dest fails — same SP-as-V31 bug). Closed because the tier round is spent and the documented surface is covered.
+
+Skipped target: (none). Build contract `cargo check --lib` / test target `cargo test --lib` succeeded.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 17:27 (campaign: coverage)
-> Files: 9/9 scanned (100%) | Functions: 74/267 total | PBT candidates: 74 | Tested: 74 (100%) | 0 pass, 74 fail
+> Last updated: 2026-09-14 17:43 (campaign: coverage)
+> Files: 9/9 scanned (100%) | Functions: 75/267 total | PBT candidates: 75 | Tested: 75 (100%) | 0 pass, 75 fail
 
 ## Summary
 
@@ -62,10 +75,10 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 | Total source files | 9 |
 | Files scanned | 9 / 9 (100%) |
 | Total functions (all files) | 267 |
-| PBT candidates (from FUNCTION_INDEX) | 74 |
-| **Tested (of PBT candidates)** | **74 / 74 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 74 / 0 |
-| **Overall (tested / all functions)** | **74 / 267 (28%)** |
+| PBT candidates (from FUNCTION_INDEX) | 75 |
+| **Tested (of PBT candidates)** | **75 / 75 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 75 / 0 |
+| **Overall (tested / all functions)** | **75 / 267 (28%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -73,13 +86,13 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 74 | 74 | 0 | 100% |
+|  | 75 | 75 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 74 | 74 | 0 | 100% |
+| unknown | 75 | 75 | 0 | 100% |
 
 ## File Coverage
 
@@ -92,7 +105,7 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 | fp_scalar.rs | 14 | 5 | 5 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
-| neon.rs | 68 | 13 | 13 | 100% | covered |
+| neon.rs | 68 | 14 | 14 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -176,3 +189,4 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 | encode_int_to_float | fp_scalar.rs |
 | encode_fcmp | fp_scalar.rs |
 | encode_fcvt_precision | fp_scalar.rs |
+| encode_neon_aes | neon.rs |

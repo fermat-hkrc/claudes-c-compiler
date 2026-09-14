@@ -1,3 +1,22 @@
+# Confirmed invariants (encode_neon_aes)
+
+- Valid AES AESE/AESD/AESMC/AESIMC Vd.16b, Vn.16b (including v31, uppercase V/16B) matches llvm-mc `-triple=aarch64 -mattr=+aes -show-encoding` (1000 cases). gas aarch64-linux-gnu-as -march=armv8-a+crypto agrees on `aese v0.16b, v1.16b` = 0x4e284820.
+- Success-path word: 0100 1110 0010 1000 opcode 10 Rn Rd. Equivalently w = (0b01001110<<24)|(0b0010100<<17)|(opc<<12)|(0b10<<10)|(rn<<5)|rd. opc AESE=00100 AESD=00101 AESMC=00110 AESIMC=00111; bits[31:24]=01001110; bits[23:17]=0010100; bits[11:10]=10.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; AESD XOR AESE = 1<<12; AESMC XOR AESE = 1<<13 (1000 cases).
+- Fewer than 2 operands, non-register dest/src kinds, and invalid names (v32/foo/empty/v/v99/v-1) always Err (1000 cases).
+- Known-answer: `aese v0.16b, v1.16b` = 0x4e284820; `aesd v0.16b, v1.16b` = 0x4e285820; `aesmc v0.16b, v1.16b` = 0x4e286820; `aesimc v0.16b, v1.16b` = 0x4e287820; `aese v31.16b, v31.16b` = 0x4e284bff; `aesd v31.16b, v0.16b` = 0x4e28581f; `aesmc v0.16b, v31.16b` = 0x4e286be0; `aesimc v15.16b, v16.16b` = 0x4e287a0f.
+- Extra operand, T other than .16b, mismatched T, bare Vn, non-V prefix, and SP/WSP currently encode incorrectly (see bugs).
+
+## Environment (encode_neon_aes)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+aes -show-encoding. gas aarch64-linux-gnu-as -march=armv8-a+crypto agrees on `aese v0.16b, v1.16b` = 0x4e284820.
+- ARM ARM Cryptographic AES: 0 1 0 0 1 1 1 0 size 1 01000 opcode 10 Rn Rd. size must be 00 (otherwise unallocated). opcode 00100=AESE 00101=AESD 00110=AESMC 00111=AESIMC. Assembly syntax is only Vd.16B, Vn.16B.
+- Dispatch: encoder/mod.rs:747-750 aese/aesd/aesmc/aesimc => encode_neon_aes with opcodes 00100/00101/00110/00111.
+- Callers: encoder dispatch only; no ARM codegen emitter of aese/aesd/aesmc/aesimc found (x86 AES-NI is a different ISA).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_neon_aes (arity / extra / T / mismatch / bare Reg / GPR prefix / SP / WSP / nonreg src / invalid-name).
+- Six failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_aes_*.md.
+
 # Confirmed invariants (encode_fcvt_precision)
 
 - Valid scalar FCVT Sd|Dd|Hd, Sn|Dn|Hn with dest precision != src precision (including s31/d31/h31, uppercase) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases; half uses -mattr=+fullfp16).

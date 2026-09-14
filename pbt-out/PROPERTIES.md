@@ -1,281 +1,254 @@
-# Properties: encode_fcvt_precision
+# Properties: encode_neon_aes
 
-## encode_fcvt_precision_diff_valid
+## encode_neon_aes_diff_valid
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree FCVT precision decoder). Sibling encode_fcvt_rounding rejected (same-job gate fails: float-to-integer). Sibling encode_neon_fcvtl/fcvtn rejected (vector widen/narrow). RISC-V encode_fcvt_fp rejected (different ISA). Doc evidence: README.md:11 gas-compatible assembler; encoder/mod.rs:1-7 32-bit words; encoder/mod.rs:460 fcvt dispatch; ARM ARM FCVT 0 00 11110 ftype 1 0001 opc 10000 Rn Rd; codegen/cast_ops.rs:74-78 emits fcvt d0,s0 / fcvt s0,d0.
-- Seed: codegen/cast_ops.rs:74-78; fp_scalar.rs encode_fcmp_pbt / encode_fcvt_rounding_pbt llvm-mc differential
-- Formal: ∀ rd,rn ∈ {0..31}, dest_ty,src_ty ∈ {s,d,h} with dest_ty ≠ src_ty, spell ∈ {lower,upper}. encode_fcvt_precision([Reg(spell(dest_ty,rd)), Reg(spell(src_ty,rn))]) = Word(llvm-mc("fcvt dest, src"))
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree AES decoder). Sibling encode_neon_rbit rejected (same-job gate fails: Advanced SIMD two-misc RBIT). Sibling encode_neon_eor3 rejected (SHA-3 EOR3). Sibling encode_neon_two_misc rejected (generic two-misc). x86 AES-NI rejected (different ISA). Doc evidence: README.md:11 gas-compatible assembler; README.md:238 NEON crypto aese/aesd/aesmc/aesimc; encoder/mod.rs:1-7 32-bit words; encoder/mod.rs:747-750 AES dispatch; ARM ARM Cryptographic AES Vd.16B, Vn.16B; neon.rs:1153-1157 purpose comment.
+- Seed: neon.rs encode_neon_rbit_pbt llvm-mc differential
+- Formal: ∀ rd,rn ∈ {0..31}, opc ∈ {00100,00101,00110,00111}, spell ∈ {lower,upper}. encode_neon_aes([RegArrangement(spell(v,rd),"16b"), RegArrangement(spell(v,rn),"16b")], opc) = Word(llvm-mc-aes(mnem(opc) Vd.16b, Vn.16b))
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.fp_scalar.encode_fcvt_precision
+function: encoder.neon.encode_neon_aes
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, dest_ty, src_ty, dest_spell, src_spell]
+  vars: [rd, rn, opc, spell]
   domain:
     rd: "0..31"
     rn: "0..31"
-    dest_ty: "s|d|h"
-    src_ty: "s|d|h with dest_ty != src_ty"
+    opc: "00100|00101|00110|00111"
+    spell: "v|V and 16b|16B"
   relation:
     op: eq
-    lhs: encode_fcvt_precision([Reg(dest), Reg(src)])
-    rhs: llvm_mc_word("fcvt dest, src")
+    lhs: encode_neon_aes([RegArrangement(Vd,16b), RegArrangement(Vn,16b)], opc)
+    rhs: llvm_mc_aes_word("mnem Vd.16b, Vn.16b")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  dest_ty: { gen: int, min: 0, max: 2, type: u32 }
-  src_ty: { gen: int, min: 0, max: 2, type: u32 }
-  dest_spell: { gen: int, min: 0, max: 1, type: u32 }
-  src_spell: { gen: int, min: 0, max: 1, type: u32 }
-evidence: README.md:11; encoder/mod.rs:460; ARM ARM FCVT; codegen/cast_ops.rs:74-78
+  opc: { gen: int, min: 0, max: 3, type: u32 }
+  spell: { gen: int, min: 0, max: 1, type: u32 }
+evidence: README.md:11; README.md:238; encoder/mod.rs:747-750; ARM ARM Cryptographic AES
 ```
 
-## encode_fcvt_precision_arm_fields
+## encode_neon_aes_arm_fields
 - Tier: 4
-- Rationale: Algebraic invariant of the ARM ARM FCVT field layout on the success path. Stronger differential covers agreement with llvm-mc; this pins the documented bit fields independently. Evidence: fp_scalar.rs:237-239 purpose comment; ARM ARM Floating-point data-processing (1 source) FCVT.
-- Seed: fp_scalar.rs encode_fcmp_arm_fields
-- Formal: ∀ rd,rn ∈ {0..31}, dest_ty ≠ src_ty ∈ {s,d,h}. let w = encode_fcvt_precision([Reg(dest_ty+rd), Reg(src_ty+rn)]). w[31:24]=00011110 ∧ w[23:22]=ftype(src) ∧ w[21]=1 ∧ w[20:17]=0001 ∧ w[16:15]=opc(dest) ∧ w[14:10]=10000 ∧ w[9:5]=rn ∧ w[4:0]=rd
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Algebraic invariant of the ARM ARM Cryptographic AES field layout on the success path. Stronger differential covers agreement with llvm-mc; this pins the documented bit fields independently. Evidence: neon.rs:1153-1157 purpose comment; ARM ARM Cryptographic AES 01001110 size=00 1 01000 opcode 10 Rn Rd.
+- Seed: neon.rs encode_neon_rbit_word_layout
+- Formal: ∀ rd,rn ∈ {0..31}, opc ∈ {00100,00101,00110,00111}. let w = encode_neon_aes([Vd.16b, Vn.16b], opc). w[31:24]=01001110 ∧ w[23:17]=0010100 ∧ w[16:12]=opc ∧ w[11:10]=10 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.fp_scalar.encode_fcvt_precision
+function: encoder.neon.encode_neon_aes
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, dest_ty, src_ty]
+  vars: [rd, rn, opc]
   domain:
     rd: "0..31"
     rn: "0..31"
-    dest_ty: "s|d|h"
-    src_ty: "s|d|h with dest_ty != src_ty"
+    opc: "00100|00101|00110|00111"
   relation:
     op: eq
-    lhs: encode_fcvt_precision([Reg(dest), Reg(src)])
-    rhs: "(0b00011110<<24)|(ftype<<22)|(1<<21)|(0b0001<<17)|(opc<<15)|(0b10000<<10)|(rn<<5)|rd"
+    lhs: encode_neon_aes([RegArrangement(Vd,16b), RegArrangement(Vn,16b)], opc)
+    rhs: "(0b01001110<<24)|(0b0010100<<17)|(opc<<12)|(0b10<<10)|(rn<<5)|rd"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  dest_ty: { gen: int, min: 0, max: 2, type: u32 }
-  src_ty: { gen: int, min: 0, max: 2, type: u32 }
-evidence: fp_scalar.rs:237-239; ARM ARM FCVT 0 00 11110 ftype 1 0001 opc 10000 Rn Rd
+  opc: { gen: int, min: 0, max: 3, type: u32 }
+evidence: neon.rs:1153-1157; ARM ARM Cryptographic AES 01001110 size=00 1 01000 opcode 10 Rn Rd
 ```
 
-## encode_fcvt_precision_metamorphic_fields
+## encode_neon_aes_metamorphic_fields
 - Tier: 4
-- Rationale: Algebraic metamorphic: independent field increments. Rd+1 / Rn+1 / dest S vs D (src H) / src S vs D (dest H) each flip only the corresponding ARM field. Stronger differential already used; this catches field packing bugs that a single-word equality can miss. Evidence: ARM ARM FCVT field positions.
-- Seed: fp_scalar.rs encode_fcmp_metamorphic_fields
-- Formal: ∀ rd,rn ∈ {0..30}, dest_ty ≠ src_ty ∈ {s,d,h}. encode(rd+1,rn) = encode(rd,rn) + 1 ∧ encode(rd,rn+1) = encode(rd,rn) + (1<<5) ∧ encode(D,H) XOR encode(S,H) = 1<<15 ∧ encode(H,D) XOR encode(H,S) = 1<<22
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Algebraic metamorphic: independent field increments. Rd+1 / Rn+1 / AESE vs AESD each flip only the corresponding ARM field. Stronger differential already used; this catches field packing bugs that a single-word equality can miss. Evidence: ARM ARM Cryptographic AES Rd[4:0] Rn[9:5] opcode[16:12].
+- Seed: neon.rs encode_neon_rbit_meta_rd_rn
+- Formal: ∀ rd,rn ∈ {0..30}, opc ∈ {00100,00101,00110,00111}. encode(rd+1,rn,opc) = encode(rd,rn,opc)+1 ∧ encode(rd,rn+1,opc) = encode(rd,rn,opc)+(1<<5) ∧ encode(rd,rn,AESD) XOR encode(rd,rn,AESE) = 1<<12 ∧ encode(rd,rn,AESMC) XOR encode(rd,rn,AESE) = 1<<13
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.fp_scalar.encode_fcvt_precision
+function: encoder.neon.encode_neon_aes
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, dest_ty, src_ty]
+  vars: [rd, rn, opc]
   domain:
     rd: "0..30"
     rn: "0..30"
-    dest_ty: "s|d|h"
-    src_ty: "s|d|h with dest_ty != src_ty"
+    opc: "00100|00101|00110|00111"
   relation:
     op: holds
-    expr: "encode(rd+1)==encode(rd)+1 && encode(rn+1)==encode(rn)+(1<<5) && (encode_D_H ^ encode_S_H)==(1<<15) && (encode_H_D ^ encode_H_S)==(1<<22)"
+    expr: "encode(rd+1)==encode(rd)+1 && encode(rn+1)==encode(rn)+(1<<5) && (encode_AESD ^ encode_AESE)==(1<<12) && (encode_AESMC ^ encode_AESE)==(1<<13)"
 generators:
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-  dest_ty: { gen: int, min: 0, max: 2, type: u32 }
-  src_ty: { gen: int, min: 0, max: 2, type: u32 }
-evidence: ARM ARM FCVT Rd[4:0] Rn[9:5] opc[16:15] ftype[23:22]
+  opc: { gen: int, min: 0, max: 3, type: u32 }
+evidence: ARM ARM Cryptographic AES Rd[4:0] Rn[9:5] opcode[16:12]
 ```
 
-## encode_fcvt_precision_neg_arity
+## encode_neon_aes_neg_arity
 - Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects `fcvt s0` / empty as too few operands; SUT documents "fcvt requires 2 operands" at fp_scalar.rs:241-242. Evidence: llvm-mc error; SUT purpose plus assembler gas-compatibility (README.md:11).
-- Seed: fp_scalar.rs encode_fcmp_neg_arity
-- Formal: ∀ ops with |ops| < 2. encode_fcvt_precision(ops) is Err
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Negative/error contract. llvm-mc rejects `aese v0.16b` / empty as too few operands; SUT documents "aes instruction requires 2 operands" at neon.rs:1147-1148. Evidence: llvm-mc error; assembler gas-compatibility (README.md:11).
+- Seed: neon.rs encode_neon_rbit_neg_arity
+- Formal: ∀ ops with |ops| < 2, opc ∈ AES opcodes. encode_neon_aes(ops, opc) is Err. ∀ non-register dest kind. encode_neon_aes([bad, Vn.16b], opc) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.fp_scalar.encode_fcvt_precision
+function: encoder.neon.encode_neon_aes
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [len, n, ty]
+  vars: [len, opc, which]
   domain:
     len: "0..1"
+    opc: "00100|00101|00110|00111"
+    which: "Imm|Mem|Shift|RegList|Label"
   relation:
-    op: throws
-    expr: encode_fcvt_precision(ops_of_len(len))
+    op: holds
+    expr: "encode_neon_aes(ops[..len], opc).is_err() && encode_neon_aes([bad_dest, src], opc).is_err()"
 generators:
   len: { gen: int, min: 0, max: 1, type: usize }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  ty: { gen: int, min: 0, max: 2, type: u32 }
+  opc: { gen: int, min: 0, max: 3, type: u32 }
+  which: { gen: int, min: 0, max: 4, type: u32 }
 expected_error: String
-evidence: fp_scalar.rs:241-242; llvm-mc too few operands; README.md:11
+evidence: neon.rs:1147-1148; llvm-mc "too few operands"; README.md:11
 ```
 
-## encode_fcvt_precision_neg_extra_operand
+## encode_neon_aes_neg_extra
 - Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects a 3rd operand (`fcvt d0, s1, s2` invalid operand). Gas-compatible assembler must not silently ignore extras. Stronger differential does not cover this invalid domain.
-- Seed: fp_scalar.rs encode_fcmp_neg_extra_operand
-- Formal: ∀ rd,rn ∈ {0..31}, dest_ty ≠ src_ty ∈ {s,d,h}, extra ∈ Operand. encode_fcvt_precision([Reg(dest), Reg(src), extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Negative/error contract. llvm-mc rejects a 3rd operand (`aese v0.16b, v1.16b, v2.16b` / `#0` / `[x0]`). Gas-compatible assembler (README.md:11) must reject extra operands. Documented bound: 2 operands.
+- Seed: neon.rs encode_neon_rbit_neg_extra_operands
+- Formal: ∀ rd,rn,extra ∈ {0..31}, opc ∈ AES opcodes, extra_kind ∈ {RegArrangement, Imm, Reg, Mem}. encode_neon_aes([Vd.16b, Vn.16b, extra], opc) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, dest_ty=0, src_off=1, extra=Reg("s0") → [Reg("s0"), Reg("d0"), Reg("s0")] encodes as 0x1e624000
-- Bug report: pbt-out/bug_reports/encode_fcvt_precision_extra_operand.md
+- Counterexample: rd=0, rn=0, extra=0, opc=4, extra_kind=0 — aese v0.16b, v0.16b, v0.16b → Ok(Word(0x4e284800))
+- Bug report: pbt-out/bug_reports/encode_neon_aes_extra_operand.md
 
 ```property
-function: encoder.fp_scalar.encode_fcvt_precision
+function: encoder.neon.encode_neon_aes
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, dest_ty, src_ty, extra]
-  domain:
-    dest_ty: "s|d|h"
-    src_ty: "s|d|h with dest_ty != src_ty"
-  relation:
-    op: throws
-    expr: encode_fcvt_precision([Reg(dest), Reg(src), extra])
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  dest_ty: { gen: int, min: 0, max: 2, type: u32 }
-  src_ty: { gen: int, min: 0, max: 2, type: u32 }
-expected_error: String
-evidence: llvm-mc invalid operand on fcvt d0, s1, s2; README.md:11
-```
-
-## encode_fcvt_precision_neg_same_precision
-- Tier: 4
-- Rationale: Negative/error contract. ARM ARM FCVT with ftype==opc is unallocated; llvm-mc rejects `fcvt s0, s1` / `d,d` / `h,h` as invalid operand. Same-precision conversion is not a documented FCVT form. Evidence: ARM ARM unallocated when ftype==opc; llvm-mc.
-- Seed: (none) — llvm-mc rejection of same-precision FCVT
-- Formal: ∀ rd,rn ∈ {0..31}, ty ∈ {s,d,h}. encode_fcvt_precision([Reg(ty+rd), Reg(ty+rn)]) is Err
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, ty=0 → [Reg("s0"), Reg("s0")] encodes as 0x1e224000
-- Bug report: pbt-out/bug_reports/encode_fcvt_precision_same_precision.md
-
-```property
-function: encoder.fp_scalar.encode_fcvt_precision
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, ty]
+  vars: [rd, rn, extra, opc, extra_kind]
   domain:
     rd: "0..31"
-    rn: "0..31"
-    ty: "s|d|h"
+    extra_kind: "RegArrangement|Imm|Reg|Mem"
   relation:
-    op: throws
-    expr: encode_fcvt_precision([Reg(ty+rd), Reg(ty+rn)])
+    op: holds
+    expr: "encode_neon_aes([Vd.16b, Vn.16b, extra], opc).is_err()"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ty: { gen: int, min: 0, max: 2, type: u32 }
+  extra: { gen: int, min: 0, max: 31, type: u32 }
+  opc: { gen: int, min: 0, max: 3, type: u32 }
+  extra_kind: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: ARM ARM FCVT ftype==opc unallocated; llvm-mc invalid operand
+evidence: llvm-mc rejects 3rd operand; README.md:11; ARM ARM AES is a 2-operand instruction
 ```
 
-## encode_fcvt_precision_neg_wrong_types
+## encode_neon_aes_neg_bad_arrangement
 - Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects GPR (x/w), SIMD (q/v/b), and SP/WSP in either slot. FCVT is scalar FP precision conversion among S/D/H only. parse_reg_num maps sp to 31 and `sp` starts with s, so this is a likely SUT hole.
-- Seed: fp_scalar.rs encode_fcmp_neg_wrong_types
-- Formal: ∀ (a,b) in wrong_type_pairs (GPR, Q/V/B, SP/WSP in either slot, or mixed with a valid S/D/H). encode_fcvt_precision([Reg(a), Reg(b)]) is Err
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
+- Rationale: Negative/error contract. ARM ARM Cryptographic AES admits only Vd.16B, Vn.16B; llvm-mc rejects .8b/.4s/.8h/.2d/.4h/.2s/.1d and empty T. Documented bound: T=16b exactly.
+- Seed: neon.rs encode_neon_rbit_neg_bad_arrangement
+- Formal: ∀ rd,rn ∈ {0..31}, T ∉ {16b,16B}, opc ∈ AES opcodes. encode_neon_aes([Vd.T, Vn.T], opc) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: failing
-- Counterexample: (a, b) = ("sp", "s0") — SP dest encoded as S31
-- Bug report: pbt-out/bug_reports/encode_fcvt_precision_sp_as_s.md
+- Counterexample: rd=0, rn=0, t="8b", opc=4 — aese v0.8b, v0.8b → Ok(Word(0x4e284800))
+- Bug report: pbt-out/bug_reports/encode_neon_aes_bad_arrangement.md
 
 ```property
-function: encoder.fp_scalar.encode_fcvt_precision
+function: encoder.neon.encode_neon_aes
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [a, b]
+  vars: [rd, rn, t, opc]
   domain:
-    a: "GPR or QVB or SP/WSP"
-    b: "S/D/H or same invalid class"
+    t: "8b|4h|8h|2s|4s|2d|1d|8s|4b|empty|b|h|s"
+    opc: "00100|00101|00110|00111"
   relation:
-    op: throws
-    expr: encode_fcvt_precision([Reg(a), Reg(b)])
+    op: holds
+    expr: "encode_neon_aes([Vd.T, Vn.T], opc).is_err()"
 generators:
-  a: { gen: string }
-  b: { gen: string }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: string }
+  opc: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: llvm-mc rejects fcvt x0,s1 / s0,x1 / q0,s1 / s0,q1 / v0,s1 / sp,s1 / s0,sp / b0,s1 / s0,w1
+evidence: ARM ARM Cryptographic AES Vd.16B, Vn.16B; llvm-mc "invalid operand" for .8b/.4s
 ```
 
-## encode_fcvt_precision_neg_gpr_qvb
+## encode_neon_aes_neg_mismatch_bare_invalid
 - Tier: 4
-- Rationale: Sweep — documented unsupported dest/source type arms (fp_scalar.rs:259, 265) for first-char not in {s,d,h}. SP is excluded here because it is a separate failing first-char-'s' hole. llvm-mc rejects x/w/q/v/b/wsp in either slot.
-- Seed: fp_scalar.rs encode_fcvt_precision_neg_wrong_types
-- Formal: ∀ n,m ∈ {0..31}, which ∈ {0,1}, bad ∈ {Xn,Wn,Qn,Vn,Bn,WSP}, good ∈ {Sn,Dn,Hn}. encode_fcvt_precision(ops with slot which = bad) is Err
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Rationale: Negative/error contract. llvm-mc rejects mismatched T (`aese v0.16b, v1.8b`), bare Vn without arrangement (`aese v0, v1`), and invalid names (v32/foo/empty). Gas-compatible assembler must reject these.
+- Seed: neon.rs encode_neon_rbit_neg_mismatch_nonreg_invalid / encode_neon_rbit_neg_bare_src / encode_neon_rbit_neg_invalid_name
+- Formal: ∀ mismatched dest/src T, bare src Reg, invalid dest/src name. encode_neon_aes(...) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, tn="8b", opc=4 — aese v0.16b, v0.8b → Ok(Word(0x4e284800)); also bare src Reg("v0") → Ok (invalid names v32/foo/empty/v/v99/v-1 correctly Err)
+- Bug report: pbt-out/bug_reports/encode_neon_aes_mismatch_arrangement.md
 
 ```property
-function: encoder.fp_scalar.encode_fcvt_precision
+function: encoder.neon.encode_neon_aes
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, m, which, kind]
+  vars: [rd, rn, td, tn, bad, opc]
   domain:
-    which: "0|1"
-    bad: "GPR or QVB or WSP"
+    td: "16b"
+    tn: "8b|16b|4h|8h|2s|4s with tn != td"
+    bad: "v32|foo|empty|v|v99|v-1"
   relation:
-    op: throws
-    expr: encode_fcvt_precision(ops_with_slot(which, bad))
+    op: holds
+    expr: "encode([Vd.td, Vn.tn], opc).is_err() && encode([Vd.16b, Reg(Vn)], opc).is_err() && encode([bad, Vn.16b], opc).is_err()"
 generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  which: { gen: int, min: 0, max: 1, type: u32 }
-  kind: { gen: int, min: 0, max: 4, type: u32 }
-expected_error: String
-evidence: fp_scalar.rs:259,265 unsupported source/dest type; llvm-mc invalid operand
-```
-
-## encode_fcvt_precision_neg_nonreg_invalid_name
-- Tier: 4
-- Rationale: Negative/error contract. Non-register kinds (Imm/Symbol/Label/Mem/Cond/Shift) and invalid names (foo/s32/d32/h32/empty/r0) are not FCVT operands. get_reg and parse_reg_num must Err. Evidence: llvm-mc invalid operand; get_reg expected register.
-- Seed: fp_scalar.rs encode_fcmp_neg_nonreg / encode_fcmp_neg_invalid_name
-- Formal: ∀ which ∈ {0,1}, bad ∈ nonreg_kinds ∪ invalid_names. encode_fcvt_precision(ops with slot which = bad) is Err
-- Test file: src/backend/arm/assembler/encoder/fp_scalar.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.fp_scalar.encode_fcvt_precision
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, bad]
-  domain:
-    which: "0|1"
-    bad: "nonreg or invalid name"
-  relation:
-    op: throws
-    expr: encode_fcvt_precision(ops_with_slot(which, bad))
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  tn: { gen: string }
   bad: { gen: string }
+  opc: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: llvm-mc invalid operand; get_reg expected register; parse_reg_num None on foo/s32
+evidence: llvm-mc rejects mismatched T, bare Vn, invalid names; README.md:11
+```
+
+## encode_neon_aes_neg_prefix_sp
+- Tier: 4
+- Rationale: Negative/error contract. llvm-mc rejects non-V prefixes (x/w/d/s/q/h/b) and SP as AES operands. parse_reg_num maps those prefixes and sp->31, so this is the documented bound (V0-V31 only) plus the gas-compatibility contract.
+- Seed: neon.rs encode_neon_rbit_neg_bad_prefix / encode_neon_rbit_neg_sp
+- Formal: ∀ prefix ∈ {x,w,d,s,q,h,b}, rd,rn ∈ {0..31}, opc ∈ AES opcodes. encode_neon_aes([prefix+rd.16b, prefix+rn.16b], opc) is Err. ∀ SP in dest or src. encode_neon_aes is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, opc=4, prefix="x" — aese x0.16b, x0.16b → Ok(Word(0x4e284800)); also aese sp.16b, v0.16b → Ok with Rd=31
+- Bug report: pbt-out/bug_reports/encode_neon_aes_non_v_prefix.md
+
+```property
+function: encoder.neon.encode_neon_aes
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, prefix, which, opc]
+  domain:
+    prefix: "x|w|d|s|q|h|b"
+    which: "dest SP | src SP"
+  relation:
+    op: holds
+    expr: "encode([prefix+rd.16b, prefix+rn.16b], opc).is_err() && encode(SP slot, opc).is_err()"
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  prefix: { gen: string }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  opc: { gen: int, min: 0, max: 3, type: u32 }
+expected_error: String
+evidence: llvm-mc "invalid operand" for x0.16b and sp.16b; README.md:11; ARM ARM Vd.16B Vn.16B
 ```

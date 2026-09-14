@@ -9966,3 +9966,574 @@ mod encode_neon_rbit_pbt {
     }
 }
 
+#[cfg(test)]
+mod encode_neon_aes_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler (+aes)
+    // Evidence: src/backend/arm/assembler/README.md:11 "accepts the same textual assembly that GCC's gas would consume";
+    //   README.md:238 NEON crypto aese/aesd/aesmc/aesimc;
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:747-750 aese/aesd/aesmc/aesimc => encode_neon_aes;
+    //   neon.rs:1145-1157 AES 0100 1110 0010 1000 opcode 10 Rn Rd;
+    //   ARM ARM Cryptographic AES Vd.16B, Vn.16B (size must be 00)
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_aes is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree AES decoder
+    //   - Differential vs encode_neon_rbit / encode_neon_two_misc / encode_neon_eor3: rejected — different jobs (same-job gate)
+    //   - x86 AES-NI: rejected — different ISA
+    // Weaker available: algebraic.metamorphic (Rd/Rn/opcode), algebraic.invariant (word layout),
+    //   negative_error (arity / extra / T / mismatch / non-reg / invalid name / prefix)
+    // Differential: candidate=encode_neon_aes, reference=llvm-mc -triple=aarch64 -mattr=+aes -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[RegArrangement(Vd,16b), RegArrangement(Vn,16b)] + opc <-> `aese|aesd|aesmc|aesimc Vd.16b, Vn.16b`
+
+    use super::encode_neon_aes;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const FIXED: u32 = 0x4E280800; // 01001110 size=00 bit21=1 bits[20:17]=0100 bits[11:10]=10
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn neon_arr_named(reg: &str, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: reg.to_string(),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn aes_mnem(opc: u32) -> &'static str {
+        match opc {
+            0b00100 => "aese",
+            0b00101 => "aesd",
+            0b00110 => "aesmc",
+            0b00111 => "aesimc",
+            _ => unreachable!("not an AES opcode: {opc}"),
+        }
+    }
+
+    fn sut_word(ops: &[Operand], opc: u32) -> Result<u32, String> {
+        match encode_neon_aes(ops, opc)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-mattr=+aes", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn aes_opc() -> impl Strategy<Value = u32> {
+        prop::sample::select(vec![0b00100u32, 0b00101, 0b00110, 0b00111])
+    }
+
+    fn bad_t() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec![
+            "8b", "4h", "8h", "2s", "4s", "2d", "1d", "8s", "4b", "", "b", "h", "s",
+        ])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_neon_aes_kat_llvm_mc_aese_v0_v1() {
+        let want = 0x4e284820u32;
+        let mc = llvm_mc_word("aese v0.16b, v1.16b").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [neon_arr(0, "16b"), neon_arr(1, "16b")];
+        let sut = sut_word(&ops, 0b00100).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_neon_aes_kat_llvm_mc_variants() {
+        let cases = [
+            ("aese v0.16b, v1.16b", 0b00100u32, 0x4e284820u32),
+            ("aesd v0.16b, v1.16b", 0b00101, 0x4e285820),
+            ("aesmc v0.16b, v1.16b", 0b00110, 0x4e286820),
+            ("aesimc v0.16b, v1.16b", 0b00111, 0x4e287820),
+            ("aese v31.16b, v31.16b", 0b00100, 0x4e284bff),
+            ("aesd v31.16b, v0.16b", 0b00101, 0x4e28581f),
+            ("aesmc v0.16b, v31.16b", 0b00110, 0x4e286be0),
+            ("aesimc v15.16b, v16.16b", 0b00111, 0x4e287a0f),
+        ];
+        for (asm, opc, want) in cases {
+            let mc = llvm_mc_word(asm).unwrap_or_else(|e| panic!("llvm-mc KAT {asm}: {e}"));
+            assert_eq!(mc, want, "llvm-mc KAT mapping broken for {asm}");
+            let rd: u32 = asm.split([' ', '.', ',']).nth(1).unwrap()[1..].parse().unwrap();
+            let rn: u32 = asm.split([' ', '.', ',']).filter(|s| !s.is_empty()).nth(3).unwrap()[1..]
+                .parse()
+                .unwrap();
+            let ops = [neon_arr(rd, "16b"), neon_arr(rn, "16b")];
+            let sut = sut_word(&ops, opc).unwrap_or_else(|e| panic!("SUT KAT {asm}: {e}"));
+            assert_eq!(sut, want, "SUT KAT mismatch for {asm}");
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_aes_diff_valid(
+            rd in reg_num(),
+            rn in reg_num(),
+            opc in aes_opc(),
+            upper_reg in any::<bool>(),
+            upper_arr in any::<bool>(),
+        ) {
+            let rd_name = if upper_reg { format!("V{rd}") } else { vreg(rd) };
+            let rn_name = if upper_reg { format!("V{rn}") } else { vreg(rn) };
+            let arr = if upper_arr { "16B" } else { "16b" };
+            let asm = format!("{} {}.{}, {}.{}", aes_mnem(opc), rd_name, arr, rn_name, arr);
+            let ops = [neon_arr_named(&rd_name, arr), neon_arr_named(&rn_name, arr)];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops, opc)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_aes_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            opc in aes_opc(),
+        ) {
+            let w = sut_word(&[neon_arr(rd, "16b"), neon_arr(rn, "16b")], opc)
+                .unwrap_or_else(|e| panic!("SUT rejected: {}", e));
+            prop_assert_eq!((w >> 24) & 0xFF, 0b01001110u32, "bits[31:24]=01001110");
+            prop_assert_eq!((w >> 17) & 0b1111111, 0b0010100u32, "bits[23:17]=0010100");
+            prop_assert_eq!((w >> 12) & 0b11111, opc, "opcode[16:12]");
+            prop_assert_eq!((w >> 10) & 0b11, 0b10u32, "bits[11:10]=10");
+            prop_assert_eq!((w >> 5) & 0b11111, rn, "Rn");
+            prop_assert_eq!(w & 0b11111, rd, "Rd");
+            prop_assert_eq!(w, FIXED | (opc << 12) | (rn << 5) | rd);
+        }
+
+        #[test]
+        fn encode_neon_aes_metamorphic_fields(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            opc in aes_opc(),
+        ) {
+            let base = sut_word(&[neon_arr(rd, "16b"), neon_arr(rn, "16b")], opc)
+                .unwrap_or_else(|e| panic!("SUT base rejected: {}", e));
+            let d1 = sut_word(&[neon_arr(rd + 1, "16b"), neon_arr(rn, "16b")], opc)
+                .unwrap_or_else(|e| panic!("SUT rd+1 rejected: {}", e));
+            let n1 = sut_word(&[neon_arr(rd, "16b"), neon_arr(rn + 1, "16b")], opc)
+                .unwrap_or_else(|e| panic!("SUT rn+1 rejected: {}", e));
+            let aese = sut_word(&[neon_arr(rd, "16b"), neon_arr(rn, "16b")], 0b00100)
+                .unwrap_or_else(|e| panic!("SUT AESE rejected: {}", e));
+            let aesd = sut_word(&[neon_arr(rd, "16b"), neon_arr(rn, "16b")], 0b00101)
+                .unwrap_or_else(|e| panic!("SUT AESD rejected: {}", e));
+            let aesmc = sut_word(&[neon_arr(rd, "16b"), neon_arr(rn, "16b")], 0b00110)
+                .unwrap_or_else(|e| panic!("SUT AESMC rejected: {}", e));
+            prop_assert_eq!(d1.wrapping_sub(base), 1u32, "rd+1 must add 1 to the word");
+            prop_assert_eq!(n1.wrapping_sub(base), 1u32 << 5, "rn+1 must add 32 to the word");
+            prop_assert_eq!(aesd ^ aese, 1u32 << 12, "AESD XOR AESE must be bit 12");
+            prop_assert_eq!(aesmc ^ aese, 1u32 << 13, "AESMC XOR AESE must be bit 13");
+        }
+
+        #[test]
+        fn encode_neon_aes_neg_arity(
+            n in 0usize..=1,
+            rd in reg_num(),
+            rn in reg_num(),
+            opc in aes_opc(),
+            which in 0u32..=4u32,
+        ) {
+            let dest = neon_arr(rd, "16b");
+            let src = neon_arr(rn, "16b");
+            let short: Vec<Operand> = [dest.clone(), src.clone()].iter().take(n).cloned().collect();
+            prop_assert!(
+                encode_neon_aes(&short, opc).is_err(),
+                "len={} must Err (aes instruction requires 2 operands)",
+                n
+            );
+            let bad_dest = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem { base: "x0".into(), offset: 0 },
+                2 => Operand::Shift { kind: "lsl".into(), amount: 0 },
+                3 => Operand::RegList(vec![neon_arr(rd, "16b")]),
+                _ => Operand::Label(".L0".into()),
+            };
+            prop_assert!(
+                encode_neon_aes(&[bad_dest, src], opc).is_err(),
+                "non-register dest must Err"
+            );
+        }
+
+        #[test]
+        fn encode_neon_aes_neg_extra(
+            rd in reg_num(),
+            rn in reg_num(),
+            extra in reg_num(),
+            opc in aes_opc(),
+            extra_kind in 0u32..=3u32,
+        ) {
+            let extra_op = match extra_kind {
+                0 => neon_arr(extra, "16b"),
+                1 => Operand::Imm(0),
+                2 => Operand::Reg(vreg(extra)),
+                _ => Operand::Mem { base: "x0".into(), offset: 0 },
+            };
+            let extra_asm = match extra_kind {
+                0 => format!("{}.16b", vreg(extra)),
+                1 => "#0".to_string(),
+                2 => vreg(extra),
+                _ => "[x0]".to_string(),
+            };
+            let asm = format!(
+                "{} {}.16b, {}.16b, {}",
+                aes_mnem(opc), vreg(rd), vreg(rn), extra_asm
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted extra operand {}",
+                asm
+            );
+            let ops = [neon_arr(rd, "16b"), neon_arr(rn, "16b"), extra_op];
+            prop_assert!(
+                encode_neon_aes(&ops, opc).is_err(),
+                "3rd operand must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_aes_neg_bad_arrangement(
+            rd in reg_num(),
+            rn in reg_num(),
+            t in bad_t(),
+            opc in aes_opc(),
+        ) {
+            prop_assume!(t != "16b" && t != "16B");
+            if !t.is_empty() {
+                let asm = format!(
+                    "{} {}.{}, {}.{}",
+                    aes_mnem(opc), vreg(rd), t, vreg(rn), t
+                );
+                prop_assert!(
+                    llvm_mc_word(&asm).is_err(),
+                    "llvm-mc unexpectedly accepted unsupported T {}",
+                    asm
+                );
+            }
+            let ops = [neon_arr(rd, t), neon_arr(rn, t)];
+            prop_assert!(
+                encode_neon_aes(&ops, opc).is_err(),
+                "T=.{} must Err (only .16b is valid)",
+                t
+            );
+        }
+
+        #[test]
+        fn encode_neon_aes_neg_mismatch_bare_invalid(
+            rd in reg_num(),
+            rn in reg_num(),
+            tn in prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s"]),
+            opc in aes_opc(),
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v99".to_string()),
+                Just("v-1".to_string()),
+            ],
+        ) {
+            if tn != "16b" {
+                let asm = format!(
+                    "{} {}.16b, {}.{}",
+                    aes_mnem(opc), vreg(rd), vreg(rn), tn
+                );
+                prop_assert!(
+                    llvm_mc_word(&asm).is_err(),
+                    "llvm-mc unexpectedly accepted mismatched T {}",
+                    asm
+                );
+                let ops = [neon_arr(rd, "16b"), neon_arr(rn, tn)];
+                prop_assert!(
+                    encode_neon_aes(&ops, opc).is_err(),
+                    "mismatched T dest=.16b src=.{} must Err (llvm-mc rejects {})",
+                    tn, asm
+                );
+            }
+            let asm_bare = format!("{} {}.16b, {}", aes_mnem(opc), vreg(rd), vreg(rn));
+            prop_assert!(
+                llvm_mc_word(&asm_bare).is_err(),
+                "llvm-mc unexpectedly accepted bare src {}",
+                asm_bare
+            );
+            let ops_bare = [neon_arr(rd, "16b"), Operand::Reg(vreg(rn))];
+            prop_assert!(
+                encode_neon_aes(&ops_bare, opc).is_err(),
+                "bare Vn without arrangement must Err (llvm-mc rejects {})",
+                asm_bare
+            );
+            let ops_bad = [neon_arr_named(&bad, "16b"), neon_arr(rn, "16b")];
+            prop_assert!(
+                encode_neon_aes(&ops_bad, opc).is_err(),
+                "invalid dest name {} must Err",
+                bad
+            );
+            let ops_bad2 = [neon_arr(rd, "16b"), neon_arr_named(&bad, "16b")];
+            prop_assert!(
+                encode_neon_aes(&ops_bad2, opc).is_err(),
+                "invalid src name {} must Err",
+                bad
+            );
+        }
+
+        #[test]
+        fn encode_neon_aes_neg_prefix_sp(
+            rd in reg_num(),
+            rn in reg_num(),
+            opc in aes_opc(),
+            prefix in prop::sample::select(vec!["x", "w", "d", "s", "q", "h", "b"]),
+            which in 0u32..=1u32,
+        ) {
+            let name_d = format!("{}{}", prefix, rd);
+            let name_n = format!("{}{}", prefix, rn);
+            let asm = format!(
+                "{} {}.16b, {}.16b",
+                aes_mnem(opc), name_d, name_n
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted prefix {}",
+                asm
+            );
+            let ops = [neon_arr_named(&name_d, "16b"), neon_arr_named(&name_n, "16b")];
+            prop_assert!(
+                encode_neon_aes(&ops, opc).is_err(),
+                "non-V prefix {} must Err (llvm-mc rejects {})",
+                prefix, asm
+            );
+            let (sp_ops, sp_asm) = if which == 0 {
+                (
+                    [neon_arr_named("sp", "16b"), neon_arr(rd, "16b")],
+                    format!("{} sp.16b, {}.16b", aes_mnem(opc), vreg(rd)),
+                )
+            } else {
+                (
+                    [neon_arr(rd, "16b"), neon_arr_named("sp", "16b")],
+                    format!("{} {}.16b, sp.16b", aes_mnem(opc), vreg(rd)),
+                )
+            };
+            prop_assert!(
+                llvm_mc_word(&sp_asm).is_err(),
+                "llvm-mc unexpectedly accepted sp {}",
+                sp_asm
+            );
+            prop_assert!(
+                encode_neon_aes(&sp_ops, opc).is_err(),
+                "sp as AES register must Err (llvm-mc rejects {})",
+                sp_asm
+            );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        /// Isolated invalid-name arm (the combined mismatch/bare/invalid property
+        /// shrinks to mismatched T first).
+        #[test]
+        fn encode_neon_aes_neg_invalid_name(
+            rn in reg_num(),
+            opc in aes_opc(),
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v99".to_string()),
+                Just("v-1".to_string()),
+            ],
+        ) {
+            let ops = [neon_arr_named(&bad, "16b"), neon_arr(rn, "16b")];
+            prop_assert!(
+                encode_neon_aes(&ops, opc).is_err(),
+                "invalid dest name {} must Err",
+                bad
+            );
+            let ops2 = [neon_arr(rn, "16b"), neon_arr_named(&bad, "16b")];
+            prop_assert!(
+                encode_neon_aes(&ops2, opc).is_err(),
+                "invalid src name {} must Err",
+                bad
+            );
+        }
+
+        /// Sweep: get_neon_reg `other` arm on src, dest-as-Reg, WSP alias of SP.
+        #[test]
+        fn encode_neon_aes_neg_src_nonreg_dest_reg_wsp(
+            rd in reg_num(),
+            opc in aes_opc(),
+            which in 0u32..=4u32,
+            dest_bare in any::<bool>(),
+        ) {
+            let dest = neon_arr(rd, "16b");
+            let bad_src = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem { base: "x0".into(), offset: 0 },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Expr("0.0".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            prop_assert!(
+                encode_neon_aes(&[dest.clone(), bad_src], opc).is_err(),
+                "non-register src must Err"
+            );
+            if dest_bare {
+                let ops = [Operand::Reg(vreg(rd)), neon_arr(rd, "16b")];
+                prop_assert!(
+                    encode_neon_aes(&ops, opc).is_err(),
+                    "bare dest Reg must Err (llvm-mc rejects aese v{}, v{}.16b)",
+                    rd, rd
+                );
+            } else {
+                let ops = [neon_arr_named("wsp", "16b"), neon_arr(rd, "16b")];
+                prop_assert!(
+                    encode_neon_aes(&ops, opc).is_err(),
+                    "WSP dest must Err (parse_reg_num maps wsp to 31)"
+                );
+            }
+        }
+    }
+
+    /// Deterministic regression: extra operand is ignored.
+    #[test]
+    fn test_encode_neon_aes_regression_extra_operand() {
+        let ops = [
+            neon_arr(0, "16b"),
+            neon_arr(0, "16b"),
+            neon_arr(0, "16b"),
+        ];
+        assert!(
+            encode_neon_aes(&ops, 0b00100).is_err(),
+            "aese v0.16b, v0.16b, v0.16b must Err (llvm-mc rejects a 3rd operand)"
+        );
+    }
+
+    /// Deterministic regression: .8b arrangement encoded as if .16b.
+    #[test]
+    fn test_encode_neon_aes_regression_8b_arrangement() {
+        let ops = [neon_arr(0, "8b"), neon_arr(0, "8b")];
+        assert!(
+            encode_neon_aes(&ops, 0b00100).is_err(),
+            "aese v0.8b, v0.8b must Err (llvm-mc rejects T other than .16b)"
+        );
+    }
+
+    /// Deterministic regression: mismatched dest/src arrangement.
+    #[test]
+    fn test_encode_neon_aes_regression_mismatch_arr() {
+        let ops = [neon_arr(0, "16b"), neon_arr(0, "8b")];
+        assert!(
+            encode_neon_aes(&ops, 0b00100).is_err(),
+            "aese v0.16b, v0.8b must Err (llvm-mc rejects mismatched T)"
+        );
+    }
+
+    /// Deterministic regression: source without arrangement.
+    #[test]
+    fn test_encode_neon_aes_regression_bare_src() {
+        let ops = [neon_arr(0, "16b"), Operand::Reg("v0".into())];
+        assert!(
+            encode_neon_aes(&ops, 0b00100).is_err(),
+            "aese v0.16b, v0 must Err (llvm-mc rejects a bare source)"
+        );
+    }
+
+    /// Deterministic regression: GPR prefix parsed as a NEON register.
+    #[test]
+    fn test_encode_neon_aes_regression_x_prefix() {
+        let ops = [neon_arr_named("x0", "16b"), neon_arr_named("x0", "16b")];
+        assert!(
+            encode_neon_aes(&ops, 0b00100).is_err(),
+            "aese x0.16b, x0.16b must Err (llvm-mc rejects a non-V prefix)"
+        );
+    }
+
+    /// Deterministic regression: SP encoded as V31.
+    #[test]
+    fn test_encode_neon_aes_regression_sp() {
+        let ops = [neon_arr_named("sp", "16b"), neon_arr(0, "16b")];
+        assert!(
+            encode_neon_aes(&ops, 0b00100).is_err(),
+            "aese sp.16b, v0.16b must Err (llvm-mc rejects SP as an AES register)"
+        );
+    }
+}
+
