@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_neon_sli)
+
+- Valid vector SLI with T in {8b,16b,4h,8h,2s,4s,2d}, Vd/Vn in v0–v31, shift in [0, esize(T)-1] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_neon_sli(Tlo) XOR encode_neon_sli(Thi) = 1<<30 for (8b,16b)/(4h,8h)/(2s,4s) at equal shift (ARM ARM Q bit) (1000 cases).
+- encode_neon_sli(shift+1) − encode_neon_sli(shift) = 1<<16 when both shifts are in range (ARM ARM immh:immb = esize + shift) (1000 cases).
+- Success-path word: bit 31=0, Q at 30 from T, U=1 at 29, bits [28:23]=011110, immh:immb at [22:16]=esize+shift, bits [15:10]=010101, Rn at [9:5], Rd at [4:0].
+- Arrangement other than 8b/16b/4h/8h/2s/4s/2d (including 1d), fewer than 3 operands, non-register dest/src (Imm/Mem/Symbol/Shift/Cond/Label), invalid names (v32, foo, empty, v, v-1, v99), dest Operand::Reg (no arrangement), and non-Imm shift always Err.
+- Known-answer: `sli v0.8b, v1.8b, #0` encodes as 0x2f085420; `sli v0.8b, v1.8b, #7` as 0x2f0f5420; `sli v0.16b, v1.16b, #3` as 0x6f0b5420; `sli v0.4h, v1.4h, #15` as 0x2f1f5420; `sli v0.2d, v1.2d, #0` as 0x6f405420; `sli v0.2d, v1.2d, #63` as 0x6f7f5420.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD shift by immediate SLI: `0 Q 1 011110 immh:immb 010101 Rn Rd`. Valid T: 8B/16B (shift 0..7), 4H/8H (0..15), 2S/4S (0..31), 2D (0..63). 1D reserved. Scalar `sli d0, d1, #0` is a different encoding (bits[31:30]=01) — not this vector helper.
+- Exactly three operands (llvm-mc rejects a fourth).
+- Dispatch: encoder/mod.rs:661 `"sli" => encode_neon_sli(operands)`.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangement is discarded; dest T is used (see bugs). Operand::Reg source (empty arrangement) is accepted (see bugs).
+- parse_reg_num accepts x/w/d/s/q/v/h/b prefixes, so non-V names encode as V registers (see bugs).
+- Shift is `get_imm as u32` then `(esize + shift) & mask`: negative panics in debug / wraps in release; shift >= esize encodes reserved immh=0000 (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_neon_reg Operand::Reg dest / src).
+
+---
+
 # Confirmed invariants (encode_neon_float_cmp_zero)
 
 - Valid vector FCMEQ/FCMGE/FCMGT/FCMLE/FCMLT-to-zero with T in {2s,4s,2d}, Vd/Vn in v0–v31, and ARM-correct (U, size_hi=1, opcode) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

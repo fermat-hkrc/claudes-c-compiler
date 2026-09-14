@@ -3489,3 +3489,653 @@ mod encode_neon_float_cmp_zero_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_neon_sli_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:661 "sli" => encode_neon_sli;
+    //   neon.rs:1257-1267 SLI Vd.T, Vn.T, #shift; 0 Q 1 0 11110 immh:immb 010101 Rn Rd (U=1);
+    //   ARM ARM Advanced SIMD shift by immediate SLI (U=1, immh:immb = esize + shift)
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_sli is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected as primary — no in-tree SLI decoder (field unpack kept as weaker algebraic)
+    //   - Differential vs encode_neon_shl / encode_neon_shift_left_imm: rejected — SHL vs SLI / SQSHL helper (same-job gate)
+    // Weaker available: algebraic.metamorphic (Q bit, shift+1), algebraic.invariant (word layout), negative_error (arity / T / extra / shift range / mismatch)
+    // Differential: candidate=encode_neon_sli, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[RegArrangement(Vd, T), RegArrangement(Vn, T), Imm(shift)] <-> `sli Vd.T, Vn.T, #shift`
+
+    use super::encode_neon_sli;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn esize(t: &str) -> u32 {
+        match t {
+            "8b" | "16b" => 8,
+            "4h" | "8h" => 16,
+            "2s" | "4s" => 32,
+            "2d" => 64,
+            _ => 0,
+        }
+    }
+
+    fn q_of(t: &str) -> u32 {
+        match t {
+            "8b" | "4h" | "2s" => 0,
+            "16b" | "8h" | "4s" | "2d" => 1,
+            _ => 0xff,
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_neon_sli(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn valid_t() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s", "2d"])
+    }
+
+    /// Co-generate T with a shift in [0, esize-1], pinning 0 and esize-1.
+    fn valid_t_shift() -> impl Strategy<Value = (&'static str, i64)> {
+        valid_t().prop_flat_map(|t| {
+            let e = esize(t) as i64;
+            prop_oneof![
+                Just(0i64),
+                Just(e - 1),
+                0i64..=(e - 1),
+            ]
+            .prop_map(move |s| (t, s))
+        })
+    }
+
+    /// Shift in [0, esize-2] so shift+1 is still valid (bounds 0 and esize-2).
+    fn valid_t_shift_inc() -> impl Strategy<Value = (&'static str, i64)> {
+        valid_t().prop_flat_map(|t| {
+            let e = esize(t) as i64;
+            prop_oneof![
+                Just(0i64),
+                Just(e - 2),
+                0i64..=(e - 2),
+            ]
+            .prop_map(move |s| (t, s))
+        })
+    }
+
+    /// Out-of-range shift, pinning -1, esize, esize+1.
+    fn oob_t_shift() -> impl Strategy<Value = (&'static str, i64)> {
+        valid_t().prop_flat_map(|t| {
+            let e = esize(t) as i64;
+            prop_oneof![
+                Just(-1i64),
+                Just(e),
+                Just(e + 1),
+                Just(-2i64),
+                Just(e * 2),
+                Just(256i64),
+                (-16i64..=-1),
+                e..=(e + 16),
+            ]
+            .prop_map(move |s| (t, s))
+        })
+    }
+
+    fn q_pair() -> impl Strategy<Value = (&'static str, &'static str)> {
+        prop::sample::select(vec![("8b", "16b"), ("4h", "8h"), ("2s", "4s")])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection (8B shift 0 and 7).
+    #[test]
+    fn encode_neon_sli_kat_llvm_mc_v0_8b_v1_8b() {
+        let want0 = 0x2f085420u32;
+        let mc0 = llvm_mc_word("sli v0.8b, v1.8b, #0").expect("llvm-mc KAT #0");
+        assert_eq!(mc0, want0, "llvm-mc KAT mapping broken for 8b #0");
+        let ops0 = [neon_arr(0, "8b"), neon_arr(1, "8b"), Operand::Imm(0)];
+        let sut0 = sut_word(&ops0).expect("SUT KAT #0");
+        assert_eq!(sut0, want0);
+
+        let want7 = 0x2f0f5420u32;
+        let mc7 = llvm_mc_word("sli v0.8b, v1.8b, #7").expect("llvm-mc KAT #7");
+        assert_eq!(mc7, want7, "llvm-mc KAT mapping broken for 8b #7");
+        let ops7 = [neon_arr(0, "8b"), neon_arr(1, "8b"), Operand::Imm(7)];
+        let sut7 = sut_word(&ops7).expect("SUT KAT #7");
+        assert_eq!(sut7, want7);
+    }
+
+    /// Known-answer: 16B / 4H / 2D bounds (Q and esize).
+    #[test]
+    fn encode_neon_sli_kat_llvm_mc_width_bounds() {
+        let want_16b = 0x6f0b5420u32;
+        let mc_16b = llvm_mc_word("sli v0.16b, v1.16b, #3").expect("llvm-mc KAT 16b");
+        assert_eq!(mc_16b, want_16b, "llvm-mc KAT mapping broken for 16b");
+        let ops_16b = [neon_arr(0, "16b"), neon_arr(1, "16b"), Operand::Imm(3)];
+        assert_eq!(sut_word(&ops_16b).expect("SUT KAT 16b"), want_16b);
+
+        let want_4h = 0x2f1f5420u32;
+        let mc_4h = llvm_mc_word("sli v0.4h, v1.4h, #15").expect("llvm-mc KAT 4h");
+        assert_eq!(mc_4h, want_4h, "llvm-mc KAT mapping broken for 4h");
+        let ops_4h = [neon_arr(0, "4h"), neon_arr(1, "4h"), Operand::Imm(15)];
+        assert_eq!(sut_word(&ops_4h).expect("SUT KAT 4h"), want_4h);
+
+        let want_2d0 = 0x6f405420u32;
+        let mc_2d0 = llvm_mc_word("sli v0.2d, v1.2d, #0").expect("llvm-mc KAT 2d #0");
+        assert_eq!(mc_2d0, want_2d0, "llvm-mc KAT mapping broken for 2d #0");
+        let ops_2d0 = [neon_arr(0, "2d"), neon_arr(1, "2d"), Operand::Imm(0)];
+        assert_eq!(sut_word(&ops_2d0).expect("SUT KAT 2d #0"), want_2d0);
+
+        let want_2d63 = 0x6f7f5420u32;
+        let mc_2d63 = llvm_mc_word("sli v0.2d, v1.2d, #63").expect("llvm-mc KAT 2d #63");
+        assert_eq!(mc_2d63, want_2d63, "llvm-mc KAT mapping broken for 2d #63");
+        let ops_2d63 = [neon_arr(0, "2d"), neon_arr(1, "2d"), Operand::Imm(63)];
+        assert_eq!(sut_word(&ops_2d63).expect("SUT KAT 2d #63"), want_2d63);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_sli_diff_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            t_shift in valid_t_shift(),
+        ) {
+            let (t, shift) = t_shift;
+            let asm = format!("sli {}.{}, {}.{}, #{}", vreg(rd), t, vreg(rn), t, shift);
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), Operand::Imm(shift)];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_sli_roundtrip_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            t_shift in valid_t_shift(),
+        ) {
+            let (t, shift) = t_shift;
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), Operand::Imm(shift)];
+            let w = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid field unpack: {}", e));
+            let q = q_of(t);
+            let immh_immb = esize(t) + (shift as u32);
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 30) & 1, q, "Q bit");
+            prop_assert_eq!((w >> 29) & 1, 1u32, "U bit must be 1 for SLI");
+            prop_assert_eq!((w >> 23) & 0b111111, 0b011110u32, "bits[28:23]=011110");
+            prop_assert_eq!((w >> 16) & 0x7f, immh_immb, "immh:immb = esize + shift");
+            prop_assert_eq!((w >> 10) & 0b111111, 0b010101u32, "bits[15:10]=010101");
+            prop_assert_eq!((w >> 5) & 0b11111, rn, "Rn");
+            prop_assert_eq!(w & 0b11111, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_neon_sli_metamorphic_q_bit(
+            rd in reg_num(),
+            rn in reg_num(),
+            pair in q_pair(),
+            t_shift in valid_t_shift(),
+        ) {
+            let (tlo, thi) = pair;
+            let e = esize(tlo) as i64;
+            // Reuse a shift that is valid for this pair's esize (ignore t_shift.0).
+            let shift = t_shift.1.rem_euclid(e);
+            let ops_lo = [neon_arr(rd, tlo), neon_arr(rn, tlo), Operand::Imm(shift)];
+            let ops_hi = [neon_arr(rd, thi), neon_arr(rn, thi), Operand::Imm(shift)];
+            let a = sut_word(&ops_lo)
+                .unwrap_or_else(|e| panic!("SUT Q=0 rejected: {}", e));
+            let b = sut_word(&ops_hi)
+                .unwrap_or_else(|e| panic!("SUT Q=1 rejected: {}", e));
+            prop_assert_eq!(a ^ b, 1u32 << 30, "Q pair {}.{} vs {}.{} must toggle only bit 30", tlo, shift, thi, shift);
+        }
+
+        #[test]
+        fn encode_neon_sli_metamorphic_shift_inc(
+            rd in reg_num(),
+            rn in reg_num(),
+            t_shift in valid_t_shift_inc(),
+        ) {
+            let (t, shift) = t_shift;
+            let ops0 = [neon_arr(rd, t), neon_arr(rn, t), Operand::Imm(shift)];
+            let ops1 = [neon_arr(rd, t), neon_arr(rn, t), Operand::Imm(shift + 1)];
+            let a = sut_word(&ops0)
+                .unwrap_or_else(|e| panic!("SUT shift={} rejected: {}", shift, e));
+            let b = sut_word(&ops1)
+                .unwrap_or_else(|e| panic!("SUT shift={} rejected: {}", shift + 1, e));
+            prop_assert_eq!(
+                b.wrapping_sub(a),
+                1u32 << 16,
+                "shift+1 must add 1 to immh:immb (bits [22:16]) and leave all other bits unchanged"
+            );
+        }
+
+        #[test]
+        fn encode_neon_sli_neg_extra_operands(
+            rd in reg_num(),
+            rn in reg_num(),
+            extra in reg_num(),
+            t_shift in valid_t_shift(),
+            extra_kind in 0u32..=3u32,
+        ) {
+            let (t, shift) = t_shift;
+            let extra_op = match extra_kind {
+                0 => neon_arr(extra, t),
+                1 => Operand::Imm(1),
+                2 => Operand::Reg(vreg(extra)),
+                _ => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+            };
+            let extra_asm = match extra_kind {
+                0 => format!("{}.{}", vreg(extra), t),
+                1 => "#1".to_string(),
+                2 => vreg(extra),
+                _ => "[x0]".to_string(),
+            };
+            let asm = format!(
+                "sli {}.{}, {}.{}, #{}, {}",
+                vreg(rd), t, vreg(rn), t, shift, extra_asm
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted extra operand {}",
+                asm
+            );
+            let ops = [
+                neon_arr(rd, t),
+                neon_arr(rn, t),
+                Operand::Imm(shift),
+                extra_op,
+            ];
+            prop_assert!(
+                encode_neon_sli(&ops).is_err(),
+                "4th operand must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_sli_neg_shift_out_of_range(
+            rd in reg_num(),
+            rn in reg_num(),
+            t_shift in oob_t_shift(),
+        ) {
+            let (t, shift) = t_shift;
+            let e = esize(t) as i64;
+            prop_assume!(shift < 0 || shift >= e);
+            let asm = format!("sli {}.{}, {}.{}, #{}", vreg(rd), t, vreg(rn), t, shift);
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted oob shift {}",
+                asm
+            );
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_sli(&ops).is_err(),
+                "shift={} for T={} (esize={}) must Err (llvm-mc rejects {})",
+                shift,
+                t,
+                e,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_sli_neg_arity_and_shape(
+            n in 0usize..=2,
+            which in 0u32..=5,
+            rd in reg_num(),
+            tbad in prop::sample::select(vec!["1d", "8s", "1s", "3s", "8s", "", "b", "h"]),
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v-1".to_string()),
+                Just("v99".to_string()),
+            ],
+        ) {
+            let dest = neon_arr(rd, "8b");
+            let src = neon_arr(rd, "8b");
+            let imm = Operand::Imm(0);
+            let short: Vec<Operand> = [dest.clone(), src.clone(), imm.clone()].iter().take(n).cloned().collect();
+            prop_assert!(
+                encode_neon_sli(&short).is_err(),
+                "len={} must Err (sli requires 3 operands)",
+                n
+            );
+            if !tbad.is_empty() {
+                let asm = format!("sli {}.{}, {}.{}, #0", vreg(rd), tbad, vreg(rd), tbad);
+                prop_assert!(
+                    llvm_mc_word(&asm).is_err(),
+                    "llvm-mc unexpectedly accepted unsupported T {}",
+                    asm
+                );
+            }
+            let ops_bad_t = [neon_arr(rd, tbad), neon_arr(rd, tbad), Operand::Imm(0)];
+            prop_assert!(
+                encode_neon_sli(&ops_bad_t).is_err(),
+                "T={} is not a valid SLI arrangement and must Err",
+                tbad
+            );
+            let bad_src = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let ops_bad_src = [dest.clone(), bad_src, Operand::Imm(0)];
+            prop_assert!(
+                encode_neon_sli(&ops_bad_src).is_err(),
+                "non-register source which={} must Err",
+                which
+            );
+            let ops_bad_dest = [
+                Operand::RegArrangement {
+                    reg: bad.clone(),
+                    arrangement: "8b".into(),
+                },
+                neon_arr(rd, "8b"),
+                Operand::Imm(0),
+            ];
+            prop_assert!(
+                encode_neon_sli(&ops_bad_dest).is_err(),
+                "invalid dest name {} must Err",
+                bad
+            );
+            let ops_bad_rn = [
+                neon_arr(rd, "8b"),
+                Operand::RegArrangement {
+                    reg: bad.clone(),
+                    arrangement: "8b".into(),
+                },
+                Operand::Imm(0),
+            ];
+            prop_assert!(
+                encode_neon_sli(&ops_bad_rn).is_err(),
+                "invalid src name {} must Err",
+                bad
+            );
+            let bad_dest_shape = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let ops_bad_dest_shape = [bad_dest_shape, neon_arr(rd, "8b"), Operand::Imm(0)];
+            prop_assert!(
+                encode_neon_sli(&ops_bad_dest_shape).is_err(),
+                "non-register dest which={} must Err",
+                which
+            );
+            let ops_reg_dest = [Operand::Reg(vreg(rd)), neon_arr(rd, "8b"), Operand::Imm(0)];
+            prop_assert!(
+                encode_neon_sli(&ops_reg_dest).is_err(),
+                "dest Operand::Reg (no arrangement) must Err"
+            );
+            let ops_non_imm = [neon_arr(rd, "8b"), neon_arr(rd, "8b"), Operand::Reg("x0".into())];
+            prop_assert!(
+                encode_neon_sli(&ops_non_imm).is_err(),
+                "non-Imm shift operand must Err"
+            );
+        }
+
+        #[test]
+        fn encode_neon_sli_neg_arrangement_mismatch(
+            rd in reg_num(),
+            rn in reg_num(),
+            td in valid_t(),
+            tn in valid_t(),
+            t_shift in valid_t_shift(),
+        ) {
+            let tn = if td == tn {
+                if td == "8b" { "16b" } else { "8b" }
+            } else {
+                tn
+            };
+            let shift = t_shift.1.rem_euclid(esize(td) as i64);
+            let asm = format!(
+                "sli {}.{}, {}.{}, #{}",
+                vreg(rd), td, vreg(rn), tn, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted mismatched T {}",
+                asm
+            );
+            let ops = [neon_arr(rd, td), neon_arr(rn, tn), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_sli(&ops).is_err(),
+                "dest T={} src T={} must Err (llvm-mc rejects {})",
+                td,
+                tn,
+                asm
+            );
+            // Coverage sweep: get_neon_reg Operand::Reg source (empty arrangement).
+            let ops_reg_src = [neon_arr(rd, td), Operand::Reg(vreg(rn)), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_sli(&ops_reg_src).is_err(),
+                "src Operand::Reg (no arrangement) must Err"
+            );
+        }
+
+        #[test]
+        fn encode_neon_sli_neg_non_v_prefix(
+            rd in reg_num(),
+            rn in reg_num(),
+            t_shift in valid_t_shift(),
+            prefix in prop::sample::select(vec!["x", "w", "d", "s", "q", "h", "b"]),
+            which in 0u32..=1u32,
+        ) {
+            let (t, shift) = t_shift;
+            let bad_name = format!("{}{}", prefix, rd);
+            let bad_op = Operand::RegArrangement {
+                reg: bad_name.clone(),
+                arrangement: t.to_string(),
+            };
+            let (ops, asm) = if which == 0 {
+                (
+                    [bad_op, neon_arr(rn, t), Operand::Imm(shift)],
+                    format!(
+                        "sli {}.{}, {}.{}, #{}",
+                        bad_name, t, vreg(rn), t, shift
+                    ),
+                )
+            } else {
+                (
+                    [neon_arr(rd, t), bad_op, Operand::Imm(shift)],
+                    format!(
+                        "sli {}.{}, {}.{}, #{}",
+                        vreg(rd), t, bad_name, t, shift
+                    ),
+                )
+            };
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted non-v prefix {}",
+                asm
+            );
+            prop_assert!(
+                encode_neon_sli(&ops).is_err(),
+                "non-v prefix {} must Err (llvm-mc rejects {})",
+                bad_name,
+                asm
+            );
+        }
+    }
+
+    /// Deterministic regression: extra 4th operand (shrunk from neg_extra_operands).
+    #[test]
+    fn test_encode_neon_sli_regression_extra_operand() {
+        let ops = [
+            neon_arr(0, "8b"),
+            neon_arr(0, "8b"),
+            Operand::Imm(0),
+            neon_arr(0, "8b"),
+        ];
+        assert!(
+            encode_neon_sli(&ops).is_err(),
+            "sli v0.8b, v0.8b, #0, v0.8b must Err (exactly 3 operands)"
+        );
+    }
+
+    /// Deterministic regression: negative shift (shrunk from neg_shift_out_of_range).
+    #[test]
+    fn test_encode_neon_sli_regression_negative_shift() {
+        let ops = [neon_arr(0, "8b"), neon_arr(0, "8b"), Operand::Imm(-1)];
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| encode_neon_sli(&ops)));
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "sli v0.8b, v0.8b, #-1 must Err, got {:?}",
+            result
+        );
+    }
+
+    /// Deterministic regression: shift = esize (8b #8) — mask wrap, not panic.
+    #[test]
+    fn test_encode_neon_sli_regression_shift_eq_esize() {
+        let ops = [neon_arr(0, "8b"), neon_arr(0, "8b"), Operand::Imm(8)];
+        assert!(
+            encode_neon_sli(&ops).is_err(),
+            "sli v0.8b, v0.8b, #8 must Err (shift in [0, 7])"
+        );
+    }
+
+    /// Deterministic regression: dest/src arrangement mismatch (shrunk from neg_arrangement_mismatch).
+    #[test]
+    fn test_encode_neon_sli_regression_arrangement_mismatch() {
+        let ops = [neon_arr(0, "8b"), neon_arr(0, "16b"), Operand::Imm(0)];
+        assert!(
+            encode_neon_sli(&ops).is_err(),
+            "sli v0.8b, v0.16b, #0 must Err (T must match)"
+        );
+    }
+
+    /// Deterministic regression: source Operand::Reg (coverage sweep).
+    #[test]
+    fn test_encode_neon_sli_regression_src_reg_no_arrangement() {
+        let ops = [neon_arr(0, "8b"), Operand::Reg("v0".into()), Operand::Imm(0)];
+        assert!(
+            encode_neon_sli(&ops).is_err(),
+            "sli v0.8b, v0, #0 must Err (source needs arrangement T)"
+        );
+    }
+
+    /// Deterministic regression: non-V prefix (shrunk from neg_non_v_prefix).
+    #[test]
+    fn test_encode_neon_sli_regression_non_v_prefix() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "x0".into(),
+                arrangement: "8b".into(),
+            },
+            neon_arr(0, "8b"),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_neon_sli(&ops).is_err(),
+            "sli x0.8b, v0.8b, #0 must Err (V register required)"
+        );
+    }
+}

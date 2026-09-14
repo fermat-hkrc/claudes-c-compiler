@@ -32,3 +32,4 @@
 | encode_ldar_stlr | load_store.rs | load_store.rs | cargo test --lib | 5 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses) |
 | encode_neon_across_long | neon.rs | neon.rs | cargo test --lib | 5 passing / 3 failing properties (plus 3 passing KAT + 3 failing regression witnesses) |
 | encode_neon_float_cmp_zero | neon.rs | neon.rs | cargo test --lib | 6 passing / 3 failing properties (plus 3 passing KAT + 3 failing regression witnesses) |
+| encode_neon_sli | neon.rs | neon.rs | cargo test --lib | 5 passing / 3 failing properties (plus 2 passing KAT + 6 failing regression witnesses; 4 bugs) |

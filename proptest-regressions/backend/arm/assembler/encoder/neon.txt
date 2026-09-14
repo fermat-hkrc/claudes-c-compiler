@@ -4,5 +4,7 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 83374aca83b298a4e50139b8127e1e34190e0ce3bfb48489d3127dacc5da28f9 # shrinks to rd = 0, rn = 0, rm = 0, ta = "8h", tb = "8b", is_high = true, u_bit = 0, opcode = 4
-cc 3f2c5cfe7d58f8324f40a6dcf15e8782e156706302fb055f3606484eacdc0b7b # shrinks to rd = 0, rn = 0, u = 0, t = "2s"
+cc c5edaeae10a6aa490d008158c31863f69c00bde444ced385696b920d590b86cd # shrinks to rd = 0, rn = 0, td = "8b", tn = "8b", t_shift = ("8b", 0)
+cc a8074acc21de712583d2e60a3eb0a4fa0ca757976de8510330db3d7b5fadb06b # shrinks to rd = 0, rn = 0, t_shift = ("8b", 0), prefix = "x", which = 0
+cc 7edd588570733fbebd993baa1967e82279f00aff2e3b704100a641f33f8b2ac7 # shrinks to rd = 0, rn = 0, extra = 0, t_shift = ("8b", 0), extra_kind = 0
+cc 4ac22b4d028e590c91f30bff636c13810c6044f6de09391361671fefda7ab080 # shrinks to rd = 0, rn = 0, t_shift = ("8b", -1)
