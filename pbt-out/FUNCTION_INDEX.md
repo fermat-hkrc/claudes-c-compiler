@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 92 | Excluded: 197
+> Total files: 10 | Total functions: 289 | PBT candidates: 93 | Excluded: 196
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -276,7 +276,7 @@
 | encode_fcvt_precision | fp_scalar.rs | 235 | function | yes | -
 | encode_ubfx | bitfield.rs | 7 | function | no | out of campaign scope |
 | encode_sbfx | bitfield.rs | 22 | function | yes | - |
-| encode_ubfm | bitfield.rs | 37 | function | no | out of campaign scope |
+| encode_ubfm | bitfield.rs | 37 | function | yes | - |
 | encode_sbfm | bitfield.rs | 49 | function | yes | - |
 | encode_sbfiz | bitfield.rs | 61 | function | yes | - |
 | encode_ubfiz | bitfield.rs | 76 | function | yes | - |

@@ -1,78 +1,31 @@
-# PBT Campaign Report: encode_sbfx
+# PBT Campaign Report: encode_ubfm
 
 ## Summary
 
 **Date:** 2026-09-14
-**Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sbfx
+**Repository:** claudes-c-compiler
+**Modules tested:** encode_ubfm
 **Tests:** 13 properties (plus 6 KAT + 5 regression witnesses)
 **Result:** 8 passing, 5 bugs
-**Effort tier:** standard (5-8 properties/target, ≥1000 cases, 1 strengthening round, 1 coverage_gaps sweep)
+**Effort tier:** standard (5–8 properties/target, ≥1000 generator runs, 1 strengthening/sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sbfx | 13 properties (8 passing / 5 failing) + 6 KAT + 5 regression | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_ubfm | 13 properties (8 pass, 5 fail) + 6 KAT pass + 5 regression fail | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### 1. Extra operand ignored
-- **Law:** SBFX takes exactly four operands; a fifth must be rejected.
-- **Shrunk input:** `[Reg("w0"), Reg("w0"), Imm(0), Imm(1), Reg("x0")]`
-- **Expected:** Err
-- **Actual:** Ok(Word) — indices 0..3 only
-- **Root cause:** encode_sbfx never checks `operands.len()`
-- **Impact:** invalid GNU-style assembly encodes instead of error
-- **Severity:** medium
-- **Fix:** reject `operands.len() != 4`
-- **Bug report:** pbt-out/bug_reports/encode_sbfx_extra_operand.md
+1. **encode_ubfm ignores extra operands** — Law: UBFM arity is 4. Shrunk input `[Reg("w0"), Reg("w0"), Imm(0), Imm(0), Reg("x0")]` returns Ok(Word) instead of Err. Root cause: get_reg/get_imm only index 0..3. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_extra_operand.md`. Serial reconfirm: PBT_TEST_JOBS=1.
 
-### 2. SP/WSP encoded as ZR
-- **Law:** Register 31 is WZR/XZR, not SP/WSP.
-- **Shrunk input:** `sbfx wsp, w0, #0, #1` (which=0, sp64=false, is_64=false, other=0)
-- **Expected:** Err
-- **Actual:** Ok(Word) — parse_reg_num maps sp/wsp to 31
-- **Root cause:** no SP-vs-ZR distinction after parse_reg_num
-- **Impact:** `sbfx sp, ...` silently becomes `sbfx xzr, ...`
-- **Severity:** medium
-- **Fix:** reject sp/wsp in Rd/Rn
-- **Bug report:** pbt-out/bug_reports/encode_sbfx_sp.md
+2. **encode_ubfm accepts SP/WSP as Rd or Rn** — Law: register 31 is ZR not SP. Shrunk input `ubfm wsp, w0, #0, #0` returns Ok(Word) with Rd=31. Root cause: parse_reg_num maps sp/wsp to 31. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_sp.md`. Serial reconfirm: PBT_TEST_JOBS=1.
 
-### 3. Out-of-range #lsb/#width panics or encodes
-- **Law:** 0 <= lsb < R and 1 <= width <= R-lsb; invalid immediates must Err, not panic.
-- **Shrunk input:** `sbfx w0, w0, #0, #0` (lsb=0, width=0, is_64=false)
-- **Expected:** Err
-- **Actual:** debug panic `attempt to subtract with overflow` at `lsb + width - 1` (bitfield.rs:30)
-- **Root cause:** no range check; `u32` wrapping arithmetic
-- **Impact:** assembler crash on valid-looking but illegal extract; other out-of-range pairs encode illegal immr/imms
-- **Severity:** high
-- **Fix:** reject width < 1, lsb >= R, width > R-lsb before computing imms
-- **Bug report:** pbt-out/bug_reports/encode_sbfx_lsb_width.md
+3. **encode_ubfm accepts out-of-range immr/imms** — Law: 0<=immr,imms<R. Shrunk input `ubfm w0, w0, #-1, #0` returns Ok(Word) via `(-1i64) as u32` wrap. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_immr_imms.md`. Serial reconfirm: PBT_TEST_JOBS=1.
 
-### 4. Mixed W/X accepted
-- **Law:** SBFX requires same-width GPR pair (Wd,Wn or Xd,Xn).
-- **Shrunk input:** `sbfx x0, w0, #0, #1` (rd=0, rn=0, rd64=true, rn64=false)
-- **Expected:** Err
-- **Actual:** Ok(Word) using Rd's sf and Rn's number
-- **Root cause:** `let (rn, _) = get_reg(operands, 1)` discards Rn width
-- **Impact:** mixed-width assembly encodes a same-width SBFM word
-- **Severity:** medium
-- **Fix:** require Rn width == Rd width
-- **Bug report:** pbt-out/bug_reports/encode_sbfx_mixed_width.md
+4. **encode_ubfm accepts mixed W/X registers** — Law: Rd and Rn same datasize. Shrunk input `ubfm x0, w0, #0, #0` returns Ok(Word) using sf from Rd. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_mixed_width.md`.
 
-### 5. FP/SIMD registers accepted as GPR
-- **Law:** SBFX Rd/Rn must be W/X (or ZR), not S/D/Q/V/H/B.
-- **Shrunk input:** `sbfx d0, x1, #0, #1` (which=0, prefix="d", n=0)
-- **Expected:** Err
-- **Actual:** Ok(Word) — parse_reg_num maps d0 to register 0
-- **Root cause:** encode_sbfx does not require a GPR prefix
-- **Impact:** `sbfx d0, ...` encodes as `sbfx w0/x0, ...`
-- **Severity:** medium
-- **Fix:** reject FP/SIMD prefixes
-- **Bug report:** pbt-out/bug_reports/encode_sbfx_fp.md
-
-All five failures reproduced serially with `PBT_TEST_JOBS=1`. They are SUT bugs, not test-isolation defects.
+5. **encode_ubfm accepts FP/SIMD registers** — Law: UBFM is GPR-only. Shrunk input `ubfm d0, x1, #0, #0` returns Ok(Word). Root cause: parse_reg_num accepts d/s/q/v/h/b; is_fp_reg unused. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_fp.md`.
 
 ## Design Caveats
 
@@ -82,7 +35,7 @@ All five failures reproduced serially with `PBT_TEST_JOBS=1`. They are SUT bugs,
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_sbfx_pbt) | 13 properties + 6 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_ubfm_pbt) | 13 properties + 6 KAT + 5 regression witnesses |
 
 ## Output Directories
 
@@ -93,22 +46,20 @@ All five failures reproduced serially with `PBT_TEST_JOBS=1`. They are SUT bugs,
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_sbfx_extra_operand.md
-- pbt-out/bug_reports/encode_sbfx_sp.md
-- pbt-out/bug_reports/encode_sbfx_lsb_width.md
-- pbt-out/bug_reports/encode_sbfx_mixed_width.md
-- pbt-out/bug_reports/encode_sbfx_fp.md
+- pbt-out/bug_reports/encode_ubfm_extra_operand.md
+- pbt-out/bug_reports/encode_ubfm_sp.md
+- pbt-out/bug_reports/encode_ubfm_immr_imms.md
+- pbt-out/bug_reports/encode_ubfm_mixed_width.md
+- pbt-out/bug_reports/encode_ubfm_fp.md
 
-## Sweep
-
-Round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_sbfx (get_reg Rd/Rn, get_imm lsb/width, sf/N, immr=lsb, imms=lsb+width-1 overflow, extra operands). Added encode_sbfx_diff_alt_spellings, encode_sbfx_neg_nonreg, encode_sbfx_neg_invalid_name (passing) and encode_sbfx_neg_mixed_width, encode_sbfx_neg_fp (failing, filed). Closed: tier round spent and documented surface covered.
+Sweep closed: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual arm audit of encode_ubfm (invalid-name / nonreg / alt-spellings / mixed / FP / extra / SP / immr-imms). Added encode_ubfm_diff_alt_spellings, encode_ubfm_neg_nonreg, encode_ubfm_neg_invalid_name (passing) and encode_ubfm_neg_mixed_width, encode_ubfm_neg_fp (failing, filed). Documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 21:51 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 92/289 total | PBT candidates: 92 | Tested: 92 (100%) | 0 pass, 92 fail
+> Last updated: 2026-09-14 22:05 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 93/289 total | PBT candidates: 93 | Tested: 93 (100%) | 0 pass, 93 fail
 
 ## Summary
 
@@ -117,10 +68,10 @@ Round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_sbfx 
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 92 |
-| **Tested (of PBT candidates)** | **92 / 92 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 92 / 0 |
-| **Overall (tested / all functions)** | **92 / 289 (32%)** |
+| PBT candidates (from FUNCTION_INDEX) | 93 |
+| **Tested (of PBT candidates)** | **93 / 93 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 93 / 0 |
+| **Overall (tested / all functions)** | **93 / 289 (32%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -128,13 +79,13 @@ Round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_sbfx 
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 92 | 92 | 0 | 100% |
+|  | 93 | 93 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 92 | 92 | 0 | 100% |
+| unknown | 93 | 93 | 0 | 100% |
 
 ## File Coverage
 
@@ -157,6 +108,7 @@ Round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_sbfx 
 
 | Function | Source |
 |----------|--------|
+| encode_ubfm | bitfield.rs |
 | encode_sbfx | bitfield.rs |
 | encode_sbfm | bitfield.rs |
 | encode_sbfiz | bitfield.rs |

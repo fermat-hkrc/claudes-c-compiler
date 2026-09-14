@@ -7873,3 +7873,618 @@ mod encode_sbfx_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_ubfm_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md:11 "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:887 "ubfm" => encode_ubfm; README.md:216 lists ubfm;
+    //   bitfield.rs:36 purpose comment Encode UBFM Rd, Rn, #immr, #imms (raw form);
+    //   ARM ARM Bitfield Move UBFM: sf 10 100110 N immr imms Rn Rd,
+    //   N=sf; 32-bit immr/imms in [0,31], 64-bit in [0,63]; register 31 is ZR not SP.
+    // Stronger considered:
+    //   - State machine: rejected — encode_ubfm is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree UBFM decoder
+    //   - encode_ubfx / encode_ubfiz as differential sibling: rejected — same-job gate fails (alias lsb/width);
+    //     encode_ubfx used only as algebraic alias after the ARM mapping
+    //   - encode_sbfm / encode_bfm: rejected — SBFM/BFM opc, different instruction
+    // Weaker available: algebraic.metamorphic (UBFX alias of UBFM; Rd/Rn field independence),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / SP / immr-imms)
+    // Differential: candidate=encode_ubfm, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(Rd), Reg(Rn), Imm(immr), Imm(imms)] <-> `ubfm Rd, Rn, #immr, #imms`
+
+    use super::{encode_ubfm, encode_ubfx};
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if is_64 {
+            if n == 31 {
+                "xzr".into()
+            } else {
+                format!("x{n}")
+            }
+        } else if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{n}")
+        }
+    }
+
+    fn immr_imms(r: u32) -> impl Strategy<Value = (u32, u32)> {
+        (
+            prop_oneof![Just(0u32), Just(r - 1), 0u32..r],
+            prop_oneof![Just(0u32), Just(r - 1), 0u32..r],
+        )
+    }
+
+    fn ubfm_valid() -> impl Strategy<Value = (bool, u32, u32, u32, u32)> {
+        any::<bool>().prop_flat_map(|is_64| {
+            let r = if is_64 { 64u32 } else { 32 };
+            (
+                Just(is_64),
+                0u32..=31,
+                0u32..=31,
+                immr_imms(r),
+            )
+                .prop_map(|(is_64, rd, rn, (immr, imms))| (is_64, rd, rn, immr, imms))
+        })
+    }
+
+    fn lsb_width(r: u32) -> impl Strategy<Value = (u32, u32)> {
+        prop_oneof![Just(0u32), Just(r - 1), 0u32..r].prop_flat_map(move |lsb| {
+            let max_w = r - lsb;
+            prop_oneof![Just(1u32), Just(max_w), 1u32..=max_w]
+                .prop_map(move |width| (lsb, width))
+        })
+    }
+
+    fn ubfx_valid() -> impl Strategy<Value = (bool, u32, u32, u32, u32)> {
+        any::<bool>().prop_flat_map(|is_64| {
+            let r = if is_64 { 64u32 } else { 32 };
+            (
+                Just(is_64),
+                0u32..=31,
+                0u32..=31,
+                lsb_width(r),
+            )
+                .prop_map(|(is_64, rd, rn, (lsb, width))| (is_64, rd, rn, lsb, width))
+        })
+    }
+
+    fn invalid_immr_imms(is_64: bool) -> impl Strategy<Value = (i64, i64)> {
+        let r = if is_64 { 64i64 } else { 32 };
+        prop_oneof![
+            Just((-1i64, 0i64)),
+            Just((0i64, -1i64)),
+            Just((-1i64, -1i64)),
+            Just((r, 0i64)),
+            Just((0i64, r)),
+            Just((r, r)),
+            Just((r + 1, 0i64)),
+            Just((0i64, r + 1)),
+            Just((r + 1, r + 1)),
+        ]
+    }
+
+    fn ops4(is_64: bool, rd: u32, rn: u32, immr: i64, imms: i64) -> [Operand; 4] {
+        [
+            Operand::Reg(gpr(is_64, rd)),
+            Operand::Reg(gpr(is_64, rn)),
+            Operand::Imm(immr),
+            Operand::Imm(imms),
+        ]
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_ubfm(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn ubfx_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_ubfx(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn must_err(ops: &[Operand]) -> bool {
+        match catch_unwind(AssertUnwindSafe(|| encode_ubfm(ops))) {
+            Ok(Err(_)) => true,
+            _ => false,
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(-1)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8h".into(),
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ubfm_kat_llvm_mc_w0_w1_immr0_imms0() {
+        let want = 0x53000020u32;
+        let mc = llvm_mc_word("ubfm w0, w1, #0, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(false, 0, 1, 0, 0)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ubfm_kat_llvm_mc_w0_w1_immr1_imms0() {
+        let want = 0x53010020u32;
+        let mc = llvm_mc_word("ubfm w0, w1, #1, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(false, 0, 1, 1, 0)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ubfm_kat_llvm_mc_x0_x1_immr1_imms8() {
+        let want = 0xd3412020u32;
+        let mc = llvm_mc_word("ubfm x0, x1, #1, #8").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(true, 0, 1, 1, 8)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ubfm_kat_llvm_mc_wzr_wzr_immr31_imms0() {
+        let want = 0x531f03ffu32;
+        let mc = llvm_mc_word("ubfm wzr, wzr, #31, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(false, 31, 31, 31, 0)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ubfm_kat_llvm_mc_x0_xzr_immr63_imms63() {
+        let want = 0xd37fffe0u32;
+        let mc = llvm_mc_word("ubfm x0, xzr, #63, #63").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(true, 0, 31, 63, 63)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ubfm_kat_llvm_mc_lr_x1_immr8_imms16() {
+        let want = 0xd348403eu32;
+        let mc = llvm_mc_word("ubfm lr, x1, #8, #16").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [
+            Operand::Reg("lr".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(8),
+            Operand::Imm(16),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_ubfm_diff_valid_gpr((is_64, rd, rn, immr, imms) in ubfm_valid()) {
+            let dest = gpr(is_64, rd);
+            let src = gpr(is_64, rn);
+            let asm = format!("ubfm {}, {}, #{}, #{}", dest, src, immr, imms);
+            let ops = ops4(is_64, rd, rn, immr as i64, imms as i64);
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "UBFM mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_ubfm_alias_ubfx((is_64, rd, rn, lsb, width) in ubfx_valid()) {
+            let imms = (lsb as i64) + (width as i64) - 1;
+            let ubfm = sut_word(&ops4(is_64, rd, rn, lsb as i64, imms)).expect("UBFM");
+            let ubfx = ubfx_word(&[
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Imm(lsb as i64),
+                Operand::Imm(width as i64),
+            ]).expect("UBFX");
+            prop_assert_eq!(ubfm, ubfx, "UBFM #lsb,#(lsb+width-1) must alias UBFX #lsb,#width");
+        }
+
+        #[test]
+        fn encode_ubfm_arm_fields((is_64, rd, rn, immr, imms) in ubfm_valid()) {
+            let sf = if is_64 { 1u32 } else { 0 };
+            let w = sut_word(&ops4(is_64, rd, rn, immr as i64, imms as i64)).expect("SUT");
+            let want = (sf << 31)
+                | (0b10 << 29)
+                | (0b100110 << 23)
+                | (sf << 22)
+                | (immr << 16)
+                | (imms << 10)
+                | (rn << 5)
+                | rd;
+            prop_assert_eq!(w, want, "ARM ARM UBFM field layout");
+            prop_assert_eq!(w >> 31, sf, "sf");
+            prop_assert_eq!((w >> 29) & 0b11, 0b10, "opc=10 UBFM");
+            prop_assert_eq!((w >> 23) & 0x3f, 0b100110, "bits[28:23]");
+            prop_assert_eq!((w >> 22) & 1, sf, "N=sf");
+            prop_assert_eq!((w >> 16) & 0x3f, immr, "immr");
+            prop_assert_eq!((w >> 10) & 0x3f, imms, "imms");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_ubfm_metamorphic_rd_rn(
+            is_64 in any::<bool>(),
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            imm in 0u32..=1,
+        ) {
+            let r = if is_64 { 64u32 } else { 32 };
+            prop_assume!(imm < r);
+            let base = sut_word(&ops4(is_64, rd, rn, imm as i64, imm as i64)).expect("base");
+            let w_rd = sut_word(&ops4(is_64, rd + 1, rn, imm as i64, imm as i64)).expect("rd+1");
+            let w_rn = sut_word(&ops4(is_64, rd, rn + 1, imm as i64, imm as i64)).expect("rn+1");
+            prop_assert_eq!(w_rd & 0x1f, rd + 1, "Rd+1 updates Rd field");
+            prop_assert_eq!(w_rd & !0x1fu32, base & !0x1fu32, "Rd+1 leaves other fields unchanged");
+            prop_assert_eq!((w_rn >> 5) & 0x1f, rn + 1, "Rn+1 updates Rn field");
+            prop_assert_eq!(w_rn & !(0x1fu32 << 5), base & !(0x1fu32 << 5), "Rn+1 leaves other fields unchanged");
+        }
+
+        #[test]
+        fn encode_ubfm_neg_arity(
+            len in 0usize..=3,
+            is_64 in any::<bool>(),
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+        ) {
+            let mut ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Imm(0),
+                Operand::Imm(0),
+            ];
+            ops.truncate(len);
+            prop_assert!(
+                encode_ubfm(&ops).is_err(),
+                "UBFM with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_ubfm_neg_extra_operand(
+            (is_64, rd, rn, immr, imms) in ubfm_valid(),
+            extra in extra_operand(),
+        ) {
+            let mut ops = ops4(is_64, rd, rn, immr as i64, imms as i64).to_vec();
+            ops.push(extra);
+            prop_assert!(
+                encode_ubfm(&ops).is_err(),
+                "UBFM has no 5th operand; extra operand must Err (llvm-mc rejects it)"
+            );
+        }
+
+        #[test]
+        fn encode_ubfm_neg_sp(
+            which in 0u32..=1,
+            sp64 in any::<bool>(),
+            is_64 in any::<bool>(),
+            other in 0u32..=30,
+        ) {
+            let sp = if sp64 { "sp" } else { "wsp" };
+            let mut ops = ops4(is_64, other, other, 0, 0);
+            ops[which as usize] = Operand::Reg(sp.to_string());
+            prop_assert!(
+                encode_ubfm(&ops).is_err(),
+                "SP/WSP is not a valid UBFM operand (which={} sp={})",
+                which,
+                sp
+            );
+        }
+
+        #[test]
+        fn encode_ubfm_neg_immr_imms(
+            (is_64, rd, rn, immr, imms) in any::<bool>().prop_flat_map(|is_64| {
+                (Just(is_64), 0u32..=31, 0u32..=31, invalid_immr_imms(is_64))
+                    .prop_map(|(is_64, rd, rn, (immr, imms))| (is_64, rd, rn, immr, imms))
+            }),
+        ) {
+            let r = if is_64 { 64i64 } else { 32 };
+            prop_assume!(!(immr >= 0 && imms >= 0 && immr < r && imms < r));
+            let ops = ops4(is_64, rd, rn, immr, imms);
+            prop_assert!(
+                must_err(&ops),
+                "UBFM immr={} imms={} R={} must Err (ARM: 0<=immr,imms<R)",
+                immr,
+                imms,
+                r
+            );
+        }
+
+        #[test]
+        fn encode_ubfm_diff_alt_spellings(
+            (is_64, rd, rn, immr, imms) in ubfm_valid(),
+            dest_spell in 0u32..=4,
+            src_spell in 0u32..=4,
+        ) {
+            let dest = spell(is_64, rd, dest_spell);
+            let src = spell(is_64, rn, src_spell);
+            let asm = format!("ubfm {}, {}, #{}, #{}", dest, src, immr, imms);
+            let ops = [
+                Operand::Reg(dest),
+                Operand::Reg(src),
+                Operand::Imm(immr as i64),
+                Operand::Imm(imms as i64),
+            ];
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "UBFM alt-spelling mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_ubfm_neg_mixed_width(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+        ) {
+            prop_assume!(rd64 != rn64);
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+                Operand::Imm(0),
+                Operand::Imm(0),
+            ];
+            prop_assert!(
+                encode_ubfm(&ops).is_err(),
+                "UBFM mixed W/X (rd64={} rn64={}) must Err (llvm-mc rejects it)",
+                rd64,
+                rn64
+            );
+        }
+
+        #[test]
+        fn encode_ubfm_neg_fp(
+            which in 0u32..=1,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in 0u32..=31,
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = ops4(true, 0, 1, 0, 0);
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_ubfm(&ops).is_err(),
+                "FP/SIMD register {} is not a valid UBFM operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_ubfm_neg_nonreg(
+            which in 0u32..=3,
+            bad in non_reg_operand(),
+        ) {
+            if which >= 2 {
+                prop_assume!(!matches!(bad, Operand::Imm(_)));
+            }
+            let mut ops = ops4(false, 0, 1, 0, 0).to_vec();
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_ubfm(&ops).is_err(),
+                "wrong operand kind at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_ubfm_neg_invalid_name(
+            which in 0u32..=1,
+            name in invalid_name(),
+        ) {
+            let mut ops = ops4(false, 0, 1, 0, 0);
+            ops[which as usize] = Operand::Reg(name.clone());
+            prop_assert!(
+                encode_ubfm(&ops).is_err(),
+                "invalid register name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+    }
+
+    fn spell(is_64: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 if n == 31 => {
+                if is_64 {
+                    "x31".into()
+                } else {
+                    "w31".into()
+                }
+            }
+            1 if n == 31 => {
+                if is_64 {
+                    "XZR".into()
+                } else {
+                    "WZR".into()
+                }
+            }
+            2 if n == 30 && is_64 => "LR".into(),
+            3 => gpr(is_64, n).to_uppercase(),
+            _ => gpr(is_64, n),
+        }
+    }
+
+    fn invalid_name() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "foo".into(),
+            "x32".into(),
+            "w32".into(),
+            "x".into(),
+            "r0".into(),
+            "".into(),
+            "x-1".into(),
+            "x99".into(),
+            "w".into(),
+        ])
+    }
+
+    fn non_reg_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            any::<i64>().prop_map(Operand::Imm),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            }),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            }),
+        ]
+    }
+
+    #[test]
+    fn test_encode_ubfm_regression_extra_operand() {
+        let mut ops = ops4(false, 0, 0, 0, 0).to_vec();
+        ops.push(Operand::Reg("x0".into()));
+        assert!(
+            encode_ubfm(&ops).is_err(),
+            "UBFM w0, w0, #0, #0, x0 must Err; extra operand is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ubfm_regression_sp() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_ubfm(&ops).is_err(),
+            "UBFM wsp, w0, #0, #0 must Err; register 31 is ZR not SP/WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ubfm_regression_immr_neg() {
+        let ops = ops4(false, 0, 0, -1, 0);
+        let result = catch_unwind(AssertUnwindSafe(|| encode_ubfm(&ops)));
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "UBFM w0, w0, #-1, #0 must Err; immr=-1 is outside [0,31] (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ubfm_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_ubfm(&ops).is_err(),
+            "UBFM x0, w0, #0, #0 must Err; mixed W/X is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ubfm_regression_fp() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_ubfm(&ops).is_err(),
+            "UBFM d0, x1, #0, #0 must Err; FP/SIMD registers are not UBFM operands (llvm-mc rejects it)"
+        );
+    }
+}
