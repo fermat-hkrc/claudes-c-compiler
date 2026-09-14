@@ -1,293 +1,276 @@
-# Properties: encode_cmp
+# Properties: encode_cneg
 
-## encode_cmp_diff_imm_llvm_mc
+## encode_cneg_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (gas-compat README). State machine rejected (pure function). Round-trip rejected (no CMP decoder). encode_cmn / encode_add_sub fail the same-job sibling gate as differential references (CMN is ADDS-XZR; SUBS is 3-operand architectural form).
-- Seed: encode_cmn_pbt encode_cmn_diff_imm_llvm_mc (compare_branch.rs)
-- Formal: ∀ rn ∈ GPR∪{sp,wsp,lr}, ∀ imm ∈ Imm12Domain. llvm-mc("cmp rn, #imm") succeeds ⇒ encode_cmp([Reg(rn), Imm(imm)]) = Word(llvm-mc word). Imm12Domain = {0..4095} ∪ {N<<12 | N∈1..4095} ∪ explicit lsl#12. Bounds 0, 1, 4095, 4096, 16773120 forced.
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (gas-compat README). State machine rejected (pure function, no lifecycle). Round-trip rejected (no CNEG decoder). encode_csneg fails the same-job sibling gate as a differential reference (4-operand architectural CSNEG, no invert); used only as a metamorphic transform. encode_cinc / encode_cinv are different jobs (CSINC / CSINV aliases).
+- Seed: encode_cinc_pbt encode_cinc_diff_llvm_mc (compare_branch.rs)
+- Formal: ∀ (rd, rn) same-width GPR (x0–x30/xzr/lr or w0–w30/wzr), ∀ cond ∈ Cond14∪{hs,lo}. llvm-mc("cneg rd, rn, cond") succeeds ⇒ encode_cneg([Reg(rd), Reg(rn), Cond(cond)]) = Word(llvm-mc word).
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rn, imm]
-  domain: { rn: gpr_or_sp, imm: imm12_or_shifted }
+  vars: [rd, rn, cond]
+  domain: { rd: gpr, rn: same_width_gpr, cond: cond14 }
   relation:
     op: eq
-    lhs: encode_cmp([Reg(rn), Imm(imm)])
-    rhs: llvm_mc_word("cmp " + rn + ", #" + imm)
+    lhs: encode_cneg([Reg(rd), Reg(rn), Cond(cond)])
+    rhs: llvm_mc_word("cneg " + rd + ", " + rn + ", " + cond)
 generators:
+  rd: { gen: string }
   rn: { gen: string }
-  imm: { gen: int, min: 0, max: 16773120, type: i64 }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compat; README.md:218 cmp; compare_branch.rs:7 CMP->SUBS XZR
+  cond: { gen: string }
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compat; encoder/mod.rs:897 cneg dispatch; compare_branch.rs:275 CNEG->CSNEG invert(cond)
 ```
 
-## encode_cmp_diff_reg_llvm_mc
-- Tier: 2
-- Rationale: Same differential oracle for the shifted-register form. Same-width GPR (XZR/WZR allowed as Rn/Rm; SP as Rm is invalid without extend and is excluded from this domain). Shift kind in {lsl,lsr,asr} with amount in 0..63 (X) / 0..31 (W), including the documented bounds 0/31/63.
-- Seed: encode_cmn_pbt encode_cmn_diff_reg_llvm_mc
-- Formal: ∀ (rn, rm) same-width GPR, ∀ shift ∈ {ε} ∪ {(lsl|lsr|asr, amt in range)}. llvm-mc("cmp rn, rm{, shift}") succeeds ⇒ encode_cmp matches that word.
+## encode_cneg_meta_vs_csneg
+- Tier: 4
+- Rationale: ARM ARM defines CNEG as the CSNEG alias with Rm=Rn and invert(cond). encode_csneg is independently implemented (compare_branch.rs:127) and is a same-job architectural expansion, not a copy of encode_cneg. Stronger differential vs llvm-mc is already property 1; this is the required metamorphic angle.
+- Seed: encode_cinc_pbt encode_cinc_meta_vs_csinc
+- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ Cond14∪{hs,lo}. encode_cneg([Rd, Rn, cond]) = encode_csneg([Rd, Rn, Rn, invert(cond)]). invert(eq)=ne, invert(hs)=lo, invert(al)=nv, etc. (XOR 1 on the 4-bit cond encoding).
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cmp
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rn, rm, shift_kind, shift_amt]
-  domain: { rn: same_width_gpr, rm: same_width_gpr }
-  relation:
-    op: eq
-    lhs: encode_cmp(reg_or_shifted(rn, rm, shift_kind, shift_amt))
-    rhs: llvm_mc_word("cmp " + rn + ", " + rm + shift_suffix)
-generators:
-  rn: { gen: string }
-  rm: { gen: string }
-  shift_kind: { gen: string }
-  shift_amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: src/backend/arm/assembler/README.md:5-14; compare_branch.rs:7; ARM ARM CMP (shifted register)
-```
-
-## encode_cmp_meta_vs_subs
-- Tier: 4c
-- Rationale: Documented alias CMP Rn, op → SUBS XZR/WZR, Rn, op (function comment + ARM ARM). encode_add_sub is not a same-job differential (different mnemonic/arity) so it is used only as a metamorphic transform. Stronger differential is the llvm-mc properties above.
-- Seed: encode_cmn_pbt encode_cmn_meta_vs_adds
-- Formal: ∀ ops of the form [Reg(rn), Imm|Reg, optional Shift|Extend]. encode_cmp(ops) = encode_add_sub([Reg(ZR)] ++ ops, is_sub=true, set_flags=true) where ZR = WZR if is_32bit_reg(rn) else XZR.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rn, op2]
-  domain: { rn: gpr_or_sp }
+  vars: [rd, rn, cond]
+  domain: { rd: gpr, rn: same_width_gpr, cond: cond14 }
   relation:
     op: eq
-    lhs: encode_cmp([Reg(rn), op2])
-    rhs: encode_add_sub([Reg(zr_of(rn)), Reg(rn), op2], true, true)
+    lhs: encode_cneg([Reg(rd), Reg(rn), Cond(cond)])
+    rhs: encode_csneg([Reg(rd), Reg(rn), Reg(rn), Cond(invert(cond))])
 generators:
+  rd: { gen: string }
   rn: { gen: string }
-evidence: compare_branch.rs:7 CMP Rn, op -> SUBS XZR, Rn, op; ARM ARM CMP alias of SUBS
+  cond: { gen: string }
+evidence: compare_branch.rs:275 CNEG Rd, Rn, cond -> CSNEG Rd, Rn, Rn, invert(cond); ARM ARM Conditional Negate alias of CSNEG
 ```
 
-## encode_cmp_word_layout_imm
-- Tier: 4d
-- Rationale: ARM ARM Add/subtract (immediate) SUBS field layout with Rd=XZR. Weaker than differential; pins opcode bits independently of llvm-mc.
-- Seed: encode_cmn_pbt encode_cmn_word_layout_imm
-- Formal: ∀ rn ∈ GPR∪{sp,wsp,lr}, ∀ imm ∈ 0..4095. encode_cmp([Reg(rn), Imm(imm)]) = Word(w) ⇒ Rd[4:0]=31 ∧ S[29]=1 ∧ op[30]=1 ∧ bits[28:24]=0b10001 ∧ sf[31]=sf(rn) ∧ sh[22]=0 ∧ imm12[21:10]=imm ∧ Rn[9:5]=reg_num(rn).
+## encode_cneg_word_layout
+- Tier: 4
+- Rationale: ARM ARM CSNEG field layout is an exact structural invariant on every success-path word. Weaker than differential/metamorphic but pins each field independently (sf, op=1, S=0, bits[28:21]=11010100, Rm=Rn, invert(cond), op2=01, Rd).
+- Seed: encode_cinc_pbt encode_cinc_word_layout
+- Formal: ∀ rd_n, rn_n ∈ 0..31, ∀ is_64 ∈ {0,1}, ∀ cond_enc ∈ 0..13. encode_cneg([gpr(rd_n,is_64), gpr(rn_n,is_64), Cond14[cond_enc]]) = Word(w) where w[31]=is_64, w[30]=1, w[29]=0, w[28:21]=0b11010100, w[20:16]=rn_n, w[15:12]=cond_enc XOR 1, w[11:10]=0b01, w[9:5]=rn_n, w[4:0]=rd_n.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rn, imm]
-  domain: { rn: gpr_or_sp, imm: 0..4095 }
+  vars: [rd_n, rn_n, is_64, cond_enc]
+  domain: { rd_n: 0..31, rn_n: 0..31, is_64: bool, cond_enc: 0..13 }
   relation:
     op: holds
-    expr: word_layout_subs_imm(encode_cmp([Reg(rn), Imm(imm)]), rn, imm)
+    expr: word_fields_match_csneg_alias(encode_cneg([gpr(rd_n, is_64), gpr(rn_n, is_64), Cond14[cond_enc]]))
 generators:
-  rn: { gen: string }
-  imm: { gen: int, min: 0, max: 4095, type: i64 }
-evidence: ARM ARM Add/subtract (immediate) SUBS; compare_branch.rs:7 Rd=XZR
+  rd_n: { gen: int, min: 0, max: 31, type: u32 }
+  rn_n: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  cond_enc: { gen: int, min: 0, max: 13, type: u32 }
+evidence: compare_branch.rs:283-286 CSNEG sf 1 0 11010100 Rm cond 0 1 Rn Rd with Rm=Rn; ARM ARM CSNEG
 ```
 
-## encode_cmp_neg_arity
-- Tier: 4e
-- Rationale: llvm-mc and gas reject cmp with fewer than 2 operands ("too few operands"). encode_add_sub requires 3 operands after ZR is prepended, so 0 or 1 user operands must Err.
-- Seed: encode_cmn_pbt encode_cmn_neg_arity
-- Formal: ∀ arity ∈ {0,1}. encode_cmp(ops) with |ops|=arity is Err.
+## encode_cneg_neg_arity
+- Tier: 4
+- Rationale: llvm-mc rejects CNEG with fewer than 3 operands ("too few operands"). Documented error contract of the gas-compat assembler. Bounds 0, 1, 2 sampled exactly.
+- Seed: encode_cinc_pbt encode_cinc_neg_arity
+- Formal: ∀ arity ∈ {0,1,2}. encode_cneg(ops) is Err when |ops| = arity.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [arity]
-  domain: { arity: 0..1 }
+  domain: { arity: 0..2 }
   relation:
     op: throws
-    expr: encode_cmp(ops_of_len(arity))
-expected_error: String
+    expr: encode_cneg(ops_of_len(arity))
 generators:
-  arity: { gen: int, min: 0, max: 1, type: u32 }
-evidence: llvm-mc "too few operands"; encode_add_sub requires 3 operands
+  arity: { gen: int, min: 0, max: 2, type: u32 }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects bare cneg / cneg x0 / cneg x0, x1 (too few operands)
 ```
 
-## encode_cmp_neg_imm_oor
-- Tier: 4e
-- Rationale: ARM ARM / llvm-mc reject immediates outside imm12 and (imm12<<12). Documented bounds sampled at 4097, 8191, 16773121, i64::MAX, i64::MIN, and negative values that do not rewrite to an encodable CMN.
-- Seed: encode_cmn_pbt encode_cmn_neg_imm_oor
-- Formal: ∀ rn ∈ GPR∪{sp,wsp,lr}, ∀ imm ∉ Imm12Domain ∪ NegImm12Domain. encode_cmp([Reg(rn), Imm(imm)]) is Err.
+## encode_cneg_neg_extra_operand
+- Tier: 4
+- Rationale: llvm-mc rejects a fourth operand ("invalid operand"). Gas-compat contract. Extra kinds: Reg/Imm/Symbol/Mem.
+- Seed: encode_cinc_pbt encode_cinc_neg_extra_operand
+- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ Cond14, ∀ extra ∈ {Reg, Imm, Symbol, Mem}. encode_cneg([Rd, Rn, Cond, extra]) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: rn = "x0", imm = -9223372036854775808 (i64::MIN); panics in encode_add_sub at data_processing.rs:314
-- Bug report: pbt-out/bug_reports/encode_cmp_imm_min_overflow.md
+- Counterexample: [Reg("x0"), Reg("x0"), Cond("eq"), Reg("x2")]  (rd="x0", rn="x0", cond="eq", which=0)
+- Bug report: pbt-out/bug_reports/encode_cneg_extra_operand.md
 
 ```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rn, imm]
-  domain: { rn: gpr_or_sp, imm: unencodable_imm }
+  vars: [rd, rn, cond, extra]
+  domain: { rd: gpr, rn: same_width_gpr, cond: cond14, extra: extra_operand }
   relation:
     op: throws
-    expr: encode_cmp([Reg(rn), Imm(imm)])
-expected_error: String
+    expr: encode_cneg([Reg(rd), Reg(rn), Cond(cond), extra])
 generators:
+  rd: { gen: string }
   rn: { gen: string }
-  imm: { gen: int, type: i64 }
-evidence: ARM ARM ADD/SUB imm12; llvm-mc "integer in range [0, 4095]"
+  cond: { gen: string }
+  extra: { gen: int, min: 0, max: 3, type: u32 }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects cneg x0, x1, eq, x2 (invalid operand)
 ```
 
-## encode_cmp_neg_extra_operand
-- Tier: 4e
-- Rationale: llvm-mc rejects a third register/imm/symbol/mem operand after `cmp Rn, Rm` ("expected sxtx/uxtx or lsl"). Extra operands must Err, not be silently dropped.
-- Seed: encode_cmn_pbt encode_cmn_neg_extra_operand
-- Formal: ∀ (rn, rm) same-width GPR, ∀ extra ∈ {Reg, Imm, Symbol, Mem}. encode_cmp([Reg(rn), Reg(rm), extra]) is Err.
+## encode_cneg_neg_al_nv
+- Tier: 4
+- Rationale: ARM ARM and llvm-mc: condition codes AL and NV are invalid for CNEG. Bounds al and nv sampled exactly.
+- Seed: encode_cinc_pbt encode_cinc_neg_al_nv
+- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ {al, nv}. encode_cneg([Rd, Rn, Cond(cond)]) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: pair = ("x0", "x0"), which = 0 → [Reg("x0"), Reg("x0"), Reg("x2")]
-- Bug report: pbt-out/bug_reports/encode_cmp_extra_operand.md
+- Counterexample: [Reg("x0"), Reg("x0"), Cond("al")]  (rd="x0", rn="x0", which=0)
+- Bug report: pbt-out/bug_reports/encode_cneg_al_nv.md
 
 ```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rn, rm, extra]
-  domain: { rn: same_width_gpr, rm: same_width_gpr }
+  vars: [rd, rn, cond]
+  domain: { rd: gpr, rn: same_width_gpr, cond: {al, nv} }
   relation:
     op: throws
-    expr: encode_cmp([Reg(rn), Reg(rm), extra])
-expected_error: String
+    expr: encode_cneg([Reg(rd), Reg(rn), Cond(cond)])
 generators:
+  rd: { gen: string }
   rn: { gen: string }
-  rm: { gen: string }
-evidence: llvm-mc "expected sxtx uxtx or lsl"; README.md:5-14 gas-compat
+  cond: { gen: string }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 "condition codes AL and NV are invalid for this instruction"; ARM ARM CNEG not valid for AL/NV
 ```
 
-## encode_cmp_neg_wrong_reg
-- Tier: 4e
-- Rationale: llvm-mc rejects XZR/WZR as immediate-form Rn (Rn=31 is SP), mixed x/w without extend, FP/SIMD names, SP as Rm without extend, and invalid register names. Gas-compat requires the same rejections.
-- Seed: encode_cmn_pbt encode_cmn_neg_wrong_reg
-- Formal: ∀ ops in WrongRegDomain. encode_cmp(ops) is Err. WrongRegDomain = { [xzr|#imm], [wzr|#imm], mixed-width pair, [dN|#0], [xN|dN], [xN|sp], invalid name, [sN|w0] }.
+## encode_cneg_neg_wrong_reg
+- Tier: 4
+- Rationale: llvm-mc rejects SP/WSP (register 31 is XZR/WZR), mixed x/w, FP/SIMD (d/s/q/v), and invalid names (x32, w32, foo, empty, r0, x, x-1, x99). Gas-compat contract.
+- Seed: encode_cinc_pbt encode_cinc_neg_wrong_reg
+- Formal: ∀ kind ∈ {sp-rd, sp-rn, wsp-rd, mixed-x-w, d-reg, s-reg, q-reg, v-reg, invalid-name}, ∀ n ∈ 0..31. encode_cneg(bad_ops(kind, n)) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: kind = 0, n = 0, imm = 0 → [Reg("xzr"), Imm(0)]; also wzr-imm, mixed x/w, d0, x0/sp
-- Bug report: pbt-out/bug_reports/encode_cmp_xzr_imm.md
+- Counterexample: kind=0, n=0  ([Reg("sp"), Reg("x0"), Cond("eq")]); also mixed [Reg("x0"), Reg("w0"), Cond("eq")] and FP [Reg("d0"), Reg("d0"), Cond("eq")]
+- Bug report: pbt-out/bug_reports/encode_cneg_sp_as_zr.md; pbt-out/bug_reports/encode_cneg_mixed_width.md; pbt-out/bug_reports/encode_cneg_fp_reg.md
 
 ```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops]
-  domain: { ops: wrong_reg_cmp }
+  vars: [kind, n]
+  domain: { kind: 0..8, n: 0..31 }
   relation:
     op: throws
-    expr: encode_cmp(ops)
+    expr: encode_cneg(bad_ops(kind, n))
+generators:
+  kind: { gen: int, min: 0, max: 8, type: u32 }
+  n: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-generators:
-  ops: { gen: list, elem: { gen: string } }
-evidence: llvm-mc rejects XZR-imm / mixed / FP / SP-Rm; ARM ARM CMP immediate Rn is Xn|SP
+evidence: llvm-mc -triple=aarch64 rejects cneg sp, x0, eq; cneg x0, w1, eq; cneg d0, d1, eq
 ```
 
-## encode_cmp_diff_extend_llvm_mc
-- Tier: 2
-- Rationale: Coverage-sweep differential for the extended-register form (sxtw/uxtw/sxtx/uxtx, amount 0..4 including bounds). Documented ARM ARM CMP (extended register) and llvm-mc-accepted.
-- Seed: encode_cmn_pbt encode_cmn_diff_extend_llvm_mc
-- Formal: ∀ (rn, rm, ext, amt) in ExtendDomain. llvm-mc("cmp rn, rm, ext{#amt}") succeeds ⇒ encode_cmp matches that word. Amount bounds 0 and 4 forced.
+## encode_cneg_neg_bad_operand_kind
+- Tier: 4
+- Rationale: get_reg requires Operand::Reg at slots 0 and 1; slot 2 must be Operand::Cond. Non-Reg/non-Cond kinds (Imm/Mem/Symbol/Shift/Label) must Err. Coverage of the match-arm error paths.
+- Seed: encode_cinc_pbt encode_cinc_neg_bad_operand_kind
+- Formal: ∀ slot ∈ {0,1,2}, ∀ kind ∈ {Imm, Mem, Symbol, Shift, Label}. encode_cneg(ops with slot replaced by that kind) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cmp
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rn, rm, ext, amt]
-  domain: { amt: 0..4 }
-  relation:
-    op: eq
-    lhs: encode_cmp([Reg(rn), Reg(rm), Extend(ext, amt)])
-    rhs: llvm_mc_word("cmp " + rn + ", " + rm + ", " + ext)
-generators:
-  amt: { gen: int, min: 0, max: 4, type: u32 }
-evidence: ARM ARM CMP (extended register); llvm-mc accepts sxtw/uxtw/sxtx/uxtx amount 0..4
-```
-
-## encode_cmp_diff_neg_imm_llvm_mc
-- Tier: 2
-- Rationale: Coverage-sweep differential for gas rewrite `cmp Rn, #-N` → `cmn Rn, #N`. Documented in encode_add_sub ("Handle negative immediates") and llvm-mc.
-- Seed: encode_cmn_pbt encode_cmn_diff_neg_imm_llvm_mc
-- Formal: ∀ rn ∈ GPR∪{sp,wsp,lr}, ∀ N ∈ 1..4095. encode_cmp([Reg(rn), Imm(-N)]) = Word(llvm-mc("cmp rn, #-N")). Bounds 1 and 4095 forced.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_cmp
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rn, n]
-  domain: { rn: gpr_or_sp, n: 1..4095 }
-  relation:
-    op: eq
-    lhs: encode_cmp([Reg(rn), Imm(-n)])
-    rhs: llvm_mc_word("cmp " + rn + ", #-" + n)
-generators:
-  n: { gen: int, min: 1, max: 4095, type: i64 }
-evidence: data_processing.rs:312-316 negative-imm alias; llvm-mc gas rewrite cmp #-N → cmn #N
-```
-
-## encode_cmp_neg_non_reg_first
-- Tier: 4e
-- Rationale: Coverage-sweep negative contract for a non-register first operand. encode_cmp only special-cases Operand::Reg for width; any other first operand still prepends XZR and encode_add_sub must Err on get_reg of a non-Reg at index 1.
-- Seed: encode_cmn_pbt encode_cmn_neg_non_reg_first
-- Formal: ∀ first ∈ {Imm, Symbol, Mem, Cond, Shift}, ∀ second ∈ {Reg("x0"), Imm(0)}. encode_cmp([first, second]) is Err.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_cmp
+function: encoder.compare_branch.encode_cneg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [kind, second]
-  domain: { kind: 0..4 }
+  vars: [slot, which]
+  domain: { slot: 0..2, which: 0..4 }
   relation:
     op: throws
-    expr: encode_cmp([non_reg_first(kind), second])
-expected_error: String
+    expr: encode_cneg(ops_with_bad_kind(slot, which))
 generators:
-  kind: { gen: int, min: 0, max: 4, type: u32 }
-evidence: get_reg requires Operand::Reg; llvm-mc rejects non-GPR first operand
+  slot: { gen: int, min: 0, max: 2, type: u32 }
+  which: { gen: int, min: 0, max: 4, type: u32 }
+expected_error: String
+evidence: encoder/mod.rs:956-966 get_reg requires Operand::Reg; compare_branch.rs:279-281 third operand must be Cond
+```
+
+## encode_cneg_neg_unknown_cond
+- Tier: 4
+- Rationale: Coverage sweep of encode_cond None arm. Unknown condition names must Err (llvm-mc and encode_cond both reject them). Documented error path at compare_branch.rs:279.
+- Seed: encode_cinc_pbt encode_cinc_neg_unknown_cond
+- Formal: ∀ (rd, rn) same-width GPR, ∀ cond ∈ {zz, foo, eqq, "", "eq ", always}. encode_cneg([Rd, Rn, Cond(cond)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_cneg
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, which]
+  domain: { rd: gpr, rn: same_width_gpr, which: 0..5 }
+  relation:
+    op: throws
+    expr: encode_cneg([Reg(rd), Reg(rn), Cond(unknown_cond(which))])
+generators:
+  rd: { gen: string }
+  rn: { gen: string }
+  which: { gen: int, min: 0, max: 5, type: u32 }
+expected_error: String
+evidence: compare_branch.rs:279 encode_cond(c).ok_or_else unknown condition
+```
+
+## encode_cneg_neg_invalid_name
+- Tier: 4
+- Rationale: Coverage sweep of get_reg parse_reg_num None arm. Invalid register names (x32, w32, foo, empty, r0, x, x-1, x99) must Err. Bound x32 is 31+1.
+- Seed: encode_cinc_pbt encode_cinc_neg_invalid_name
+- Formal: ∀ name ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_cneg([Reg(name), Reg("x0"), Cond("eq")]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_cneg
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which]
+  domain: { which: 0..7 }
+  relation:
+    op: throws
+    expr: encode_cneg([Reg(invalid_name(which)), Reg("x0"), Cond("eq")])
+generators:
+  which: { gen: int, min: 0, max: 7, type: u32 }
+expected_error: String
+evidence: encoder/mod.rs:131-148 parse_reg_num returns None for x32/non-prefix; get_reg maps that to Err
 ```
