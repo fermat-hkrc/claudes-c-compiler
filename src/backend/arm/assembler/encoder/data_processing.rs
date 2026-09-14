@@ -4830,3 +4830,931 @@ mod encode_eon_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_logical_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:231-234 and/orr/eor/ands => encode_logical(opc);
+    //   ARM ARM Logical (shifted register) sf opc 01010 shift N=0 Rm imm6 Rn Rd;
+    //   ARM ARM Logical (immediate) sf opc 100100 N immr imms Rn Rd;
+    //   ARM ARM Advanced SIMD logical 0 Q U 01110 size 1 Rm 000111 Rn Rd
+    // Stronger considered:
+    //   - State machine: rejected — encode_logical is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree AND/ORR/EOR/ANDS decoder
+    //   - Same-job sibling encode_bic/orn/eon/bics: rejected — those are N=1 (different job)
+    // Weaker available: algebraic.metamorphic (opc bits), algebraic.invariant (word layout),
+    //   negative_error (arity / invalid imm / SP / mixed width / FP / shift range / NEON T / ANDS NEON)
+    // Differential: candidate=encode_logical, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=(operands,opc) <-> {and|orr|eor|ands} Rd, Rn, Rm{, shift} / #imm / Vd.T,Vn.T,Vm.T
+
+    use super::encode_logical;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn mnemonic(opc: u32) -> &'static str {
+        match opc & 3 {
+            0 => "and",
+            1 => "orr",
+            2 => "eor",
+            _ => "ands",
+        }
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn dest_imm(is_64: bool, n: u32, opc: u32) -> String {
+        if n == 31 && (opc & 3) != 0b11 {
+            if is_64 {
+                "sp".into()
+            } else {
+                "wsp".into()
+            }
+        } else {
+            gpr(is_64, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand], opc: u32) -> Result<u32, String> {
+        match encode_logical(ops, opc)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    /// Independent AArch64 logical-immediate constructor (ARM ARM, not encode_bitmask_imm).
+    fn bitmask_from_fields(size: u32, ones: u32, immr: u32, is_64: bool) -> u64 {
+        let width = if is_64 { 64u32 } else { 32 };
+        let mask = if size == 64 {
+            u64::MAX
+        } else {
+            (1u64 << size) - 1
+        };
+        let base = (1u64 << ones) - 1;
+        let elem = if immr % size == 0 {
+            base
+        } else {
+            let r = immr % size;
+            ((base >> r) | (base << (size - r))) & mask
+        };
+        let mut val = 0u64;
+        let mut pos = 0u32;
+        while pos < width {
+            val |= elem << pos;
+            pos += size;
+        }
+        val
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn opc_all() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(2u32), Just(3u32)]
+    }
+
+    fn opc_neon() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(2u32)]
+    }
+
+    fn shift_kind() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["lsl", "lsr", "asr", "ror"])
+    }
+
+    fn neon_arr() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "16b"])
+    }
+
+    fn invalid_arr() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["4s", "8h", "4h", "2s", "2d", "1d", "8s"])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_logical_kat_llvm_mc_and_x0_x1_x2() {
+        let want = 0x8a020020u32;
+        let mc = llvm_mc_word("and x0, x1, x2").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        let sut = sut_word(&ops, 0b00).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_logical_kat_llvm_mc_orr_eor_ands_and_w_imm_neon() {
+        let cases: &[(&str, u32)] = &[
+            ("orr x0, x1, x2", 0xaa020020),
+            ("eor x0, x1, x2", 0xca020020),
+            ("ands x0, x1, x2", 0xea020020),
+            ("and w0, w1, w2", 0x0a020020),
+            ("and x0, x1, #0x1", 0x92400020),
+            ("and v0.16b, v1.16b, v2.16b", 0x4e221c20),
+            ("and v0.8b, v1.8b, v2.8b", 0x0e221c20),
+            ("orr v0.16b, v1.16b, v2.16b", 0x4ea21c20),
+            ("eor v0.16b, v1.16b, v2.16b", 0x6e221c20),
+            ("and sp, x0, #0x1", 0x9240001f),
+        ];
+        for (asm, want) in cases {
+            let mc = llvm_mc_word(asm).unwrap_or_else(|e| panic!("llvm-mc KAT {asm}: {e}"));
+            assert_eq!(mc, *want, "llvm-mc KAT mapping broken for {asm}");
+        }
+        let and_imm = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(1),
+        ];
+        assert_eq!(sut_word(&and_imm, 0b00).expect("SUT imm KAT"), 0x92400020);
+        let neon = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v1".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v2".into(),
+                arrangement: "16b".into(),
+            },
+        ];
+        assert_eq!(sut_word(&neon, 0b00).expect("SUT neon KAT"), 0x4e221c20);
+        let sp_imm = [
+            Operand::Reg("sp".into()),
+            Operand::Reg("x0".into()),
+            Operand::Imm(1),
+        ];
+        assert_eq!(sut_word(&sp_imm, 0b00).expect("SUT sp imm KAT"), 0x9240001f);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_logical_diff_reg(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in 0u32..=63,
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let rm_n = gpr(is_64, rm);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rn_n.clone()),
+                Operand::Reg(rm_n.clone()),
+            ];
+            let mut asm = format!("{} {}, {}, {}", mnemonic(opc), rd_n, rn_n, rm_n);
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+                if !(kind == "lsl" && amt == 0) {
+                    asm.push_str(&format!(", {} #{}", kind, amt));
+                }
+            }
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, opc)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_logical_diff_imm(
+            rd in reg_num(),
+            rn in reg_num(),
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+            seed in 0u32..10000,
+        ) {
+            let sizes: [u32; 6] = if is_64 {
+                [2, 4, 8, 16, 32, 64]
+            } else {
+                [2, 4, 8, 16, 32, 32]
+            };
+            let size = sizes[(seed as usize) % sizes.len()];
+            let ones = 1 + (seed / 6) % (size - 1);
+            let rot = (seed / 6 / (size - 1).max(1)) % size;
+            let m = bitmask_from_fields(size, ones, rot, is_64);
+            let rd_n = dest_imm(is_64, rd, opc);
+            let rn_n = gpr(is_64, rn);
+            let hex = if is_64 {
+                format!("#0x{:x}", m)
+            } else {
+                format!("#0x{:x}", m as u32)
+            };
+            let asm = format!("{} {}, {}, {}", mnemonic(opc), rd_n, rn_n, hex);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(m as i64),
+            ];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, opc)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_logical_diff_neon(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            arr in neon_arr(),
+            opc in opc_neon(),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vm}"),
+                    arrangement: arr.to_string(),
+                },
+            ];
+            let asm = format!(
+                "{} v{vd}.{arr}, v{vn}.{arr}, v{vm}.{arr}",
+                mnemonic(opc)
+            );
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, opc)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_logical_metamorphic_opc(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            opc1 in opc_all(),
+            opc2 in opc_all(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in 0u32..=63,
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let mut ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+            ];
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+            }
+            let w1 = match encode_logical(&ops, opc1) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => panic!("opc1 should encode, got {other:?}"),
+            };
+            let w2 = match encode_logical(&ops, opc2) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => panic!("opc2 should encode, got {other:?}"),
+            };
+            prop_assert_eq!(
+                w1 ^ w2,
+                (opc1 ^ opc2) << 29,
+                "opc bits [30:29] (w1={:#010x} w2={:#010x})", w1, w2
+            );
+        }
+
+        #[test]
+        fn encode_logical_invariant_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in 0u32..=63,
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let st = match kind {
+                "lsl" => 0u32,
+                "lsr" => 1,
+                "asr" => 2,
+                "ror" => 3,
+                _ => 0,
+            };
+            let mut ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+            ];
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+            }
+            let w = match encode_logical(&ops, opc) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => panic!("should encode, got {other:?}"),
+            };
+            let sf = if is_64 { 1u32 } else { 0 };
+            prop_assert_eq!(w >> 31, sf, "sf");
+            prop_assert_eq!((w >> 29) & 3, opc, "opc");
+            prop_assert_eq!((w >> 24) & 0x1F, 0b01010, "opcode 01010");
+            if use_shift {
+                prop_assert_eq!((w >> 22) & 3, st, "shift type");
+                prop_assert_eq!((w >> 10) & 0x3F, amt, "imm6");
+            } else {
+                prop_assert_eq!((w >> 22) & 3, 0, "default lsl");
+                prop_assert_eq!((w >> 10) & 0x3F, 0, "imm6=0");
+            }
+            prop_assert_eq!((w >> 21) & 1, 0, "N=0");
+            prop_assert_eq!((w >> 16) & 0x1F, rm, "Rm");
+            prop_assert_eq!((w >> 5) & 0x1F, rn, "Rn");
+            prop_assert_eq!(w & 0x1F, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_logical_neg_arity(
+            opc in opc_all(),
+            n in 0usize..3,
+            is_64 in any::<bool>(),
+            r in reg_num(),
+        ) {
+            let name = gpr(is_64, r);
+            let ops: Vec<Operand> = (0..n).map(|_| Operand::Reg(name.clone())).collect();
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "len={} must Err", n
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_invalid_imm(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+            which in 0u32..6,
+        ) {
+            let imm: i64 = match which {
+                0 => 0,
+                1 => -1,
+                2 => 0x1234,
+                3 => 5,
+                4 => 0x1001,
+                _ => 0x12345678,
+            };
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Imm(imm),
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "imm={:#x} must Err as non-bitmask", imm
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_extra_operand(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            extra in 0u32..=30,
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Reg(gpr(is_64, extra)),
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "4th GPR operand must Err (llvm-mc rejects extra operand)"
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_sp_shifted(
+            other in 0u32..=30,
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+            pos in 0u32..3,
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let g = gpr(is_64, other);
+            let mut names = [g.clone(), g.clone(), g.clone()];
+            names[pos as usize] = sp.to_string();
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "SP in shifted-register form must Err (llvm-mc rejects)"
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_mixed_width(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            opc in opc_all(),
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+            rm64 in any::<bool>(),
+        ) {
+            prop_assume!(rd64 != rn64 || rd64 != rm64);
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+                Operand::Reg(gpr(rm64, rm)),
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "mixed X/W must Err"
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_fp_as_gpr(
+            n in 0u32..=31,
+            opc in opc_all(),
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            pos in 0u32..3,
+        ) {
+            let fp = format!("{prefix}{n}");
+            let g = gpr(true, n.min(30));
+            let mut names = [g.clone(), g.clone(), g.clone()];
+            names[pos as usize] = fp;
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "FP/SIMD name as GPR must Err"
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_shift_oob(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+            kind in shift_kind(),
+            amt in prop_oneof![Just(32u32), Just(63u32), Just(64u32), Just(65u32), 32u32..=128],
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            prop_assume!(amt > max);
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "shift amount {} > {} must Err", amt, max
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_unknown_shift(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            opc in opc_all(),
+            kind in prop::sample::select(vec!["lslx", "rol", "uxtw", "", "lsr "]),
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: 0,
+                },
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "unknown shift kind {:?} must Err", kind
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_neon_bad_arr(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            arr in invalid_arr(),
+            opc in opc_neon(),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vm}"),
+                    arrangement: arr.to_string(),
+                },
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "NEON T={} must Err (only 8b/16b)", arr
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_neon_mismatch(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            opc in opc_neon(),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: "16b".into(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: "8b".into(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vm}"),
+                    arrangement: "16b".into(),
+                },
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "mismatched NEON arrangements must Err"
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_ands_neon(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            arr in neon_arr(),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: arr.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vm}"),
+                    arrangement: arr.to_string(),
+                },
+            ];
+            prop_assert!(
+                encode_logical(&ops, 0b11).is_err(),
+                "ANDS is not a NEON instruction"
+            );
+        }
+
+        #[test]
+        fn encode_logical_metamorphic_sf(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            opc in opc_all(),
+        ) {
+            let ops64 = [
+                Operand::Reg(gpr(true, rd)),
+                Operand::Reg(gpr(true, rn)),
+                Operand::Reg(gpr(true, rm)),
+            ];
+            let ops32 = [
+                Operand::Reg(gpr(false, rd)),
+                Operand::Reg(gpr(false, rn)),
+                Operand::Reg(gpr(false, rm)),
+            ];
+            let w64 = match encode_logical(&ops64, opc) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => panic!("x form should encode, got {other:?}"),
+            };
+            let w32 = match encode_logical(&ops32, opc) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => panic!("w form should encode, got {other:?}"),
+            };
+            prop_assert_eq!(w64 ^ w32, 1u32 << 31, "sf must be the only differing bit");
+        }
+
+        #[test]
+        fn encode_logical_neg_unsupported_third(
+            opc in opc_all(),
+            which in 0u32..4,
+        ) {
+            let third = match which {
+                0 => Operand::Symbol("foo".into()),
+                1 => Operand::Mem { base: "x0".into(), offset: 0 },
+                2 => Operand::Label("L1".into()),
+                _ => Operand::Cond("eq".into()),
+            };
+            let ops = [
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                third,
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "third operand not Imm/Reg must Err"
+            );
+        }
+
+        #[test]
+        fn encode_logical_neg_invalid_reg(
+            opc in opc_all(),
+            pos in 0u32..3,
+            name in prop::sample::select(vec!["foo", "x32", "w32", "x", "r0", ""]),
+        ) {
+            let g = "x0".to_string();
+            let mut names = [g.clone(), g.clone(), g.clone()];
+            names[pos as usize] = name.to_string();
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            prop_assert!(
+                encode_logical(&ops, opc).is_err(),
+                "invalid register name must Err"
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_logical_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND w0, w0, w0, w0 must Err; llvm-mc rejects a 4th GPR operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_sp_shifted() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND wsp, w0, w0 must Err; shifted-register form uses WZR not WSP for 31"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND w0, w0, x0 must Err; mixed X/W is invalid"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_fp_as_gpr() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND d0, x0, x0 must Err; FP/SIMD names are not GPRs"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_shift_oob() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lsl".into(),
+                amount: 32,
+            },
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND w0, w0, w0, lsl #32 must Err; 32-bit shift amount range is [0, 31]"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_unknown_shift() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lslx".into(),
+                amount: 0,
+            },
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND w0, w0, w0, lslx #0 must Err; only lsl/lsr/asr/ror are valid"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_neon_bad_arr() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            },
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND v0.4s, v0.4s, v0.4s must Err; NEON logical T is 8b/16b only"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_neon_mismatch() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+        ];
+        assert!(
+            encode_logical(&ops, 0b00).is_err(),
+            "AND v0.16b, v0.8b, v0.16b must Err; arrangements must match"
+        );
+    }
+
+    #[test]
+    fn test_encode_logical_regression_ands_neon() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            },
+        ];
+        assert!(
+            encode_logical(&ops, 0b11).is_err(),
+            "ANDS v0.8b, v0.8b, v0.8b must Err; ANDS is not a NEON instruction"
+        );
+    }
+}

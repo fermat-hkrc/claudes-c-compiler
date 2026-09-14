@@ -1,3 +1,38 @@
+# Confirmed invariants (encode_logical)
+
+- Valid AND/ORR/EOR/ANDS shifted-register with Rd/Rn/Rm in x0–x30/xzr or w0–w30/wzr, shift in {lsl,lsr,asr,ror} with amount in [0,31] (W) or [0,63] (X), matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Valid AND/ORR/EOR/ANDS bitmask-immediate constructed from ARM ARM (size, ones, immr), Rd=31 as SP (AND/ORR/EOR) or XZR (ANDS), Rn=31 as XZR, matches llvm-mc (1000 cases).
+- Valid NEON AND/ORR/EOR with T in {8b,16b}, Vd/Vn/Vm in v0–v31, matches llvm-mc (1000 cases).
+- encode(opc_a) XOR encode(opc_b) = (opc_a XOR opc_b)<<29 at equal other fields (ARM ARM opc at bits [30:29]) (1000 cases).
+- encode(X) XOR encode(W) at equal register numbers = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path shifted-register word: sf at 31, opc at [30:29], bits [28:24]=01010, shift at [23:22], N=0 at 21, Rm at [20:16], imm6 at [15:10], Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands, invalid bitmask (0 / all-ones / 0x1234 / 0x5 / 0x1001), third operand that is Symbol/Mem/Label/Cond, and invalid names (foo, x32, w32, x, r0, empty) always Err.
+- Known-answer: `and x0, x1, x2` encodes as 0x8a020020; `orr x0, x1, x2` as 0xaa020020; `eor x0, x1, x2` as 0xca020020; `ands x0, x1, x2` as 0xea020020; `and w0, w1, w2` as 0x0a020020; `and x0, x1, #1` as 0x92400020; `and sp, x0, #1` as 0x9240001f; `and v0.16b, v1.16b, v2.16b` as 0x4e221c20; `and v0.8b, v1.8b, v2.8b` as 0x0e221c20; `orr v0.16b, v1.16b, v2.16b` as 0x4ea21c20; `eor v0.16b, v1.16b, v2.16b` as 0x6e221c20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Logical (shifted register): `sf opc 01010 shift N Rm imm6 Rn Rd` with N=0. opc 00 AND / 01 ORR / 10 EOR / 11 ANDS.
+- ARM ARM Logical (immediate): `sf opc 100100 N immr imms Rn Rd`. Rd=31 is SP for AND/ORR/EOR and XZR for ANDS (TST). llvm-mc rejects SP as Rn.
+- ARM ARM Advanced SIMD logical: `0 Q U 01110 size 1 Rm 000111 Rn Rd`. AND U=0 size=00; ORR U=0 size=10; EOR U=1 size=00. T in {8B,16B} only.
+- Dispatch: encoder/mod.rs:231-234 and/orr/eor/ands.
+- `lr` is a 64-bit alias of X30.
+
+## Quirks
+
+- Extra operands beyond a shift at index 3 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so shifted-register SP encodes as ZR (see bugs).
+- Mixed X/W is accepted; sf is taken only from Rd (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- Shift amount is masked with 0x3F with no range check (see bugs).
+- Unknown shift kinds default to LSL (see bugs).
+- NEON T other than 16b is encoded with Q=0; source arrangements discarded (see bugs).
+- ANDS (opc=11) on NEON encodes as EOR-like (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / NEON / Imm / Reg / unsupported-third / invalid-reg / sf).
+
+---
+
 # Confirmed invariants (encode_ldxr_stxr)
 
 - Valid LDXR/STXR/LDXRB/STXRB/LDXRH/STXRH with Rt in x0–x30/xzr or w0–w30/wzr (byte/half always W), Rn in x0–x30/sp, Ws in w0–w30/wzr not aliasing Rt/Xn, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

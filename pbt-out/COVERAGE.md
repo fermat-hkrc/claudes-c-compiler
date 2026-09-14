@@ -37,3 +37,4 @@
 | encode_ldxp_stxp | load_store.rs | load_store.rs | cargo test --lib | 5 passing / 4 failing properties (plus 7 passing KAT + 9 failing regression witnesses; 9 bugs) |
 | encode_neon_float_three_same | neon.rs | neon.rs | cargo test --lib | 7 passing / 4 failing properties (plus 2 passing KAT + 4 failing regression witnesses; 4 bugs) |
 | encode_ldxr_stxr | load_store.rs | load_store.rs | cargo test --lib | 3 passing / 4 failing properties (plus 8 passing KAT + 9 failing regression witnesses; 9 bugs) |
+| encode_logical | data_processing.rs | data_processing.rs | cargo test --lib | 10 passing / 1 failing property group (9 bugs; plus 2 KAT + 9 regression witnesses) |

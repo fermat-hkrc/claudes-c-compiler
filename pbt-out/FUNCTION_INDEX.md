@@ -1,4 +1,4 @@
-> Total files: 6 | Total functions: 184 | PBT candidates: 35 | Excluded: 149
+> Total files: 6 | Total functions: 184 | PBT candidates: 36 | Excluded: 148
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -9,7 +9,7 @@
 | encode_movk | data_processing.rs | 234 | function | no | out of campaign scope |
 | encode_movn | data_processing.rs | 266 | function | no | out of campaign scope |
 | encode_add_sub | data_processing.rs | 291 | function | yes | - |
-| encode_logical | data_processing.rs | 455 | function | no | out of campaign scope |
+| encode_logical | data_processing.rs | 455 | function | yes | - |
 | encode_bitmask_imm | data_processing.rs | 505 | function | no | out of campaign scope |
 | encode_mul | data_processing.rs | 584 | function | no | out of campaign scope |
 | encode_madd | data_processing.rs | 598 | function | no | out of campaign scope |
