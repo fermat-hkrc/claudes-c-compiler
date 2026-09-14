@@ -1,345 +1,256 @@
-# Properties: encode_neon_sqshrun
+# Properties: encode_smull
 
-## encode_neon_sqshrun_diff_llvm_mc
+## encode_smull_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. README.md:1-14 claims the assembler "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:1-7 encodes AArch64 into 32-bit words. State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree SQSHRUN decoder. Differential vs encode_neon_shrn / encode_neon_qshrn / encode_neon_scalar_qshrn rejected: same-job gate (different opcode / saturation / scalar vs vector). SUT-boundary: internal-helper of the GNU-style assembler. Mapping: encode_neon_sqshrun([Vd.Tb, Vn.Ta, #shift], is_rounding, is_high) <-> `{sq,sqr}shrun{2?} Vd.Tb, Vn.Ta, #shift`.
-- Seed: README.md:229; encoder/mod.rs:649-650,841-842
-- Formal: ∀ rd,rn ∈ {0..31}, Ta ∈ {8h,4s,2d}, is_high ∈ 𝔹, is_rounding ∈ 𝔹, shift ∈ {1..dest_esize(Ta)}. encode_neon_sqshrun([Vd.Tb, Vn.Ta, Imm(shift)], is_rounding, is_high) = llvm-mc("{sq,sqr}shrun{2?} Vd.Tb, Vn.Ta, #shift") where Tb = mandated pair of (Ta, is_high).
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Rationale: Strongest evidenced oracle is Differential against llvm-mc (independent AArch64 assembler). State machine rejected: encode_smull is a pure function with no lifecycle. Round-trip rejected: no in-tree SMULL decoder. encode_umull fails the same-job gate (unsigned twin, U=1). SUT-boundary: internal-helper of the GNU-style assembler; public contract is encoding `smull Xd, Wn, Wm`. Doc evidence: README.md:1-14 "accepts the same textual assembly that GCC's gas would consume"; README.md:214 lists smull; ARM ARM SMULL alias of SMADDL Xd,Wn,Wm,XZR; encoder/mod.rs:1-7.
+- Seed: README.md:214 Data Processing table; encoder/mod.rs:247-256 dispatch; data_processing.rs:630 docstring. (none existing unit test)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, dest ∈ {xN, xzr if rd=31, lr if rd=30}. encode_smull([Reg(dest), Reg(wN rn), Reg(wN rm)]) = llvm-mc("smull dest, Wn, Wm") as a little-endian u32 word.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_sqshrun
+function: encoder.data_processing.encode_smull
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, shift, is_high, is_rounding]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, ta: ta_arr, shift: dest_shift, is_high: bool, is_rounding: bool}
+  vars: [rd, rn, rm]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: sut_word(ops, is_rounding, is_high)
-    rhs: llvm_mc_word(asm)
+    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
+    rhs: llvm_mc("smull Xd, Wn, Wm")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:1-14; encoder/mod.rs:649-650,841-842; ARM ARM Advanced SIMD shift by immediate SQSHRUN
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: src/backend/arm/assembler/README.md:1-14; README.md:214; ARM ARM SMULL=SMADDL Ra=XZR; encoder/mod.rs:247-256
 ```
 
-## encode_neon_sqshrun_metamorphic_q
-- Tier: 4
-- Rationale: ARM ARM Q bit is bit 30 and is the sole difference between SQSHRUN and SQSHRUN2 at equal operands. Stronger differential is property 1; this pins the Q isolation independently of llvm-mc. State machine / round-trip rejected as above.
-- Seed: neon.rs:147 let q = if is_high { 1u32 } else { 0 };
-- Formal: ∀ valid (rd,rn,Ta,shift,is_rounding). encode_neon_sqshrun(..., is_rounding, false) XOR encode_neon_sqshrun(..., is_rounding, true) = 1<<30.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_smull_alias_smaddl_xzr
+- Tier: 3
+- Rationale: ARM ARM and the SUT docstring state SMULL Xd, Wn, Wm is the alias of SMADDL Xd, Wn, Wm, XZR. Algebraic metamorphic (alias equality) plus llvm-mc agreement. Stronger differential vs encode_smaddl is rejected as independent differential (shared get_reg / same TU) but the alias equality is an evidenced algebraic law. encode_umull rejected as same-job sibling.
+- Seed: data_processing.rs:630 "Encode SMULL Xd, Wn, Wm -> SMADDL Xd, Wn, Wm, XZR"; llvm-mc prints `smull` for `smaddl ..., xzr`.
+- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_smull([Xrd, Wrn, Wrm]) = encode_smaddl([Xrd, Wrn, Wrm, XZR]) ∧ encode_smull(...) = llvm-mc("smull Xd, Wn, Wm") ∧ encode_smull(...) = llvm-mc("smaddl Xd, Wn, Wm, xzr").
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_sqshrun
+function: encoder.data_processing.encode_smull
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, shift, is_rounding]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, ta: ta_arr, shift: dest_shift, is_rounding: bool}
+  vars: [rd, rn, rm]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: sut_word(ops, is_rounding, false) ^ sut_word(ops, is_rounding, true)
-    rhs: 1u32 << 30
+    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
+    rhs: encode_smaddl([Reg(x(rd)), Reg(w(rn)), Reg(w(rm)), Reg("xzr")])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_rounding: { gen: bool }
-evidence: ARM ARM Advanced SIMD shift by immediate Q bit; neon.rs:147
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: data_processing.rs:630; ARM ARM SMULL alias of SMADDL with Ra=XZR
 ```
 
-## encode_neon_sqshrun_metamorphic_round
-- Tier: 4
-- Rationale: ARM ARM opcode bit 11 distinguishes SQSHRUN (100001) from SQRSHRUN (100011). Stronger differential is property 1; this pins the rounding isolation. State machine / round-trip rejected as above.
-- Seed: neon.rs:151 opcode_bits = if is_rounding { 0b100011 } else { 0b100001 }
-- Formal: ∀ valid (rd,rn,Ta,shift,is_high). encode_neon_sqshrun(..., false, is_high) XOR encode_neon_sqshrun(..., true, is_high) = 1<<11.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_smull_xor_umull_u_bit
+- Tier: 3
+- Rationale: ARM ARM Data-processing (3 source) documents SMULL (U=0) and UMULL (U=1) as the same format differing only at bit 23. Same-job differential rejected (signed vs unsigned). Metamorphic: XOR of the two encodings at equal register numbers is exactly 1<<23.
+- Seed: data_processing.rs:635 vs 646 opcode comments (001 vs 101 at bits [23:21]).
+- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_smull([Xrd, Wrn, Wrm]) XOR encode_umull([Xrd, Wrn, Wrm]) = 1<<23.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_sqshrun
+function: encoder.data_processing.encode_smull
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, shift, is_high]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, ta: ta_arr, shift: dest_shift, is_high: bool}
+  vars: [rd, rn, rm]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: sut_word(ops, false, is_high) ^ sut_word(ops, true, is_high)
-    rhs: 1u32 << 11
+    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))]) XOR encode_umull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
+    rhs: 1u32 << 23
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_high: { gen: bool }
-evidence: ARM ARM SQSHRUN opcode 100001 vs SQRSHRUN 100011; neon.rs:151
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM Data-processing (3 source) U bit; data_processing.rs:635,646
 ```
 
-## encode_neon_sqshrun_invariant_arm_fields
-- Tier: 4
-- Rationale: ARM ARM field layout is an exact structural predicate on every success-path word. Stronger differential is property 1; this asserts each field independently. Dest esize bound is pinned via generator min/max straddling 1 and dest_esize.
-- Seed: neon.rs:117-118 Format comment; ARM ARM Advanced SIMD shift by immediate
-- Formal: ∀ valid (rd,rn,Ta,shift,is_high,is_rounding). let w = encode_neon_sqshrun(...). w[31]=0 ∧ w[30]=is_high ∧ w[29]=1 ∧ w[28:23]=011110 ∧ w[22:19]=(src_esize-shift)>>3 ∧ w[18:16]=(src_esize-shift)&7 ∧ w[15:10]=100001 or 100011 ∧ w[9:5]=rn ∧ w[4:0]=rd.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_smull_arm_fields
+- Tier: 3
+- Rationale: ARM ARM SMADDL/SMULL field layout is an algebraic invariant on every success-path word. Weaker than differential (does not check agreement with an independent assembler) but pins each field so a swapped Rn/Rm cannot hide behind a matching llvm-mc skip.
+- Seed: data_processing.rs:635 comment; llvm-mc KAT `smull x0, w1, w2` = 0x9b227c20.
+- Formal: ∀ rd,rn,rm ∈ {0..31}. let w = encode_smull([Xrd, Wrn, Wrm]). w[31]=1 ∧ w[30:21]=0b0011011001 ∧ w[20:16]=rm ∧ w[15]=0 ∧ w[14:10]=0b11111 ∧ w[9:5]=rn ∧ w[4:0]=rd. Equivalently w = 0x9B207C00 | (rm<<16) | (rn<<5) | rd.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_sqshrun
+function: encoder.data_processing.encode_smull
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, shift, is_high, is_rounding]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, ta: ta_arr, shift: dest_shift, is_high: bool, is_rounding: bool}
+  vars: [rd, rn, rm]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
-    op: holds
-    expr: arm_fields_match(sut_word(ops, is_rounding, is_high), rd, rn, ta, shift, is_high, is_rounding)
+    op: eq
+    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
+    rhs: 0x9B207C00 | (rm << 16) | (rn << 5) | rd
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: ARM ARM Advanced SIMD shift by immediate SQSHRUN; neon.rs:117-155
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM SMADDL sf=1 U=0 o0=0 Ra=31; data_processing.rs:635
 ```
 
-## encode_neon_sqshrun_neg_shift_oob
-- Tier: 5
-- Rationale: ARM ARM shift range is 1..=dest_esize (esize = dest element size). llvm-mc rejects 0, dest_esize+1, src_esize. Sibling encode_neon_shrn (neon.rs:1443-1444) uses half_bits = source/2 as the same bound. Negative/error contract: out-of-range shift must Err. Documented bounds dest_esize and dest_esize+1 are pinned in the generator. Stronger oracles do not apply on the invalid domain.
-- Seed: neon.rs:141-143; encode_neon_shrn neon.rs:1443-1444; llvm-mc rejection of #0/#9/#16 for 8h
-- Formal: ∀ rd,rn ∈ {0..31}, Ta ∈ {8h,4s,2d}, is_high, is_rounding, shift ∈ ℤ. (shift < 1 ∨ shift > dest_esize(Ta)) ⇒ encode_neon_sqshrun([Vd.Tb, Vn.Ta, Imm(shift)], is_rounding, is_high) is Err ∧ llvm-mc rejects the corresponding asm.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, ta=8h, shift=9, is_high=false, is_rounding=false (sqshrun v0.8b, v0.8h, #9)
-- Bug report: pbt-out/bug_reports/encode_neon_sqshrun_shift_oob.md
-
-```property
-function: encoder.neon.encode_neon_sqshrun
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, ta, shift, is_high, is_rounding]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, ta: ta_arr, shift: oob_shift, is_high: bool, is_rounding: bool}
-  relation:
-    op: throws
-    expr: encode_neon_sqshrun(ops, is_rounding, is_high)
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: -16, max: 80, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: ARM ARM SQSHRUN shift 1..=esize; encode_neon_shrn neon.rs:1443-1444; llvm-mc
-```
-
-## encode_neon_sqshrun_neg_dest_tb
-- Tier: 5
-- Rationale: ARM ARM mandates Tb/Ta pairs (Q=0: 8B<-8H, 4H<-4S, 2S<-2D; Q=1: 16B<-8H, 8H<-4S, 4S<-2D). llvm-mc rejects mismatched dest. README claims gas-compatible text. Dest arrangement is a documented contract of the public GNU-style mnemonic, not an implementation detail. Stronger oracles do not apply on the invalid domain.
-- Seed: README.md:1-14; llvm-mc rejection of sqshrun v0.16b, v1.8h, #1
-- Formal: ∀ rd,rn, Ta ∈ {8h,4s,2d}, shift ∈ {1..dest_esize(Ta)}, is_high, is_rounding, Tb ∈ arrangements. Tb ≠ mandated(Ta, is_high) ⇒ encode_neon_sqshrun([Vd.Tb, Vn.Ta, Imm(shift)], is_rounding, is_high) is Err ∧ llvm-mc rejects.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, ta=8h, shift=1, tb=4h, is_high=false, is_rounding=false (sqshrun v0.4h, v0.8h, #1)
-- Bug report: pbt-out/bug_reports/encode_neon_sqshrun_mismatched_dest_tb.md
-
-```property
-function: encoder.neon.encode_neon_sqshrun
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, ta, shift, tb, is_high, is_rounding]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, ta: ta_arr, tb: mismatched_tb, shift: dest_shift, is_high: bool, is_rounding: bool}
-  relation:
-    op: throws
-    expr: encode_neon_sqshrun(ops, is_rounding, is_high)
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  tb: { gen: oneof, options: ["8b", "16b", "4h", "8h", "2s", "4s", "1d", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: ARM ARM SQSHRUN Tb/Ta pairs; README.md:1-14; llvm-mc
-```
-
-## encode_neon_sqshrun_neg_gpr_dest
-- Tier: 5
-- Rationale: GNU-style SQSHRUN dest is Vd.Tb, never a GPR or scalar FP register. llvm-mc rejects sqshrun x0, v1.8h, #1. parse_reg_num accepts x/w/d/s/q/h/b prefixes, so a bare Operand::Reg dest is a documented invalid domain. Stronger oracles do not apply on the invalid domain.
-- Seed: README.md:229 NEON narrow (vector Vd.Tb); llvm-mc rejection of GPR dest
-- Formal: ∀ prefix ∈ {x,w,d,s,q,h,b}, n ∈ {0..31}, rn, Ta, shift ∈ {1..dest_esize}, is_high, is_rounding. encode_neon_sqshrun([Reg(prefix n), Vn.Ta, Imm(shift)], is_rounding, is_high) is Err ∧ llvm-mc rejects.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
-- Status: failing
-- Counterexample: prefix=x, n=0, rn=0, ta=8h, shift=1, is_high=false, is_rounding=false (sqshrun x0, v0.8h, #1)
-- Bug report: pbt-out/bug_reports/encode_neon_sqshrun_gpr_dest.md
-
-```property
-function: encoder.neon.encode_neon_sqshrun
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [prefix, n, rn, ta, shift, is_high, is_rounding]
-  domain: {prefix: gpr_fp_prefix, n: 0..31, rn: vreg_0_31, ta: ta_arr, shift: dest_shift, is_high: bool, is_rounding: bool}
-  relation:
-    op: throws
-    expr: encode_neon_sqshrun(ops, is_rounding, is_high)
-expected_error: String
-generators:
-  prefix: { gen: oneof, options: ["x", "w", "d", "s", "q", "h", "b"] }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: README.md:229; llvm-mc; parse_reg_num encoder/mod.rs:131-147
-```
-
-## encode_neon_sqshrun_neg_extra_arity_kinds
-- Tier: 5
-- Rationale: GNU-style SQSHRUN is a 3-operand instruction (Vd.Tb, Vn.Ta, #shift). llvm-mc rejects a 4th operand. Arity less than 3 is documented by the SUT error string "sqshrun requires 3 operands". Unsupported source Ta (not 8h/4s/2d) and non-register/non-imm kinds are invalid GNU-style forms. Stronger oracles do not apply on the invalid domain.
-- Seed: neon.rs:121-122; llvm-mc rejection of 4-operand form
-- Formal: ∀ (len < 3) or Ta not in {8h,4s,2d} or non-matching operand kind at a slot or invalid register name. encode_neon_sqshrun(...) is Err.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_smull_diff_alt_spellings
+- Tier: 2
+- Rationale: Coverage-sweep differential. First valid-domain generator spelled ZR as xzr/wzr and used lowercase xN. parse_reg_num lowercases and accepts n=31 as ZR; llvm-mc accepts x31/w31, XZR/WZR, LR, and uppercase Xn/Wn. Same differential contract as encode_smull_diff_valid_gpr; generator skewed to those spellings.
+- Seed: parse_reg_num encoder/mod.rs:131-146 (to_lowercase, num<=31); llvm-mc `smull x31, w31, w31` / `smull X0, W1, W2` / `smull LR, W1, W2`.
+- Formal: ∀ rd,rn,rm ∈ {0..31}, dest_spell,src_spell covering {x31, XZR, LR, uppercase xN, xzr/xN} × {w31, uppercase wN, wzr/wN}. encode_smull([Reg(dest), Reg(src_n), Reg(src_m)]) = llvm-mc("smull dest, src_n, src_m").
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_sqshrun
-oracle: negative_error
+function: encoder.data_processing.encode_smull
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, extra, ta, is_high, is_rounding, n, slot, which, bad]
-  domain: {arity: 0..2, extra: vreg, ta: bad_ta, kinds: non_reg_imm, names: invalid_vreg}
+  vars: [rd, rn, rm, dest_spell, src_spell]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, dest_spell: 0..4, src_spell: 0..2 }
   relation:
-    op: throws
-    expr: encode_neon_sqshrun(malformed, is_rounding, is_high)
-expected_error: String
+    op: eq
+    lhs: encode_smull([Reg(dest_spell(rd)), Reg(src_spell(rn)), Reg(src_spell(rm))])
+    rhs: llvm_mc("smull dest, Wn, Wm")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: int, min: 0, max: 31, type: u32 }
-  n: { gen: int, min: 0, max: 2, type: usize }
-  ta: { gen: oneof, options: ["8b", "16b", "4h", "2s", "1d", "16h", "8s", "4d", "", "b", "h"] }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: neon.rs:121-122; README.md:1-14; llvm-mc
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
+  src_spell: { gen: int, min: 0, max: 2, type: u32 }
+evidence: encoder/mod.rs:131-146 parse_reg_num; llvm-mc accepts x31/XZR/LR/uppercase
 ```
 
-## encode_neon_sqshrun_neg_extra_operand
-- Tier: 5
-- Rationale: GNU-style SQSHRUN is a 3-operand instruction (Vd.Tb, Vn.Ta, #shift). llvm-mc rejects a 4th operand. README.md:1-14 claims gas-compatible text. Stronger oracles do not apply on the invalid domain.
-- Seed: neon.rs:121-122; llvm-mc rejection of 4-operand form
-- Formal: ∀ rd,rn,extra ∈ {0..31}, Ta ∈ {8h,4s,2d}, shift ∈ {1..dest_esize(Ta)}, is_high, is_rounding. encode_neon_sqshrun([Vd.Tb, Vn.Ta, Imm(shift), extra], is_rounding, is_high) is Err ∧ llvm-mc rejects.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, extra=0, ta=8h, shift=1, is_high=false, is_rounding=false (sqshrun v0.8b, v0.8h, #1, v0)
-- Bug report: pbt-out/bug_reports/encode_neon_sqshrun_extra_operand.md
-
-```property
-function: encoder.neon.encode_neon_sqshrun
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, extra, ta, shift, is_high, is_rounding]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, extra: vreg_0_31, ta: ta_arr, shift: dest_shift, is_high: bool, is_rounding: bool}
-  relation:
-    op: throws
-    expr: encode_neon_sqshrun(ops4, is_rounding, is_high)
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: neon.rs:121-122; README.md:1-14; llvm-mc
-```
-
-## encode_neon_sqshrun_neg_shift_i64_trunc
-- Tier: 5
-- Rationale: Operand::Imm is i64. The SUT does `*v as u32`, so an i64 whose low 32 bits look like a valid shift is encoded as that shift. GNU-style #imm must be rejected when the i64 is not in 1..=dest_esize. Coverage-sweep of the as-u32 path. Stronger oracles do not apply on the invalid domain.
-- Seed: neon.rs:125 `*v as u32`; parser.rs:24 Operand::Imm(i64)
-- Formal: ∀ rd,rn, Ta, shift ∈ {1..dest_esize}, k ≠ 0, is_high, is_rounding. let wide = shift + k*2^32. encode_neon_sqshrun([Vd.Tb, Vn.Ta, Imm(wide)], is_rounding, is_high) is Err.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, ta=8h, shift=1, k=1, is_high=false, is_rounding=false (Imm(4294967297))
-- Bug report: pbt-out/bug_reports/encode_neon_sqshrun_shift_i64_trunc.md
-
-```property
-function: encoder.neon.encode_neon_sqshrun
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, ta, shift, is_high, is_rounding, k]
-  domain: {rd: vreg_0_31, rn: vreg_0_31, ta: ta_arr, shift: dest_shift, k: nonzero_i64, is_high: bool, is_rounding: bool}
-  relation:
-    op: throws
-    expr: encode_neon_sqshrun(ops_wide, is_rounding, is_high)
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  k: { gen: int, min: -4, max: 4, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: neon.rs:125; parser.rs:24 Operand::Imm(i64)
-```
-
-## encode_neon_sqshrun_neg_reg_source
-- Tier: 5
-- Rationale: GNU-style SQSHRUN source is Vn.Ta. A bare Operand::Reg (GPR/FP/V without arrangement) is not Vn.Ta. Coverage-sweep of the Operand::Reg source arm. Stronger oracles do not apply on the invalid domain.
-- Seed: neon.rs:14-17 Operand::Reg path; README.md:229 Vn.Ta
-- Formal: ∀ prefix ∈ {x,w,d,s,q,h,b,v}, n ∈ {0..31}, rd, Ta, shift ∈ {1..dest_esize}, is_high, is_rounding. encode_neon_sqshrun([Vd.Tb, Reg(prefix n), Imm(shift)], is_rounding, is_high) is Err.
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_smull_neg_arity
+- Tier: 4e
+- Rationale: GNU as / llvm-mc reject SMULL with fewer than 3 operands ("too few operands"). get_reg on a missing index returns Err. Negative/error contract. Stronger oracles do not apply to the invalid domain.
+- Seed: llvm-mc `smull` / `smull x0` / `smull x0, w1` → error: too few operands.
+- Formal: ∀ ops with len(ops) ∈ {0,1,2} and slots filled with valid X/W regs or other Operand kinds. encode_smull(ops) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_sqshrun
+function: encoder.data_processing.encode_smull
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, prefix, n, ta, shift, is_high, is_rounding]
-  domain: {rd: vreg_0_31, prefix: gpr_fp_v, n: 0..31, ta: ta_arr, shift: dest_shift, is_high: bool, is_rounding: bool}
+  vars: [ops]
+  domain: { ops: operand lists of length 0..2 }
   relation:
     op: throws
-    expr: encode_neon_sqshrun(ops, is_rounding, is_high)
+    expr: encode_smull(ops)
+expected_error: String
+generators:
+  ops: { gen: list, elem: { gen: string }, maxLen: 2 }
+evidence: llvm-mc "too few operands for instruction"; get_reg encoder/mod.rs:956-966
+```
+
+## encode_smull_neg_extra_operand
+- Tier: 4e
+- Rationale: llvm-mc rejects a 4th operand on scalar SMULL ("invalid operand for instruction"). The assembler contract is GNU-style assembly. Extra operands must Err, not be silently ignored. get_reg only reads indices 0..2 so the current body ignores extras — this is the law, not a characterizing test of the body.
+- Seed: llvm-mc `smull x0, w1, w2, x3` and `smull x0, w1, w2, lsl #0` error.
+- Formal: ∀ rd,rn,rm ∈ {0..31}, extra ∈ Operand. encode_smull([Xrd, Wrn, Wrm, extra]) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, extra=Reg("x0") — encode_smull returns Ok(Word(0x9b207c00))
+- Bug report: pbt-out/bug_reports/encode_smull_extra_operand.md
+
+```property
+function: encoder.data_processing.encode_smull
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, extra]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, extra: Operand }
+  relation:
+    op: throws
+    expr: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm)), extra])
 expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  prefix: { gen: oneof, options: ["x", "w", "d", "s", "q", "h", "b", "v"] }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: oneof, options: ["8h", "4s", "2d"] }
-  shift: { gen: int, min: 1, max: 32, type: i64 }
-  is_high: { gen: bool }
-  is_rounding: { gen: bool }
-evidence: neon.rs:14-17; README.md:229
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: oneof, options: [Reg, Imm, Shift] }
+evidence: llvm-mc rejects 4th operand; README.md:1-14 GNU-style assembly
+```
+
+## encode_smull_neg_wrong_width
+- Tier: 4e
+- Rationale: ARM ARM SMULL form is Xd, Wn, Wm only. llvm-mc rejects W dest and X sources. Mixed or inverted widths must Err. The body discards is_64 from get_reg and always sets sf=1, so this law is independent of the producing statement.
+- Seed: llvm-mc `smull w0, w1, w2` / `smull x0, x1, x2` / `smull x0, w1, x2` error: invalid operand.
+- Formal: ∀ rd,rn,rm ∈ {0..30}, rd64,rn64,rm64 ∈ bool. (rd64,rn64,rm64) ≠ (true,false,false) ⇒ encode_smull([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))]) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=false — encode_smull(w0, w0, w0) returns Ok
+- Bug report: pbt-out/bug_reports/encode_smull_wrong_width.md
+
+```property
+function: encoder.data_processing.encode_smull
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, rd64, rn64, rm64]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30, widths: not (X,W,W) }
+  relation:
+    op: throws
+    expr: encode_smull([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))])
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+  rm64: { gen: bool }
+evidence: ARM ARM SMULL Xd,Wn,Wm; llvm-mc invalid operand for W dest / X source
+```
+
+## encode_smull_neg_sp_fp_nonreg
+- Tier: 4e
+- Rationale: ARM ARM register 31 is XZR/WZR, never SP/WSP. FP/SIMD names (d/s/q/v/h/b) are not SMULL GPR operands. Non-register Operand kinds at any of the three slots are not registers. llvm-mc rejects all three classes. parse_reg_num currently maps sp/wsp to 31 and accepts FP prefixes — the law is the assembler contract, not the helper.
+- Seed: llvm-mc `smull sp, w1, w2` / `smull x0, wsp, w2` / `smull d0, w1, w2` error.
+- Formal: ∀ which ∈ {0,1,2}, bad ∈ {sp,wsp} ∪ {d,s,q,v,h,b}{0..31} ∪ {Imm,Mem,Shift,RegArrangement,Label,Symbol}. encode_smull(ops with slot `which` = bad, other slots valid X/W) = Err. Also ∀ invalid name ∈ {foo, x32, w32, x, r0, ""} encode_smull = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: SP which=0 is_64=false a=0 b=0 names=[wsp, w0, w0] returns Ok; FP which=0 prefix=d n=0 (d0, w1, w2) returns Ok. Sub-tests encode_smull_neg_nonreg and encode_smull_neg_invalid_name passed.
+- Bug report: pbt-out/bug_reports/encode_smull_sp_as_zr.md; pbt-out/bug_reports/encode_smull_fp_as_gpr.md
+
+```property
+function: encoder.data_processing.encode_smull
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, bad]
+  domain: { which: 0..2, bad: SP/WSP or FP/SIMD name or non-Reg Operand or invalid GPR name }
+  relation:
+    op: throws
+    expr: encode_smull(ops_with_slot(which, bad))
+expected_error: String
+generators:
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  bad: { gen: oneof, options: [sp, wsp, fp_reg, non_reg, invalid_name] }
+evidence: ARM ARM Rd/Rn/Rm are XZR/WZR never SP; llvm-mc rejects SP/FP/non-reg; README.md:1-14
 ```

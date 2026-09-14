@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_smull)
+
+- Valid SMULL Xd, Wn, Wm with Rd/Rn/Rm in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Alternate spellings x31/w31, XZR/WZR, LR, uppercase Xn/Wn match llvm-mc (1000 cases).
+- encode_smull(Xd, Wn, Wm) equals encode_smaddl(Xd, Wn, Wm, XZR) and both match llvm-mc `smull` / `smaddl ..., xzr` (1000 cases).
+- encode_smull XOR encode_umull at equal registers = 1<<23 (ARM ARM U bit) (1000 cases).
+- Success-path word: bit 31=1, bits[30:21]=00 11011 001, Rm at [20:16], o0=0 at 15, Ra=11111 at [14:10], Rn at [9:5], Rd at [4:0]. Equivalently w = 0x9B207C00 | (rm<<16) | (rn<<5) | rd.
+- Fewer than 3 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at GPR slots always Err.
+- Known-answer: `smull x0, w1, w2` = 0x9b227c20; `smull xzr, wzr, wzr` = 0x9b3f7fff; `smull lr, w1, w2` = 0x9b227c3e; `smaddl x0, w1, w2, xzr` aliases to the same word.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) SMADDL: sf=1 U=0 11011 001 Rm o0=0 Ra Rn Rd. SMULL Xd, Wn, Wm is the alias of SMADDL Xd, Wn, Wm, XZR. Register 31 is XZR/WZR, never SP/WSP. Dest is Xd; sources are Wn/Wm.
+- Dispatch: encoder/mod.rs:247-256 `"smull"` with RegArrangement goes to NEON; otherwise encode_smull (scalar). This campaign tests only the scalar helper.
+- Sibling encode_smaddl is the same format with caller Ra (alias at Ra=XZR). Sibling encode_umull is U=1 (different job).
+- Callers: assembler README Data Processing table lists smull. No codegen emission of scalar smull found.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- is_64 from get_reg is discarded; W dest and X sources are encoded (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / extra / width / SP / FP / non-Reg / invalid name / x31 / uppercase / lr).
+
+---
+
 # Confirmed invariants (encode_shift)
 
 - Valid GP dest matching mnemonic size b/w/l/q, Imm count 0..255 matches llvm-mc `-triple=x86_64 -show-encoding` (1000 cases).

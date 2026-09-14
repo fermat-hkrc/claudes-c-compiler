@@ -57,3 +57,4 @@
 | encode_sbc | data_processing.rs | data_processing.rs | cargo test --lib | 9 passing / 4 failing properties (plus 3 passing KAT + 4 failing regression witnesses; 4 bugs) |
 | encode_neon_shll | neon.rs | neon.rs | cargo test --lib | 6 passing / 5 failing properties (plus 2 passing KAT + 6 failing regression witnesses; 5 bugs) |
 | encode_neon_sqshrun | neon.rs | neon.rs | cargo test --lib | 6 passing / 5 failing properties (plus 2 passing KAT + 5 failing regression witnesses; 5 bugs) |
+| encode_smull | data_processing.rs | data_processing.rs | cargo test --lib | 6 passing / 3 failing properties (plus 4 passing KAT + 4 failing regression witnesses; 4 bugs; sweep alt-spellings passing) |
