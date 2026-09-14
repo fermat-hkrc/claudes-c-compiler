@@ -1,69 +1,82 @@
-# PBT Campaign Report: encode_umull
+# PBT Campaign Report: encode_uxtw
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_umull
-**Tests:** 12 properties + 4 KAT + 4 regression witnesses
-**Result:** 4 failing (SUT bugs), 8 passing
+**Modules tested:** encode_uxtw
+**Tests:** 11 properties + 4 KAT + 5 regression witnesses
+**Result:** 8 failing (5 SUT bugs), 3 passing
 **Effort tier:** standard (1 coverage-driven sweep round; ≥1000 generator cases; ≥1 metamorphic/differential required)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_umull | 4 failing / 8 passing properties + 4 KAT pass + 4 regression fail | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_uxtw | 8 failing / 3 passing properties + 4 KAT fail + 5 regression fail | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **encode_umull silently ignores a 4th operand**
-   - Law: UMULL is 3-operand (`Xd, Wn, Wm`); extra operand must Err (llvm-mc `invalid operand`).
-   - Minimal input: `[Reg("x0"), Reg("w0"), Reg("w0"), Reg("x0")]`
+1. **encode_uxtw emits MOV Wd,Wn (ORR) instead of UBFM Xd,Xn,#0,#31**
+   - Law: ARM ARM C6 UXTW is the alias of UBFM Xd, Xn, #0, #31. llvm-mc encodes `uxtw x0, w1` as `0xD3407C20`.
+   - Minimal input: `[Reg("x0"), Reg("w1")]` (also shrunk `uxtw x0, w0`)
+   - Expected: `Ok(Word(0xD3407C20))`
+   - Actual: `Ok(Word(0x2A0103E0))` — 32-bit `ORR Wd, WZR, Wn` (`mov w0, w1`)
+   - Root cause: body uses `(0b001010100 << 23) | (rn << 16) | (31 << 5) | rd` instead of `0xD3407C00 | (rn << 5) | rd`
+   - Impact: every `uxtw` word disagrees with gas/llvm-mc; disassembly shows MOV not UBFX
+   - Severity: high
+   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
+   - Bug report: `pbt-out/bug_reports/encode_uxtw_mov_not_ubfm.md`
+   - Regression: `test_encode_uxtw_regression_mov_not_ubfm` (fails as witness)
+   - Also fails: `encode_uxtw_alias_ubfm`, `encode_uxtw_arm_fields`, `encode_uxtw_diff_alt_spellings`, 4 KATs
+
+2. **encode_uxtw silently ignores a 3rd operand**
+   - Law: UXTW is 2-operand (`Xd, Wn`); extra operand must Err (llvm-mc `invalid operand`).
+   - Minimal input: `[Reg("x0"), Reg("w0"), Reg("x0")]`
    - Expected: `Err`
-   - Actual: `Ok(Word(0x9ba07c00))` — `get_reg` only reads indices 0..2
+   - Actual: `Ok(Word)` — `get_reg` only reads indices 0..1
    - Root cause: no `operands.len()` check
    - Impact: typos/extra operands assemble silently
    - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `RUST_TEST_THREADS=1`
-   - Bug report: `pbt-out/bug_reports/encode_umull_extra_operand.md`
-   - Regression: `test_encode_umull_regression_extra_operand` (fails as witness)
+   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
+   - Bug report: `pbt-out/bug_reports/encode_uxtw_extra_operand.md`
+   - Regression: `test_encode_uxtw_regression_extra_operand` (fails as witness)
 
-2. **encode_umull accepts W dest and X sources**
-   - Law: ARM ARM form is `UMULL <Xd>, <Wn>, <Wm>` only. llvm-mc rejects `umull w0, w0, w0`.
-   - Minimal input: `[Reg("w0"), Reg("w0"), Reg("w0")]`
+3. **encode_uxtw accepts W dest**
+   - Law: ARM ARM form is `UXTW <Xd>, <Wn>` only. llvm-mc rejects `uxtw w0, w0`.
+   - Minimal input: `[Reg("w0"), Reg("w0")]`
    - Expected: `Err`
-   - Actual: `Ok(Word(...))` with sf forced to 1; `is_64` from `get_reg` discarded
+   - Actual: `Ok(Word(0x2A0003E0))`; `is_64` from `get_reg` discarded
    - Root cause: `let (rd, _) = get_reg(...)` ignores width
-   - Impact: 32-bit dest mnemonic encoded as 64-bit unsigned long multiply
+   - Impact: 32-bit dest mnemonic encoded instead of rejected
    - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `RUST_TEST_THREADS=1`
-   - Bug report: `pbt-out/bug_reports/encode_umull_wrong_width.md`
-   - Regression: `test_encode_umull_regression_wrong_width` (fails as witness)
+   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
+   - Bug report: `pbt-out/bug_reports/encode_uxtw_wd.md`
+   - Regression: `test_encode_uxtw_regression_wd` (fails as witness)
 
-3. **encode_umull encodes SP/WSP as XZR/WZR**
-   - Law: 3-source register 31 is ZR, never SP. llvm-mc rejects `umull sp, w1, w2`.
-   - Minimal input: `[Reg("wsp"), Reg("w0"), Reg("w0")]`
+4. **encode_uxtw encodes SP/WSP as XZR/WZR**
+   - Law: Bitfield register 31 is ZR, never SP. llvm-mc rejects `uxtw sp, w1` and `uxtw x0, wsp`.
+   - Minimal input: `[Reg("wsp"), Reg("w0")]`
    - Expected: `Err`
-   - Actual: `Ok(Word(...))` with that slot as register 31
+   - Actual: `Ok(Word)` with that slot as register 31
    - Root cause: `parse_reg_num` maps `sp`/`wsp` to 31 with no SP-vs-ZR check
    - Impact: stack-pointer operands silently rewritten to the zero register
    - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `RUST_TEST_THREADS=1`
-   - Bug report: `pbt-out/bug_reports/encode_umull_sp_as_zr.md`
-   - Regression: `test_encode_umull_regression_sp` (fails as witness)
+   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
+   - Bug report: `pbt-out/bug_reports/encode_uxtw_sp.md`
+   - Regression: `test_encode_uxtw_regression_sp` (fails as witness)
 
-4. **encode_umull encodes FP/SIMD register names as GPRs**
-   - Law: Scalar UMULL operands are GPRs. llvm-mc rejects `umull d0, w1, w2`.
-   - Minimal input: `[Reg("d0"), Reg("w1"), Reg("w2")]`
+5. **encode_uxtw encodes FP/SIMD register names as GPRs**
+   - Law: UXTW operands are GPRs. llvm-mc rejects `uxtw d0, w1`.
+   - Minimal input: `[Reg("d0"), Reg("w1")]`
    - Expected: `Err`
-   - Actual: `Ok(Word(...))` treating `d0` as GPR 0
+   - Actual: `Ok(Word)` treating `d0` as GPR 0
    - Root cause: `parse_reg_num` accepts `d`/`s`/`q`/`v`/`h`/`b` prefixes
    - Impact: FP dest/source silently treated as same-numbered GPR
    - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `RUST_TEST_THREADS=1`
-   - Bug report: `pbt-out/bug_reports/encode_umull_fp_as_gpr.md`
-   - Regression: `test_encode_umull_regression_fp` (fails as witness)
+   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
+   - Bug report: `pbt-out/bug_reports/encode_uxtw_fp.md`
+   - Regression: `test_encode_uxtw_regression_fp` (fails as witness)
 
 ## Design Caveats
 
@@ -73,42 +86,37 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (`mod encode_umull_pbt`) | 12 properties + 4 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/data_processing.rs (`mod encode_uxtw_pbt`) | 11 properties + 4 KAT + 5 regression witnesses |
 
 ## Output Directories
 
 - `pbt-out/PLAN.md` — campaign checklist
 - `pbt-out/PROPERTIES.md` — property ledger
 - `pbt-out/REPORT.md` — this report
-- `pbt-out/COVERAGE.md` — coverage ledger row for encode_umull
+- `pbt-out/COVERAGE.md` — per-function coverage row
 - `pbt-out/COVERAGE_STATUS.md` — campaign coverage stats
-- `pbt-out/FUNCTION_INDEX.md` — encode_umull marked PBT candidate
-- `pbt-out/INVARIANTS.md` — confirmed encode_umull invariants
-- `pbt-out/bug_reports/encode_umull_extra_operand.md`
-- `pbt-out/bug_reports/encode_umull_wrong_width.md`
-- `pbt-out/bug_reports/encode_umull_sp_as_zr.md`
-- `pbt-out/bug_reports/encode_umull_fp_as_gpr.md`
+- `pbt-out/FUNCTION_INDEX.md` — merged function index
+- `pbt-out/INVARIANTS.md` — confirmed invariants
+- `pbt-out/bug_reports/encode_uxtw_mov_not_ubfm.md`
+- `pbt-out/bug_reports/encode_uxtw_extra_operand.md`
+- `pbt-out/bug_reports/encode_uxtw_wd.md`
+- `pbt-out/bug_reports/encode_uxtw_sp.md`
+- `pbt-out/bug_reports/encode_uxtw_fp.md`
 
-## Sweep close-out
+## Contract-surface sweep
 
-Contract-surface sweep (standard tier, 1 round): `coverage_gaps` reported no LLVM profraw in this session. Manual arm audit of `encode_umull` added SP / FP / non-reg / invalid-name properties. Non-reg and invalid-name pass; SP and FP fail as additional bugs. Sweep closed: documented error-path surface has a property.
+Tier `standard` owes 1 coverage-driven round. `coverage_gaps` reported no instrumented LLVM profraw in this session. Sweep was a manual arm audit of encode_uxtw (arity / extra / Wd / SP / FP / nonreg / invalid name / alt-spellings / UBFM alias / ARM fields). Added `encode_uxtw_diff_alt_spellings` (fails, same MOV-vs-UBFM bug), `encode_uxtw_neg_nonreg` (passing), `encode_uxtw_neg_invalid_name` (passing). Function is 8 lines with no remaining documented branch without a property. Sweep closed: documented behaviors have properties.
 
-## Results (session)
+## Skipped targets
 
-Results: 4 failed, 8 passed (plus 4 KAT passed, 4 regression witnesses failed as intended)
-
-Failing tests:
-- encode_umull_neg_extra_operand: SUT bug — extra operand ignored — pbt-out/bug_reports/encode_umull_extra_operand.md
-- encode_umull_neg_wrong_width: SUT bug — W dest / X sources accepted — pbt-out/bug_reports/encode_umull_wrong_width.md
-- encode_umull_neg_sp: SUT bug — SP/WSP encoded as ZR — pbt-out/bug_reports/encode_umull_sp_as_zr.md
-- encode_umull_neg_fp: SUT bug — FP/SIMD names encoded as GPRs — pbt-out/bug_reports/encode_umull_fp_as_gpr.md
+(none) — in-scope symbol `encode_uxtw` compiled and ran under `cargo test --lib`.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 14:36 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 63/253 total | PBT candidates: 63 | Tested: 63 (100%) | 0 pass, 63 fail
+> Last updated: 2026-09-14 14:48 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 64/253 total | PBT candidates: 64 | Tested: 64 (100%) | 0 pass, 64 fail
 
 ## Summary
 
@@ -117,10 +125,10 @@ Failing tests:
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 63 |
-| **Tested (of PBT candidates)** | **63 / 63 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 63 / 0 |
-| **Overall (tested / all functions)** | **63 / 253 (25%)** |
+| PBT candidates (from FUNCTION_INDEX) | 64 |
+| **Tested (of PBT candidates)** | **64 / 64 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 64 / 0 |
+| **Overall (tested / all functions)** | **64 / 253 (25%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -128,13 +136,13 @@ Failing tests:
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 63 | 63 | 0 | 100% |
+|  | 64 | 64 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 63 | 63 | 0 | 100% |
+| unknown | 64 | 64 | 0 | 100% |
 
 ## File Coverage
 
@@ -143,7 +151,7 @@ Failing tests:
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 23 | 23 | 100% | covered |
+| data_processing.rs | 36 | 24 | 24 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
@@ -219,3 +227,4 @@ Failing tests:
 | encode_umulh | data_processing.rs |
 | encode_neon_rbit | neon.rs |
 | encode_umull | data_processing.rs |
+| encode_uxtw | data_processing.rs |

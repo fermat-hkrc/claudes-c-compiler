@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_uxtw)
+
+- Fewer than 2 operands, invalid names (foo, x32, w32, x, r0, empty, x-1, x99, w), and non-register kinds at GPR slots always Err (1000 cases each).
+- Known-answer (llvm-mc, not SUT): `uxtw x0, w1` = 0xD3407C20; `uxtw xzr, wzr` = 0xD3407FFF; `uxtw lr, w0` = 0xD3407C1E; `ubfm x0, x1, #0, #31` aliases to 0xD3407C20. SUT currently emits 32-bit ORR/MOV instead (see bugs).
+- Intended success-path word (ARM ARM / llvm-mc): sf=1 opc=10 bits[28:23]=100110 N=1 immr=0 imms=31 Rn Rd. Equivalently w = 0xD3407C00 | (rn<<5) | rd. SUT does not satisfy this (MOV encoding).
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM C6 UXTW: alias of UBFM Xd, Xn, #0, #31. sf=1 opc=10 N=1 immr=0 imms=31 Rn Rd. Syntax UXTW Xd, Wn only. Register 31 is XZR/WZR, never SP. Sibling encode_sxtw is SBFM (opc=00, different job). Sibling encode_uxth/uxtb use imms=15/7.
+- Dispatch: encoder/mod.rs:296 `"uxtw" => encode_uxtw(operands)` (scalar only; no NEON arrangement path).
+- Callers: assembler README Extensions table lists uxtw.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- is_64 from get_reg is discarded; W dest is encoded (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- Body emits 32-bit ORR (MOV Wd, Wn) instead of 64-bit UBFM (see bugs). The producing comment mentions both encodings; ARM ARM / llvm-mc / gas require UBFM.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_uxtw (arity / extra / Wd / SP / FP / nonreg / invalid name / alt-spellings / UBFM alias / ARM fields).
+- Five failing properties (plus KATs/regressions) are SUT bugs, not quirks: MOV-not-UBFM, extra operand, W dest, SP-as-ZR, FP-as-GPR. See pbt-out/bug_reports/encode_uxtw_*.md.
+
 # Confirmed invariants (encode_umull)
 
 - Valid UMULL Xd, Wn, Wm with Rd/Rn/Rm in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

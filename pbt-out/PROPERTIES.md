@@ -1,335 +1,303 @@
-# Properties: encode_umull
+# Properties: encode_uxtw
 
-## encode_umull_diff_valid_gpr
+## encode_uxtw_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. README claims GNU-gas-compatible textual assembly; encoder/mod.rs claims 32-bit AArch64 words. State machine rejected (pure function). Round-trip rejected (no in-tree UMULL decoder). encode_smull rejected as sibling (U bit different job). encode_umaddl rejected as independent differential (shared get_reg / same TU).
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_diff_valid_gpr
-- Formal: ∀ rd,rn,rm ∈ {0..31}, dest ∈ {x{rd}, xzr if rd=31, lr if rd=30}. encode_umull([Reg(dest), Reg(w{rn}|wzr), Reg(w{rm}|wzr)]) = Word(llvm-mc("umull dest, Wn, Wm"))
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree UXTW decoder). Same-job siblings encode_sxtw / encode_uxth / encode_uxtb rejected (SBFM vs UBFM; different imms). encode_ubfm is same crate so alias equality is metamorphic, not independent differential. Doc evidence: README.md "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:296 `"uxtw" => encode_uxtw`; ARM ARM C6 UXTW = UBFM Xd, Xn, #0, #31.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_diff_valid_gpr
+- Formal: ∀ rd, rn ∈ {0..31}. encode_uxtw([Reg(Xd), Reg(Wn)]) = llvm-mc("uxtw Xd, Wn") as little-endian u32, where X31/W31 are xzr/wzr.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Status: failing
+- Counterexample: rd = 0, rn = 0, use_lr = false (uxtw x0, w0 → SUT 0x2A0003E0 vs llvm-mc 0xD3407C00)
+- Bug report: pbt-out/bug_reports/encode_uxtw_mov_not_ubfm.md
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  vars: [rd, rn]
+  domain: { rd: "0..=31", rn: "0..=31" }
   relation:
     op: eq
-    lhs: encode_umull([Reg(xreg(rd)), Reg(wreg(rn)), Reg(wreg(rm))])
-    rhs: llvm_mc("umull Xd, Wn, Wm")
+    lhs: encode_uxtw([Reg(xreg(rd)), Reg(wreg(rn))])
+    rhs: llvm_mc_word("uxtw {xreg(rd)}, {wreg(rn)}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/arm/assembler/README.md gas-compatible assembly; encoder/mod.rs 32-bit words; ARM ARM UMULL alias of UMADDL Ra=XZR
+evidence: src/backend/arm/assembler/README.md:13; encoder/mod.rs:296; ARM ARM C6 UXTW alias of UBFM
 ```
 
-## encode_umull_alias_umaddl_xzr
-- Tier: 4c
-- Rationale: ARM ARM and the encode_umull docstring state UMULL Xd, Wn, Wm is the alias of UMADDL Xd, Wn, Wm, XZR. Not an independent differential (shared TU). Metamorphic relation plus llvm-mc agreement.
-- Seed: data_processing.rs encode_umaddl_pbt::encode_umaddl_alias_umull_xzr
-- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_umull([Xd,Wn,Wm]) = encode_umaddl([Xd,Wn,Wm,XZR]) = llvm-mc("umull Xd, Wn, Wm") = llvm-mc("umaddl Xd, Wn, Wm, xzr")
+## encode_uxtw_alias_ubfm
+- Tier: 4
+- Rationale: ARM ARM documents UXTW as the assembler alias of UBFM Xd, Xn, #0, #31 (equivalently UBFX Xd, Xn, #0, #32). encode_ubfm is the same crate, so this is algebraic.metamorphic, not independent differential. Stronger differential already claimed by encode_uxtw_diff_valid_gpr. Round-trip rejected (no decoder).
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_alias_sbfm
+- Formal: ∀ rd, rn ∈ {0..31}. encode_uxtw([Reg(Xd), Reg(Wn)]) = encode_ubfm([Reg(Xd), Reg(Xn), Imm(0), Imm(31)]) = llvm-mc("uxtw Xd, Wn").
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Status: failing
+- Counterexample: rd = 0, rn = 0 (SUT 0x2A0003E0 vs UBFM 0xD3407C00)
+- Bug report: pbt-out/bug_reports/encode_uxtw_mov_not_ubfm.md
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  vars: [rd, rn]
+  domain: { rd: "0..=31", rn: "0..=31" }
   relation:
     op: eq
-    lhs: encode_umull([Xd, Wn, Wm])
-    rhs: encode_umaddl([Xd, Wn, Wm, XZR])
+    lhs: encode_uxtw([Reg(xreg(rd)), Reg(wreg(rn))])
+    rhs: encode_ubfm([Reg(xreg(rd)), Reg(xreg(rn)), Imm(0), Imm(31)])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: data_processing.rs:641-646 docstring; ARM ARM UMULL alias of UMADDL Ra=XZR
+evidence: ARM ARM C6 UXTW alias of UBFM Xd, Xn, #0, #31; llvm-mc disassembles uxtw as ubfx #0,#32
 ```
 
-## encode_umull_xor_smull_u_bit
-- Tier: 4c
-- Rationale: ARM ARM Data-processing (3 source) U bit (bit 23) is the sole encoding difference between UMULL (U=1) and SMULL (U=0) at equal registers. Metamorphic, not same-job differential.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_xor_umull_u_bit
-- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_umull(Xd,Wn,Wm) XOR encode_smull(Xd,Wn,Wm) = 1<<23
+## encode_uxtw_arm_fields
+- Tier: 4
+- Rationale: ARM ARM bitfield encoding of UXTW/UBFM with sf=1 opc=10 N=1 immr=0 imms=31. Weaker than differential; kept as an exact structural invariant that pins each field independently of llvm-mc parsing.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_arm_fields
+- Formal: ∀ rd, rn ∈ {0..31}. let w = encode_uxtw([Reg(Xd), Reg(Wn)]). w = 0xD3407C00 | (rn << 5) | rd ∧ w[31]=1 ∧ w[30:29]=10 ∧ w[28:23]=100110 ∧ w[22]=1 ∧ w[21:16]=0 ∧ w[15:10]=31 ∧ w[9:5]=rn ∧ w[4:0]=rd.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Status: failing
+- Counterexample: rd = 0, rn = 0 (SUT 0x2A0003E0 vs 0xD3407C00)
+- Bug report: pbt-out/bug_reports/encode_uxtw_mov_not_ubfm.md
 
 ```property
-function: encoder.data_processing.encode_umull
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
-  relation:
-    op: eq
-    lhs: encode_umull(ops) XOR encode_smull(ops)
-    rhs: 1u32 << 23
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Data-processing (3 source) U bit at bit 23; SMULL U=0 UMULL U=1
-```
-
-## encode_umull_arm_fields
-- Tier: 4d
-- Rationale: ARM ARM field layout for UMULL: sf=1 op54=00 11011 U=1 01 Rm o0=0 Ra=11111 Rn Rd. Weaker than differential; still pins each field independently of llvm-mc.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_arm_fields
-- Formal: ∀ rd,rn,rm ∈ {0..31}. let w = encode_umull(Xd,Wn,Wm). w = 0x9BA07C00 | (rm<<16) | (rn<<5) | rd ∧ w[31]=1 ∧ w[30:21]=00_11011_101 ∧ w[20:16]=rm ∧ w[15]=0 ∧ w[14:10]=11111 ∧ w[9:5]=rn ∧ w[4:0]=rd
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  vars: [rd, rn]
+  domain: { rd: "0..=31", rn: "0..=31" }
   relation:
     op: eq
-    lhs: encode_umull([Xd, Wn, Wm])
-    rhs: 0x9BA07C00 | (rm << 16) | (rn << 5) | rd
+    lhs: encode_uxtw([Reg(xreg(rd)), Reg(wreg(rn))])
+    rhs: "0xD3407C00 | (rn << 5) | rd"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Data-processing (3 source) UMADDL/UMULL; data_processing.rs:646 comment
+evidence: ARM ARM C6 Bitfield UXTW/UBFM sf=1 opc=10 N=1 immr=0 imms=31
 ```
 
-## encode_umull_diff_alt_spellings
-- Tier: 2
-- Rationale: get_reg accepts x31/w31 (not only xzr/wzr), uppercase, and LR. llvm-mc accepts the same spellings. Documented bounds of register names must be sampled exactly.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_diff_alt_spellings
-- Formal: ∀ rd,rn,rm ∈ {0..31}, dest_spell, src_spell. encode_umull of accepted alternate spellings equals llvm-mc of the same text.
+## encode_uxtw_neg_arity
+- Tier: 4
+- Rationale: llvm-mc rejects `uxtw` with fewer than 2 operands ("too few operands"). Negative/error contract from the GNU-style assembler surface. Stronger oracles do not apply to the invalid-arity domain.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_neg_arity
+- Formal: ∀ ops. |ops| < 2 ⇒ encode_uxtw(ops) = Err(_).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_umull
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, dest_spell, src_spell]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, dest_spell: 0..4, src_spell: 0..2 }
-  relation:
-    op: eq
-    lhs: encode_umull(ops)
-    rhs: llvm_mc(asm)
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
-  src_spell: { gen: int, min: 0, max: 2, type: u32 }
-evidence: encoder/mod.rs:131-148 parse_reg_num (sp/xzr/lr/xN); llvm-mc accepts x31, XZR, LR, uppercase
-```
-
-## encode_umull_neg_arity
-- Tier: 4e
-- Rationale: ARM ARM / gas syntax is UMULL Xd, Wn, Wm (3 operands). llvm-mc rejects fewer. get_reg on missing slots returns Err; property pins the documented rejection.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_neg_arity
-- Formal: ∀ ops with |ops| < 3. encode_umull(ops) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops]
-  domain: { ops: length 0..2 }
+  domain: { ops: "len 0..=1" }
   relation:
     op: throws
-    expr: encode_umull(ops)
+    expr: encode_uxtw(ops)
 generators:
-  len: { gen: int, min: 0, max: 2, type: usize }
+  len: { gen: int, min: 0, max: 1, type: usize }
 expected_error: String
-evidence: ARM ARM UMULL syntax Xd, Wn, Wm; llvm-mc too few operands
+evidence: llvm-mc "too few operands for instruction"; get_reg errors when operand missing
 ```
 
-## encode_umull_neg_extra_operand
-- Tier: 4e
-- Rationale: llvm-mc rejects a 4th operand (`umull x0, w1, w2, x3` error: invalid operand). README gas-compatibility requires the same rejection. encode_umull currently only reads slots 0..2.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_neg_extra_operand
-- Formal: ∀ rd,rn,rm ∈ {0..31}, extra. encode_umull([Xd,Wn,Wm,extra]) = Err
+## encode_uxtw_neg_extra_operand
+- Tier: 4
+- Rationale: ARM ARM UXTW takes exactly two registers. llvm-mc rejects a 3rd operand. Documented assembler arity; extra operand must Err.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_neg_extra_operand
+- Formal: ∀ rd, rn ∈ {0..31}. ∀ extra. encode_uxtw([Reg(Xd), Reg(Wn), extra]) = Err(_).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: [Reg("x0"), Reg("w0"), Reg("w0"), Reg("x0")]
-- Bug report: pbt-out/bug_reports/encode_umull_extra_operand.md
+- Counterexample: rd = 0, rn = 0, extra = Reg("x0")
+- Bug report: pbt-out/bug_reports/encode_uxtw_extra_operand.md
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, extra]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, extra: Operand }
+  vars: [rd, rn, extra]
+  domain: { rd: "0..=31", rn: "0..=31", extra: Operand }
   relation:
     op: throws
-    expr: encode_umull([Xd, Wn, Wm, extra])
+    expr: encode_uxtw([Reg(xreg(rd)), Reg(wreg(rn)), extra])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: oneof, variants: [Reg, Imm, Shift, RegArrangement] }
 expected_error: String
-evidence: llvm-mc rejects 4th operand; README gas-compatible assembly
+evidence: llvm-mc rejects "uxtw x0, w1, #0" / "uxtw x0, w1, w2"; ARM ARM two-operand alias
 ```
 
-## encode_umull_neg_wrong_width
-- Tier: 4e
-- Rationale: ARM ARM syntax is UMULL Xd, Wn, Wm. llvm-mc rejects W dest or X sources. Documented width bound must be enforced, not ignored via get_reg discarding is_64.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_neg_wrong_width
-- Formal: ∀ rd,rn,rm ∈ {0..30}, (rd64,rn64,rm64) ≠ (true,false,false). encode_umull([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm)]) = Err
+## encode_uxtw_neg_wd
+- Tier: 4
+- Rationale: ARM ARM assembler syntax is UXTW Xd, Wn only. llvm-mc rejects `uxtw w0, w1` ("invalid operand"). 32-bit dest is outside the valid domain.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_neg_wd
+- Formal: ∀ rd, rn ∈ {0..31}. ∀ src64 ∈ Bool. encode_uxtw([Reg(Wd), Reg(src)]) = Err(_).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: [Reg("w0"), Reg("w0"), Reg("w0")] (rd64=false, rn64=false, rm64=false)
-- Bug report: pbt-out/bug_reports/encode_umull_wrong_width.md
+- Counterexample: rd = 0, rn = 0, src64 = false (uxtw w0, w0)
+- Bug report: pbt-out/bug_reports/encode_uxtw_wd.md
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30, widths: not (X,W,W) }
+  vars: [rd, rn, src64]
+  domain: { rd: "0..=31", rn: "0..=31", src64: bool }
   relation:
     op: throws
-    expr: encode_umull(ops)
+    expr: encode_uxtw([Reg(wreg(rd)), Reg(gpr(src64, rn))])
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rn64: { gen: bool }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rm64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  src64: { gen: bool }
 expected_error: String
-evidence: ARM ARM UMULL Xd, Wn, Wm; llvm-mc `umull w0, w1, w2` invalid operand
+evidence: llvm-mc "invalid operand for instruction" on uxtw w0, w1; ARM ARM UXTW Xd, Wn
 ```
 
-## encode_umull_neg_sp
-- Tier: 4e
-- Rationale: Contract-surface sweep. ARM ARM Data-processing (3 source) register 31 is XZR/WZR, never SP/WSP. llvm-mc rejects `umull sp, w1, w2`. parse_reg_num maps sp/wsp to 31.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_neg_sp
-- Formal: ∀ which ∈ {0,1,2}, sp ∈ {sp,wsp}, a,b ∈ {0..30}. encode_umull with SP/WSP in slot `which` = Err
+## encode_uxtw_neg_sp
+- Tier: 4
+- Rationale: Register 31 in the bitfield class is XZR/WZR, never SP/WSP. llvm-mc rejects `uxtw sp, w1` and `uxtw x0, wsp`.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_neg_sp
+- Formal: ∀ which ∈ {0,1}. ∀ is_64_sp ∈ Bool. ∀ a ∈ {0..30}. encode_uxtw with SP or WSP in slot `which` = Err(_).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: [Reg("wsp"), Reg("w0"), Reg("w0")] (which=0, is_64=false, a=0, b=0)
-- Bug report: pbt-out/bug_reports/encode_umull_sp_as_zr.md
+- Counterexample: which = 0, is_64_sp = false, a = 0 (uxtw wsp, w0)
+- Bug report: pbt-out/bug_reports/encode_uxtw_sp.md
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, is_64, a, b]
-  domain: { which: 0..2, is_64: bool, a: 0..30, b: 0..30 }
+  vars: [which, is_64_sp, a]
+  domain: { which: "0..=1", is_64_sp: bool, a: "0..=30" }
   relation:
     op: throws
-    expr: encode_umull(ops_with_sp_in_slot)
+    expr: encode_uxtw(ops_with_sp)
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  is_64: { gen: bool }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  is_64_sp: { gen: bool }
   a: { gen: int, min: 0, max: 30, type: u32 }
-  b: { gen: int, min: 0, max: 30, type: u32 }
 expected_error: String
-evidence: ARM ARM 3-source register 31 is ZR not SP; llvm-mc rejects umull sp / wsp
+evidence: llvm-mc rejects uxtw sp, w1 and uxtw x0, wsp; ARM ARM Rd/Rn are XZR/WZR at 31
 ```
 
-## encode_umull_neg_fp
-- Tier: 4e
-- Rationale: Contract-surface sweep. Scalar UMULL operands are GPRs. llvm-mc rejects `umull d0, w1, w2`. parse_reg_num accepts d/s/q/v/h/b prefixes.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_neg_fp
-- Formal: ∀ which ∈ {0,1,2}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_umull with FP/SIMD name in slot `which` = Err
+## encode_uxtw_neg_fp
+- Tier: 4
+- Rationale: UXTW operands are GPRs. llvm-mc rejects FP/SIMD names (d/s/q/v/h/b). parse_reg_num currently accepts those prefixes, so this is a caller-reachable invalid domain.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_neg_fp
+- Formal: ∀ which ∈ {0,1}. ∀ prefix ∈ {d,s,q,v,h,b}. ∀ n ∈ {0..31}. encode_uxtw with Reg(prefix||n) in slot `which` = Err(_).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: [Reg("d0"), Reg("w1"), Reg("w2")] (which=0, prefix="d", n=0)
-- Bug report: pbt-out/bug_reports/encode_umull_fp_as_gpr.md
+- Counterexample: which = 0, prefix = "d", n = 0 (uxtw d0, w1)
+- Bug report: pbt-out/bug_reports/encode_uxtw_fp.md
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, prefix, n]
-  domain: { which: 0..2, prefix: {d,s,q,v,h,b}, n: 0..31 }
+  domain: { which: "0..=1", prefix: "{d,s,q,v,h,b}", n: "0..=31" }
   relation:
     op: throws
-    expr: encode_umull(ops_with_fp_in_slot)
+    expr: encode_uxtw(ops_with_fp)
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  prefix: { gen: oneof, variants: ["d", "s", "q", "v", "h", "b"] }
   n: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: ARM ARM UMULL GPR-only; llvm-mc rejects umull d0, w1, w2
+evidence: llvm-mc "invalid operand" on uxtw x0, d1; ARM ARM GPR-only UXTW
 ```
 
-## encode_umull_neg_nonreg
-- Tier: 4e
-- Rationale: Contract-surface sweep. get_reg requires Operand::Reg; Imm/Shift/Mem/Label/Symbol/Cond/RegArrangement at any GPR slot must Err.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_neg_nonreg
-- Formal: ∀ which ∈ {0,1,2}, bad ∉ Reg. encode_umull with `bad` in slot `which` = Err
+## encode_uxtw_diff_alt_spellings
+- Tier: 2
+- Rationale: Contract-surface sweep: llvm-mc accepts x31/w31, uppercase, LR, and X-source (canonicalizes to UBFX). Same differential oracle as encode_uxtw_diff_valid_gpr over spelling variants. Fails for the same MOV-vs-UBFM encoding bug.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_diff_alt_spellings
+- Formal: ∀ rd, rn ∈ {0..31}. ∀ dest/src spellings in {xN, x31, XZR, LR, uppercase, Wn, Xn}. encode_uxtw([Reg(dest), Reg(src)]) = llvm-mc("uxtw dest, src").
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd = 0, rn = 0, dest_spell = 0, src_spell = 0 (uxtw x0, w0 → 0x2A0003E0 vs 0xD3407C00)
+- Bug report: pbt-out/bug_reports/encode_uxtw_mov_not_ubfm.md
+
+```property
+function: encoder.data_processing.encode_uxtw
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rn, dest_spell, src_spell]
+  domain: { rd: "0..=31", rn: "0..=31", dest_spell: "0..=4", src_spell: "0..=3" }
+  relation:
+    op: eq
+    lhs: encode_uxtw([Reg(dest), Reg(src)])
+    rhs: llvm_mc_word("uxtw {dest}, {src}")
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
+  src_spell: { gen: int, min: 0, max: 3, type: u32 }
+evidence: llvm-mc accepts x31/XZR/LR/uppercase and uxtw Xd, Xn
+```
+
+## encode_uxtw_neg_nonreg
+- Tier: 4
+- Rationale: Contract-surface sweep: non-register operand kinds (Imm, Shift, Mem, Label, Symbol, Cond, RegArrangement) at either GPR slot must Err. get_reg already documents "expected register".
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_neg_nonreg
+- Formal: ∀ which ∈ {0,1}. ∀ bad ∉ Reg. encode_uxtw with `bad` in slot `which` = Err(_).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, bad]
-  domain: { which: 0..2, bad: non-Reg Operand }
+  domain: { which: "0..=1", bad: "non-Reg Operand" }
   relation:
     op: throws
-    expr: encode_umull(ops_with_nonreg)
+    expr: encode_uxtw(ops_with_nonreg)
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  bad: { gen: oneof, variants: [Imm, Shift, Mem, Label, Symbol, Cond, RegArrangement] }
 expected_error: String
-evidence: get_reg expected register; llvm-mc rejects non-register UMULL operands
+evidence: get_reg "expected register at operand"; llvm-mc rejects non-register UXTW operands
 ```
 
-## encode_umull_neg_invalid_name
-- Tier: 4e
-- Rationale: Contract-surface sweep. parse_reg_num rejects foo/x32/w32/empty/r0/x-1. llvm-mc rejects those names.
-- Seed: data_processing.rs encode_smull_pbt::encode_smull_neg_invalid_name
-- Formal: ∀ which ∈ {0,1,2}, name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_umull with that name in slot `which` = Err
+## encode_uxtw_neg_invalid_name
+- Tier: 4
+- Rationale: Contract-surface sweep: invalid register names (foo, x32, w32, x, r0, empty, x-1, x99, w) must Err via parse_reg_num.
+- Seed: data_processing.rs encode_sxtw_pbt encode_sxtw_neg_invalid_name
+- Formal: ∀ which ∈ {0,1}. ∀ name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_uxtw with Reg(name) in slot `which` = Err(_).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_umull
+function: encoder.data_processing.encode_uxtw
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, name]
-  domain: { which: 0..2, name: invalid register spelling }
+  domain: { which: "0..=1", name: "{foo,x32,w32,x,r0,\"\",x-1,x99,w}" }
   relation:
     op: throws
-    expr: encode_umull(ops_with_invalid_name)
+    expr: encode_uxtw(ops_with_invalid_name)
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  name: { gen: oneof, variants: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
 expected_error: String
-evidence: parse_reg_num returns None for names outside x/w 0..31, xzr, wzr, lr, sp
+evidence: parse_reg_num returns None for names outside x/w0..31 and aliases
 ```
