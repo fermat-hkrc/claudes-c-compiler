@@ -1,3 +1,22 @@
+# Confirmed invariants (encode_fp_1src)
+
+- Valid scalar FRINTN/P/M/Z/A/X/I Sd,Sn or Dd,Dn (including s31/d31, uppercase, all 7 mnemonics) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: 0 00 11110 ftype 1 opcode 10000 Rn Rd. Equivalently w = (0b00011110<<24)|(ftype<<22)|(1<<21)|(opcode<<15)|(0b10000<<10)|(rn<<5)|rd. ftype 00=S 01=D; bits[14:10]=10000; bit21=1.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; S vs D flips only bit 22; FRINTN XOR FRINTP = 1<<15 (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/s32/d32/empty/r0) always Err (1000 cases).
+- Known-answer: `frintn s0, s1` = 0x1e244020; `frintn d0, d1` = 0x1e644020; `frintp s0, s1` = 0x1e24c020; `frintz s0, s1` = 0x1e25c020; `frinti s0, s1` = 0x1e27c020; `frintn s31, s31` = 0x1e2443ff; llvm-mc +fullfp16 `frintn h0, h1` = 0x1ee44020 (SUT currently 0x1e244020, see bugs).
+- Extra operand, mixed S/D (and GPR/SP/QVB), and H registers currently encode incorrectly (see bugs).
+
+## Environment (encode_fp_1src)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (half: -mattr=+fullfp16). gas aarch64-linux-gnu-as agrees on `frintn s0, s1` = 0x1e244020.
+- ARM ARM Floating-point data-processing (1 source): M=0 S=0 11110 ftype 1 opcode 10000 Rn Rd. ftype 00=S 01=D 11=H. FRINTN=001000 FRINTP=001001 FRINTM=001010 FRINTZ=001011 FRINTA=001100 FRINTX=001110 FRINTI=001111.
+- Dispatch: encoder/mod.rs:414-434 frintn/p/m/z/a/x/i => encode_fp_1src. Vector RegArrangement goes to encode_neon_float_two_misc.
+- Callers: encoder dispatch only (no codegen emitter of scalar frint* found).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_fp_1src (arity / extra / mixed S-D / GPR / QVB / SP / half ftype / nonreg / invalid-name / uppercase / S vs D / all 7 opcodes).
+- Three failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_fp_1src_*.md.
+
 # Confirmed invariants (encode_fcvt_rounding)
 
 - Valid integer FCVT* Wd|Xd, Sn|Dn (including wzr/xzr, w31/x31, lr, uppercase, all 10 mnemonics fcvtzs/zu/as/au/ns/nu/ms/mu/ps/pu) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
