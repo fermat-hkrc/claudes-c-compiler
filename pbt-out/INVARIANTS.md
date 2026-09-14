@@ -276,3 +276,32 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_reg (parse_reg_num None via encode_blr_neg_invalid_name).
 
+---
+
+# Confirmed invariants (encode_br)
+
+- `br Xn` / `br xzr` / `br lr` (x0–x30, xzr, lr, uppercase X0) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: 0xd61f0000 | (rn << 5); bits[31:25]=1101011, opc[24:21]=0000, op4[4:0]=0, Rn at [9:5] (1000 cases).
+- encode_blr(ops) XOR encode_br(ops) = 1<<21 for the same Xn operand (ARM ARM opc bit 21) (1000 cases).
+- Empty operands always Err.
+- Non-register (Imm/Mem/Shift/Extend/RegArrangement/Modifier/Symbol/Label) always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1, x99) always Err.
+- Known-answer: `br x0` encodes as 0xd61f0000; `br x17` as 0xd61f0220.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- BR register 31 is XZR, never SP (llvm-mc rejects `br sp`).
+- BR takes Xn only (llvm-mc rejects `br w0` and `br d0`).
+- llvm-mc accepts `br x31` as `br xzr`; `br lr` as `br x30`.
+- Codegen emits `br x0` for indirect jumps (emit.rs:1760) and `br x17` for jump tables (emit.rs:1808).
+
+## Quirks
+
+- encode_br discards the is_64 flag from get_reg, so W names encode as Xn (see bugs).
+- Extra operands beyond index 0 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `br sp` encodes as `br xzr` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_reg (parse_reg_num None via encode_br_neg_invalid_name).
+

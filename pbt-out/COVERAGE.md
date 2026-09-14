@@ -12,3 +12,4 @@
 | encode_bics | data_processing.rs | data_processing.rs | cargo test --lib | 5 passing / 5 failing properties (plus 2 KAT + 7 regression witnesses) |
 | encode_bl | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 2 failing KAT + 1 passing KAT + 3 regression witnesses) |
 | encode_blr | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 2 passing KAT + 4 failing regression witnesses) |
+| encode_br | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 2 passing KAT + 4 failing regression witnesses) |
