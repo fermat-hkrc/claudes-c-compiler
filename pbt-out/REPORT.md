@@ -1,47 +1,47 @@
-# PBT Campaign Report: encode_neon_across_long
+# PBT Campaign Report: encode_neon_float_cmp_zero
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** claudes-c-compiler
-**Modules tested:** encode_neon_across_long
-**Tests:** 8 properties (plus 3 KAT + 3 regression witnesses)
-**Result:** 5 passing, 3 bugs
+**Modules tested:** encode_neon_float_cmp_zero
+**Tests:** 9 properties (plus 3 KAT + 3 regression witnesses)
+**Result:** 6 passing, 3 bugs
 **Effort tier:** standard (1 coverage-driven contract-surface sweep; generator runs=1000)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_across_long | 8 properties (5 pass, 3 fail) + 3 KAT pass + 3 regression fail | 3 | differential, algebraic.round_trip, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_float_cmp_zero | 9 properties (6 pass, 3 fail) + 3 KAT pass + 3 regression fail | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
 ### 1. Extra operands ignored
-- **Law:** SADDLV/UADDLV take exactly two operands.
-- **Shrunk counterexample:** `saddlv h0, v0.8b, h0` (rd=0, rn=0, extra=0, u=0, t=8b, extra_kind=0).
-- **Expected:** Err. **Actual:** Ok(Word) — `len < 2` does not reject len>2.
+- **Law:** Vector FCM* #0.0 takes `Vd.T, Vn.T, #0.0` only; a fourth operand must be Err.
+- **Shrunk counterexample:** `fcmeq v0.2s, v0.2s, #0.0, v0.2s` (rd=0, rn=0, extra=0, t="2s", extra_kind=0).
+- **Expected:** Err. **Actual:** Ok(Word) — only operands[0] and operands[1] are read; no arity check.
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_across_long_extra_operand.md
-- **Regression test:** `test_encode_neon_across_long_regression_extra_operand` (fails, as intended)
+- **Bug report:** pbt-out/bug_reports/encode_neon_float_cmp_zero_extra_operand.md
+- **Regression test:** `test_encode_neon_float_cmp_zero_regression_extra_operand` (fails, as intended)
 
-### 2. Reserved source arrangement T=2S (also 1D/2D) encoded
-- **Law:** ARM ARM T is only 8B/16B/4H/8H/4S; size=11 and 2S are reserved.
-- **Shrunk counterexample:** `saddlv h0, v0.2s` (rd=0, rn=0, u=0, t="2s").
-- **Expected:** Err. **Actual:** Ok(Word) with Q=0, size=10. Root cause: `neon_arr_to_q_size` maps 2s/1d/2d.
+### 2. Source arrangement ignored
+- **Law:** ARM ARM requires the same T on dest and source (`<Vd>.<T>, <Vn>.<T>, #0.0`).
+- **Shrunk counterexample:** `fcmeq v0.4s, v0.2s, #0.0` (rd=0, rn=0, td="4s", tn="2s"). Encodes as `fcmeq v0.4s, v0.4s, #0.0`.
+- **Expected:** Err. **Actual:** Ok(Word) — Q/sz taken only from dest; `let (rn, _) = get_neon_reg(operands, 1)`.
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_across_long_reserved_arrangement.md
-- **Regression test:** `test_encode_neon_across_long_regression_reserved_2s` (fails, as intended)
+- **Bug report:** pbt-out/bug_reports/encode_neon_float_cmp_zero_arrangement_mismatch.md
+- **Regression test:** `test_encode_neon_float_cmp_zero_regression_arrangement_mismatch` (fails, as intended)
 
-### 3. Destination register type ignored
-- **Law:** Dest `<V><d>` is H for 8B/16B, S for 4H/8H, D for 4S — never B/Q/GPR/vector arrangement.
-- **Shrunk counterexample:** `saddlv b0, v0.8b` (rd=0, rn=0, u=0, t=8b, prefix=b, as_arr=false). Encodes as `saddlv h0, v0.8b`.
-- **Expected:** Err. **Actual:** Ok(Word) with Rd=0. Dest prefix and RegArrangement dest arrangement are ignored.
+### 3. Non-V register prefix accepted
+- **Law:** Vector FCM* #0.0 takes V registers; x/w/d/s/q/h/b prefixes must be Err.
+- **Shrunk counterexample:** `fcmeq x0.2s, v0.2s, #0.0` (rd=0, rn=0, t="2s", prefix="x", which=0). Encodes as `fcmeq v0.2s, v0.2s, #0.0`.
+- **Expected:** Err. **Actual:** Ok(Word) — `parse_reg_num` maps x/w/d/s/q/v/h/b with num<=31 to the same 5-bit number.
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_across_long_dest_type.md
-- **Regression test:** `test_encode_neon_across_long_regression_dest_type` (fails, as intended)
+- **Bug report:** pbt-out/bug_reports/encode_neon_float_cmp_zero_non_v_prefix.md
+- **Regression test:** `test_encode_neon_float_cmp_zero_regression_non_v_prefix` (fails, as intended)
 
-Serial reconfirmation: all three failures reproduced with `PBT_TEST_JOBS=1 cargo test --lib encode_neon_across_long_neg -- --test-threads=1`.
+Serial reconfirmation: all three failures reproduced with `PBT_TEST_JOBS=1 cargo test --lib … -- --test-threads=1`.
 
 ## Design Caveats
 
@@ -51,7 +51,7 @@ Serial reconfirmation: all three failures reproduced with `PBT_TEST_JOBS=1 cargo
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_across_long_pbt) | 8 properties + 3 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_float_cmp_zero_pbt) | 9 properties + 3 KAT + 3 regression witnesses |
 
 ## Output Directories
 
@@ -62,18 +62,18 @@ Serial reconfirmation: all three failures reproduced with `PBT_TEST_JOBS=1 cargo
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_across_long_extra_operand.md
-- pbt-out/bug_reports/encode_neon_across_long_reserved_arrangement.md
-- pbt-out/bug_reports/encode_neon_across_long_dest_type.md
+- pbt-out/bug_reports/encode_neon_float_cmp_zero_extra_operand.md
+- pbt-out/bug_reports/encode_neon_float_cmp_zero_arrangement_mismatch.md
+- pbt-out/bug_reports/encode_neon_float_cmp_zero_non_v_prefix.md
 
-Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had no LLVM profraw; manual arm audit of dest `_` (non-Reg) and parse_reg_num None on dest RegArrangement — generators extended; those paths Err as specified. Sweep closed because the tier's one round is done.
+Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had no LLVM profraw; manual arm audit of get_neon_reg Operand::Reg dest (empty arrangement → Err as specified) and non-V prefix (new failing property, bug 3). Sweep closed because the tier's one round is done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 05:26 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 29/184 total | PBT candidates: 29 | Tested: 29 (100%) | 0 pass, 29 fail
+> Last updated: 2026-09-14 05:41 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 30/184 total | PBT candidates: 30 | Tested: 30 (100%) | 0 pass, 30 fail
 
 ## Summary
 
@@ -82,10 +82,10 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 29 |
-| **Tested (of PBT candidates)** | **29 / 29 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 29 / 0 |
-| **Overall (tested / all functions)** | **29 / 184 (16%)** |
+| PBT candidates (from FUNCTION_INDEX) | 30 |
+| **Tested (of PBT candidates)** | **30 / 30 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 30 / 0 |
+| **Overall (tested / all functions)** | **30 / 184 (16%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -93,13 +93,13 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 29 | 29 | 0 | 100% |
+|  | 30 | 30 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 29 | 29 | 0 | 100% |
+| unknown | 30 | 30 | 0 | 100% |
 
 ## File Coverage
 
@@ -110,7 +110,7 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 6 | 6 | 100% | covered |
 | load_store.rs | 20 | 2 | 2 | 100% | covered |
-| neon.rs | 68 | 2 | 2 | 100% | covered |
+| neon.rs | 68 | 3 | 3 | 100% | covered |
 
 ## Recommended Focus
 
@@ -148,3 +148,4 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 | encode_eon | data_processing.rs |
 | encode_ldar_stlr | load_store.rs |
 | encode_neon_across_long | neon.rs |
+| encode_neon_float_cmp_zero | neon.rs |

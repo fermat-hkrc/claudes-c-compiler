@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_neon_float_cmp_zero)
+
+- Valid vector FCMEQ/FCMGE/FCMGT/FCMLE/FCMLT-to-zero with T in {2s,4s,2d}, Vd/Vn in v0–v31, and ARM-correct (U, size_hi=1, opcode) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_neon_float_cmp_zero(ops, 0, size_hi, opcode) XOR encode_neon_float_cmp_zero(ops, 1, size_hi, opcode) = 1<<29 (ARM ARM U bit) (1000 cases).
+- encode_neon_float_cmp_zero(ops, U, 0, opcode) XOR encode_neon_float_cmp_zero(ops, U, 1, opcode) = 1<<23 (size_hi = size[1]) (1000 cases).
+- Success-path word: bit 31=0, Q at 30 from T (2s→0, 4s/2d→1), U at 29, bits [28:24]=01110, size at [23:22]=(size_hi<<1)|sz, bits [21:17]=10000, opcode at [16:12], bits [11:10]=10, Rn at [9:5], Rd at [4:0].
+- Arrangement other than 2s/4s/2d, fewer than 2 operands, non-register dest/src, invalid names (v32, foo, empty, v, v-1, v99), and dest Operand::Reg (no arrangement) always Err.
+- Known-answer: `fcmeq v0.4s, v1.4s, #0.0` encodes as 0x4ea0d820; `fcmge v0.4s, v1.4s, #0.0` as 0x6ea0c820; `fcmlt v0.4s, v1.4s, #0.0` as 0x4ea0e820; `fcmeq v0.2s, v1.2s, #0.0` as 0x0ea0d820; `fcmeq v0.2d, v1.2d, #0.0` as 0x4ee0d820.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM-correct (U, size_hi, opcode): FCMEQ (0,1,01101), FCMGE (1,1,01100), FCMGT (0,1,01100), FCMLE (1,1,01101), FCMLT (0,1,01110). size = 1sz (not 0sz).
+- Valid T is 2S, 4S, 2D (llvm-mc rejects 8b/16b/4h/8h/1d without +fullfp16; 4h/8h is a different FP16 encoding).
+- Scalar `fcmeq s0, s1, #0.0` is a different encoding (bits[31:30]=01) — not this vector helper.
+- Dispatch passes [Vd, Vn, Imm(0)] for fcmeq/fcmge/fcmgt #0.0; the helper reads only [0] and [1].
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- Source arrangement is discarded; dest T is used (see bugs).
+- parse_reg_num accepts x/w/d/s/q/v/h/b prefixes, so non-V names encode as V registers (see bugs).
+- Function comment says size=0sz; ARM ARM and llvm-mc use size=1sz. The helper packs the caller-supplied size_hi; dispatcher currently passes size_hi=0 for fcmeq/fcmge/fcmle (out of this symbol's scope).
+- Dispatcher passes opcode=01101 for fcmlt; ARM/llvm-mc use 01110 (out of this symbol's scope).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_neon_reg Operand::Reg dest / non-V prefix).
+
+---
+
 # Confirmed invariants (encode_neon_across_long)
 
 - Valid SADDLV/UADDLV with dest V matching T (H for 8B/16B, S for 4H/8H, D for 4S) and Vn in v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
