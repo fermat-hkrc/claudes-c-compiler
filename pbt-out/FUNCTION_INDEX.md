@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 97 | Excluded: 192
+> Total files: 10 | Total functions: 289 | PBT candidates: 98 | Excluded: 191
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -262,7 +262,7 @@
 | encode_xadd | gp_integer.rs | 1134 | method | no | out of campaign scope |
 | encode_fmov | fp_scalar.rs | 6 | function | yes | - |
 | encode_fp_arith | fp_scalar.rs | 68 | function | yes | - |
-| encode_fneg | fp_scalar.rs | 82 | function | no | out of campaign scope |
+| encode_fneg | fp_scalar.rs | 82 | function | yes | - |
 | encode_fabs | fp_scalar.rs | 93 | function | yes | - |
 | encode_fsqrt | fp_scalar.rs | 104 | function | no | out of campaign scope |
 | encode_fp_1src | fp_scalar.rs | 117 | function | yes | - |

@@ -99,3 +99,4 @@
 | encode_neon_float_two_misc | neon.rs | neon.rs | cargo test --lib | 8 passing / 5 failing properties (plus 2 passing KAT + 5 failing regression witnesses; 5 bugs; sweep alt-spellings passing, SP failing) |
 | encode_fabs | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
 | encode_fmadd_fmsub | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 7 passing KAT + 5 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
+| encode_fneg | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
