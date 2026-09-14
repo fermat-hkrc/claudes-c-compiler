@@ -1,3 +1,40 @@
+# Confirmed invariants (encode_ldxr_stxr)
+
+- Valid LDXR/STXR/LDXRB/STXRB/LDXRH/STXRH with Rt in x0–x30/xzr or w0–w30/wzr (byte/half always W), Rn in x0–x30/sp, Ws in w0–w30/wzr not aliasing Rt/Xn, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode(load) XOR encode(store with Ws=31) at equal Rt/Rn = 1<<22 (ARM ARM L bit) (1000 cases).
+- encode(X) XOR encode(W) at equal register numbers = 1<<30 (ARM ARM size 11 vs 10) (1000 cases).
+- encode(byte) XOR encode(half) at equal W registers = 1<<30 (ARM ARM size 00 vs 01) (1000 cases).
+- Success-path word: bits [29:24]=001000, bit 23=0, bit 21=0 (not pair), o0=0 at bit 15, Rt2=11111 at [14:10], size at [31:30], L at 22, Rs=31 on load else Ws at [20:16], Rn at [9:5], Rt at [4:0].
+- Fewer than 2 (load) / 3 (store) operands, non-Reg first operand, non-Mem memory slot (Imm/Symbol/pre/post-index), and invalid base names (foo, x32) always Err.
+- Known-answer: `ldxr x0, [x1]` encodes as 0xc85f7c20; `ldxr w0, [x1]` as 0x885f7c20; `ldxrb w0, [x1]` as 0x085f7c20; `ldxrh w0, [x1]` as 0x485f7c20; `stxr w0, x1, [x2]` as 0xc8007c41; `stxr w0, w1, [x2]` as 0x88007c41; `ldxr x0, [sp]` as 0xc85f7fe0; `ldxr lr, [x2]` as 0xc85f7c5e.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Load/Store Exclusive (single): `size 001000 0 L 0 Rs o0 Rt2 Rn Rt`. size=00 byte / 01 half / 10 word / 11 doubleword. Offset absent or #0. o0=0 distinguishes LDXR/STXR from LDAXR/STLXR.
+- Rt register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `ldxr sp, ...`).
+- Rn is Xn|SP (llvm-mc rejects [wN], [xzr], [wzr], [wsp]).
+- STXR Ws is Wt (31=WZR); llvm-mc rejects Xt/SP as status and rejects Ws aliasing Rt/Xn ("status is also a source"). WZR vs SP is allowed.
+- Byte/half data is Wt (llvm-mc rejects `ldxrb x0, [x1]`).
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg).
+- Dispatch: encoder/mod.rs:348-353 ldxr/stxr/ldxrb/stxrb/ldxrh/stxrh.
+
+## Quirks
+
+- Extra operands beyond the memory slot are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `ldxr sp, ...` encodes as ZR (see bugs).
+- W-register base is accepted and encoded as the same-number X register (see bugs).
+- XZR as base encodes as SP (register 31) (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- X as STXR status is accepted; only the number is used (see bugs).
+- forced_size byte/half with an X data register is encoded (see bugs).
+- `Mem { base, .. }` ignores a nonzero offset (see bugs).
+- STXR Ws overlapping Rt/Rn is encoded (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (is_load / get_reg miss / non-Mem / parse_reg_num None / forced_size / is_64).
+
+---
+
 # Confirmed invariants (encode_neon_float_three_same)
 
 - Valid vector FP three-same (FADD/FSUB/FMUL/FDIV/FMAX/FMIN/FMAXNM/FMINNM/FMLA/FMLS/FRECPS/FRSQRTS/FCMEQ/FCMGE/FCMGT/FACGE/FACGT/FABD) with T in {2s,4s,2d}, Vd/Vn/Vm in v0–v31, and ARM-correct (U, size_hi, opcode) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

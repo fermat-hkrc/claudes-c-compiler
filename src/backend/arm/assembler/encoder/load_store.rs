@@ -3879,3 +3879,803 @@ mod encode_ldxp_stxp_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_ldxr_stxr_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:348-353 ldxr/stxr/ldxrb/stxrb/ldxrh/stxrh dispatch;
+    //   ARM ARM Load/Store Exclusive: size 001000 0 L 0 Rs o0 Rt2 Rn Rt;
+    //   Rt is Wt/Xt (31=ZR); Rn is Xn|SP; Ws is Wt (31=WZR); offset {,#0}; o0=0; Rt2=11111.
+    // Stronger considered:
+    //   - State machine: rejected — encode_ldxr_stxr is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no exclusive-single decoder
+    //   - encode_ldaxr_stlxr / encode_ldxp_stxp / encode_ldar_stlr as differential siblings:
+    //     rejected — acquire-release exclusive / exclusive-pair / ordered non-exclusive, different job
+    // Weaker available: algebraic.invariant (ARM field unpack), algebraic.metamorphic (L / size),
+    //   negative_error (arity / extra / SP / FP / W-base / XZR-base / X-Ws / offset / Ws-overlap)
+    // Differential: candidate=encode_ldxr_stxr, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=load (Reg(Rt), Mem{Rn, 0}, is_load=true, forced_size)
+    //           <-> `{ldxr|ldxrb|ldxrh} Rt, [Rn]`;
+    //           store (Reg(Ws), Reg(Rt), Mem{Rn, 0}, is_load=false, forced_size)
+    //           <-> `{stxr|stxrb|stxrh} Ws, Rt, [Rn]`
+
+    use super::encode_ldxr_stxr;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn data_name(n: u32, is_64: bool) -> String {
+        if is_64 {
+            if n == 31 {
+                "xzr".into()
+            } else {
+                format!("x{}", n)
+            }
+        } else if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn rn_name(n: u32) -> String {
+        if n == 31 {
+            "sp".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn ws_name(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    /// llvm-mc / ARM: STXR status must not also be a source (Rt or Xn).
+    /// WZR vs SP (both encode as 31) is allowed: `stxr wzr, x0, [sp]`.
+    fn stxr_ws_aliases_source(ws: u32, rt: u32, rn: u32) -> bool {
+        ws == rt || (rn != 31 && ws == rn)
+    }
+
+    fn forced_size(variant: u32) -> Option<u32> {
+        match variant {
+            1 => Some(0b00),
+            2 => Some(0b01),
+            _ => None,
+        }
+    }
+
+    fn mnemonic(is_load: bool, variant: u32) -> &'static str {
+        match (is_load, variant) {
+            (true, 1) => "ldxrb",
+            (false, 1) => "stxrb",
+            (true, 2) => "ldxrh",
+            (false, 2) => "stxrh",
+            (true, _) => "ldxr",
+            (false, _) => "stxr",
+        }
+    }
+
+    /// Byte/half exclusive forms take Wt, not Xt.
+    fn data_is_64(variant: u32, is_64: bool) -> bool {
+        variant == 0 && is_64
+    }
+
+    fn expected_size(variant: u32, is_64: bool) -> u32 {
+        match variant {
+            1 => 0b00,
+            2 => 0b01,
+            _ if is_64 => 0b11,
+            _ => 0b10,
+        }
+    }
+
+    fn load_ops(rt: u32, rn: u32, is_64: bool) -> Vec<Operand> {
+        vec![
+            Operand::Reg(data_name(rt, is_64)),
+            Operand::Mem {
+                base: rn_name(rn),
+                offset: 0,
+            },
+        ]
+    }
+
+    fn store_ops(ws: u32, rt: u32, rn: u32, is_64: bool) -> Vec<Operand> {
+        vec![
+            Operand::Reg(ws_name(ws)),
+            Operand::Reg(data_name(rt, is_64)),
+            Operand::Mem {
+                base: rn_name(rn),
+                offset: 0,
+            },
+        ]
+    }
+
+    fn valid_ops(rt: u32, rn: u32, ws: u32, is_load: bool, is_64: bool) -> Vec<Operand> {
+        if is_load {
+            load_ops(rt, rn, is_64)
+        } else {
+            store_ops(ws, rt, rn, is_64)
+        }
+    }
+
+    fn sut_word(ops: &[Operand], is_load: bool, forced: Option<u32>) -> Result<u32, String> {
+        match encode_ldxr_stxr(ops, is_load, forced)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    /// Unpack exclusive-single fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_ldxr_stxr(word: u32) -> (u32, u32, u32, u32, u32, u32, u32, u32) {
+        let size = (word >> 30) & 0b11;
+        let l = (word >> 22) & 1;
+        let o1 = (word >> 21) & 1;
+        let rs = (word >> 16) & 0x1f;
+        let o0 = (word >> 15) & 1;
+        let rt2 = (word >> 10) & 0x1f;
+        let rn = (word >> 5) & 0x1f;
+        let rt = word & 0x1f;
+        (size, l, o1, rs, o0, rt2, rn, rt)
+    }
+
+    fn fixed_ldxr_stxr_bits(word: u32) -> bool {
+        ((word >> 24) & 0x3f) == 0b001000
+            && ((word >> 23) & 1) == 0
+            && ((word >> 21) & 1) == 0
+            && ((word >> 15) & 1) == 0
+            && ((word >> 10) & 0x1f) == 0b11111
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x2".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x3".into(),
+                offset: 0
+            }),
+        ]
+    }
+
+    fn nonzero_offset() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(-1i64),
+            Just(1i64),
+            Just(8i64),
+            Just(-8i64),
+            Just(256i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            1i64..=4096,
+            -4096i64..=-1,
+        ]
+    }
+
+    fn fp_name(n: u32, kind: u32) -> String {
+        let p = match kind % 6 {
+            0 => "d",
+            1 => "s",
+            2 => "q",
+            3 => "v",
+            4 => "h",
+            _ => "b",
+        };
+        format!("{}{}", p, n % 32)
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_ldxr_x0_x1() {
+        let want = 0xc85f7c20u32;
+        let mc = llvm_mc_word("ldxr x0, [x1]").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = load_ops(0, 1, true);
+        let sut = sut_word(&ops, true, None).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_ldxr_w0_x1() {
+        let want = 0x885f7c20u32;
+        let mc = llvm_mc_word("ldxr w0, [x1]").expect("llvm-mc KAT w");
+        assert_eq!(mc, want, "llvm-mc KAT w mapping broken");
+        let ops = load_ops(0, 1, false);
+        let sut = sut_word(&ops, true, None).expect("SUT KAT w");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_ldxrb_w0_x1() {
+        let want = 0x085f7c20u32;
+        let mc = llvm_mc_word("ldxrb w0, [x1]").expect("llvm-mc KAT b");
+        assert_eq!(mc, want, "llvm-mc KAT b mapping broken");
+        let ops = load_ops(0, 1, false);
+        let sut = sut_word(&ops, true, Some(0b00)).expect("SUT KAT b");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_ldxrh_w0_x1() {
+        let want = 0x485f7c20u32;
+        let mc = llvm_mc_word("ldxrh w0, [x1]").expect("llvm-mc KAT h");
+        assert_eq!(mc, want, "llvm-mc KAT h mapping broken");
+        let ops = load_ops(0, 1, false);
+        let sut = sut_word(&ops, true, Some(0b01)).expect("SUT KAT h");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_stxr_w0_x1_x2() {
+        let want = 0xc8007c41u32;
+        let mc = llvm_mc_word("stxr w0, x1, [x2]").expect("llvm-mc KAT stxr");
+        assert_eq!(mc, want, "llvm-mc KAT stxr mapping broken");
+        let ops = store_ops(0, 1, 2, true);
+        let sut = sut_word(&ops, false, None).expect("SUT KAT stxr");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_stxr_w0_w1_x2() {
+        let want = 0x88007c41u32;
+        let mc = llvm_mc_word("stxr w0, w1, [x2]").expect("llvm-mc KAT stxr w");
+        assert_eq!(mc, want, "llvm-mc KAT stxr w mapping broken");
+        let ops = store_ops(0, 1, 2, false);
+        let sut = sut_word(&ops, false, None).expect("SUT KAT stxr w");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_ldxr_sp() {
+        let want = 0xc85f7fe0u32;
+        let mc = llvm_mc_word("ldxr x0, [sp]").expect("llvm-mc KAT sp");
+        assert_eq!(mc, want, "llvm-mc KAT sp mapping broken");
+        let ops = load_ops(0, 31, true);
+        let sut = sut_word(&ops, true, None).expect("SUT KAT sp");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldxr_stxr_kat_llvm_mc_ldxr_lr() {
+        let want = 0xc85f7c5eu32;
+        let mc = llvm_mc_word("ldxr lr, [x2]").expect("llvm-mc KAT lr");
+        assert_eq!(mc, want, "llvm-mc KAT lr mapping broken");
+        let ops = vec![
+            Operand::Reg("lr".into()),
+            Operand::Mem {
+                base: "x2".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops, true, None).expect("SUT KAT lr");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_extra_operand() {
+        let mut ops = store_ops(0, 1, 2, true);
+        ops.push(Operand::Reg("x2".into()));
+        assert!(
+            encode_ldxr_stxr(&ops, false, None).is_err(),
+            "stxr w0, x1, [x2], x2 must Err; llvm-mc rejects a 4th operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_sp_as_rt() {
+        let ops = load_ops_named("sp", "x0");
+        assert!(
+            encode_ldxr_stxr(&ops, true, None).is_err(),
+            "ldxr sp, [x0] must Err; llvm-mc rejects SP as Rt"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_w_base() {
+        let ops = load_ops_named("x0", "w1");
+        assert!(
+            encode_ldxr_stxr(&ops, true, None).is_err(),
+            "ldxr x0, [w1] must Err; llvm-mc rejects a W register as base"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_xzr_as_base() {
+        let ops = load_ops_named("x0", "xzr");
+        assert!(
+            encode_ldxr_stxr(&ops, true, None).is_err(),
+            "ldxr x0, [xzr] must Err; llvm-mc rejects XZR as base"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_fp_as_rt() {
+        let ops = load_ops_named("d0", "x1");
+        assert!(
+            encode_ldxr_stxr(&ops, true, None).is_err(),
+            "ldxr d0, [x1] must Err; llvm-mc rejects SIMD/FP as Rt"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_x_as_ws() {
+        let ops = vec![
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Mem {
+                base: "x2".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldxr_stxr(&ops, false, None).is_err(),
+            "stxr x0, x1, [x2] must Err; llvm-mc rejects X as STXR status"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_x_data_byte() {
+        let ops = load_ops_named("x0", "x1");
+        assert!(
+            encode_ldxr_stxr(&ops, true, Some(0b00)).is_err(),
+            "ldxrb x0, [x1] must Err; llvm-mc requires Wt for byte exclusive"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_nonzero_offset() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: -1,
+            },
+        ];
+        assert!(
+            encode_ldxr_stxr(&ops, true, None).is_err(),
+            "ldxr x0, [x1, #-1] must Err; llvm-mc: index must be absent or #0"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldxr_stxr_regression_ws_overlap() {
+        let ops = store_ops(0, 0, 1, false);
+        assert!(
+            encode_ldxr_stxr(&ops, false, None).is_err(),
+            "stxr w0, w0, [x1] must Err; llvm-mc: unpredictable STXR, status is also a source"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldxr_stxr
+        #[test]
+        fn encode_ldxr_stxr_diff_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            ws in reg_edge(),
+            is_load in any::<bool>(),
+            variant in 0u32..=2,
+            is_64 in any::<bool>(),
+        ) {
+            let is_64 = data_is_64(variant, is_64);
+            if !is_load {
+                prop_assume!(!stxr_ws_aliases_source(ws, rt, rn));
+            }
+            let ops = valid_ops(rt, rn, ws, is_load, is_64);
+            let mnem = mnemonic(is_load, variant);
+            let asm = if is_load {
+                format!("{} {}, [{}]", mnem, data_name(rt, is_64), rn_name(rn))
+            } else {
+                format!(
+                    "{} {}, {}, [{}]",
+                    mnem,
+                    ws_name(ws),
+                    data_name(rt, is_64),
+                    rn_name(rn)
+                )
+            };
+            let sut = sut_word(&ops, is_load, forced_size(variant))
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_ldxr_stxr
+        #[test]
+        fn encode_ldxr_stxr_arm_fields(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            ws in reg_edge(),
+            is_load in any::<bool>(),
+            variant in 0u32..=2,
+            is_64 in any::<bool>(),
+        ) {
+            let is_64 = data_is_64(variant, is_64);
+            let ops = valid_ops(rt, rn, ws, is_load, is_64);
+            let word = sut_word(&ops, is_load, forced_size(variant))
+                .unwrap_or_else(|e| panic!("SUT rejected valid exclusive: {}", e));
+            prop_assert!(
+                fixed_ldxr_stxr_bits(word),
+                "fixed exclusive-single bits wrong: {:#010x}",
+                word
+            );
+            let (size, l, o1, rs, o0, rt2, got_rn, got_rt) = unpack_ldxr_stxr(word);
+            prop_assert_eq!(size, expected_size(variant, is_64), "size");
+            prop_assert_eq!(l, if is_load { 1 } else { 0 }, "L");
+            prop_assert_eq!(o1, 0, "o1 must be 0 (not pair)");
+            prop_assert_eq!(rs, if is_load { 31 } else { ws }, "Rs");
+            prop_assert_eq!(o0, 0, "o0 must be 0 (not acquire/release)");
+            prop_assert_eq!(rt2, 0b11111, "Rt2");
+            prop_assert_eq!(got_rn, rn, "Rn");
+            prop_assert_eq!(got_rt, rt, "Rt");
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_ldxr_stxr
+        #[test]
+        fn encode_ldxr_stxr_metamorphic_l_size(
+            rt in 0u32..=30,
+            rn in reg_edge(),
+            ws in reg_edge(),
+        ) {
+            let load = sut_word(&load_ops(rt, rn, true), true, None)
+                .unwrap_or_else(|e| panic!("load: {}", e));
+            let store = sut_word(&store_ops(31, rt, rn, true), false, None)
+                .unwrap_or_else(|e| panic!("store wzr: {}", e));
+            prop_assert_eq!(
+                load ^ store,
+                1u32 << 22,
+                "L bit: ldxr XOR stxr(wzr) must be 1<<22; load={:#010x} store={:#010x}",
+                load,
+                store
+            );
+
+            let xw_x = sut_word(&load_ops(rt, rn, true), true, None)
+                .unwrap_or_else(|e| panic!("X: {}", e));
+            let xw_w = sut_word(&load_ops(rt, rn, false), true, None)
+                .unwrap_or_else(|e| panic!("W: {}", e));
+            prop_assert_eq!(
+                xw_x ^ xw_w,
+                1u32 << 30,
+                "size X vs W must XOR 1<<30; x={:#010x} w={:#010x}",
+                xw_x,
+                xw_w
+            );
+
+            if !stxr_ws_aliases_source(ws, rt, rn) {
+                let b = sut_word(&store_ops(ws, rt, rn, false), false, Some(0b00))
+                    .unwrap_or_else(|e| panic!("byte: {}", e));
+                let h = sut_word(&store_ops(ws, rt, rn, false), false, Some(0b01))
+                    .unwrap_or_else(|e| panic!("half: {}", e));
+                prop_assert_eq!(
+                    b ^ h,
+                    1u32 << 30,
+                    "size byte vs half must XOR 1<<30; b={:#010x} h={:#010x}",
+                    b,
+                    h
+                );
+            }
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldxr_stxr
+        #[test]
+        fn encode_ldxr_stxr_neg_extra_operand(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            ws in reg_edge(),
+            is_load in any::<bool>(),
+            variant in 0u32..=2,
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let is_64 = data_is_64(variant, is_64);
+            let mut ops = valid_ops(rt, rn, ws, is_load, is_64);
+            ops.push(extra);
+            prop_assert!(
+                encode_ldxr_stxr(&ops, is_load, forced_size(variant)).is_err(),
+                "extra operand must Err (llvm-mc rejects a trailing operand); got {:?}",
+                encode_ldxr_stxr(&ops, is_load, forced_size(variant))
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldxr_stxr
+        #[test]
+        fn encode_ldxr_stxr_neg_invalid_regs(
+            kind in 0u32..=5,
+            n in reg_edge(),
+            other in reg_edge(),
+            fp_kind in 0u32..=5,
+        ) {
+            let (ops, is_load, forced, why) = match kind {
+                0 => {
+                    // SP as Rt — register 31 is ZR, not SP
+                    (
+                        load_ops_named("sp", &rn_name(n)),
+                        true,
+                        None,
+                        "ldxr sp, [Xn] must Err; llvm-mc rejects SP as Rt",
+                    )
+                }
+                1 => {
+                    // W register as base
+                    let base = if n == 31 {
+                        "wsp".to_string()
+                    } else {
+                        format!("w{}", n)
+                    };
+                    (
+                        load_ops_named(&data_name(other, true), &base),
+                        true,
+                        None,
+                        "ldxr Xt, [Wn] must Err; llvm-mc rejects a W register as base",
+                    )
+                }
+                2 => {
+                    // XZR as base (encoding 31 is SP in the address register)
+                    (
+                        load_ops_named(&data_name(other, true), "xzr"),
+                        true,
+                        None,
+                        "ldxr Xt, [xzr] must Err; llvm-mc rejects XZR as base",
+                    )
+                }
+                3 => {
+                    // FP/SIMD as Rt
+                    (
+                        load_ops_named(&fp_name(n, fp_kind), &rn_name(other)),
+                        true,
+                        None,
+                        "ldxr <FP>, [Xn] must Err; llvm-mc rejects SIMD/FP as Rt",
+                    )
+                }
+                4 => {
+                    // X register as STXR status (must be Ws)
+                    (
+                        vec![
+                            Operand::Reg(data_name(n, true)),
+                            Operand::Reg(data_name(other, true)),
+                            Operand::Mem {
+                                base: rn_name((other + 1) % 31),
+                                offset: 0,
+                            },
+                        ],
+                        false,
+                        None,
+                        "stxr Xt, Xt, [Xn] must Err; llvm-mc rejects X as STXR status",
+                    )
+                }
+                _ => {
+                    // X data register on byte/half exclusive
+                    (
+                        load_ops_named(&data_name(n, true), &rn_name(other)),
+                        true,
+                        Some(0b00),
+                        "ldxrb Xt, [Xn] must Err; llvm-mc requires Wt for byte/half",
+                    )
+                }
+            };
+            prop_assert!(
+                encode_ldxr_stxr(&ops, is_load, forced).is_err(),
+                "{}; got {:?}",
+                why,
+                encode_ldxr_stxr(&ops, is_load, forced)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldxr_stxr
+        #[test]
+        fn encode_ldxr_stxr_neg_arity_shape(
+            is_load in any::<bool>(),
+            shape in 0u32..=8,
+            rt in reg_edge(),
+            offset in nonzero_offset(),
+        ) {
+            let rt_n = data_name(rt, true);
+            let ops: Vec<Operand> = match shape {
+                0 => vec![],
+                1 => vec![Operand::Reg(rt_n)],
+                2 => vec![Operand::Reg(rt_n.clone()), Operand::Imm(0)],
+                3 => vec![Operand::Reg(rt_n.clone()), Operand::Symbol("foo".into())],
+                4 => vec![
+                    Operand::Reg(rt_n.clone()),
+                    Operand::MemPreIndex {
+                        base: "x0".into(),
+                        offset: 0,
+                    },
+                ],
+                5 => vec![
+                    Operand::Reg(rt_n.clone()),
+                    Operand::MemPostIndex {
+                        base: "x0".into(),
+                        offset: 0,
+                    },
+                ],
+                6 => {
+                    if is_load {
+                        vec![
+                            Operand::Reg(rt_n),
+                            Operand::Mem {
+                                base: "foo".into(),
+                                offset: 0,
+                            },
+                        ]
+                    } else {
+                        vec![
+                            Operand::Reg(ws_name(0)),
+                            Operand::Reg(rt_n),
+                            Operand::Mem {
+                                base: "foo".into(),
+                                offset: 0,
+                            },
+                        ]
+                    }
+                }
+                7 => {
+                    if is_load {
+                        vec![
+                            Operand::Reg(rt_n),
+                            Operand::Mem {
+                                base: "x32".into(),
+                                offset: 0,
+                            },
+                        ]
+                    } else {
+                        vec![
+                            Operand::Reg(ws_name(0)),
+                            Operand::Reg(rt_n),
+                            Operand::Mem {
+                                base: "x32".into(),
+                                offset: 0,
+                            },
+                        ]
+                    }
+                }
+                _ => {
+                    if is_load {
+                        vec![
+                            Operand::Reg(rt_n),
+                            Operand::Mem {
+                                base: "x0".into(),
+                                offset,
+                            },
+                        ]
+                    } else {
+                        vec![
+                            Operand::Reg(ws_name(1)),
+                            Operand::Reg(data_name(0, true)),
+                            Operand::Mem {
+                                base: "x2".into(),
+                                offset,
+                            },
+                        ]
+                    }
+                }
+            };
+            prop_assert!(
+                encode_ldxr_stxr(&ops, is_load, None).is_err(),
+                "too-few / non-Mem / pre-post / invalid base / nonzero offset must Err (shape {}); got {:?}",
+                shape,
+                encode_ldxr_stxr(&ops, is_load, None)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldxr_stxr
+        #[test]
+        fn encode_ldxr_stxr_neg_ws_overlap(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            variant in 0u32..=2,
+            is_64 in any::<bool>(),
+            overlap_rt in any::<bool>(),
+        ) {
+            let is_64 = data_is_64(variant, is_64);
+            // Force a CONSTRAINED UNPREDICTABLE overlap: Ws==Rt, or Ws==Rn (Rn not SP).
+            let ws = if overlap_rt {
+                rt
+            } else if rn != 31 {
+                rn
+            } else {
+                rt // rn==31 cannot overlap via Xn; fall back to Rt alias
+            };
+            prop_assume!(stxr_ws_aliases_source(ws, rt, rn));
+            let ops = store_ops(ws, rt, rn, is_64);
+            prop_assert!(
+                encode_ldxr_stxr(&ops, false, forced_size(variant)).is_err(),
+                "stxr with Ws aliasing Rt/Xn must Err (llvm-mc: status is also a source); got {:?}",
+                encode_ldxr_stxr(&ops, false, forced_size(variant))
+            );
+        }
+    }
+
+    fn load_ops_named(rt: &str, rn: &str) -> Vec<Operand> {
+        vec![
+            Operand::Reg(rt.to_string()),
+            Operand::Mem {
+                base: rn.to_string(),
+                offset: 0,
+            },
+        ]
+    }
+}
