@@ -1615,3 +1615,32 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (encode_cond None, parse_reg_num None on Rm, unsupported operand kinds).
 
+---
+
+# Confirmed invariants (encode_neon_shll)
+
+- Valid SSHLL/USHLL(+2) with mandated (Tb,Ta) and shift in [0, esize-1] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- is_high XOR toggles only Q (bit 30) (1000 cases).
+- u_bit XOR toggles only U (bit 29) (1000 cases).
+- encode_neon_shll(..., Imm(0)) equals encode_neon_xtl and llvm-mc sxtl/uxtl(+2) (1000 cases).
+- Success-path word: bit31=0, Q at 30, U at 29, bits[28:23]=011110, immh:immb=esize+shift, opcode=101001, Rn, Rd.
+- Arity < 3, unsupported source Tb, non-matching operand kinds, and invalid NEON names always Err (1000 cases).
+- Known-answer: `sshll v0.8h, v1.8b, #0` = 0x0f08a420; `#7` = 0x0f0fa420; `ushll` #0 = 0x2f08a420; `sshll2 v0.8h, v1.16b, #0` = 0x4f08a420; `ushll2 ... #7` = 0x6f0fa420; `sshll v0.4s, v1.4h, #0` = 0x0f10a420; `#15` = 0x0f1fa420; `sshll v0.2d, v1.2s, #0` = 0x0f20a420; `#31` = 0x0f3fa420; `ushll2 v0.2d, v1.4s, #31` = 0x6f3fa420; `sxtl v0.8h, v1.8b` = 0x0f08a420.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD SSHLL/USHLL: `0 Q U 011110 immh immb 101001 Rn Rd`. Q=0 Tb={8B,4H,2S}; Q=1 Tb={16B,8H,4S}. Ta is 8H/4S/2D. shift in 0..(esize-1). immh:immb = esize + shift.
+- Dispatch: encoder/mod.rs:614-617 ushll/ushll2/sshll/sshll2. Sibling encode_neon_xtl is the documented #0 alias (same job at shift 0).
+- Callers: assembler README NEON widen/long table lists sshll/ushll/sxtl/uxtl (+2).
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Dest arrangement is discarded (see bugs).
+- Shift is `get_imm as u32` with no range check; #8 for 8b encodes as 16-bit esize; #-1 overflows in debug (see bugs).
+- Operand::Reg dest (GPR/FP names) encodes via parse_reg_num (see bugs).
+- Q comes only from is_high, not from Tb, so sshll2+8b and sshll+16b encode (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity < 3, unsupported Tb, kinds, invalid names, GPR dest, Q vs Tb).
+

@@ -7325,3 +7325,725 @@ mod encode_neon_tbl_pbt {
     }
 }
 
+#[cfg(test)]
+mod encode_neon_shll_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md:1-14 "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:614-617 ushll/ushll2/sshll/sshll2 => encode_neon_shll;
+    //   neon.rs:1470-1484 Format 0 Q U 011110 immh:immb 101001 Rn Rd;
+    //   ARM ARM Advanced SIMD shift by immediate SSHLL/USHLL;
+    //   sibling encode_neon_xtl neon.rs:160-161 aliases for USHLL/SSHLL #0
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_shll is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree SSHLL decoder
+    //   - Differential vs encode_neon_shl / encode_neon_shift_left_imm / two-misc SHLL:
+    //     rejected — same-width SHL or shift-by-esize (same-job gate)
+    // Weaker available: algebraic.metamorphic (Q/U bits), algebraic.invariant (word layout),
+    //   negative_error (arity / Ta / Tb / shift range / extra / non-reg)
+    // Differential: candidate=encode_neon_shll, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[RegArrangement(Vd,Ta), RegArrangement(Vn,Tb), Imm(shift)] + (u_bit, is_high)
+    //     <-> `{sshll|ushll}{2?} Vd.Ta, Vn.Tb, #shift`
+
+    use super::encode_neon_shll;
+    use super::encode_neon_xtl;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn esize(tb: &str) -> u32 {
+        match tb {
+            "8b" | "16b" => 8,
+            "4h" | "8h" => 16,
+            "2s" | "4s" => 32,
+            _ => 0,
+        }
+    }
+
+    fn mandated_ta(tb: &str) -> &'static str {
+        match tb {
+            "8b" | "16b" => "8h",
+            "4h" | "8h" => "4s",
+            "2s" | "4s" => "2d",
+            _ => "8h",
+        }
+    }
+
+    fn tb_is_high(tb: &str) -> bool {
+        matches!(tb, "16b" | "8h" | "4s")
+    }
+
+    fn mnemonic(u_bit: u32, is_high: bool) -> &'static str {
+        match (u_bit, is_high) {
+            (0, false) => "sshll",
+            (0, true) => "sshll2",
+            (1, false) => "ushll",
+            (1, true) => "ushll2",
+            _ => "sshll",
+        }
+    }
+
+    fn sut_word(ops: &[Operand], u_bit: u32, is_high: bool) -> Result<u32, String> {
+        match encode_neon_shll(ops, u_bit, is_high)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn xtl_word(ops: &[Operand], u_bit: u32, is_high: bool) -> Result<u32, String> {
+        match encode_neon_xtl(ops, u_bit, is_high)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn valid_tb() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s"])
+    }
+
+    /// Co-generate Tb with a shift in [0, esize-1], pinning 0 and esize-1.
+    fn valid_tb_shift() -> impl Strategy<Value = (&'static str, i64)> {
+        valid_tb().prop_flat_map(|tb| {
+            let e = esize(tb) as i64;
+            prop_oneof![Just(0i64), Just(e - 1), 0i64..=(e - 1)].prop_map(move |s| (tb, s))
+        })
+    }
+
+    /// Out-of-range shift, pinning -1, esize, esize+1, and i64 values that truncate to a valid u32.
+    fn oob_tb_shift() -> impl Strategy<Value = (&'static str, i64)> {
+        valid_tb().prop_flat_map(|tb| {
+            let e = esize(tb) as i64;
+            prop_oneof![
+                Just(-1i64),
+                Just(e),
+                Just(e + 1),
+                Just(256i64),
+                Just(1i64 << 32),
+                Just((1i64 << 32) + (e - 1)),
+                (-16i64..=-1),
+                e..=(e + 16),
+            ]
+            .prop_map(move |s| (tb, s))
+        })
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_neon_shll_kat_llvm_mc_sshll_v0_8h_v1_8b() {
+        let want0 = 0x0f08a420u32;
+        let mc0 = llvm_mc_word("sshll v0.8h, v1.8b, #0").expect("llvm-mc KAT #0");
+        assert_eq!(mc0, want0, "llvm-mc KAT mapping broken for sshll #0");
+        let ops0 = [neon_arr(0, "8h"), neon_arr(1, "8b"), Operand::Imm(0)];
+        assert_eq!(sut_word(&ops0, 0, false).expect("SUT KAT #0"), want0);
+
+        let want7 = 0x0f0fa420u32;
+        let mc7 = llvm_mc_word("sshll v0.8h, v1.8b, #7").expect("llvm-mc KAT #7");
+        assert_eq!(mc7, want7, "llvm-mc KAT mapping broken for sshll #7");
+        let ops7 = [neon_arr(0, "8h"), neon_arr(1, "8b"), Operand::Imm(7)];
+        assert_eq!(sut_word(&ops7, 0, false).expect("SUT KAT #7"), want7);
+    }
+
+    /// Known-answer: Q / U / 2-suffix / 4h / 2s bounds and UXTL alias.
+    #[test]
+    fn encode_neon_shll_kat_llvm_mc_variants() {
+        let want_u = 0x2f08a420u32;
+        let mc_u = llvm_mc_word("ushll v0.8h, v1.8b, #0").expect("llvm-mc KAT ushll");
+        assert_eq!(mc_u, want_u, "llvm-mc KAT mapping broken for ushll");
+        let ops_u = [neon_arr(0, "8h"), neon_arr(1, "8b"), Operand::Imm(0)];
+        assert_eq!(sut_word(&ops_u, 1, false).expect("SUT KAT ushll"), want_u);
+
+        let want_2 = 0x4f08a420u32;
+        let mc_2 = llvm_mc_word("sshll2 v0.8h, v1.16b, #0").expect("llvm-mc KAT sshll2");
+        assert_eq!(mc_2, want_2, "llvm-mc KAT mapping broken for sshll2");
+        let ops_2 = [neon_arr(0, "8h"), neon_arr(1, "16b"), Operand::Imm(0)];
+        assert_eq!(sut_word(&ops_2, 0, true).expect("SUT KAT sshll2"), want_2);
+
+        let want_u2 = 0x6f0fa420u32;
+        let mc_u2 = llvm_mc_word("ushll2 v0.8h, v1.16b, #7").expect("llvm-mc KAT ushll2");
+        assert_eq!(mc_u2, want_u2, "llvm-mc KAT mapping broken for ushll2");
+        let ops_u2 = [neon_arr(0, "8h"), neon_arr(1, "16b"), Operand::Imm(7)];
+        assert_eq!(sut_word(&ops_u2, 1, true).expect("SUT KAT ushll2"), want_u2);
+
+        let want_4h = 0x0f10a420u32;
+        let mc_4h = llvm_mc_word("sshll v0.4s, v1.4h, #0").expect("llvm-mc KAT 4h #0");
+        assert_eq!(mc_4h, want_4h, "llvm-mc KAT mapping broken for 4h #0");
+        let ops_4h = [neon_arr(0, "4s"), neon_arr(1, "4h"), Operand::Imm(0)];
+        assert_eq!(sut_word(&ops_4h, 0, false).expect("SUT KAT 4h"), want_4h);
+
+        let want_15 = 0x0f1fa420u32;
+        let mc_15 = llvm_mc_word("sshll v0.4s, v1.4h, #15").expect("llvm-mc KAT 4h #15");
+        assert_eq!(mc_15, want_15, "llvm-mc KAT mapping broken for 4h #15");
+        let ops_15 = [neon_arr(0, "4s"), neon_arr(1, "4h"), Operand::Imm(15)];
+        assert_eq!(sut_word(&ops_15, 0, false).expect("SUT KAT 4h #15"), want_15);
+
+        let want_2s = 0x0f20a420u32;
+        let mc_2s = llvm_mc_word("sshll v0.2d, v1.2s, #0").expect("llvm-mc KAT 2s #0");
+        assert_eq!(mc_2s, want_2s, "llvm-mc KAT mapping broken for 2s #0");
+        let ops_2s = [neon_arr(0, "2d"), neon_arr(1, "2s"), Operand::Imm(0)];
+        assert_eq!(sut_word(&ops_2s, 0, false).expect("SUT KAT 2s"), want_2s);
+
+        let want_31 = 0x0f3fa420u32;
+        let mc_31 = llvm_mc_word("sshll v0.2d, v1.2s, #31").expect("llvm-mc KAT 2s #31");
+        assert_eq!(mc_31, want_31, "llvm-mc KAT mapping broken for 2s #31");
+        let ops_31 = [neon_arr(0, "2d"), neon_arr(1, "2s"), Operand::Imm(31)];
+        assert_eq!(sut_word(&ops_31, 0, false).expect("SUT KAT 2s #31"), want_31);
+
+        let want_u2d = 0x6f3fa420u32;
+        let mc_u2d = llvm_mc_word("ushll2 v0.2d, v1.4s, #31").expect("llvm-mc KAT ushll2 4s #31");
+        assert_eq!(mc_u2d, want_u2d, "llvm-mc KAT mapping broken for ushll2 4s #31");
+        let ops_u2d = [neon_arr(0, "2d"), neon_arr(1, "4s"), Operand::Imm(31)];
+        assert_eq!(sut_word(&ops_u2d, 1, true).expect("SUT KAT ushll2 4s"), want_u2d);
+
+        let want_sxtl = 0x0f08a420u32;
+        let mc_sxtl = llvm_mc_word("sxtl v0.8h, v1.8b").expect("llvm-mc KAT sxtl");
+        assert_eq!(mc_sxtl, want_sxtl, "llvm-mc KAT mapping broken for sxtl");
+        let xtl_ops = [neon_arr(0, "8h"), neon_arr(1, "8b")];
+        assert_eq!(xtl_word(&xtl_ops, 0, false).expect("xtl KAT sxtl"), want_sxtl);
+        assert_eq!(sut_word(&ops0_alias(), 0, false).expect("SUT alias sxtl"), want_sxtl);
+    }
+
+    fn ops0_alias() -> [Operand; 3] {
+        [neon_arr(0, "8h"), neon_arr(1, "8b"), Operand::Imm(0)]
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_shll_diff_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb_shift in valid_tb_shift(),
+            u_bit in 0u32..=1u32,
+        ) {
+            let (tb, shift) = tb_shift;
+            let is_high = tb_is_high(tb);
+            let ta = mandated_ta(tb);
+            let mnem = mnemonic(u_bit, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}",
+                mnem, vreg(rd), ta, vreg(rn), tb, shift
+            );
+            let ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(shift)];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops, u_bit, is_high)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_shll_metamorphic_q(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb in prop::sample::select(vec!["8b", "4h", "2s"]),
+            shift_sel in 0u32..=2u32,
+            u_bit in 0u32..=1u32,
+        ) {
+            let e = esize(tb) as i64;
+            let shift = match shift_sel {
+                0 => 0i64,
+                1 => e - 1,
+                _ => e / 2,
+            };
+            let ta = mandated_ta(tb);
+            let ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(shift)];
+            let lo = sut_word(&ops, u_bit, false)
+                .unwrap_or_else(|e| panic!("SUT Q=0 rejected: {}", e));
+            let hi = sut_word(&ops, u_bit, true)
+                .unwrap_or_else(|e| panic!("SUT Q=1 rejected: {}", e));
+            prop_assert_eq!(lo ^ hi, 1u32 << 30, "is_high must toggle only Q (bit 30)");
+        }
+
+        #[test]
+        fn encode_neon_shll_metamorphic_u(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb_shift in valid_tb_shift(),
+        ) {
+            let (tb, shift) = tb_shift;
+            let is_high = tb_is_high(tb);
+            let ta = mandated_ta(tb);
+            let ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(shift)];
+            let s = sut_word(&ops, 0, is_high)
+                .unwrap_or_else(|e| panic!("SUT U=0 rejected: {}", e));
+            let u = sut_word(&ops, 1, is_high)
+                .unwrap_or_else(|e| panic!("SUT U=1 rejected: {}", e));
+            prop_assert_eq!(s ^ u, 1u32 << 29, "u_bit must toggle only U (bit 29)");
+        }
+
+        #[test]
+        fn encode_neon_shll_alias_xtl(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb in valid_tb(),
+            u_bit in 0u32..=1u32,
+        ) {
+            let is_high = tb_is_high(tb);
+            let ta = mandated_ta(tb);
+            let shll_ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(0)];
+            let xtl_ops = [neon_arr(rd, ta), neon_arr(rn, tb)];
+            let shll = sut_word(&shll_ops, u_bit, is_high)
+                .unwrap_or_else(|e| panic!("SUT shll #0 rejected: {}", e));
+            let xtl = xtl_word(&xtl_ops, u_bit, is_high)
+                .unwrap_or_else(|e| panic!("SUT xtl rejected: {}", e));
+            prop_assert_eq!(shll, xtl, "sshll/ushll #0 must equal sxtl/uxtl");
+            let xtl_mnem = match (u_bit, is_high) {
+                (0, false) => "sxtl",
+                (0, true) => "sxtl2",
+                (1, false) => "uxtl",
+                _ => "uxtl2",
+            };
+            let asm = format!(
+                "{} {}.{}, {}.{} ",
+                xtl_mnem, vreg(rd), ta, vreg(rn), tb
+            )
+            .trim_end()
+            .to_string();
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(shll, mc, "mismatch vs llvm-mc {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_shll_invariant_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb_shift in valid_tb_shift(),
+            u_bit in 0u32..=1u32,
+        ) {
+            let (tb, shift) = tb_shift;
+            let is_high = tb_is_high(tb);
+            let ta = mandated_ta(tb);
+            let ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(shift)];
+            let w = sut_word(&ops, u_bit, is_high)
+                .unwrap_or_else(|e| panic!("SUT rejected valid layout: {}", e));
+            let q = if is_high { 1u32 } else { 0 };
+            let immhb = esize(tb) + shift as u32;
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 30) & 1, q, "Q bit");
+            prop_assert_eq!((w >> 29) & 1, u_bit, "U bit");
+            prop_assert_eq!((w >> 23) & 0b111111, 0b011110u32, "bits[28:23]=011110");
+            prop_assert_eq!((w >> 19) & 0b1111, immhb >> 3, "immh");
+            prop_assert_eq!((w >> 16) & 0b111, immhb & 7, "immb");
+            prop_assert_eq!((w >> 10) & 0b111111, 0b101001u32, "opcode");
+            prop_assert_eq!((w >> 5) & 0b11111, rn, "Rn");
+            prop_assert_eq!(w & 0b11111, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_neon_shll_neg_shift_oob(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb_shift in oob_tb_shift(),
+            u_bit in 0u32..=1u32,
+        ) {
+            let (tb, shift) = tb_shift;
+            let e = esize(tb) as i64;
+            prop_assume!(shift < 0 || shift >= e);
+            let is_high = tb_is_high(tb);
+            let ta = mandated_ta(tb);
+            let mnem = mnemonic(u_bit, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}",
+                mnem, vreg(rd), ta, vreg(rn), tb, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted OOB shift {}",
+                asm
+            );
+            let ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_shll(&ops, u_bit, is_high).is_err(),
+                "shift {} for Tb={} esize={} must Err (llvm-mc rejects {})",
+                shift,
+                tb,
+                e,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_shll_neg_dest_tb(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb_shift in valid_tb_shift(),
+            ta in prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s", "1d", "2d"]),
+            u_bit in 0u32..=1u32,
+        ) {
+            let (tb, shift) = tb_shift;
+            let is_high = tb_is_high(tb);
+            prop_assume!(ta != mandated_ta(tb));
+            let mnem = mnemonic(u_bit, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}",
+                mnem, vreg(rd), ta, vreg(rn), tb, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted mismatched Ta {}",
+                asm
+            );
+            let ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_shll(&ops, u_bit, is_high).is_err(),
+                "mismatched dest Ta={} for Tb={} is_high={} must Err (llvm-mc rejects {})",
+                ta,
+                tb,
+                is_high,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_shll_neg_extra_operand(
+            rd in reg_num(),
+            rn in reg_num(),
+            extra in reg_num(),
+            tb_shift in valid_tb_shift(),
+            u_bit in 0u32..=1u32,
+        ) {
+            let (tb, shift) = tb_shift;
+            let is_high = tb_is_high(tb);
+            let ta = mandated_ta(tb);
+            let mnem = mnemonic(u_bit, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}, {}.{} ",
+                mnem, vreg(rd), ta, vreg(rn), tb, shift, vreg(extra), ta
+            )
+            .trim_end()
+            .to_string();
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted 4-operand {}",
+                asm
+            );
+            let ops = [
+                neon_arr(rd, ta),
+                neon_arr(rn, tb),
+                Operand::Imm(shift),
+                neon_arr(extra, ta),
+            ];
+            prop_assert!(
+                encode_neon_shll(&ops, u_bit, is_high).is_err(),
+                "4 operands must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_shll_neg_gpr_dest(
+            prefix in prop::sample::select(vec!["x", "w", "d", "s", "q", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+            rn in reg_num(),
+            tb_shift in valid_tb_shift(),
+            u_bit in 0u32..=1u32,
+        ) {
+            let (tb, shift) = tb_shift;
+            let is_high = tb_is_high(tb);
+            let dest = format!("{}{}", prefix, n);
+            let mnem = mnemonic(u_bit, is_high);
+            let asm = format!(
+                "{} {}, {}.{}, #{}",
+                mnem, dest, vreg(rn), tb, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted GPR/FP dest {}",
+                asm
+            );
+            let ops = [
+                Operand::Reg(dest.clone()),
+                neon_arr(rn, tb),
+                Operand::Imm(shift),
+            ];
+            prop_assert!(
+                encode_neon_shll(&ops, u_bit, is_high).is_err(),
+                "GPR/FP dest {} is not a NEON Vd.Ta and must Err (llvm-mc rejects {})",
+                dest,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_shll_neg_src_vs_high(
+            rd in reg_num(),
+            rn in reg_num(),
+            tb in valid_tb(),
+            shift_sel in 0u32..=2u32,
+            u_bit in 0u32..=1u32,
+        ) {
+            let e = esize(tb) as i64;
+            let shift = match shift_sel {
+                0 => 0i64,
+                1 => e - 1,
+                _ => 0i64,
+            };
+            // Flip the 2-suffix relative to Tb: sshll with high Tb, sshll2 with low Tb.
+            let is_high = !tb_is_high(tb);
+            let ta = mandated_ta(tb);
+            let mnem = mnemonic(u_bit, is_high);
+            let asm = format!(
+                "{} {}.{}, {}.{}, #{}",
+                mnem, vreg(rd), ta, vreg(rn), tb, shift
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted Q/Tb mismatch {}",
+                asm
+            );
+            let ops = [neon_arr(rd, ta), neon_arr(rn, tb), Operand::Imm(shift)];
+            prop_assert!(
+                encode_neon_shll(&ops, u_bit, is_high).is_err(),
+                "mnemonic {} with Tb={} must Err (llvm-mc rejects {})",
+                mnem,
+                tb,
+                asm
+            );
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        /// Coverage sweep: arity < 3, unsupported source Tb, non-matching kinds, invalid names.
+        #[test]
+        fn encode_neon_shll_neg_arity_kinds(
+            n in 0usize..=2,
+            rd in reg_num(),
+            rn in reg_num(),
+            ta in prop::sample::select(vec!["2d", "1d", "16h", "8s", "4d", "", "b", "h"]),
+            slot in 0usize..=2,
+            which in 0u32..=5,
+            u_bit in 0u32..=1u32,
+            is_high in any::<bool>(),
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("v99".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v-1".to_string()),
+            ],
+        ) {
+            let all = [neon_arr(rd, "8h"), neon_arr(rn, "8b")];
+            let ops: Vec<Operand> = all.iter().take(n).cloned().collect();
+            prop_assert!(
+                encode_neon_shll(&ops, u_bit, is_high).is_err(),
+                "len={} must Err (requires 3 operands)",
+                n
+            );
+
+            let ops_ta = [
+                neon_arr(rd, "8h"),
+                neon_arr(rn, ta),
+                Operand::Imm(0),
+            ];
+            prop_assert!(
+                encode_neon_shll(&ops_ta, u_bit, is_high).is_err(),
+                "source Tb={} is not 8b/16b/4h/8h/2s/4s and must Err",
+                ta
+            );
+
+            // Imm is valid at slot 2 (the shift); skip that combination.
+            prop_assume!(!(slot == 2 && which == 0));
+            let bad_op = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let mut ops_kind = vec![
+                neon_arr(rd, "8h"),
+                neon_arr(rn, "8b"),
+                Operand::Imm(0),
+            ];
+            ops_kind[slot] = bad_op;
+            prop_assert!(
+                encode_neon_shll(&ops_kind, u_bit, is_high).is_err(),
+                "non-matching kind at slot {} which={} must Err",
+                slot,
+                which
+            );
+
+            let mut ops_bad = vec![
+                neon_arr(rd, "8h"),
+                neon_arr(rn, "8b"),
+                Operand::Imm(0),
+            ];
+            if slot < 2 {
+                ops_bad[slot] = Operand::RegArrangement {
+                    reg: bad.clone(),
+                    arrangement: if slot == 1 {
+                        "8b".into()
+                    } else {
+                        "8h".into()
+                    },
+                };
+                prop_assert!(
+                    encode_neon_shll(&ops_bad, u_bit, is_high).is_err(),
+                    "invalid NEON register {} at slot {} must Err",
+                    bad,
+                    slot
+                );
+            }
+        }
+    }
+
+    /// Deterministic regression: extra operand (shrunk from neg_extra_operand).
+    #[test]
+    fn test_encode_neon_shll_regression_extra_operand() {
+        let ops = [
+            neon_arr(0, "8h"),
+            neon_arr(0, "8b"),
+            Operand::Imm(0),
+            neon_arr(0, "8h"),
+        ];
+        assert!(
+            encode_neon_shll(&ops, 0, false).is_err(),
+            "sshll v0.8h, v0.8b, #0, v0.8h must Err (exactly 3 operands)"
+        );
+    }
+
+    /// Deterministic regression: dest Ta must match Tb (shrunk from neg_dest_tb).
+    #[test]
+    fn test_encode_neon_shll_regression_mismatched_dest_ta() {
+        let ops = [neon_arr(0, "8b"), neon_arr(0, "8b"), Operand::Imm(0)];
+        assert!(
+            encode_neon_shll(&ops, 0, false).is_err(),
+            "sshll v0.8b, v0.8b, #0 must Err (dest Ta=8b is not 8h)"
+        );
+    }
+
+    /// Deterministic regression: shift must be in 0..=esize-1 (bound+1).
+    #[test]
+    fn test_encode_neon_shll_regression_shift_oob() {
+        let ops = [neon_arr(0, "8h"), neon_arr(0, "8b"), Operand::Imm(8)];
+        assert!(
+            encode_neon_shll(&ops, 0, false).is_err(),
+            "sshll v0.8h, v0.8b, #8 must Err (shift 8 not in [0, 7]; llvm-mc range)"
+        );
+    }
+
+    /// Deterministic regression: Imm(-1) must Err, not overflow (shrunk from neg_shift_oob).
+    #[test]
+    fn test_encode_neon_shll_regression_shift_neg() {
+        let ops = [neon_arr(0, "8h"), neon_arr(0, "8b"), Operand::Imm(-1)];
+        assert!(
+            encode_neon_shll(&ops, 0, false).is_err(),
+            "sshll v0.8h, v0.8b, #-1 must Err (not in [0, 7]; must not overflow as u32)"
+        );
+    }
+
+    /// Deterministic regression: GPR dest is not Vd.Ta.
+    #[test]
+    fn test_encode_neon_shll_regression_gpr_dest() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            neon_arr(0, "8b"),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_neon_shll(&ops, 0, false).is_err(),
+            "sshll x0, v0.8b, #0 must Err (GPR dest is not Vd.Ta)"
+        );
+    }
+
+    /// Deterministic regression: sshll (Q=0) cannot take high-half Tb=16b.
+    #[test]
+    fn test_encode_neon_shll_regression_src_vs_high() {
+        let ops = [neon_arr(0, "8h"), neon_arr(0, "16b"), Operand::Imm(0)];
+        assert!(
+            encode_neon_shll(&ops, 0, false).is_err(),
+            "sshll v0.8h, v0.16b, #0 must Err (16b is SSHLL2 source)"
+        );
+    }
+}
+

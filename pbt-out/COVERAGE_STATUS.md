@@ -1,19 +1,19 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 11:43 (campaign: English campaign)
-> Files: 7/7 scanned (100%) | Functions: 52/229 total | PBT candidates: 52 | Tested: 52 (100%) | 0 pass, 52 fail
+> Last updated: 2026-09-14 12:02 (campaign: English campaign)
+> Files: 8/8 scanned (100%) | Functions: 53/253 total | PBT candidates: 53 | Tested: 53 (100%) | 0 pass, 53 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 7 |
-| Files scanned | 7 / 7 (100%) |
-| Total functions (all files) | 229 |
-| PBT candidates (from FUNCTION_INDEX) | 52 |
-| **Tested (of PBT candidates)** | **52 / 52 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 52 / 0 |
-| **Overall (tested / all functions)** | **52 / 229 (23%)** |
+| Total source files | 8 |
+| Files scanned | 8 / 8 (100%) |
+| Total functions (all files) | 253 |
+| PBT candidates (from FUNCTION_INDEX) | 53 |
+| **Tested (of PBT candidates)** | **53 / 53 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 53 / 0 |
+| **Overall (tested / all functions)** | **53 / 253 (21%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 52 | 52 | 0 | 100% |
+|  | 53 | 53 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 52 | 52 | 0 | 100% |
+| unknown | 53 | 53 | 0 | 100% |
 
 ## File Coverage
 
@@ -37,6 +37,7 @@
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 17 | 17 | 100% | covered |
+| gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 9 | 9 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
@@ -48,6 +49,7 @@
 
 | Function | Source |
 |----------|--------|
+| encode_shift | gp_integer.rs |
 | encode_add_sub | data_processing.rs |
 | cast_float_to_target | constants.rs |
 | classify_cast_with_f128 | cast.rs |
