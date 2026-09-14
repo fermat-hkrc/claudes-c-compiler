@@ -1,41 +1,31 @@
-# PBT Campaign Report: encode_ubfx
+# PBT Campaign Report: encode_neon_float_two_misc
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ubfx
-**Tests:** 13 properties (8 passing, 5 failing) plus 6 passing KAT and 5 failing regression witnesses
+**Modules tested:** encode_neon_float_two_misc
+**Tests:** 13 properties (plus 2 KAT + 5 regression witnesses)
 **Result:** 8 passing, 5 bugs
-**Effort tier:** standard (1 contract-surface sweep round; ≥1000 proptest cases; ≥1 metamorphic/differential)
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ubfx | 13 properties + 6 KAT + 5 regressions | 5 | differential (llvm-mc), algebraic.metamorphic (UBFX alias of UBFM; Rd/Rn fields), algebraic.invariant (ARM fields), negative_error (arity / extra / SP / lsb-width / mixed / FP / nonreg / invalid-name) |
+| encode_neon_float_two_misc | 13 properties (8 passing, 5 failing) + 2 KAT + 5 regressions | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_ubfx_neg_extra_operand** (Negative/Error Contract). Law: UBFX takes exactly four operands. Shrunk counterexample: `[Reg("w0"), Reg("w0"), Imm(0), Imm(1), extra=Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg/get_imm only read indices 0..3. Serial reconfirm PBT_TEST_JOBS=1. llvm-mc rejects the extra operand.
-   - Path: pbt-out/bug_reports/encode_ubfx_extra_operand.md
-   - Regression: test_encode_ubfx_regression_extra_operand
+1. **encode_neon_float_two_misc_neg_extra_operands** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, extra=0, t="2s", insn=(1,1,15,"fneg"), extra_kind=0` → `fneg v0.2s, v0.2s, v0.2s`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_neon_float_two_misc_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
 
-2. **encode_ubfx_neg_sp** (Negative/Error Contract). Law: register 31 is ZR not SP. Shrunk counterexample: which=0, sp64=false, is_64=false, other=0 — `ubfx wsp, w0, #0, #1`. Expected Err; actual Ok(Word) (parse_reg_num maps wsp to 31). Serial reconfirm PBT_TEST_JOBS=1.
-   - Path: pbt-out/bug_reports/encode_ubfx_sp.md
-   - Regression: test_encode_ubfx_regression_sp
+2. **encode_neon_float_two_misc_neg_arrangement_mismatch** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, td="2s", tn="4s", insn=(1,1,15,"fneg")` → `fneg v0.2s, v0.4s`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_neon_float_two_misc_arrangement_mismatch.md. Serial: PBT_TEST_JOBS=1 failed.
 
-3. **encode_ubfx_neg_lsb_width** (Negative/Error Contract). Law: 0<=lsb<R and 1<=width<=R-lsb. Shrunk counterexample: is_64=false, rd=0, rn=0, lsb=0, width=0 — `ubfx w0, w0, #0, #0`. Expected Err; actual debug panic (`attempt to subtract with overflow` at bitfield.rs:15 `lsb + width - 1`). Serial reconfirm PBT_TEST_JOBS=1.
-   - Path: pbt-out/bug_reports/encode_ubfx_lsb_width.md
-   - Regression: test_encode_ubfx_regression_width_zero
+3. **encode_neon_float_two_misc_neg_non_v_prefix** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, t="2s", insn=(1,1,15,"fneg"), prefix="x", which=0` → `fneg x0.2s, v0.2s`. Expected Err; actual Ok(Word) Rd=0. Report: pbt-out/bug_reports/encode_neon_float_two_misc_non_v_prefix.md. Serial: PBT_TEST_JOBS=1 failed.
 
-4. **encode_ubfx_neg_mixed_width** (Negative/Error Contract). Law: Rd and Rn must be the same width. Shrunk counterexample: rd=0, rn=0, rd64=true, rn64=false — `ubfx x0, w0, #0, #1`. Expected Err; actual Ok(Word) (sf taken only from Rd). Serial reconfirm PBT_TEST_JOBS=1.
-   - Path: pbt-out/bug_reports/encode_ubfx_mixed_width.md
-   - Regression: test_encode_ubfx_regression_mixed_width
+4. **encode_neon_float_two_misc_neg_bare_src** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, t="2s", insn=(1,1,15,"fneg")` → `fneg v0.2s, v0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_neon_float_two_misc_bare_src.md. Serial: PBT_TEST_JOBS=1 failed.
 
-5. **encode_ubfx_neg_fp** (Negative/Error Contract). Law: Rd/Rn must be GPR, not FP/SIMD. Shrunk counterexample: which=0, prefix="d", n=0 — `ubfx d0, x1, #0, #1`. Expected Err; actual Ok(Word) (parse_reg_num maps d0 to 0). Serial reconfirm PBT_TEST_JOBS=1.
-   - Path: pbt-out/bug_reports/encode_ubfx_fp.md
-   - Regression: test_encode_ubfx_regression_fp
+5. **encode_neon_float_two_misc_neg_sp** (Negative/Error Contract). Shrunk counterexample: `t="2s", insn=(1,1,15,"fneg"), alias="sp", which=0` → `fneg sp.2s, v0.2s`. Expected Err; actual Ok(Word) Rd=31. Report: pbt-out/bug_reports/encode_neon_float_two_misc_sp.md. Serial: PBT_TEST_JOBS=1 failed.
 
 ## Design Caveats
 
@@ -45,7 +35,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_ubfx_pbt) | 13 properties + 6 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_float_two_misc_pbt) | 13 properties + 2 KAT + 5 regressions |
 
 ## Output Directories
 
@@ -53,23 +43,22 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_ubfx_extra_operand.md
-- pbt-out/bug_reports/encode_ubfx_sp.md
-- pbt-out/bug_reports/encode_ubfx_lsb_width.md
-- pbt-out/bug_reports/encode_ubfx_mixed_width.md
-- pbt-out/bug_reports/encode_ubfx_fp.md
+- pbt-out/FUNCTION_INDEX.md (merged; encode_neon_float_two_misc now a candidate)
+- pbt-out/INVARIANTS.md (encode_neon_float_two_misc section)
+- pbt-out/bug_reports/encode_neon_float_two_misc_extra_operand.md
+- pbt-out/bug_reports/encode_neon_float_two_misc_arrangement_mismatch.md
+- pbt-out/bug_reports/encode_neon_float_two_misc_non_v_prefix.md
+- pbt-out/bug_reports/encode_neon_float_two_misc_bare_src.md
+- pbt-out/bug_reports/encode_neon_float_two_misc_sp.md
 
-Sweep close: tier round 1/1 spent; coverage_gaps had no LLVM profraw so a manual arm audit covered arity / extra / SP / mixed / FP / nonreg / invalid-name / alt-spellings / lsb-width. Documented contract surface has a property against each clause.
+Sweep: coverage_gaps had no LLVM profraw; manual arm audit added alt-spellings (passing) and SP (failing). Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 22:17 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 94/289 total | PBT candidates: 94 | Tested: 94 (100%) | 0 pass, 94 fail
+> Last updated: 2026-09-14 22:36 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 95/289 total | PBT candidates: 95 | Tested: 95 (100%) | 0 pass, 95 fail
 
 ## Summary
 
@@ -78,10 +67,10 @@ Sweep close: tier round 1/1 spent; coverage_gaps had no LLVM profraw so a manual
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 94 |
-| **Tested (of PBT candidates)** | **94 / 94 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 94 / 0 |
-| **Overall (tested / all functions)** | **94 / 289 (33%)** |
+| PBT candidates (from FUNCTION_INDEX) | 95 |
+| **Tested (of PBT candidates)** | **95 / 95 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 95 / 0 |
+| **Overall (tested / all functions)** | **95 / 289 (33%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -89,13 +78,13 @@ Sweep close: tier round 1/1 spent; coverage_gaps had no LLVM profraw so a manual
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 94 | 94 | 0 | 100% |
+|  | 95 | 95 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 94 | 94 | 0 | 100% |
+| unknown | 95 | 95 | 0 | 100% |
 
 ## File Coverage
 
@@ -108,7 +97,7 @@ Sweep close: tier round 1/1 spent; coverage_gaps had no LLVM profraw so a manual
 | fp_scalar.rs | 13 | 6 | 7 | 117% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 10 | 10 | 100% | covered |
-| neon.rs | 68 | 14 | 14 | 100% | covered |
+| neon.rs | 68 | 15 | 15 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -212,3 +201,4 @@ Sweep close: tier round 1/1 spent; coverage_gaps had no LLVM profraw so a manual
 | encode_rev32 | bitfield.rs |
 | encode_ubfiz | bitfield.rs |
 | encode_bfm | bitfield.rs |
+| encode_neon_float_two_misc | neon.rs |

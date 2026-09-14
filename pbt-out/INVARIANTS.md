@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_neon_float_two_misc)
+
+- Valid vector FP two-misc (T in {2s,4s,2d}, v0–v31 including V0/V31 uppercase) matches llvm-mc `-triple=aarch64 -show-encoding` for ARM-correct (U, size_hi, opcode) of fneg/fabs/fsqrt/frintn/p/m/z/a/x/i/fcvtzs/fcvtzu/ucvtf/scvtf/frecpe/frsqrte (1000 cases).
+- Success-path word is ARM Advanced SIMD two-register miscellaneous: 0 Q U 01110 size 10000 opcode 10 Rn Rd with size=(size_hi<<1)|sz. Q(2s)=0, Q(4s)=1, Q(2d)=1; sz(2s)=0, sz(4s)=0, sz(2d)=1.
+- Metamorphic: U toggles only bit 29; size_hi toggles only bit 23; 2s vs 4s toggles only Q (bit 30) (1000 cases).
+- Unsupported T (8b/16b/4h/8h/1d/1s/3s/8s/empty/b/h), fewer than 2 operands, non-register kinds, invalid names (v32/foo/empty/v/v-1/v99), and dest Operand::Reg (no arrangement) always Err (1000 cases).
+- Known-answer: `fneg v0.4s, v1.4s` = 0x6ea0f820; `fabs v0.4s, v1.4s` = 0x4ea0f820; `fsqrt v0.4s, v1.4s` = 0x6ea1f820; `fneg v0.2s, v1.2s` = 0x2ea0f820; `fneg v0.2d, v1.2d` = 0x6ee0f820; `ucvtf v0.4s, v1.4s` = 0x6e21d820; `fcvtzs v0.4s, v1.4s` = 0x4ea1b820.
+- Extra operand, dest/src T mismatch, non-V prefixes, bare source, and SP/WSP/XZR/WZR/LR currently encode instead of Err (see bugs).
+
+## Environment (encode_neon_float_two_misc)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD two-register miscellaneous (FP): 0 Q U 01110 size 10000 opcode 10 Rn Rd; T in {2S,4S,2D}; size[1]=size_hi, size[0]=sz.
+- Dispatch: encoder/mod.rs:406-458 vector fneg/fabs/fsqrt/frint*/fcvtzs/fcvtzu/ucvtf/scvtf => encode_neon_float_two_misc. Note: dispatch passes size_hi=0 for fneg; ARM FNEG is size_hi=1. Out of this function's contract.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_two_misc is integer two-misc (different size map). Sibling encode_neon_float_cmp_zero is compare-with-zero. Sibling encode_neon_float_three_same is three-register.
+- encode_neon_float_two_misc does not check operands.len() (extra ignored); takes Q/sz from dest arrangement only; get_neon_reg accepts Operand::Reg and x/w/d/s/q/v/h/b prefixes; parse_reg_num maps sp/wsp/xzr/wzr to 31 and lr to 30.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (alt-spellings / SP aliases).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_float_two_misc_*.md.
+
 # Confirmed invariants (encode_ubfx)
 
 - Same-width GPR UBFX (x0–x30/xzr/lr and w0–w30/wzr, 0<=lsb<R, 1<=width<=R-lsb) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as LSR/UBFM aliases; the 32-bit word still matches.

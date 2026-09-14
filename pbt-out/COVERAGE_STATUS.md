@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 22:06 (campaign: English campaign)
-> Files: 10/10 scanned (100%) | Functions: 93/289 total | PBT candidates: 93 | Tested: 93 (100%) | 0 pass, 93 fail
+> Last updated: 2026-09-14 22:18 (campaign: English campaign)
+> Files: 10/10 scanned (100%) | Functions: 94/289 total | PBT candidates: 94 | Tested: 94 (100%) | 0 pass, 94 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 93 |
-| **Tested (of PBT candidates)** | **93 / 93 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 93 / 0 |
-| **Overall (tested / all functions)** | **93 / 289 (32%)** |
+| PBT candidates (from FUNCTION_INDEX) | 94 |
+| **Tested (of PBT candidates)** | **94 / 94 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 94 / 0 |
+| **Overall (tested / all functions)** | **94 / 289 (33%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 93 | 93 | 0 | 100% |
+|  | 94 | 94 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 93 | 93 | 0 | 100% |
+| unknown | 94 | 94 | 0 | 100% |
 
 ## File Coverage
 
@@ -50,6 +50,7 @@
 
 | Function | Source |
 |----------|--------|
+| encode_ubfx | bitfield.rs |
 | encode_ubfm | bitfield.rs |
 | encode_sbfx | bitfield.rs |
 | encode_sbfm | bitfield.rs |

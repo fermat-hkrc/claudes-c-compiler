@@ -1,374 +1,381 @@
-# Properties: encode_ubfx
+# Properties: encode_neon_float_two_misc
 
-## encode_ubfx_diff_valid_gpr
+## encode_neon_float_two_misc_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent AArch64 assembler. State machine rejected (pure function, no lifecycle). Round-trip rejected (no in-tree UBFX decoder). Sibling encode_ubfm/encode_ubfiz rejected as differential (same-job gate: raw immr/imms vs insert alias vs extract alias). Sibling encode_sbfx/encode_bfxil rejected (opc 00/01, different instruction). Doc evidence: README.md:11 GNU-style assembly; encoder/mod.rs:885 dispatch; ARM ARM Unsigned Bitfield Extract UBFX.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_diff_valid_gpr (signed twin)
-- Formal: ∀ is_64 ∈ {false,true}, Rd,Rn ∈ 0..31, lsb,width with 0≤lsb<R, 1≤width≤R-lsb (R=64 if is_64 else 32). encode_ubfx([Reg(gpr(is_64,Rd)), Reg(gpr(is_64,Rn)), Imm(lsb), Imm(width)]) = llvm-mc("ubfx gpr(is_64,Rd), gpr(is_64,Rn), #lsb, #width")
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent AArch64 assembler. State machine rejected (pure function, no lifecycle). Round-trip rejected (no in-tree float two-misc decoder). Sibling encode_neon_two_misc rejected as differential (same-job gate: integer two-misc, different size map). Sibling encode_neon_float_cmp_zero rejected (compare-with-zero job). Sibling encode_neon_float_three_same rejected (three-register). Doc evidence: README.md:11 GNU-style assembly; README.md:226/236 vector fneg/fabs/fsqrt/frint*/fcvtzs/fcvtzu/ucvtf/scvtf/frecpe/frsqrte; encoder/mod.rs:406-458 dispatch; ARM ARM Advanced SIMD two-register miscellaneous (FP).
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_diff_llvm_mc
+- Formal: ∀ rd,rn ∈ 0..31, T ∈ {2s,4s,2d}, (U,size_hi,opcode,mnem) ∈ ARM-correct two-misc FP table. encode_neon_float_two_misc([RegArrangement(v{rd},T), RegArrangement(v{rn},T)], U, size_hi, opcode) = llvm-mc("{mnem} v{rd}.{T}, v{rn}.{T}")
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ubfx
+function: encode_neon_float_two_misc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, lsb, width]
-  domain: { is_64: bool, rd: 0..31, rn: 0..31, lsb: 0..R-1, width: 1..R-lsb, R: 64 if is_64 else 32 }
+  vars: [rd, rn, t, u, size_hi, opcode, mnem]
+  domain: { rd: 0..31, rn: 0..31, t: {2s,4s,2d}, (u,size_hi,opcode,mnem): arm_fp_two_misc_table }
   relation:
     op: eq
-    lhs: "encode_ubfx([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(lsb), Imm(width)])"
-    rhs: "llvm_mc_word(format!(\"ubfx {}, {}, #{}, #{}\", gpr(is_64,rd), gpr(is_64,rn), lsb, width))"
+    lhs: "encode_neon_float_two_misc([RegArrangement(v(rd), t), RegArrangement(v(rn), t)], u, size_hi, opcode)"
+    rhs: "llvm_mc_word(format!(\"{} v{}.{ }, v{}.{}\", mnem, rd, t, rn, t))"
 generators:
-  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  lsb: { gen: int, min: 0, max: 63, type: u32 }
-  width: { gen: int, min: 1, max: 64, type: u32 }
-evidence: src/backend/arm/assembler/README.md:11; encoder/mod.rs:885; ARM ARM UBFX alias of UBFM
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+evidence: src/backend/arm/assembler/README.md:11,226,236; encoder/mod.rs:406-458; ARM ARM Advanced SIMD two-register miscellaneous FP
 ```
 
-## encode_ubfx_alias_ubfm
-- Tier: 4c
-- Rationale: Algebraic metamorphic alias. ARM ARM and bitfield.rs:6 state UBFX Rd,Rn,#lsb,#width is UBFM Rd,Rn,#lsb,#(lsb+width-1). encode_ubfm is a same-encoding sibling after that mapping (not a same-job differential). Stronger differential already used above.
-- Seed: bitfield.rs encode_ubfm_pbt encode_ubfm_alias_ubfx
-- Formal: ∀ valid (is_64,Rd,Rn,lsb,width) with 0≤lsb<R, 1≤width≤R-lsb. encode_ubfx([Rd,Rn,lsb,width]) = encode_ubfm([Rd,Rn,lsb,lsb+width-1])
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_ubfx
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [is_64, rd, rn, lsb, width]
-  domain: { is_64: bool, rd: 0..31, rn: 0..31, lsb: 0..R-1, width: 1..R-lsb }
-  relation:
-    op: eq
-    lhs: "encode_ubfx([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(lsb), Imm(width)])"
-    rhs: "encode_ubfm([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(lsb), Imm(lsb+width-1)])"
-generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  lsb: { gen: int, min: 0, max: 63, type: u32 }
-  width: { gen: int, min: 1, max: 64, type: u32 }
-evidence: bitfield.rs:6 purpose comment; ARM ARM UBFX alias of UBFM
-```
-
-## encode_ubfx_arm_fields
+## encode_neon_float_two_misc_arm_fields
 - Tier: 4d
-- Rationale: Algebraic invariant from ARM ARM Bitfield Move UBFM encoding (UBFX alias). Success-path word is sf 10 100110 N immr imms Rn Rd with N=sf, immr=lsb, imms=lsb+width-1. Stronger differential already used.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_arm_fields
-- Formal: ∀ valid (is_64,Rd,Rn,lsb,width). let w = encode_ubfx(...). w[31]=sf, w[30:29]=10, w[28:23]=100110, w[22]=sf, w[21:16]=lsb, w[15:10]=lsb+width-1, w[9:5]=Rn, w[4:0]=Rd
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Rationale: Algebraic invariant of the ARM word layout documented by neon.rs:1417-1418 and ARM ARM Advanced SIMD two-register miscellaneous. Stronger differential already used above. Field unpack is not a semantic inverse (no decoder).
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_roundtrip_arm_fields
+- Formal: ∀ rd,rn ∈ 0..31, T ∈ {2s,4s,2d}, U,size_hi ∈ {0,1}, opcode ∈ 0..31. let w = encode_neon_float_two_misc([Vd.T,Vn.T],U,size_hi,opcode). Then w[31]=0, w[30]=Q(T), w[29]=U, w[28:24]=01110, w[23:22]=(size_hi<<1)|sz(T), w[21:17]=10000, w[16:12]=opcode, w[11:10]=10, w[9:5]=rn, w[4:0]=rd. Q(2s)=0,Q(4s)=1,Q(2d)=1; sz(2s)=0,sz(4s)=0,sz(2d)=1.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ubfx
+function: encode_neon_float_two_misc
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, lsb, width]
-  domain: { is_64: bool, rd: 0..31, rn: 0..31, lsb: 0..R-1, width: 1..R-lsb }
+  vars: [rd, rn, t, u, size_hi, opcode]
+  domain: { rd: 0..31, rn: 0..31, t: {2s,4s,2d}, u: 0..1, size_hi: 0..1, opcode: 0..31 }
   relation:
-    op: eq
-    lhs: "encode_ubfx([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(lsb), Imm(width)])"
-    rhs: "(sf<<31)|(0b10<<29)|(0b100110<<23)|(sf<<22)|(lsb<<16)|((lsb+width-1)<<10)|(rn<<5)|rd"
+    op: holds
+    expr: "word_fields_match_arm_two_misc_fp(encode_neon_float_two_misc([Vd.T,Vn.T],u,size_hi,opcode), rd, rn, t, u, size_hi, opcode)"
 generators:
-  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  lsb: { gen: int, min: 0, max: 63, type: u32 }
-  width: { gen: int, min: 1, max: 64, type: u32 }
-evidence: ARM ARM Bitfield Move UBFM/UBFX; bitfield.rs:14 comment UBFM sf 10 100110 N immr imms Rn Rd
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  size_hi: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1417-1418 Format 0 Q U 01110 size 10000 opcode 10 Rn Rd; ARM ARM Advanced SIMD two-register miscellaneous
 ```
 
-## encode_ubfx_metamorphic_rd_rn
+## encode_neon_float_two_misc_metamorphic_u_bit
 - Tier: 4c
-- Rationale: ARM ARM field layout: Rd is bits[4:0], Rn is bits[9:5]. Changing one register must not change other fields. Stronger differential already used.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_metamorphic_rd_rn
-- Formal: ∀ is_64, Rd,Rn ∈ 0..30, lsb∈{0,1}, width=1. encode_ubfx(Rd+1,Rn) & ~0x1f = encode_ubfx(Rd,Rn) & ~0x1f ∧ encode_ubfx(Rd,Rn+1) & ~(0x1f<<5) = encode_ubfx(Rd,Rn) & ~(0x1f<<5)
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Rationale: Algebraic metamorphic. ARM U occupies bit 29 only; flipping U with other fields fixed must XOR exactly 1<<29. Stronger differential already used.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_metamorphic_u_bit
+- Formal: ∀ rd,rn ∈ 0..31, T ∈ {2s,4s,2d}, size_hi ∈ {0,1}, opcode ∈ 0..31. encode(...,U=0,...) XOR encode(...,U=1,...) = 1<<29
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ubfx
+function: encode_neon_float_two_misc
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, lsb]
-  domain: { is_64: bool, rd: 0..30, rn: 0..30, lsb: {0,1}, width: 1 }
+  vars: [rd, rn, t, size_hi, opcode]
+  domain: { rd: 0..31, rn: 0..31, t: {2s,4s,2d}, size_hi: 0..1, opcode: 0..31 }
   relation:
-    op: holds
-    expr: "(encode_ubfx(rd+1,rn) & !0x1f) == (encode_ubfx(rd,rn) & !0x1f) && ((encode_ubfx(rd,rn+1) >> 5) & 0x1f) == rn+1"
+    op: eq
+    lhs: "encode_neon_float_two_misc(ops, 0, size_hi, opcode) ^ encode_neon_float_two_misc(ops, 1, size_hi, opcode)"
+    rhs: "1u32 << 29"
 generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  lsb: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM Bitfield Move Rd bits[4:0] Rn bits[9:5]
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  size_hi: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1417 Format 0 Q U 01110 ...; ARM ARM U at bit 29
 ```
 
-## encode_ubfx_neg_arity
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects UBFX with fewer than 4 operands ("too few operands"). get_reg/get_imm fail when the slot is missing. Documented by llvm-mc and README GNU-style assembly.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_arity
-- Formal: ∀ len ∈ 0..3, valid Rd,Rn. encode_ubfx(ops[0..len]) = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+## encode_neon_float_two_misc_metamorphic_size_hi
+- Tier: 4c
+- Rationale: Algebraic metamorphic. size[1]=size_hi occupies bit 23 only; flipping size_hi must XOR exactly 1<<23. Stronger differential already used.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_metamorphic_size_hi
+- Formal: ∀ rd,rn ∈ 0..31, T ∈ {2s,4s,2d}, U ∈ {0,1}, opcode ∈ 0..31. encode(...,size_hi=0,...) XOR encode(...,size_hi=1,...) = 1<<23
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ubfx
-oracle: negative_error
+function: encode_neon_float_two_misc
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [len, is_64, rd, rn]
-  domain: { len: 0..3, is_64: bool, rd: 0..31, rn: 0..31 }
+  vars: [rd, rn, t, u, opcode]
+  domain: { rd: 0..31, rn: 0..31, t: {2s,4s,2d}, u: 0..1, opcode: 0..31 }
   relation:
-    op: throws
-    expr: "encode_ubfx(truncate([Reg(Rd),Reg(Rn),Imm(0),Imm(1)], len))"
-expected_error: String
+    op: eq
+    lhs: "encode_neon_float_two_misc(ops, u, 0, opcode) ^ encode_neon_float_two_misc(ops, u, 1, opcode)"
+    rhs: "1u32 << 23"
 generators:
-  len: { gen: int, min: 0, max: 3, type: usize }
-  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc rejects too few operands; README.md:11 GNU-style assembly
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1418 size[1]=size_hi; ARM ARM size at bits[23:22]
 ```
 
-## encode_ubfx_neg_extra_operand
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects a 5th UBFX operand. GNU-style assembly (README.md:11) has no 5th operand for UBFX. encode_ubfx currently ignores extra operands (no len check) — expected to fail.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_extra_operand
-- Formal: ∀ valid UBFX ops, extra operand. encode_ubfx(ops ++ [extra]) = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: failing
-- Counterexample: ubfx w0, w0, #0, #1 plus extra Reg("x0") — encodes instead of Err
-- Bug report: pbt-out/bug_reports/encode_ubfx_extra_operand.md
+## encode_neon_float_two_misc_metamorphic_q
+- Tier: 4c
+- Rationale: Algebraic metamorphic. 2S vs 4S differ only in Q (bit 30); sz is 0 for both. Stronger differential already used.
+- Seed: neon.rs encode_neon_float_three_same_pbt encode_neon_float_three_same_metamorphic_q
+- Formal: ∀ rd,rn ∈ 0..31, U,size_hi ∈ {0,1}, opcode ∈ 0..31. encode(2s,...) XOR encode(4s,...) = 1<<30
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encode_ubfx
-oracle: negative_error
+function: encode_neon_float_two_misc
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, lsb, width, extra]
-  domain: { is_64: bool, rd: 0..31, rn: 0..31, extra: Operand }
+  vars: [rd, rn, u, size_hi, opcode]
+  domain: { rd: 0..31, rn: 0..31, u: 0..1, size_hi: 0..1, opcode: 0..31 }
   relation:
-    op: throws
-    expr: "encode_ubfx([Rd,Rn,lsb,width,extra])"
-expected_error: String
+    op: eq
+    lhs: "encode_neon_float_two_misc(ops_2s, u, size_hi, opcode) ^ encode_neon_float_two_misc(ops_4s, u, size_hi, opcode)"
+    rhs: "1u32 << 30"
 generators:
-  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, variants: [Reg, Imm, Shift, RegArrangement] }
-evidence: llvm-mc rejects extra operand; README.md:11
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  size_hi: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1423-1425 2s=>Q=0, 4s=>Q=1, sz=0 both; ARM ARM Q at bit 30
 ```
 
-## encode_ubfx_neg_sp
-- Tier: 4e
-- Rationale: Negative/error contract. ARM ARM register 31 is ZR not SP for UBFM/UBFX. llvm-mc rejects sp/wsp as UBFX operands. parse_reg_num maps sp/wsp to 31, so SUT currently encodes them as ZR.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_sp
-- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, other GPR. encode_ubfx with slot `which` = SP = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: failing
-- Counterexample: which=0, sp=wsp, is_64=false, other=0 — UBFX wsp, w0, #0, #1 encodes as wzr
-- Bug report: pbt-out/bug_reports/encode_ubfx_sp.md
+## encode_neon_float_two_misc_neg_unsupported_arrangement
+- Tier: 5
+- Rationale: Negative/error contract. ARM ARM T in {2S,4S,2D}; llvm-mc rejects 8b/16b/4h/8h/1d/1s and empty/malformed T (fullfp16 not enabled, matching default llvm-mc). Function comment match arm documents only 2s/4s/2d. Stronger oracles do not apply to the invalid-T domain.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_neg_unsupported_arrangement
+- Formal: ∀ rd,rn ∈ 0..31, U,size_hi ∈ {0,1}, opcode ∈ 0..31, T ∉ {2s,4s,2d} in {8b,16b,4h,8h,1d,1s,3s,8s,"",b,h}. encode_neon_float_two_misc([Vd.T,Vn.T],U,size_hi,opcode) is Err. For nonempty T, llvm-mc also rejects.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encode_ubfx
+function: encode_neon_float_two_misc
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, sp64, is_64, other]
-  domain: { which: 0..1, sp64: bool, is_64: bool, other: 0..30 }
+  vars: [rd, rn, u, size_hi, opcode, t]
+  domain: { rd: 0..31, rn: 0..31, u: 0..1, size_hi: 0..1, opcode: 0..31, t: {8b,16b,4h,8h,1d,1s,3s,8s,"",b,h} }
   relation:
     op: throws
-    expr: "encode_ubfx(ops with slot which = SP/WSP)"
+    expr: "encode_neon_float_two_misc([RegArrangement(v(rd), t), RegArrangement(v(rn), t)], u, size_hi, opcode)"
 expected_error: String
 generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  size_hi: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "1d", "1s", "3s", "8s", "", "b", "h"] }
+evidence: neon.rs:1423-1425 match 2s/4s/2d else Err; ARM ARM T in {2S,4S,2D}; llvm-mc rejects other T
+```
+
+## encode_neon_float_two_misc_neg_extra_operands
+- Tier: 5
+- Rationale: Negative/error contract. llvm-mc / gas reject a 3rd operand on vector fneg/fabs/etc. README.md:11 gas compatibility. Stronger oracles do not apply to the extra-operand domain.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_neg_extra_operands
+- Formal: ∀ rd,rn,extra ∈ 0..31, T ∈ {2s,4s,2d}, (U,size_hi,opcode,mnem) ∈ ARM table, extra_kind ∈ {RegArrangement, Imm, Reg, Mem}. encode_neon_float_two_misc([Vd.T, Vn.T, extra], U, size_hi, opcode) is Err. llvm-mc("{mnem} Vd.T, Vn.T, extra") is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, extra=0, t=2s, insn=(1,1,15,fneg), extra_kind=0 (fneg v0.2s, v0.2s, v0.2s)
+- Bug report: pbt-out/bug_reports/encode_neon_float_two_misc_extra_operand.md
+
+```property
+function: encode_neon_float_two_misc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, extra, t, insn, extra_kind]
+  domain: { rd,rn,extra: 0..31, t: {2s,4s,2d}, insn: arm_fp_two_misc_table, extra_kind: 0..3 }
+  relation:
+    op: throws
+    expr: "encode_neon_float_two_misc([Vd.T, Vn.T, extra_op], u, size_hi, opcode)"
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+evidence: README.md:11 gas compatibility; llvm-mc rejects extra operand on vector fneg/fabs
+```
+
+## encode_neon_float_two_misc_neg_arity_and_shape
+- Tier: 5
+- Rationale: Negative/error contract. Fewer than 2 operands, non-register kinds, and invalid V names (v32/foo/empty/v/v-1/v99) must Err. llvm-mc rejects v32 and non-register shapes. get_neon_reg documents expected NEON register.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_neg_arity_and_shape
+- Formal: ∀ n ∈ 0..1, invalid name ∈ {v32,foo,"",v,v-1,v99}, non-reg kind ∈ {Imm,Mem,Symbol,Shift,Cond,Label}. encode with len=n is Err; encode with invalid dest/src name is Err; encode with non-reg dest or src is Err; dest Operand::Reg (no arrangement) is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_neon_float_two_misc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, which, u, rd, bad]
+  domain: { n: 0..1, which: 0..5, u: 0..1, rd: 0..31, bad: {v32,foo,"",v,v-1,v99} }
+  relation:
+    op: throws
+    expr: "encode_neon_float_two_misc(short_or_ill_typed, u, 1, 0b01111)"
+expected_error: String
+generators:
+  n: { gen: int, min: 0, max: 1, type: usize }
+  which: { gen: int, min: 0, max: 5, type: u32 }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:7-20 get_neon_reg expected NEON register; llvm-mc rejects v32 and non-register operands
+```
+
+## encode_neon_float_two_misc_neg_non_v_prefix
+- Tier: 5
+- Rationale: Negative/error contract. ARM Vd/Vn are SIMD V registers; llvm-mc rejects x/w/d/s/q/h/b prefixes with arrangement. parse_reg_num accepts those prefixes, so this is a reachable invalid domain. README.md:11 gas compatibility.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_neg_non_v_prefix
+- Formal: ∀ rd,rn ∈ 0..31, T ∈ {2s,4s,2d}, (U,size_hi,opcode,mnem) ∈ ARM table, prefix ∈ {x,w,d,s,q,h,b}, which ∈ {dest,src}. encode with prefix{rd}.T in slot which is Err. llvm-mc rejects.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, t=2s, insn=(1,1,15,fneg), prefix=x, which=0 (fneg x0.2s, v0.2s)
+- Bug report: pbt-out/bug_reports/encode_neon_float_two_misc_non_v_prefix.md
+
+```property
+function: encode_neon_float_two_misc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, t, insn, prefix, which]
+  domain: { rd,rn: 0..31, t: {2s,4s,2d}, insn: arm_fp_two_misc_table, prefix: {x,w,d,s,q,h,b}, which: 0..1 }
+  relation:
+    op: throws
+    expr: "encode_neon_float_two_misc(ops_with_non_v_prefix, u, size_hi, opcode)"
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  prefix: { gen: oneof, values: ["x", "w", "d", "s", "q", "h", "b"] }
   which: { gen: int, min: 0, max: 1, type: u32 }
-  sp64: { gen: bool }
-  is_64: { gen: bool }
-  other: { gen: int, min: 0, max: 30, type: u32 }
-evidence: ARM ARM UBFM/UBFX Rd/Rn are ZR not SP; llvm-mc rejects sp/wsp
+evidence: README.md:11 gas compatibility; ARM ARM Vd/Vn SIMD registers; llvm-mc rejects non-V prefix
 ```
 
-## encode_ubfx_neg_lsb_width
-- Tier: 4e
-- Rationale: Negative/error contract. ARM ARM constraints 0≤lsb<datasize, 1≤width≤datasize-lsb. llvm-mc rejects width=0, negative, lsb>=R, width>R-lsb. SUT casts i64 as u32 with no range check and computes lsb+width-1 (debug underflow on width=0).
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_lsb_width
-- Formal: ∀ lsb,width outside 0≤lsb<R ∧ 1≤width≤R-lsb. encode_ubfx(...) is Err (or does not panic)
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+## encode_neon_float_two_misc_neg_arrangement_mismatch
+- Tier: 5
+- Rationale: Negative/error contract. ARM requires dest T = src T; llvm-mc rejects mismatched arrangements. Function reads arrangement only from dest (neon.rs:1422 ignores src arr). README.md:11 gas compatibility.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt encode_neon_float_cmp_zero_neg_arrangement_mismatch
+- Formal: ∀ rd,rn ∈ 0..31, Td,Tn ∈ {2s,4s,2d} with Td ≠ Tn, (U,size_hi,opcode,mnem) ∈ ARM table. encode_neon_float_two_misc([Vd.Td, Vn.Tn], U, size_hi, opcode) is Err. llvm-mc rejects.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: failing
-- Counterexample: is_64=false, rd=0, rn=0, lsb=0, width=0 — debug panic (subtract overflow) instead of Err
-- Bug report: pbt-out/bug_reports/encode_ubfx_lsb_width.md
+- Counterexample: rd=0, rn=0, td=2s, tn=4s, insn=(1,1,15,fneg) (fneg v0.2s, v0.4s)
+- Bug report: pbt-out/bug_reports/encode_neon_float_two_misc_arrangement_mismatch.md
 
 ```property
-function: encode_ubfx
+function: encode_neon_float_two_misc
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, lsb, width]
-  domain: { is_64: bool, rd: 0..31, rn: 0..31, lsb: i64, width: i64 }
+  vars: [rd, rn, td, tn, insn]
+  domain: { rd,rn: 0..31, td,tn: {2s,4s,2d}, td != tn, insn: arm_fp_two_misc_table }
   relation:
     op: throws
-    expr: "encode_ubfx([Rd,Rn,Imm(lsb),Imm(width)])"
+    expr: "encode_neon_float_two_misc([RegArrangement(v(rd), td), RegArrangement(v(rn), tn)], u, size_hi, opcode)"
 expected_error: String
 generators:
-  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  lsb: { gen: int, min: -1, max: 65, type: i64 }
-  width: { gen: int, min: -1, max: 65, type: i64 }
-evidence: ARM ARM UBFX 0<=lsb<datasize, 1<=width<=datasize-lsb; llvm-mc rejects out-of-range
+  td: { gen: oneof, values: ["2s", "4s", "2d"] }
+  tn: { gen: oneof, values: ["2s", "4s", "2d"] }
+evidence: README.md:11 gas compatibility; ARM ARM Vd.<T>, Vn.<T> same T; llvm-mc rejects mismatched T
 ```
 
-## encode_ubfx_diff_alt_spellings
+## encode_neon_float_two_misc_neg_bare_src
+- Tier: 5
+- Rationale: Negative/error contract. llvm-mc rejects a source without arrangement (fneg v0.4s, v1). get_neon_reg accepts Operand::Reg and the function ignores src arrangement. README.md:11 gas compatibility.
+- Seed: neon.rs encode_neon_aes_pbt test_encode_neon_aes_regression_bare_src
+- Formal: ∀ rd,rn ∈ 0..31, T ∈ {2s,4s,2d}, (U,size_hi,opcode,mnem) ∈ ARM table. encode_neon_float_two_misc([RegArrangement(v{rd},T), Reg(v{rn})], U, size_hi, opcode) is Err. llvm-mc("{mnem} v{rd}.{T}, v{rn}") is Err.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, t=2s, insn=(1,1,15,fneg) (fneg v0.2s, v0)
+- Bug report: pbt-out/bug_reports/encode_neon_float_two_misc_bare_src.md
+
+```property
+function: encode_neon_float_two_misc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, t, insn]
+  domain: { rd,rn: 0..31, t: {2s,4s,2d}, insn: arm_fp_two_misc_table }
+  relation:
+    op: throws
+    expr: "encode_neon_float_two_misc([RegArrangement(v(rd), t), Reg(v(rn))], u, size_hi, opcode)"
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+evidence: README.md:11 gas compatibility; llvm-mc rejects bare source without arrangement
+```
+
+## encode_neon_float_two_misc_neg_sp
+- Tier: 5
+- Rationale: Negative/error contract (coverage sweep). Parser is_register accepts sp/wsp/xzr/wzr/lr; parse_reg_num maps them to 31/30. llvm-mc rejects those as SIMD operands. README.md:11 gas compatibility.
+- Seed: neon.rs encode_neon_aes_pbt test_encode_neon_aes_regression_sp
+- Formal: ∀ T ∈ {2s,4s,2d}, (U,size_hi,opcode,mnem) ∈ ARM table, alias ∈ {sp,wsp,xzr,wzr,lr}, which ∈ {dest,src}. encode with alias.T in slot which is Err. llvm-mc rejects.
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: t=2s, insn=(1,1,15,fneg), alias=sp, which=0 (fneg sp.2s, v0.2s)
+- Bug report: pbt-out/bug_reports/encode_neon_float_two_misc_sp.md
+
+```property
+function: encode_neon_float_two_misc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [t, insn, alias, which]
+  domain: { t: {2s,4s,2d}, insn: arm_fp_two_misc_table, alias: {sp,wsp,xzr,wzr,lr}, which: 0..1 }
+  relation:
+    op: throws
+    expr: "encode_neon_float_two_misc(ops_with_gp_alias, u, size_hi, opcode)"
+expected_error: String
+generators:
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  alias: { gen: oneof, values: ["sp", "wsp", "xzr", "wzr", "lr"] }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+evidence: README.md:11 gas compatibility; parser.rs:2280 sp|wsp|xzr|wzr|lr; llvm-mc rejects GP aliases as SIMD regs
+```
+
+## encode_neon_float_two_misc_diff_alt_spellings
 - Tier: 2
-- Rationale: Differential vs llvm-mc for alternate register spellings (x31/w31, XZR/WZR, LR, uppercase). Sweep of documented GNU-style aliases. Stronger oracles already used on canonical names.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_diff_alt_spellings
-- Formal: ∀ valid (is_64,Rd,Rn,lsb,width), dest_spell,src_spell ∈ 0..4. encode_ubfx([Reg(spell(Rd)), Reg(spell(Rn)), Imm(lsb), Imm(width)]) = llvm-mc("ubfx spell(Rd), spell(Rn), #lsb, #width")
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Rationale: Differential vs llvm-mc for alternate V-register spellings (v0/V0/v31/V31). parse_reg_num lowercases; llvm-mc accepts uppercase. Coverage sweep of register-name aliases that ARE valid.
+- Seed: neon.rs encode_neon_float_cmp_zero_pbt (vreg helper); bitfield encode_ubfx_diff_alt_spellings
+- Formal: ∀ T ∈ {2s,4s,2d}, (U,size_hi,opcode,mnem) ∈ ARM table, dest,src ∈ {v0,V0,v31,V31,v1,V1}. encode_neon_float_two_misc([RegArrangement(dest,T), RegArrangement(src,T)], U, size_hi, opcode) = llvm-mc("{mnem} dest.T, src.T")
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_ubfx
+function: encode_neon_float_two_misc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, lsb, width, dest_spell, src_spell]
-  domain: { is_64: bool, rd: 0..31, rn: 0..31, dest_spell: 0..4, src_spell: 0..4 }
+  vars: [t, insn, dest, src]
+  domain: { t: {2s,4s,2d}, insn: arm_fp_two_misc_table, dest: {v0,V0,v31,V31}, src: {v1,V1,v31,V31} }
   relation:
     op: eq
-    lhs: "encode_ubfx([Reg(spell(is_64,rd,dest_spell)), Reg(spell(is_64,rn,src_spell)), Imm(lsb), Imm(width)])"
-    rhs: "llvm_mc_word(format!(\"ubfx {}, {}, #{}, #{}\", spell(is_64,rd,dest_spell), spell(is_64,rn,src_spell), lsb, width))"
+    lhs: "encode_neon_float_two_misc([RegArrangement(dest, t), RegArrangement(src, t)], u, size_hi, opcode)"
+    rhs: "llvm_mc_word(format!(\"{} {}.{}, {}.{}\", mnem, dest, t, src, t))"
 generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
-  src_spell: { gen: int, min: 0, max: 4, type: u32 }
-evidence: README.md:11 GNU-style assembly; llvm-mc accepts x31/XZR/LR/uppercase
-```
-
-## encode_ubfx_neg_mixed_width
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects mixed W/X UBFX (e.g. x0, w1). GNU-style assembly requires matching register width. encode_ubfx takes sf from Rd only.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_mixed_width
-- Formal: ∀ Rd,Rn ∈ 0..31, rd64 ≠ rn64. encode_ubfx([Reg(gpr(rd64,Rd)), Reg(gpr(rn64,Rn)), Imm(0), Imm(1)]) = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rd64=true, rn64=false — ubfx x0, w0, #0, #1 encodes instead of Err
-- Bug report: pbt-out/bug_reports/encode_ubfx_mixed_width.md
-
-```property
-function: encode_ubfx
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rd64, rn64]
-  domain: { rd: 0..31, rn: 0..31, rd64: bool, rn64: bool }
-  relation:
-    op: throws
-    expr: "encode_ubfx([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Imm(0), Imm(1)])"
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-evidence: llvm-mc rejects mixed W/X; README.md:11 GNU-style assembly
-```
-
-## encode_ubfx_neg_fp
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects FP/SIMD prefixes (d/s/q/v/h/b) as UBFX operands. parse_reg_num accepts those prefixes as GPR numbers.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_fp
-- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_ubfx with slot which = prefix+n = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: failing
-- Counterexample: which=0, prefix="d", n=0 — ubfx d0, x1, #0, #1 encodes as w0
-- Bug report: pbt-out/bug_reports/encode_ubfx_fp.md
-
-```property
-function: encode_ubfx
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, prefix, n]
-  domain: { which: 0..1, prefix: [d,s,q,v,h,b], n: 0..31 }
-  relation:
-    op: throws
-    expr: "encode_ubfx(ops with slot which = format!(\"{}{}\", prefix, n))"
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc rejects FP/SIMD UBFX operands; README.md:11
-```
-
-## encode_ubfx_neg_nonreg
-- Tier: 4e
-- Rationale: Negative/error contract. Slots 0-1 must be registers; slots 2-3 must be immediates. Shift/Mem/Label/Symbol/Cond/RegArrangement are invalid. get_reg/get_imm already Err on wrong kind.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_nonreg
-- Formal: ∀ which ∈ 0..3, bad operand of wrong kind for that slot. encode_ubfx(...) = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_ubfx
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, bad]
-  domain: { which: 0..3, bad: Operand }
-  relation:
-    op: throws
-    expr: "encode_ubfx(ops with slot which = bad)"
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 3, type: u32 }
-evidence: get_reg/get_imm error on wrong kind; llvm-mc rejects non-reg/non-imm
-```
-
-## encode_ubfx_neg_invalid_name
-- Tier: 4e
-- Rationale: Negative/error contract. Invalid register names (foo, x32, empty, r0) must Err. parse_reg_num returns None.
-- Seed: bitfield.rs encode_sbfx_pbt encode_sbfx_neg_invalid_name
-- Formal: ∀ which ∈ {0,1}, name ∈ {foo,x32,w32,x,r0,"",x-1,x99,w}. encode_ubfx with slot which = name = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_ubfx
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, name]
-  domain: { which: 0..1, name: invalid register name }
-  relation:
-    op: throws
-    expr: "encode_ubfx(ops with slot which = Reg(name))"
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
-evidence: parse_reg_num returns None for invalid names; llvm-mc rejects them
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  dest: { gen: oneof, values: ["v0", "V0", "v31", "V31"] }
+  src: { gen: oneof, values: ["v1", "V1", "v31", "V31"] }
+evidence: README.md:11 gas compatibility; parse_reg_num lowercases; llvm-mc accepts V0/V31
 ```

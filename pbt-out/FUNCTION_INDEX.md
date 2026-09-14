@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 94 | Excluded: 195
+> Total files: 10 | Total functions: 289 | PBT candidates: 95 | Excluded: 194
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -145,7 +145,7 @@
 | encode_neon_mvni | neon.rs | 1333 | function | no | out of campaign scope |
 | encode_neon_float_three_same | neon.rs | 1390 | function | yes | - |
 | encode_neon_two_misc | neon.rs | 1407 | function | no | out of campaign scope |
-| encode_neon_float_two_misc | neon.rs | 1420 | function | no | out of campaign scope |
+| encode_neon_float_two_misc | neon.rs | 1420 | function | yes | - |
 | encode_neon_shrn | neon.rs | 1436 | function | no | out of campaign scope |
 | encode_neon_shift_right | neon.rs | 1454 | function | yes | - |
 | encode_neon_shll | neon.rs | 1472 | function | yes | - |
