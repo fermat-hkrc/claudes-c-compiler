@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_fmadd_fmsub)
+
+- Valid scalar FMADD/FMSUB (s0–s31 / d0–d31, including uppercase S/D) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word is ARM FP 3-source: 0 00 11111 ftype o1=0 Rm o0 Ra Rn Rd. Equivalently w = (0b00011111<<24)|(ftype<<22)|(rm<<16)|(o0<<15)|(ra<<10)|(rn<<5)|rd with ftype=01 for D else 00, o0=1 for FMSUB else 0.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; Ra+1 increments bits[14:10] only; Rm+1 increments bits[20:16] only; S vs D flips only ftype bit 22; FMADD XOR FMSUB is o0 bit 15 (1000 cases).
+- Fewer than 4 operands, non-register kinds, and invalid names (foo/s32/d32/h32/x32/r0/s/d/empty) always Err (1000 cases).
+- Known-answer: `fmadd s0, s1, s2, s3` = 0x1f020c20; `fmadd d0, d1, d2, d3` = 0x1f420c20; `fmsub s0, s1, s2, s3` = 0x1f028c20; `fmsub d0, d1, d2, d3` = 0x1f428c20; `fmadd s31, s31, s31, s31` = 0x1f1f7fff; `fmadd S0, S1, S2, S3` = 0x1f020c20; llvm-mc fp16 `fmadd h0, h1, h2, h3` = 0x1fc20c20.
+- Extra operand, mixed S/D / GPR / QVB / SP, and H registers currently encode instead of matching llvm-mc/gas (see bugs).
+
+## Environment (encode_fmadd_fmsub)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (+ `-mattr=+fullfp16` for H).
+- ARM ARM Floating-point data-processing (3 source): M=0 S=0 11111 ftype o1 Rm o0 Ra Rn Rd; FMADD o1=0 o0=0, FMSUB o1=0 o0=1; ftype 00=S, 01=D, 11=H.
+- Dispatch: encoder/mod.rs:435-436 `fmadd` => encode_fmadd_fmsub(operands, false); `fmsub` => encode_fmadd_fmsub(operands, true).
+- Callers: encoder dispatch only.
+- Sibling encode_fnmadd_fnmsub is o1=1 negated fused class, not a same-job differential. Sibling encode_fp_arith is 2-source. Sibling encode_madd is integer MADD.
+- encode_fmadd_fmsub does not check operands.len() (extra ignored); takes ftype from dest starts_with('d') only (H encoded as S; mixed S/D / GPR / SP / QVB accepted via parse_reg_num).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid names).
+- Three failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_fmadd_fmsub_*.md.
+
 # Confirmed invariants (encode_fabs)
 
 - Valid scalar FABS (s0–s31 / d0–d31, including uppercase S/D) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

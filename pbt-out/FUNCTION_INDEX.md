@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 96 | Excluded: 193
+> Total files: 10 | Total functions: 289 | PBT candidates: 97 | Excluded: 192
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -266,7 +266,7 @@
 | encode_fabs | fp_scalar.rs | 93 | function | yes | - |
 | encode_fsqrt | fp_scalar.rs | 104 | function | no | out of campaign scope |
 | encode_fp_1src | fp_scalar.rs | 117 | function | yes | - |
-| encode_fmadd_fmsub | fp_scalar.rs | 130 | function | no | out of campaign scope |
+| encode_fmadd_fmsub | fp_scalar.rs | 130 | function | yes | - |
 | encode_fnmadd_fnmsub | fp_scalar.rs | 146 | function | no | out of campaign scope |
 | encode_fcmp | fp_scalar.rs | 160 | function | yes | - |
 | encode_fcvt_rounding | fp_scalar.rs | 178 | function | yes | - |

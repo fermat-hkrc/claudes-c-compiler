@@ -1,11 +1,11 @@
-# PBT Campaign Report: encode_fabs
+# PBT Campaign Report: encode_fmadd_fmsub
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fabs
-**Tests:** 9 properties (plus 6 KAT + 3 regression witnesses)
+**Modules tested:** encode_fmadd_fmsub
+**Tests:** 9 properties (plus 7 KAT + 5 regression witnesses)
 **Result:** 6 passing, 3 bugs
 **Tier:** standard
 
@@ -13,15 +13,15 @@
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fabs | 9 properties (6 passing, 3 failing) + 6 KAT + 3 regressions | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fmadd_fmsub | 9 properties (6 passing, 3 failing) + 7 KAT + 5 regressions | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_fabs_neg_extra_operand** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, is_d=false, extra=Reg("s0")` → `fabs s0, s0, s0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_fabs_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
+1. **encode_fmadd_fmsub_neg_extra_operand** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, rm=0, ra=0, is_d=false, is_sub=false, extra=Reg("s0")` → `fmadd s0, s0, s0, s0, s0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_fmadd_fmsub_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
 
-2. **encode_fabs_neg_wrong_types** (Negative/Error Contract). Shrunk counterexample: `dest="s0", src="d0"` → `fabs s0, d0`. Expected Err; actual Ok(Word) using dest ftype only. Report: pbt-out/bug_reports/encode_fabs_wrong_types.md. Serial: PBT_TEST_JOBS=1 failed.
+2. **encode_fmadd_fmsub_neg_wrong_types** (Negative/Error Contract). Shrunk counterexample: `dest="d0", src_n="s0", src_m="s0", src_a="s0"` → `fmadd d0, s0, s0, s0`. Expected Err; actual Ok(Word) using dest ftype only. Also GPR dest `x0` and SP as Ra. Report: pbt-out/bug_reports/encode_fmadd_fmsub_wrong_types.md. Serial: PBT_TEST_JOBS=1 failed.
 
-3. **encode_fabs_diff_half** (Differential vs llvm-mc +fullfp16). Shrunk counterexample: `rd=0, rn=0` → `fabs h0, h0`. Expected Word(0x1ee0c000) ftype=11; actual Word(0x1e20c000) ftype=00. Report: pbt-out/bug_reports/encode_fabs_half_ftype.md. Serial: PBT_TEST_JOBS=1 failed.
+3. **encode_fmadd_fmsub_diff_half** (Differential vs llvm-mc +fullfp16). Shrunk counterexample: `rd=0, rn=0, rm=0, ra=0, is_sub=false` → `fmadd h0, h0, h0, h0`. Expected Word(0x1fc00000) ftype=11; actual Word(0x1f000000) ftype=00. Report: pbt-out/bug_reports/encode_fmadd_fmsub_half_ftype.md. Serial: PBT_TEST_JOBS=1 failed.
 
 ## Design Caveats
 
@@ -31,7 +31,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fabs_pbt) | 9 properties + 6 KAT + 3 regressions |
+| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fmadd_fmsub_pbt) | 9 properties + 7 KAT + 5 regressions |
 
 ## Output Directories
 
@@ -39,11 +39,11 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/FUNCTION_INDEX.md (merged; encode_fabs now a candidate)
-- pbt-out/INVARIANTS.md (encode_fabs section)
-- pbt-out/bug_reports/encode_fabs_extra_operand.md
-- pbt-out/bug_reports/encode_fabs_wrong_types.md
-- pbt-out/bug_reports/encode_fabs_half_ftype.md
+- pbt-out/FUNCTION_INDEX.md (merged; encode_fmadd_fmsub now a candidate)
+- pbt-out/INVARIANTS.md (encode_fmadd_fmsub section)
+- pbt-out/bug_reports/encode_fmadd_fmsub_extra_operand.md
+- pbt-out/bug_reports/encode_fmadd_fmsub_wrong_types.md
+- pbt-out/bug_reports/encode_fmadd_fmsub_half_ftype.md
 
 Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (passing). Closed: tier round spent and documented surface covered.
 
@@ -51,8 +51,8 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 22:49 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 96/289 total | PBT candidates: 96 | Tested: 96 (100%) | 0 pass, 96 fail
+> Last updated: 2026-09-14 23:02 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 97/289 total | PBT candidates: 97 | Tested: 97 (100%) | 0 pass, 97 fail
 
 ## Summary
 
@@ -61,10 +61,10 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 96 |
-| **Tested (of PBT candidates)** | **96 / 96 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 96 / 0 |
-| **Overall (tested / all functions)** | **96 / 289 (33%)** |
+| PBT candidates (from FUNCTION_INDEX) | 97 |
+| **Tested (of PBT candidates)** | **97 / 97 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 97 / 0 |
+| **Overall (tested / all functions)** | **97 / 289 (34%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -72,13 +72,13 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 96 | 96 | 0 | 100% |
+|  | 97 | 97 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 96 | 96 | 0 | 100% |
+| unknown | 97 | 97 | 0 | 100% |
 
 ## File Coverage
 
@@ -88,7 +88,7 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 13 | 7 | 8 | 114% | covered |
+| fp_scalar.rs | 13 | 8 | 9 | 113% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 10 | 10 | 100% | covered |
 | neon.rs | 68 | 15 | 15 | 100% | covered |
@@ -197,3 +197,4 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | encode_bfm | bitfield.rs |
 | encode_neon_float_two_misc | neon.rs |
 | encode_fabs | fp_scalar.rs |
+| encode_fmadd_fmsub | fp_scalar.rs |
