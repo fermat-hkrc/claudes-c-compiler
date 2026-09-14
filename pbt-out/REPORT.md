@@ -1,68 +1,84 @@
-# PBT Campaign Report: encode_branch
+# PBT Campaign Report: encode_cbz
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** claudes-c-compiler
-**Modules tested:** encode_branch
-**Tests:** 9 properties (plus 3 KAT + 3 regression witnesses)
-**Result:** 6 passing, 3 bugs
+**Modules tested:** encode_cbz
+**Tests:** 10 properties (plus 4 KAT + 4 regression witnesses)
+**Result:** 7 passing, 4 bugs
 **Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-driven contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_branch | 9 properties (6 pass, 3 fail) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_cbz | 10 properties (7 pass, 3 fail) | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### 1. encode_branch rejects immediate PC-offset form `b #imm`
-- **Law:** ∀ aligned imm in [-2^27, 2^27-4]. encode_branch([Imm(imm)]) = Word(llvm-mc("b #imm"))
-- **Shrunk counterexample:** Imm(-134217728); also Imm(0), Imm(4)
-- **Expected:** Word matching llvm-mc (`b #0` → 0x14000000, `b #4` → 0x14000001, `b #-134217728` → 0x16000000)
-- **Actual:** Err("expected symbol at operand 0, got Some(Imm(...))") — encode_branch only calls get_symbol and never fills imm26
-- **Root cause:** missing Imm encoding path; comment says imm26 is filled by linker/assembler for reloc form only
-- **Impact:** gas-compat hole for hand-written `b #imm`; codegen currently emits labels so compiler output is unaffected
+### 1. encode_cbz rejects immediate PC-offset form `cbz/cbnz Rt, #imm`
+- **Law:** ∀ GPR rt, is_nz, aligned imm in [-2^20, 2^20-4]. encode_cbz([Reg(rt), Imm(imm)], is_nz) = Word(llvm-mc("cbz/cbnz rt, #imm"))
+- **Shrunk counterexample:** [Reg("x0"), Imm(-1048576)], is_nz=false; also Imm(0), Imm(4)
+- **Expected:** Word matching llvm-mc (`cbz x0, #0` → 0xb4000000, `cbz w0, #0` → 0x34000000, `cbnz x0, #4` → 0xb5000020, `cbz x0, #-1048576` → 0xb4800000)
+- **Actual:** Err("expected symbol at operand 1, got Some(Imm(...))") — encode_cbz only calls get_symbol for operand 1 and never fills imm19
+- **Root cause:** missing Imm encoding path; comment says imm19 is filled by linker/assembler for reloc form only
+- **Impact:** gas-compat hole for hand-written `cbz x0, #imm`; codegen currently emits labels so compiler output is unaffected
 - **Severity:** medium
-- **Fix:** match Imm, range-check alignment and ±128 MiB, return Word(0b000101<<26 | ((imm/4) as u32 & 0x03ffffff)); Err otherwise
-- **Bug report:** pbt-out/bug_reports/encode_branch_imm_offset.md
+- **Fix:** match Imm at operand 1, range-check alignment and ±1 MiB, return Word((sf<<31)|(0b011010<<25)|(op<<24)|(((imm/4) as u32 & 0x7ffff)<<5)|rt); Err otherwise
+- **Bug report:** pbt-out/bug_reports/encode_cbz_imm_offset.md
 - **Serial reconfirmation:** PBT_TEST_JOBS=1 reproduced
 
-### 2. encode_branch ignores extra operands
-- **Law:** B takes a single target; encode_branch([Symbol(s), extra]) must be Err
-- **Shrunk counterexample:** [Symbol("labl0"), Reg("x0")]
+### 2. encode_cbz ignores extra operands
+- **Law:** CBZ/CBNZ take a register and a target; encode_cbz([Reg(rt), Symbol(s), extra], is_nz) must be Err
+- **Shrunk counterexample:** [Reg("x0"), Symbol("labl0"), Reg("x1")], is_nz=false
 - **Expected:** Err (llvm-mc: invalid operand)
-- **Actual:** Ok(WordWithReloc Jump26) — get_symbol only inspects operand 0
+- **Actual:** Ok(WordWithReloc CondBr19) — get_reg/get_symbol only inspect operands 0 and 1
 - **Root cause:** no arity check
-- **Impact:** typos such as `b foo, x0` silently assemble
+- **Impact:** typos such as `cbz x0, foo, x1` silently assemble
 - **Severity:** medium
-- **Fix:** return Err when operands.len() != 1
-- **Bug report:** pbt-out/bug_reports/encode_branch_extra_operand.md
+- **Fix:** return Err when operands.len() != 2
+- **Bug report:** pbt-out/bug_reports/encode_cbz_extra_operand.md
 - **Serial reconfirmation:** PBT_TEST_JOBS=1 reproduced
 
-### 3. encode_branch accepts :lo12: / modifier operands as Jump26 symbols
-- **Law:** B operand is a label or encodable integer PC offset; Modifier/ModifierOffset must be Err
-- **Shrunk counterexample:** Modifier { kind: "lo12", symbol: "foo" }
-- **Expected:** Err (llvm-mc does not treat `:lo12:` as B)
-- **Actual:** Ok(WordWithReloc Jump26 to "foo") — get_symbol discards kind
-- **Root cause:** get_symbol treats Modifier as a plain symbol
-- **Impact:** wrong relocation class relative to source text
-- **Severity:** medium
-- **Fix:** reject Modifier/ModifierOffset in encode_branch (or in get_symbol when used for B/BL)
-- **Bug report:** pbt-out/bug_reports/encode_branch_modifier.md
+### 3. encode_cbz treats SP as XZR
+- **Law:** ARM CBZ Rt is Wt/Xt; register 31 is XZR/WZR, not SP/WSP. llvm-mc rejects `cbz sp, L`
+- **Shrunk counterexample:** [Reg("sp"), Symbol("L")], is_nz=false
+- **Expected:** Err
+- **Actual:** Ok(WordWithReloc { word: 0xb400001f, CondBr19, "L", 0 }) — same as `cbz xzr, L`. parse_reg_num maps sp to 31
+- **Root cause:** parse_reg_num aliases sp/wsp to 31; encode_cbz does not reject SP
+- **Impact:** `cbz sp, L` becomes a compare-and-branch on XZR
+- **Severity:** high
+- **Fix:** reject sp/wsp (and require GPR Wt/Xt/WZR/XZR/LR)
+- **Bug report:** pbt-out/bug_reports/encode_cbz_sp_as_zr.md
 - **Serial reconfirmation:** PBT_TEST_JOBS=1 reproduced
+
+### 4. encode_cbz accepts FP/SIMD register names as Rt
+- **Law:** ARM CBZ Rt is a GPR. llvm-mc rejects `cbz d0, L` and s/q/v/h/b prefixes
+- **Minimal input:** [Reg("d0"), Symbol("L")], is_nz=false
+- **Expected:** Err
+- **Actual:** Ok(WordWithReloc) with sf=0 and Rt=0 — parse_reg_num accepts d/s/q/v/h/b; is_64bit_reg is false for them
+- **Root cause:** no FP-register rejection in encode_cbz / get_reg
+- **Impact:** `cbz d0, L` is assembled as `cbz w0, L`
+- **Severity:** high
+- **Fix:** reject FP/SIMD names (is_fp_reg) before encoding
+- **Bug report:** pbt-out/bug_reports/encode_cbz_fp_reg.md
+- **Serial reconfirmation:** PBT_TEST_JOBS=1 reproduced (property shrunk to sp; d0 confirmed by regression test)
 
 ## Design Caveats
 
-Parser-misclassified Reg/Cond/Barrier names at the B target slot are treated as symbols and emit Jump26. encode_branch_symbol_misclassified confirms this.
+Parser-misclassified Reg/Cond/Barrier names at the CBZ target slot are treated as symbols and emit CondBr19. encode_cbz_symbol_misclassified confirms this.
 Doc evidence: `src/backend/arm/assembler/encoder/mod.rs:982-986` — "The parser misclassifies symbol names that collide with register names, condition codes, or barrier names. These are valid symbols in context."
+
+Unaligned/out-of-range Imm currently Err because *all* Imm is rejected (see bug 1). encode_cbz_neg_imm_unaligned_oor therefore passes for the wrong reason until Imm encoding is added; the valid-Imm contract is the failing differential, not this caveat.
+
+llvm-mc accepted `cbz x0, :lo12:foo` as a branch19 fixup; no Modifier negative-error was filed (unlike encode_branch, where llvm-mc rejected `:lo12:`).
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/compare_branch.rs (mod encode_branch_pbt) | 9 properties + 3 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/compare_branch.rs (mod encode_cbz_pbt) | 10 properties + 4 KAT + 4 regression witnesses |
 
 ## Output Directories
 
@@ -71,22 +87,30 @@ Doc evidence: `src/backend/arm/assembler/encoder/mod.rs:982-986` — "The parser
 - pbt-out/REPORT.md — this report
 - pbt-out/COVERAGE.md — per-function coverage table
 - pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/FUNCTION_INDEX.md — merged function index (encode_branch marked yes)
-- pbt-out/INVARIANTS.md — confirmed encode_branch invariants
-- pbt-out/bug_reports/encode_branch_imm_offset.md
-- pbt-out/bug_reports/encode_branch_extra_operand.md
-- pbt-out/bug_reports/encode_branch_modifier.md
+- pbt-out/FUNCTION_INDEX.md — merged function index (encode_cbz marked yes)
+- pbt-out/INVARIANTS.md — confirmed encode_cbz invariants
+- pbt-out/bug_reports/encode_cbz_imm_offset.md
+- pbt-out/bug_reports/encode_cbz_extra_operand.md
+- pbt-out/bug_reports/encode_cbz_sp_as_zr.md
+- pbt-out/bug_reports/encode_cbz_fp_reg.md
 
 ## Contract-surface sweep
 
-STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw. Manual arm audit of get_symbol (the only branching helper encode_branch calls): Symbol/Label/SymbolOffset already covered; Modifier/ModifierOffset hit by the failing negative property; Imm/empty/Mem/Shift covered; undocumented catch-all kinds not targeted. Added encode_branch_symbol_misclassified for the documented Reg/Cond/Barrier workaround (passing). Sweep closed: tier round spent.
+Tier `standard` owes 1 coverage-driven round. `coverage_gaps` had no LLVM profraw in this session (same environment quirk as prior campaigns). Sweep was a manual arm audit of get_symbol:
+
+- Reg/Cond/Barrier parser-misclassification arms → encode_cbz_symbol_misclassified (passing)
+- other-kind arm (Mem/Shift/Extend/RegArrangement/Expr/RegList) → encode_cbz_neg_bad_label_kind (passing)
+
+Close reason: the tier's 1 sweep round is done. Documented get_symbol behaviors now have properties. Remaining documented Imm/arity/Rt contracts are the failing properties above.
+
+Skipped target: (none). Built and tested the real `encode_cbz` via `cargo test --lib`.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 01:54 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 12/184 total | PBT candidates: 12 | Tested: 12 (100%) | 0 pass, 12 fail
+> Last updated: 2026-09-14 02:06 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 13/184 total | PBT candidates: 13 | Tested: 13 (100%) | 0 pass, 13 fail
 
 ## Summary
 
@@ -95,10 +119,10 @@ STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw. Manual arm audit of 
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 12 |
-| **Tested (of PBT candidates)** | **12 / 12 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 12 / 0 |
-| **Overall (tested / all functions)** | **12 / 184 (7%)** |
+| PBT candidates (from FUNCTION_INDEX) | 13 |
+| **Tested (of PBT candidates)** | **13 / 13 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 13 / 0 |
+| **Overall (tested / all functions)** | **13 / 184 (7%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -106,20 +130,20 @@ STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw. Manual arm audit of 
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 12 | 12 | 0 | 100% |
+|  | 13 | 13 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 12 | 12 | 0 | 100% |
+| unknown | 13 | 13 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 4 | 4 | 100% | covered |
+| compare_branch.rs | 21 | 5 | 5 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 4 | 4 | 100% | covered |
 | load_store.rs | 20 | 1 | 1 | 100% | covered |
@@ -144,3 +168,4 @@ STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw. Manual arm audit of 
 | encode_blr | compare_branch.rs |
 | encode_br | compare_branch.rs |
 | encode_branch | compare_branch.rs |
+| encode_cbz | compare_branch.rs |

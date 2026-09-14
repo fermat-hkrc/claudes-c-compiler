@@ -2049,3 +2049,625 @@ mod encode_branch_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_cbz_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler (immediate form);
+    //   algebraic.invariant (symbol reloc / word layout); algebraic.metamorphic (CBZ vs CBNZ);
+    //   negative_error (arity / extra / wrong Rt / unaligned-OOR imm).
+    // Evidence: src/backend/arm/assembler/README.md:5-14 gas-compat;
+    //   README.md:220 Branches lists cbz/cbnz; README.md:267 CondBr19 ELF 280;
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:321-322 cbz/cbnz dispatch;
+    //   encoder/mod.rs:76 R_AARCH64_CONDBR19; compare_branch.rs:242 CBZ/CBNZ sf 011010 op imm19 Rt;
+    //   ARM ARM Compare and branch (immediate): sf 011010 op imm19 Rt, offset/4, ±1 MiB.
+    // Stronger considered:
+    //   - State machine: rejected — encode_cbz is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no CBZ decoder
+    //   - encode_tbz / encode_cond_branch as differential siblings: rejected — different jobs
+    //     (test-and-branch TstBr14 / B.cond)
+    // Weaker available: algebraic.invariant (opcode/reloc fields), algebraic.metamorphic
+    //   (bit-24 XOR vs CBNZ), negative_error (empty/unaligned/OOR/extra/SP/FP)
+    // Differential: candidate=encode_cbz, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(rt), Imm(imm)] <-> asm text `cbz/cbnz rt, #imm`;
+    //   [Reg(rt), Symbol(s)|Label(s)|SymbolOffset(s,a)] <-> `cbz/cbnz rt, s{+a}`
+
+    use super::encode_cbz;
+    use super::super::{EncodeResult, RelocType};
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    /// ARM ARM CBZ/CBNZ signed PC offset: ±1 MiB, multiple of 4.
+    const IMM_MIN: i64 = -1_048_576; // -2^20
+    const IMM_MAX: i64 = 1_048_572; // 2^20 - 4
+    const CBZ_X_BASE: u32 = 0xb4000000;
+    const CBNZ_X_BASE: u32 = 0xb5000000;
+    const CBZ_W_BASE: u32 = 0x34000000;
+    const CBNZ_W_BASE: u32 = 0x35000000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn mnemonic(is_nz: bool) -> &'static str {
+        if is_nz { "cbnz" } else { "cbz" }
+    }
+
+    /// n=0..30 -> xN; 31 -> xzr; 32 -> lr.
+    fn x_name(n: u32) -> String {
+        match n {
+            31 => "xzr".to_string(),
+            32 => "lr".to_string(),
+            n => format!("x{}", n.min(30)),
+        }
+    }
+
+    /// n=0..30 -> wN; 31 -> wzr.
+    fn w_name(n: u32) -> String {
+        match n {
+            31 => "wzr".to_string(),
+            n => format!("w{}", n.min(30)),
+        }
+    }
+
+    fn gpr_name_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("x0".to_string()),
+            Just("x17".to_string()),
+            Just("x30".to_string()),
+            Just("xzr".to_string()),
+            Just("lr".to_string()),
+            Just("w0".to_string()),
+            Just("w4".to_string()),
+            Just("wzr".to_string()),
+            Just("X0".to_string()),
+            (0u32..=32).prop_map(x_name),
+            (0u32..=31).prop_map(w_name),
+        ]
+    }
+
+    fn aligned_imm() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN),
+            Just(IMM_MIN + 4),
+            Just(-8i64),
+            Just(-4i64),
+            Just(0i64),
+            Just(4i64),
+            Just(8i64),
+            Just(IMM_MAX - 4),
+            Just(IMM_MAX),
+            (-(1i64 << 18)..(1i64 << 18)).prop_map(|k| k * 4),
+        ]
+    }
+
+    fn invalid_imm() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN - 4),
+            Just(IMM_MIN - 1),
+            Just(-1i64),
+            Just(1i64),
+            Just(2i64),
+            Just(3i64),
+            Just(5i64),
+            Just(IMM_MAX + 1),
+            Just(IMM_MAX + 4),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            (-(1i64 << 18) + 1..(1i64 << 18)).prop_map(|k| k * 4 + 1),
+            (1i64..=1024).prop_map(|k| IMM_MAX + 4 + k * 4),
+            (1i64..=1024).prop_map(|k| IMM_MIN - k * 4),
+        ]
+    }
+
+    fn addend_strat() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(-1i64),
+            Just(4i64),
+            Just(8i64),
+            Just(-8i64),
+            Just(-4i64),
+            -4096i64..=4096i64,
+        ]
+    }
+
+    fn extra_operand(which: u32) -> Operand {
+        match which {
+            0 => Operand::Reg("x1".into()),
+            1 => Operand::Imm(0),
+            2 => Operand::Symbol("bar".into()),
+            _ => Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        }
+    }
+
+    fn wrong_reg_name(which: u32, n: u32) -> String {
+        let n = n.min(31);
+        match which {
+            0 => "sp".to_string(),
+            1 => "wsp".to_string(),
+            2 => format!("d{}", n),
+            3 => format!("s{}", n),
+            4 => format!("q{}", n),
+            5 => format!("v{}", n),
+            6 => format!("h{}", n),
+            7 => format!("b{}", n),
+            _ => match n {
+                0 => "x32".to_string(),
+                1 => "w32".to_string(),
+                2 => "foo".to_string(),
+                3 => "".to_string(),
+                4 => "r0".to_string(),
+                5 => "x".to_string(),
+                6 => "x-1".to_string(),
+                _ => "x99".to_string(),
+            },
+        }
+    }
+
+    fn is_condbr19(t: &RelocType) -> bool {
+        matches!(t, RelocType::CondBr19)
+    }
+
+    fn reloc_base(is_64: bool, is_nz: bool) -> u32 {
+        match (is_64, is_nz) {
+            (true, false) => CBZ_X_BASE,
+            (true, true) => CBNZ_X_BASE,
+            (false, false) => CBZ_W_BASE,
+            (false, true) => CBNZ_W_BASE,
+        }
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_cbz_kat_llvm_mc_cbz_x0_imm0() {
+        let want = 0xb4000000u32;
+        let mc = llvm_mc_word("cbz x0, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(0)];
+        match encode_cbz(&ops, false) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cbz x0, #0, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cbz_kat_llvm_mc_cbz_w0_imm0() {
+        let want = 0x34000000u32;
+        let mc = llvm_mc_word("cbz w0, #0").expect("llvm-mc KAT w0");
+        assert_eq!(mc, want, "llvm-mc KAT w0 mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Imm(0)];
+        match encode_cbz(&ops, false) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cbz w0, #0, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cbz_kat_llvm_mc_cbnz_x0_imm4() {
+        let want = 0xb5000020u32;
+        let mc = llvm_mc_word("cbnz x0, #4").expect("llvm-mc KAT cbnz #4");
+        assert_eq!(mc, want, "llvm-mc KAT cbnz #4 mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(4)];
+        match encode_cbz(&ops, true) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cbnz x0, #4, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cbz_kat_symbol_foo() {
+        let ops = [Operand::Reg("x0".into()), Operand::Symbol("foo".into())];
+        match encode_cbz(&ops, false) {
+            Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                assert_eq!(word, CBZ_X_BASE);
+                assert!(is_condbr19(&reloc.reloc_type));
+                assert_eq!(reloc.reloc_type.elf_type(), 280);
+                assert_eq!(reloc.symbol, "foo");
+                assert_eq!(reloc.addend, 0);
+            }
+            other => panic!(
+                "expected WordWithReloc CondBr19 for cbz x0, foo, got {:?}",
+                other
+            ),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_diff_imm_llvm_mc(
+            rt in gpr_name_strat(),
+            is_nz in any::<bool>(),
+            imm in aligned_imm(),
+        ) {
+            let asm = format!("{} {}, #{}", mnemonic(is_nz), rt, imm);
+            let ops = [Operand::Reg(rt.clone()), Operand::Imm(imm)];
+            let sut = match encode_cbz(&ops, is_nz) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "SUT rejected valid {}: {:?}",
+                        asm, other
+                    )));
+                }
+            };
+            let mc = llvm_mc_word(&asm)
+                .map_err(|e| TestCaseError::fail(format!(
+                    "llvm-mc rejected valid {}: {}",
+                    asm, e
+                )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_symbol_reloc(
+            n in 0u32..=31,
+            is_64 in any::<bool>(),
+            is_nz in any::<bool>(),
+            suffix in 0u32..=1000,
+            addend in addend_strat(),
+        ) {
+            let rt = if is_64 {
+                if n == 31 { "xzr".to_string() } else { format!("x{}", n) }
+            } else if n == 31 {
+                "wzr".to_string()
+            } else {
+                format!("w{}", n)
+            };
+            let sym = format!("labl{}", suffix);
+            let base = reloc_base(is_64, is_nz) | n;
+            let check = |ops: &[Operand], expect_addend: i64, tag: &str| {
+                match encode_cbz(ops, is_nz) {
+                    Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                        prop_assert_eq!(word, base, "{} word", tag);
+                        prop_assert!(
+                            is_condbr19(&reloc.reloc_type),
+                            "{} expected CondBr19, got {:?}",
+                            tag, reloc.reloc_type
+                        );
+                        prop_assert_eq!(
+                            reloc.reloc_type.elf_type(),
+                            280u32,
+                            "{} ELF type", tag
+                        );
+                        prop_assert_eq!(&reloc.symbol, &sym, "{} symbol", tag);
+                        prop_assert_eq!(reloc.addend, expect_addend, "{} addend", tag);
+                        prop_assert_eq!(word & 0x00ff_ffe0, 0, "{} imm19 must be 0", tag);
+                        Ok(())
+                    }
+                    other => Err(TestCaseError::fail(format!(
+                        "{} expected WordWithReloc, got {:?}",
+                        tag, other
+                    ))),
+                }
+            };
+            check(&[Operand::Reg(rt.clone()), Operand::Symbol(sym.clone())], 0, "Symbol")?;
+            check(&[Operand::Reg(rt.clone()), Operand::Label(sym.clone())], 0, "Label")?;
+            check(
+                &[Operand::Reg(rt), Operand::SymbolOffset(sym.clone(), addend)],
+                addend,
+                "SymbolOffset",
+            )?;
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_meta_cbz_vs_cbnz(
+            n in 0u32..=31,
+            is_64 in any::<bool>(),
+            suffix in 0u32..=1000,
+            addend in addend_strat(),
+        ) {
+            let rt = if is_64 {
+                if n == 31 { "xzr".to_string() } else { format!("x{}", n) }
+            } else if n == 31 {
+                "wzr".to_string()
+            } else {
+                format!("w{}", n)
+            };
+            let sym = format!("labl{}", suffix);
+            let ops = [Operand::Reg(rt), Operand::SymbolOffset(sym.clone(), addend)];
+            let cbnz = encode_cbz(&ops, true).map_err(|e| TestCaseError::fail(e))?;
+            let cbz = encode_cbz(&ops, false).map_err(|e| TestCaseError::fail(e))?;
+            match (cbnz, cbz) {
+                (
+                    EncodeResult::WordWithReloc { word: w_nz, reloc: r_nz },
+                    EncodeResult::WordWithReloc { word: w_z, reloc: r_z },
+                ) => {
+                    prop_assert_eq!(
+                        w_nz ^ w_z,
+                        1u32 << 24,
+                        "CBNZ XOR CBZ must be bit 24 (cbnz={:#010x} cbz={:#010x})",
+                        w_nz, w_z
+                    );
+                    prop_assert!(is_condbr19(&r_nz.reloc_type), "CBNZ reloc CondBr19");
+                    prop_assert!(is_condbr19(&r_z.reloc_type), "CBZ reloc CondBr19");
+                    prop_assert_eq!(&r_nz.symbol, &sym);
+                    prop_assert_eq!(&r_z.symbol, &sym);
+                    prop_assert_eq!(r_nz.addend, addend);
+                    prop_assert_eq!(r_z.addend, addend);
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "expected WordWithReloc pair, got {:?}",
+                        other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_word_layout(
+            n in 0u32..=31,
+            is_64 in any::<bool>(),
+            is_nz in any::<bool>(),
+        ) {
+            let rt = if is_64 {
+                if n == 31 { "xzr".to_string() } else { format!("x{}", n) }
+            } else if n == 31 {
+                "wzr".to_string()
+            } else {
+                format!("w{}", n)
+            };
+            match encode_cbz(&[Operand::Reg(rt), Operand::Symbol("L".into())], is_nz) {
+                Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                    prop_assert_eq!((word >> 25) & 0x3f, 0b011010u32, "bits[30:25]");
+                    prop_assert_eq!(word >> 31, if is_64 { 1u32 } else { 0u32 }, "sf");
+                    prop_assert_eq!((word >> 24) & 1, if is_nz { 1u32 } else { 0u32 }, "op");
+                    prop_assert_eq!(word & 0x1f, n, "Rt");
+                    prop_assert_eq!(word & 0x00ff_ffe0, 0, "imm19");
+                    prop_assert!(is_condbr19(&reloc.reloc_type));
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "expected WordWithReloc, got {:?}",
+                        other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_neg_arity(is_nz in any::<bool>()) {
+            prop_assert!(
+                encode_cbz(&[], is_nz).is_err(),
+                "bare {} must Err (llvm-mc: too few operands)",
+                mnemonic(is_nz)
+            );
+            prop_assert!(
+                encode_cbz(&[Operand::Reg("x0".into())], is_nz).is_err(),
+                "{} x0 must Err (llvm-mc: too few operands)",
+                mnemonic(is_nz)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_neg_extra_operand(
+            n in 0u32..=30,
+            is_nz in any::<bool>(),
+            suffix in 0u32..=1000,
+            which in 0u32..=3,
+        ) {
+            let extra = extra_operand(which);
+            let ops = [
+                Operand::Reg(format!("x{}", n)),
+                Operand::Symbol(format!("labl{}", suffix)),
+                extra,
+            ];
+            prop_assert!(
+                encode_cbz(&ops, is_nz).is_err(),
+                "{} x{}, label, extra (which={}) must Err (llvm-mc: invalid operand)",
+                mnemonic(is_nz), n, which
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_neg_wrong_reg(
+            which in 0u32..=8,
+            n in 0u32..=31,
+            is_nz in any::<bool>(),
+        ) {
+            let name = wrong_reg_name(which, n);
+            let ops = [Operand::Reg(name.clone()), Operand::Symbol("L".into())];
+            prop_assert!(
+                encode_cbz(&ops, is_nz).is_err(),
+                "{} {} , L must Err (llvm-mc rejects SP / FP / invalid names)",
+                mnemonic(is_nz), name
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_neg_imm_unaligned_oor(
+            rt in gpr_name_strat(),
+            is_nz in any::<bool>(),
+            imm in invalid_imm(),
+        ) {
+            let ops = [Operand::Reg(rt.clone()), Operand::Imm(imm)];
+            prop_assert!(
+                encode_cbz(&ops, is_nz).is_err(),
+                "{} {}, #{} is unaligned or out of [-1048576, 1048572] and must Err",
+                mnemonic(is_nz), rt, imm
+            );
+        }
+
+        // Oracle: algebraic.invariant (coverage sweep: get_symbol parser-misclassification arms)
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_symbol_misclassified(
+            which in 0u32..=2,
+            name in prop::sample::select(vec!["eq", "ne", "lt", "gt", "sy", "ish", "st", "ld"]),
+            is_nz in any::<bool>(),
+        ) {
+            let label = match which {
+                0 => Operand::Reg(name.to_string()),
+                1 => Operand::Cond(name.to_string()),
+                _ => Operand::Barrier(name.to_string()),
+            };
+            let ops = [Operand::Reg("x0".into()), label];
+            match encode_cbz(&ops, is_nz) {
+                Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                    prop_assert_eq!(word, reloc_base(true, is_nz));
+                    prop_assert!(is_condbr19(&reloc.reloc_type));
+                    prop_assert_eq!(&reloc.symbol, name);
+                    prop_assert_eq!(reloc.addend, 0);
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "parser-misclassified {} as CBZ target must be a CondBr19 reloc, got {:?}",
+                        name, other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: negative_error (coverage sweep: get_symbol other-kind arm)
+        // Target: encoder.compare_branch.encode_cbz
+        #[test]
+        fn encode_cbz_neg_bad_label_kind(which in 0u32..=5, is_nz in any::<bool>()) {
+            let bad = match which {
+                0 => Operand::Mem { base: "x0".into(), offset: 0 },
+                1 => Operand::Shift { kind: "lsl".into(), amount: 0 },
+                2 => Operand::Extend { kind: "sxtw".into(), amount: 0 },
+                3 => Operand::RegArrangement { reg: "v0".into(), arrangement: "16b".into() },
+                4 => Operand::Expr("foo+bar".into()),
+                _ => Operand::RegList(vec![]),
+            };
+            let ops = [Operand::Reg("x0".into()), bad];
+            prop_assert!(
+                encode_cbz(&ops, is_nz).is_err(),
+                "CBZ label slot does not take Mem/Shift/Extend/RegArrangement/Expr/RegList (which={})",
+                which
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_cbz_regression_imm_offset() {
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(IMM_MIN)];
+        match encode_cbz(&ops, false) {
+            Ok(EncodeResult::Word(w)) => {
+                let mc = llvm_mc_word("cbz x0, #-1048576").expect("llvm-mc");
+                assert_eq!(w, mc, "cbz x0, #-1048576 must match llvm-mc");
+            }
+            other => panic!(
+                "cbz x0, #-1048576 must encode as Word matching llvm-mc, got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_encode_cbz_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Symbol("labl0".into()),
+            Operand::Reg("x1".into()),
+        ];
+        assert!(
+            encode_cbz(&ops, false).is_err(),
+            "cbz x0, labl0, x1 must Err; llvm-mc rejects a third operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_cbz_regression_sp() {
+        let ops = [Operand::Reg("sp".into()), Operand::Symbol("L".into())];
+        assert!(
+            encode_cbz(&ops, false).is_err(),
+            "cbz sp, L must Err; llvm-mc rejects SP (register 31 is XZR)"
+        );
+    }
+
+    #[test]
+    fn test_encode_cbz_regression_fp_reg() {
+        let ops = [Operand::Reg("d0".into()), Operand::Symbol("L".into())];
+        assert!(
+            encode_cbz(&ops, false).is_err(),
+            "cbz d0, L must Err; llvm-mc rejects FP/SIMD Rt"
+        );
+    }
+}

@@ -332,3 +332,35 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_symbol (Reg/Cond/Barrier via encode_branch_symbol_misclassified).
 
+---
+
+# Confirmed invariants (encode_cbz)
+
+- Symbol / Label / SymbolOffset produce WordWithReloc { CondBr19, symbol, addend } with word = (sf<<31)|(0b011010<<25)|(op<<24)|Rt and imm19 field 0 (1000 cases). ELF type is 280 (R_AARCH64_CONDBR19).
+- encode_cbz(ops, true).word XOR encode_cbz(ops, false).word = 1<<24 for the same SymbolOffset operands (ARM ARM op bit); both reloc types CondBr19; same symbol and addend (1000 cases).
+- Success-path reloc word: bits[30:25] = 011010, sf at 31 from Rt width, op at 24 from is_nz, Rt at [4:0], bits[23:5] = 0.
+- Empty operands and a missing label always Err.
+- Unaligned or out-of-range Imm always Err (because all Imm currently Err — see bugs).
+- Mem / Shift / Extend / RegArrangement / Expr / RegList in the label slot always Err.
+- Parser-misclassified Reg/Cond/Barrier names at operand 1 are treated as symbols (get_symbol workaround) and emit CondBr19 (1000 cases).
+- Known-answer: llvm-mc `cbz x0, #0` encodes as 0xb4000000; `cbz w0, #0` as 0x34000000; `cbnz x0, #4` as 0xb5000020. SUT does not yet match (see bugs). llvm-mc `cbz x0, foo` is a CondBr19 reloc with word 0xb4000000 — SUT matches.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM CBZ/CBNZ signed PC offset: [-1048576, 1048572], multiple of 4.
+- CBZ register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `cbz sp, ...`).
+- CBZ takes Wt/Xt only (llvm-mc rejects `cbz d0, ...` and `cbz wsp, ...`).
+- llvm-mc rejects bare `cbz` / `cbz x0` (too few operands), `cbz x0, #0, x1` (invalid operand), `cbz x0, #1` (expected label or encodable integer pc offset).
+- Codegen emits `cbz xN, .Llabel` / `cbnz wN, .Llabel`, not `cbz Rt, #imm`.
+
+## Quirks
+
+- encode_cbz never encodes Imm: get_symbol rejects it (see bugs).
+- Extra operands beyond index 1 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `cbz sp, L` encodes as `cbz xzr, L` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- llvm-mc accepted `cbz x0, :lo12:foo` as a branch19 fixup; get_symbol also accepts Modifier (kind discarded).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_symbol (Reg/Cond/Barrier via encode_cbz_symbol_misclassified; other kinds via encode_cbz_neg_bad_label_kind).
+
