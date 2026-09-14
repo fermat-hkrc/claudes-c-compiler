@@ -1,3 +1,37 @@
+# Confirmed invariants (encode_mvn)
+
+- Valid two-GPR same-width MVN with Rd/Rm in x0–x30/xzr or w0–w30/wzr and optional LSL/LSR/ASR/ROR in range matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_mvn(Rd, Rm, shift) equals llvm-mc `mvn Rd, Rm, shift` and llvm-mc `orn Rd, ZR, Rm, shift` (1000 cases). Documented alias at data_processing.rs:753.
+- encode_mvn(X-ops) XOR encode_mvn(W-ops) at equal register numbers = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path word: sf at 31, opc=01 at [30:29], bits [28:24]=01010, shift at [23:22], N=1 at 21, Rm at [20:16], imm6 at [15:10], Rn=31 at [9:5], Rd at [4:0].
+- Valid NEON MVN with T in {8b,16b}, Vd/Vn in v0–v31, matches llvm-mc `mvn` and llvm-mc `not` (1000 cases).
+- `lr` in either scalar slot encodes as X30 and matches llvm-mc (1000 cases).
+- Fewer than 2 operands always Err.
+- Known-answer: `mvn x0, x1` encodes as 0xaa2103e0; `mvn w0, w1` as 0x2a2103e0; `orn x0, xzr, x1` as 0xaa2103e0; `mvn v0.16b, v1.16b` / `not v0.16b, v1.16b` as 0x6e205820.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Logical (shifted register) MVN (alias of ORN): `sf 01 01010 shift 1 Rm imm6 11111 Rd`. Register 31 is XZR/WZR, never SP/WSP. Rd and Rm same width. Exactly two registers plus optional shift. shift in {LSL,LSR,ASR,ROR}. imm6 0..31 (sf=0) or 0..63 (sf=1).
+- ARM ARM Advanced SIMD NOT (vector, alias MVN): `0 Q 1 01110 00 10000 00101 10 Rn Rd`. T in {8B,16B} only.
+- `lr` is a 64-bit alias of X30 (llvm-mc and parse_reg_num).
+- Dispatch: encoder/mod.rs:280 `"mvn" => encode_mvn`. NEON dest is branched inside encode_mvn to encode_neon_not.
+- Callers: alu.rs:26 `mvn x0, x0`; i128_ops.rs:43-51 `mvn x0, x0` / `mvn x1, x1`; inline_asm.rs:354 `mvn dest, dest`.
+
+## Quirks
+
+- Extra operands beyond the optional shift are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- Mixed X/W is accepted; sf is taken only from Rd (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- Unknown shift kind defaults to LSL (see bugs).
+- Shift amount is masked with 0x3F; 32-bit amounts 32..63 encode UNALLOCATED imm6<5>=1 (see bugs).
+- encode_neon_not sets Q from dest=="16b" only; T not in {8b,16b} and mismatched source T are accepted (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg 0..1 / sf / Shift at 2 / shift-kind / imm6 / Rn=31 / neon Q / neon extra).
+
+---
+
 # Confirmed invariants (encode_mul)
 
 - Valid three-GPR same-width MUL with Rd/Rn/Rm in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

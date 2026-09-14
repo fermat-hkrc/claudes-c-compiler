@@ -1,491 +1,347 @@
-# Properties: encode_mul
+# Properties: encode_mvn
 
-## encode_mul_diff_gpr
+## encode_mvn_diff_gpr_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Round-trip rejected (no in-tree MUL decoder). encode_madd rejected by same-job sibling gate for the 4-operand public mnemonic (MADD vs MUL). Doc evidence: README.md:5-14 gas-compatible assembly; README.md:214 lists mul; encoder/mod.rs:1-7 32-bit words; encoder/mod.rs:238-244 dispatch; ARM ARM Data-processing (3 source) MUL `sf 00 11011 000 Rm 0 11111 Rn Rd`; llvm-mc `-triple=aarch64`.
-- Seed: encode_madd_pbt::encode_madd_diff_gpr
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ {false,true}. encode_mul([Rd, Rn, Rm]) = llvm-mc("mul Rd, Rn, Rm") where each name is xN/xzr if is_64 else wN/wzr.
+- Rationale: Strongest independent same-job reference is llvm-mc AArch64 assembler. State machine rejected (pure function, no lifecycle). Round-trip rejected (no in-tree MVN decoder). SUT-boundary: internal-helper of the GNU-style assembler whose public contract is gas-compatible AArch64 text (README.md:5-14). Mapping: operands <-> `mvn Rd, Rm{, shift #amt}`.
+- Seed: encode_eon_pbt::encode_eon_diff_reg_llvm_mc
+- Formal: ∀ rd,rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ [0, 31+32·is_64]. encode_mvn([Rd, Rm, Shift(kind,amt)]) = llvm-mc(`mvn Rd, Rm, kind #amt`) as a little-endian u32, where Rd/Rm are xN/xzr or wN/wzr of matching width (register 31 is ZR, never SP).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_mul
+function: encoder.encode_mvn
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64]
-  domain:
-    rd: 0..31
-    rn: 0..31
-    rm: 0..31
-    is_64: bool
+  vars: [rd, rm, is_64, kind, amt]
+  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: {lsl,lsr,asr,ror}, amt: 0..(31+32*is_64) }
   relation:
     op: eq
-    lhs: encode_mul([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn)), Reg(gpr(is_64, rm))])
-    rhs: llvm_mc("mul {Rd}, {Rn}, {Rm}")
+    lhs: encode_mvn([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rm)), Shift(kind,amt)])
+    rhs: llvm_mc("mvn " + gpr(is_64,rd) + ", " + gpr(is_64,rm) + ", " + kind + " #" + amt)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:5-14 README.md:214 encoder/mod.rs:238-244 ARM ARM Data-processing (3 source) MUL
+  kind: { gen: oneof, values: [lsl, lsr, asr, ror] }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: src/backend/arm/assembler/README.md:5-14; data_processing.rs:753; ARM ARM Logical (shifted register) MVN
 ```
 
-## encode_mul_diff_alias_madd_zr
+## encode_mvn_diff_orn_alias
 - Tier: 2
-- Rationale: Documented alias: encode_mul comment data_processing.rs:589 "MUL Rd, Rn, Rm is MADD Rd, Rn, Rm, XZR". llvm-mc aliases madd Rd,Rn,Rm,ZR to mul. Differential vs llvm-mc of both mnemonics. encode_madd itself is a different job (4-operand public mnemonic) so not a same-job sibling of encode_mul. Doc evidence: data_processing.rs:589; ARM ARM MUL is MADD with Ra=XZR/WZR.
-- Seed: encode_madd_pbt::encode_madd_diff_ra_zr_is_mul
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ {false,true}. encode_mul([Rd, Rn, Rm]) = llvm-mc("mul Rd, Rn, Rm") = llvm-mc("madd Rd, Rn, Rm, ZR").
+- Rationale: Documented alias MVN Rd, Rm ≡ ORN Rd, ZR, Rm (data_processing.rs:753). Independent reference is llvm-mc of both mnemonics, not encode_orn (shared construction). Metamorphic required at STANDARD. State machine / round-trip rejected as above.
+- Seed: encode_mul_pbt::encode_mul_diff (MADD/XZR alias pattern)
+- Formal: ∀ rd,rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ [0, 31+32·is_64]. encode_mvn([Rd, Rm, Shift(kind,amt)]) = llvm-mc(`orn Rd, ZR, Rm, kind #amt`) = llvm-mc(`mvn Rd, Rm, kind #amt`).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_mul
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64]
-  domain:
-    rd: 0..31
-    rn: 0..31
-    rm: 0..31
-    is_64: bool
-  relation:
-    op: eq
-    lhs: encode_mul([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn)), Reg(gpr(is_64, rm))])
-    rhs: llvm_mc("madd {Rd}, {Rn}, {Rm}, {ZR}")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: data_processing.rs:589 ARM ARM MUL is MADD with Ra=31 encoder/mod.rs:245
-```
-
-## encode_mul_metamorphic_sf_bit
-- Tier: 4
-- Rationale: ARM ARM sf bit is the sole 64 vs 32 distinguisher of otherwise-identical MUL encodings. Stronger differential covers full-word agreement; this metamorphic isolates sf. Round-trip rejected (no decoder). Doc evidence: ARM ARM `sf 00 11011 000 Rm 0 11111 Rn Rd`.
-- Seed: encode_madd_pbt::encode_madd_metamorphic_sf_bit
-- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_mul(X-ops) XOR encode_mul(W-ops) = 1<<31 at equal register numbers.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_mul
+function: encoder.encode_mvn
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain:
-    rd: 0..31
-    rn: 0..31
-    rm: 0..31
+  vars: [rd, rm, is_64, kind, amt]
+  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: {lsl,lsr,asr,ror}, amt: 0..(31+32*is_64) }
   relation:
     op: eq
-    lhs: encode_mul(x_ops) XOR encode_mul(w_ops)
-    rhs: 1 << 31
+    lhs: encode_mvn([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rm)), Shift(kind,amt)])
+    rhs: llvm_mc("orn " + gpr(is_64,rd) + ", " + zr(is_64) + ", " + gpr(is_64,rm) + ", " + kind + " #" + amt)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Data-processing (3 source) MUL sf at bit 31
+  is_64: { gen: bool }
+  kind: { gen: oneof, values: [lsl, lsr, asr, ror] }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: data_processing.rs:753; ARM ARM MVN alias of ORN; llvm-mc aliases orn Rd, ZR, Rm to mvn
 ```
 
-## encode_mul_invariant_arm_fields
-- Tier: 4
-- Rationale: ARM ARM field layout is an exact structural predicate on success-path words. Stronger differential covers full-word; this invariant pins Ra=31 and o0=0 (the MUL vs MADD/MSUB distinguisher) and each register field. Doc evidence: ARM ARM `sf 00 11011 000 Rm 0 11111 Rn Rd`.
-- Seed: encode_madd_pbt::encode_madd_invariant_arm_fields
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ {false,true}. let w = encode_mul(...). (w>>31)&1 = sf(is_64) ∧ (w>>21)&0x3FF = 0b0011011000 ∧ (w>>16)&0x1F = rm ∧ (w>>15)&1 = 0 ∧ (w>>10)&0x1F = 31 ∧ (w>>5)&0x1F = rn ∧ w&0x1F = rd.
+## encode_mvn_diff_neon_llvm_mc
+- Tier: 2
+- Rationale: README.md:225 lists NEON `not`/`mvn`. ARM ARM Advanced SIMD NOT T ∈ {8B,16B}. Independent reference llvm-mc. encode_neon_not is a callee, not a same-job sibling with a distinct public contract.
+- Seed: encode_mul_pbt NEON differential
+- Formal: ∀ vd,vn ∈ {0..31}, T ∈ {8b,16b}. encode_mvn([Vd.T, Vn.T]) = llvm-mc(`mvn Vd.T, Vn.T`) = llvm-mc(`not Vd.T, Vn.T`).
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_mul
+function: encoder.encode_mvn
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [vd, vn, t]
+  domain: { vd: 0..31, vn: 0..31, t: {8b,16b} }
+  relation:
+    op: eq
+    lhs: encode_mvn([RegArrangement(v{vd}, t), RegArrangement(v{vn}, t)])
+    rhs: llvm_mc("mvn v" + vd + "." + t + ", v" + vn + "." + t)
+generators:
+  vd: { gen: int, min: 0, max: 31, type: u32 }
+  vn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: [8b, 16b] }
+evidence: src/backend/arm/assembler/README.md:225; data_processing.rs:749; neon.rs:608-621; ARM ARM Advanced SIMD NOT
+```
+
+## encode_mvn_metamorphic_sf_xor
+- Tier: 4
+- Rationale: ARM ARM sf bit is the sole 32/64 discriminator for Logical (shifted register). Same register numbers at W vs X must differ by exactly bit 31. Weaker than differential; kept as a field-level metamorphic check independent of llvm-mc byte parsing.
+- Seed: encode_mul_pbt sf XOR
+- Formal: ∀ rd,rm ∈ {0..31}, kind ∈ {lsl,lsr,asr,ror}, amt ∈ [0,31]. encode_mvn(X-ops) XOR encode_mvn(W-ops) = 1<<31.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_mvn
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rm, kind, amt]
+  domain: { rd: 0..31, rm: 0..31, kind: {lsl,lsr,asr,ror}, amt: 0..31 }
+  relation:
+    op: eq
+    lhs: encode_mvn(x_ops) XOR encode_mvn(w_ops)
+    rhs: 1u32 << 31
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  kind: { gen: oneof, values: [lsl, lsr, asr, ror] }
+  amt: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM Logical (shifted register) sf at bit 31; data_processing.rs:755
+```
+
+## encode_mvn_invariant_arm_fields
+- Tier: 4
+- Rationale: ARM ARM field layout of ORN/MVN: sf, opc=01, 01010, shift, N=1, Rm, imm6, Rn=31, Rd. Independent of llvm-mc. Weaker than differential.
+- Seed: encode_eon_pbt::encode_eon_invariant_arm_fields
+- Formal: ∀ rd,rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ [0, 31+32·is_64]. let w = encode_mvn(...). (w>>31)&1 = sf(is_64) ∧ (w>>29)&3 = 0b01 ∧ (w>>24)&0x1F = 0b01010 ∧ (w>>22)&3 = st(kind) ∧ (w>>21)&1 = 1 ∧ (w>>16)&0x1F = rm ∧ (w>>10)&0x3F = amt ∧ (w>>5)&0x1F = 31 ∧ w&0x1F = rd.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_mvn
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64]
-  domain:
-    rd: 0..31
-    rn: 0..31
-    rm: 0..31
-    is_64: bool
-  relation:
-    op: holds
-    expr: arm_mul_fields(encode_mul(ops), rd, rn, rm, is_64)
+  vars: [rd, rm, is_64, kind, amt]
+  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: {lsl,lsr,asr,ror}, amt: 0..(31+32*is_64) }
+  body: fields(encode_mvn(...)) match ARM ARM ORN/MVN layout with Rn=31
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-evidence: ARM ARM Data-processing (3 source) MUL sf 00 11011 000 Rm 0 11111 Rn Rd
+  kind: { gen: oneof, values: [lsl, lsr, asr, ror] }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: ARM ARM Logical (shifted register) MVN/ORN; data_processing.rs:768-770
 ```
 
-## encode_mul_diff_neon
+## encode_mvn_neg_arity_and_extra
+- Tier: 4
+- Rationale: ARM ARM / llvm-mc: MVN takes exactly two registers plus optional shift. Fewer than 2 operands is too few; a trailing non-shift extra operand is invalid. README gas-compatibility is the error contract. Negative/error is the strongest applicable for the invalid domain (no decoder to round-trip).
+- Seed: encode_eon_pbt::encode_eon_neg_arity / encode_eon_neg_extra_operand
+- Formal: ∀ ops. (|ops| < 2 ∨ (|ops| ≥ 3 ∧ ops[2] is not a valid Shift) ∨ |ops| ≥ 4) ∧ ops otherwise well-typed GPR ⇒ encode_mvn(ops) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: encode_mvn_neg_too_few passes; extra fails on [Reg(w0), Reg(w0), Reg(x0)] and [Reg(w0), Reg(w0), Shift{lsl,1}, Reg(x0)]
+- Bug report: pbt-out/bug_reports/encode_mvn_extra_operand.md
+
+```property
+function: encoder.encode_mvn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  domain:
+    ops: too-few GPR lists or two-GPR plus trailing non-shift extra
+  relation:
+    op: throws
+    expr: encode_mvn(ops)
+expected_error: String
+generators:
+  n: { gen: int, min: 0, max: 1, type: usize }
+  extra: { gen: oneof, values: [Reg, Imm, Mem, Symbol] }
+evidence: ARM ARM MVN operand list; llvm-mc rejects mvn x0 and mvn x0, x1, x2; README.md:5-14
+```
+
+## encode_mvn_neg_mixed_sp_fp
+- Tier: 4
+- Rationale: ARM ARM register 31 is XZR/WZR never SP/WSP; Rd and Rm must be the same width GPR; FP/SIMD names are not Logical (shifted register) operands. llvm-mc rejects all three. Gas-compatibility is the error contract.
+- Seed: encode_eon_pbt::encode_eon_neg_mixed_width / encode_eon_neg_sp_fp
+- Formal: ∀ mixed-width GPR pairs, or any slot in {Rd,Rm} being SP/WSP or {d,s,q,v,h,b}N. encode_mvn(ops) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: mixed [Reg(w0), Reg(x0)]; SP [Reg(wsp), Reg(w0)]; FP [Reg(d0), Reg(x1)]
+- Bug report: pbt-out/bug_reports/encode_mvn_mixed_width.md; pbt-out/bug_reports/encode_mvn_sp.md; pbt-out/bug_reports/encode_mvn_fp_reg.md
+
+```property
+function: encoder.encode_mvn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  domain:
+    ops: mixed X/W pair or SP/WSP or FP/SIMD name in Rd or Rm
+  relation:
+    op: throws
+    expr: encode_mvn(ops)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+evidence: ARM ARM Logical (shifted register) register specifiers; llvm-mc rejects mvn x0 w1, mvn sp x0, mvn d0 x1
+```
+
+## encode_mvn_neg_shift_and_neon_t
+- Tier: 4
+- Rationale: Documented bounds: 32-bit imm6 in 0..31 (imm6<5>==1 UNALLOCATED); 64-bit 0..63. NEON T ∈ {8B,16B} only, matching source T. llvm-mc rejects out-of-range shift and T in {4h,8h,2s,4s,1d,2d} and mismatched T. Bounds sampled at 31/32/63/64 and each illegal T.
+- Seed: encode_eon_pbt::encode_eon_neg_shift_range; encode_mul_pbt::encode_mul_neg_neon_d
+- Formal: ∀ sf=0 ∧ amt ∈ {32,33,63,64} ∨ sf=1 ∧ amt ∈ {64,65,128} ∨ T ∉ {8b,16b} ∨ dest T ≠ src T. encode_mvn(ops) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: shift [Reg(w0), Reg(w0), Shift{lsl,32}]; neon T [v0.4h, v0.4h]; mismatch [v0.16b, v0.8b]
+- Bug report: pbt-out/bug_reports/encode_mvn_shift_range.md; pbt-out/bug_reports/encode_mvn_neon_t.md; pbt-out/bug_reports/encode_mvn_neon_mismatch_t.md
+
+```property
+function: encoder.encode_mvn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  domain:
+    ops: GPR plus Shift with amt outside ARM ARM imm6 range or NEON T not in 8b/16b or mismatched T
+  relation:
+    op: throws
+    expr: encode_mvn(ops)
+expected_error: String
+generators:
+  amt_w: { gen: oneof, values: [32, 33, 63, 64] }
+  amt_x: { gen: oneof, values: [64, 65, 128] }
+  t: { gen: oneof, values: [4h, 8h, 2s, 4s, 1d, 2d] }
+evidence: ARM ARM Logical (shifted register) imm6; ARM ARM Advanced SIMD NOT T in 8B/16B; llvm-mc rejects mvn w0 w1 lsl 32 and mvn v0.4s v1.4s
+```
+
+## encode_mvn_diff_lr
 - Tier: 2
-- Rationale: encode_mul dispatches RegArrangement dest to encode_neon_mul (data_processing.rs:586-588). Differential vs llvm-mc for valid T. State machine rejected. Round-trip rejected (no in-tree NEON MUL decoder). Doc evidence: README.md:224 NEON three-same lists mul; ARM ARM Advanced SIMD MUL `0 Q 0 01110 size 1 Rm 10011 1 Rn Rd`; T in {8B,16B,4H,8H,2S,4S}; llvm-mc `-triple=aarch64`.
-- Seed: encode_logical NEON differential (same file)
-- Formal: ∀ vd,vn,vm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s}. encode_mul([Vd.T, Vn.T, Vm.T]) = llvm-mc("mul Vd.T, Vn.T, Vm.T").
+- Rationale: `lr` is a documented 64-bit alias of X30 (parse_reg_num / llvm-mc). Differential vs llvm-mc.
+- Seed: encode_mul_pbt::encode_mul_diff_lr
+- Formal: ∀ which ∈ {0,1}, other ∈ {0..30}, kind ∈ {lsl,lsr,asr,ror}, amt ∈ [0,63]. encode_mvn with `lr` in slot `which` equals llvm-mc of the same text.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_mul
+function: encoder.encode_mvn
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [vd, vn, vm, t]
+  vars: [which, other, kind, amt]
   domain:
-    vd: 0..31
-    vn: 0..31
-    vm: 0..31
-    t: {8b,16b,4h,8h,2s,4s}
+    which: 0..1
+    other: 0..30
+    kind: lsl lsr asr ror
+    amt: 0..63
   relation:
     op: eq
-    lhs: encode_mul([RegArrangement(v{vd}, t), RegArrangement(v{vn}, t), RegArrangement(v{vm}, t)])
-    rhs: llvm_mc("mul v{vd}.{t}, v{vn}.{t}, v{vm}.{t}")
+    lhs: encode_mvn(ops_with_lr)
+    rhs: llvm_mc(asm_with_lr)
 generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  vn: { gen: int, min: 0, max: 31, type: u32 }
-  vm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, variants: [{ gen: const, value: "8b" }, { gen: const, value: "16b" }, { gen: const, value: "4h" }, { gen: const, value: "8h" }, { gen: const, value: "2s" }, { gen: const, value: "4s" }] }
-evidence: README.md:224 ARM ARM Advanced SIMD MUL vector T in {8B,16B,4H,8H,2S,4S} data_processing.rs:586-588
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  other: { gen: int, min: 0, max: 30, type: u32 }
+  amt: { gen: int, min: 0, max: 63, type: u32 }
+evidence: encoder/mod.rs parse_reg_num lr => 30; llvm-mc accepts lr as x30
 ```
 
-## encode_mul_neg_too_few
-- Tier: 5
-- Rationale: llvm-mc "too few operands for instruction" for arity < 3. get_reg on missing index returns Err. Documented ARM 3-operand form. Stronger oracles do not apply to the invalid domain. Doc evidence: ARM ARM three-register MUL; llvm-mc rejects `mul x0, x1`.
-- Seed: encode_madd_pbt::encode_madd_neg_too_few
-- Formal: ∀ n ∈ {0..2}, ops a length-n register list. encode_mul(ops) is Err.
+## encode_mvn_neg_too_few
+- Tier: 4
+- Rationale: llvm-mc rejects `mvn x0` (too few operands). Split out of arity property because extra-operand fails independently.
+- Seed: encode_eon_pbt::encode_eon_neg_arity
+- Formal: ∀ n ∈ {0,1}, is_64 ∈ Bool, r ∈ {0..31}. encode_mvn(ops[0..n]) = Err.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_mul
+function: encoder.encode_mvn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, r0, r1, is_64]
+  vars: [n]
   domain:
-    n: 0..2
-    r0: 0..31
-    r1: 0..31
-    is_64: bool
+    n: 0..1
   relation:
     op: throws
-    expr: encode_mul(ops[..n])
-generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
-  r0: { gen: int, min: 0, max: 31, type: u32 }
-  r1: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
+    expr: encode_mvn(ops[0..n])
 expected_error: String
-evidence: ARM ARM MUL three registers; llvm-mc too few operands
+generators:
+  n: { gen: int, min: 0, max: 1, type: usize }
+evidence: llvm-mc rejects mvn x0 as too few operands
 ```
 
-## encode_mul_neg_extra_operand
-- Tier: 5
-- Rationale: llvm-mc "invalid operand for instruction" for a fourth operand. ARM ARM MUL has exactly three registers. The encoder must reject extra operands rather than silently drop them. Doc evidence: ARM ARM three-register form; llvm-mc rejects `mul x0, x1, x2, x3`.
-- Seed: encode_madd_pbt::encode_madd_neg_extra_operand
-- Formal: ∀ rd,rn,rm ∈ {0..30}, is_64 ∈ {false,true}, extra ∈ {Reg, Imm, Shift}. encode_mul([Rd,Rn,Rm,extra]) is Err.
+## encode_mvn_neg_bad_shift_kind
+- Tier: 4
+- Rationale: ARM ARM shift is LSL/LSR/ASR/ROR only. Unknown kind must Err. Strengthening round after first batch.
+- Seed: encode_eon_pbt shift kind match
+- Formal: ∀ rd,rm ∈ {0..30}, is_64 ∈ Bool, kind ∉ {lsl,lsr,asr,ror}, amt ∈ [0,31]. encode_mvn([Rd, Rm, Shift(kind,amt)]) = Err.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, is_64=false, extra=Reg("x0") i.e. mul w0, w0, w0, x0
-- Bug report: pbt-out/bug_reports/encode_mul_extra_operand.md
+- Counterexample: rd=0, rm=0, is_64=false, kind="foo", amt=0
+- Bug report: pbt-out/bug_reports/encode_mvn_bad_shift_kind.md
 
 ```property
-function: encoder.data_processing.encode_mul
+function: encoder.encode_mvn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, extra]
+  vars: [rd, rm, is_64, kind, amt]
   domain:
-    rd: 0..30
-    rn: 0..30
-    rm: 0..30
-    is_64: bool
-    extra: Reg or Imm or Shift
+    kind: not in lsl lsr asr ror
   relation:
     op: throws
-    expr: encode_mul([Rd, Rn, Rm, extra])
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  extra: { gen: oneof, variants: [{ gen: const, value: "Reg(x0)" }, { gen: const, value: "Imm(0)" }, { gen: const, value: "Shift(lsl,0)" }] }
+    expr: encode_mvn([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rm)), Shift(kind,amt)])
 expected_error: String
-evidence: ARM ARM MUL three registers; llvm-mc invalid operand for fourth
+generators:
+  kind: { gen: oneof, values: [foo, lslv, rrx, empty, uxtw] }
+  amt: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM Logical (shifted register) shift; llvm-mc rejects unknown shift mnemonics
 ```
 
-## encode_mul_neg_mixed_width
-- Tier: 5
-- Rationale: ARM MUL uses a single sf bit for all three registers. llvm-mc rejects mixed X/W (`mul x0, w1, x2`). The encoder must Err when Rd/Rn/Rm are not all W or all X. Doc evidence: ARM ARM single sf; llvm-mc "invalid operand".
-- Seed: encode_madd_pbt::encode_madd_neg_mixed_width
-- Formal: ∀ rd,rn,rm ∈ {0..30}, width flags not all equal. encode_mul of mixed X/W names is Err.
+## encode_mvn_neg_neon_extra
+- Tier: 4
+- Rationale: NEON MVN is exactly two arrangement operands. Strengthening round after first batch.
+- Seed: encode_mul extra operand
+- Formal: ∀ vd,vn ∈ {0..31}, extra. encode_mvn([Vd.16b, Vn.16b, extra]) = Err.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=true i.e. mul w0, w0, x0
-- Bug report: pbt-out/bug_reports/encode_mul_mixed_width.md
+- Counterexample: vd=0, vn=0, extra=Reg("x0")
+- Bug report: pbt-out/bug_reports/encode_mvn_neon_extra.md
 
 ```property
-function: encoder.data_processing.encode_mul
+function: encoder.encode_mvn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64]
-  domain:
-    rd: 0..30
-    rn: 0..30
-    rm: 0..30
-    rd64: bool
-    rn64: bool
-    rm64: bool
-  relation:
-    op: throws
-    expr: encode_mul(mixed_width_ops)
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-  rm64: { gen: bool }
-expected_error: String
-evidence: ARM ARM single sf bit; llvm-mc rejects mixed X/W MUL
-```
-
-## encode_mul_diff_lr
-- Tier: 2
-- Rationale: `lr` is a documented 64-bit alias of X30 (parse_reg_num encoder/mod.rs:135; llvm-mc rewrites lr to x30). Differential vs llvm-mc. Strengthening round. Doc evidence: encoder/mod.rs:135 "lr" => 30; is_64bit_reg treats lr as 64-bit.
-- Seed: encode_madd_pbt::encode_madd_diff_lr
-- Formal: ∀ which ∈ {0..2}, a,b ∈ {0..30}. placing "lr" in slot which of mul xA, xB, xC (other slots GPR x0-x30) ⇒ encode_mul = llvm-mc of that asm.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_mul
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [which, a, b]
-  domain:
-    which: 0..2
-    a: 0..30
-    b: 0..30
-  relation:
-    op: eq
-    lhs: encode_mul(ops_with_lr_at(which, a, b))
-    rhs: llvm_mc(mul_asm_with_lr_at(which, a, b))
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  a: { gen: int, min: 0, max: 30, type: u32 }
-  b: { gen: int, min: 0, max: 30, type: u32 }
-evidence: encoder/mod.rs:135 parse_reg_num lr => 30; llvm-mc lr alias
-```
-
-## encode_mul_neg_sp
-- Tier: 5
-- Rationale: ARM MUL encoding uses register 31 as WZR/XZR, never WSP/SP. llvm-mc rejects `mul wsp, w0, w0` and `mul sp, x0, x1`. Strengthening round after extra-operand / mixed-width failures. Doc evidence: ARM ARM register 31 is ZR; llvm-mc "invalid operand".
-- Seed: encode_madd_pbt::encode_madd_neg_sp
-- Formal: ∀ which ∈ {0..2}, is_64 ∈ {false,true}, a,b ∈ {0..30}. placing sp/wsp in slot which of an otherwise-valid 3-GPR MUL ⇒ encode_mul is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: which=0, is_64=false, a=0, b=0 i.e. mul wsp, w0, w0
-- Bug report: pbt-out/bug_reports/encode_mul_sp.md
-
-```property
-function: encoder.data_processing.encode_mul
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, is_64, a, b]
-  domain:
-    which: 0..2
-    is_64: bool
-    a: 0..30
-    b: 0..30
-  relation:
-    op: throws
-    expr: encode_mul(ops_with_sp_at(which, is_64, a, b))
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  is_64: { gen: bool }
-  a: { gen: int, min: 0, max: 30, type: u32 }
-  b: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: ARM ARM register 31 is ZR not SP; llvm-mc rejects mul wsp / mul sp
-```
-
-## encode_mul_neg_fp
-- Tier: 5
-- Rationale: Integer MUL is GPR-only. llvm-mc rejects `mul d0, x1, x2`. parse_reg_num accepts d/s/q/v/h/b prefixes. Strengthening round. Doc evidence: ARM ARM GPR-only 3-source; llvm-mc "invalid operand".
-- Seed: encode_madd_pbt::encode_madd_neg_fp
-- Formal: ∀ which ∈ {0..2}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. placing prefixN in slot which of mul x0,x1,x2 ⇒ encode_mul is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: which=0, prefix="d", n=0 i.e. mul d0, x1, x2
-- Bug report: pbt-out/bug_reports/encode_mul_fp_reg.md
-
-```property
-function: encoder.data_processing.encode_mul
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, prefix, n]
-  domain:
-    which: 0..2
-    prefix: {d,s,q,v,h,b}
-    n: 0..31
-  relation:
-    op: throws
-    expr: encode_mul(ops_with_fp_at(which, prefix, n))
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  prefix: { gen: oneof, variants: [{ gen: const, value: "d" }, { gen: const, value: "s" }, { gen: const, value: "q" }, { gen: const, value: "v" }, { gen: const, value: "h" }, { gen: const, value: "b" }] }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: ARM ARM GPR-only 3-source MUL; llvm-mc rejects mul d0, x1, x2
-```
-
-## encode_mul_neg_neon_d
-- Tier: 5
-- Rationale: ARM ARM Advanced SIMD MUL is UNDEFINED when size==11 (64-bit elements). llvm-mc rejects `mul v0.2d, ...` and `mul v0.1d, ...`. neon_arr_to_q_size accepts 1d/2d. Strengthening round. Doc evidence: ARM ARM MUL (vector) `if size == '11' then UNDEFINED`; llvm-mc "invalid operand".
-- Seed: (none) — ARM size==11 bound, not covered by scalar madd/msub seeds
-- Formal: ∀ vd,vn,vm ∈ {0..31}, T ∈ {1d,2d}. encode_mul([Vd.T, Vn.T, Vm.T]) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: vd=0, vn=0, vm=0, t="1d" i.e. mul v0.1d, v0.1d, v0.1d
-- Bug report: pbt-out/bug_reports/encode_mul_neon_d.md
-
-```property
-function: encoder.data_processing.encode_mul
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [vd, vn, vm, t]
+  vars: [vd, vn, extra]
   domain:
     vd: 0..31
     vn: 0..31
-    vm: 0..31
-    t: {1d,2d}
   relation:
     op: throws
-    expr: encode_mul([RegArrangement(v{vd}, t), RegArrangement(v{vn}, t), RegArrangement(v{vm}, t)])
+    expr: encode_mvn([RegArrangement(v{vd}, 16b), RegArrangement(v{vn}, 16b), extra])
+expected_error: String
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
   vn: { gen: int, min: 0, max: 31, type: u32 }
-  vm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, variants: [{ gen: const, value: "1d" }, { gen: const, value: "2d" }] }
-expected_error: String
-evidence: ARM ARM MUL vector size==11 UNDEFINED; llvm-mc rejects 1d/2d
-```
-
-## encode_mul_neg_invalid_reg
-- Tier: 5
-- Rationale: parse_reg_num returns None for names outside x0-x31/w0-w31/aliases; get_reg then Err. llvm-mc rejects `mul foo, x1, x2`. Strengthening round. Doc evidence: encoder/mod.rs:131-147 parse_reg_num; llvm-mc unknown operand.
-- Seed: encode_msub_pbt::encode_msub_neg_invalid_reg
-- Formal: ∀ which ∈ {0..2}, bad ∈ {x32,w32,x99,w99,"",foo,r0,x,x-1}. encode_mul with bad at slot which of mul x0,x1,x2 is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_mul
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, bad]
-  domain:
-    which: 0..2
-    bad: {x32,w32,x99,w99,"",foo,r0,x,x-1}
-  relation:
-    op: throws
-    expr: encode_mul(ops_with_bad_at(which, bad))
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  bad: { gen: oneof, variants: [{ gen: const, value: "x32" }, { gen: const, value: "w32" }, { gen: const, value: "foo" }, { gen: const, value: "r0" }, { gen: const, value: "" }] }
-expected_error: String
-evidence: encoder/mod.rs:131-147 parse_reg_num; llvm-mc unknown operand
-```
-
-## encode_mul_neg_non_register
-- Tier: 5
-- Rationale: get_reg requires Operand::Reg. llvm-mc rejects Imm/Symbol/Mem/Shift/Cond/Label as MUL operands. Coverage-sweep (coverage_gaps had no profraw; manual arm audit of get_reg). Doc evidence: encoder/mod.rs:956-965 get_reg; ARM ARM three-register MUL; llvm-mc.
-- Seed: encode_msub_pbt::encode_msub_neg_non_register
-- Formal: ∀ which ∈ {0..2}, bad ∈ {Imm, Symbol, Mem, Shift, Cond, Label}. encode_mul with bad at slot which of mul x0,x1,x2 is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_mul
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, bad]
-  domain:
-    which: 0..2
-    bad: {Imm, Symbol, Mem, Shift, Cond, Label}
-  relation:
-    op: throws
-    expr: encode_mul(ops_with_non_reg_at(which, bad))
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  bad: { gen: oneof, variants: [{ gen: const, value: "Imm" }, { gen: const, value: "Symbol" }, { gen: const, value: "Mem" }] }
-expected_error: String
-evidence: encoder/mod.rs:956-965 get_reg; ARM ARM three-register MUL
-```
-
-## encode_mul_neg_neon_mismatch_t
-- Tier: 5
-- Rationale: ARM ARM Advanced SIMD MUL requires matching T on Vd, Vn, Vm. llvm-mc rejects `mul v0.8b, v0.8b, v0.16b`. encode_neon_mul uses dest arrangement only. Coverage-sweep. Doc evidence: ARM ARM MUL (vector) all three share T; llvm-mc "invalid operand".
-- Seed: (none) — ARM matching-T contract, not in scalar madd/msub seeds
-- Formal: ∀ vd,vn,vm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s} with not all equal. encode_mul([Vd.Td, Vn.Tn, Vm.Tm]) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: vd=0, vn=0, vm=0, td="8b", tn="8b", tm="16b" i.e. mul v0.8b, v0.8b, v0.16b
-- Bug report: pbt-out/bug_reports/encode_mul_neon_mismatch_t.md
-
-```property
-function: encoder.data_processing.encode_mul
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [vd, vn, vm, td, tn, tm]
-  domain:
-    vd: 0..31
-    vn: 0..31
-    vm: 0..31
-    td: {8b,16b,4h,8h,2s,4s}
-    tn: {8b,16b,4h,8h,2s,4s}
-    tm: {8b,16b,4h,8h,2s,4s}
-  relation:
-    op: throws
-    expr: encode_mul([RegArrangement(v{vd}, td), RegArrangement(v{vn}, tn), RegArrangement(v{vm}, tm)])
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  vn: { gen: int, min: 0, max: 31, type: u32 }
-  vm: { gen: int, min: 0, max: 31, type: u32 }
-  td: { gen: oneof, variants: [{ gen: const, value: "8b" }, { gen: const, value: "16b" }] }
-  tn: { gen: oneof, variants: [{ gen: const, value: "8b" }, { gen: const, value: "16b" }] }
-  tm: { gen: oneof, variants: [{ gen: const, value: "8b" }, { gen: const, value: "16b" }] }
-expected_error: String
-evidence: ARM ARM MUL vector matching T; llvm-mc rejects mul v0.8b, v0.8b, v0.16b
+evidence: ARM ARM Advanced SIMD NOT two operands; llvm-mc rejects mvn v0.16b v1.16b v2.16b
 ```

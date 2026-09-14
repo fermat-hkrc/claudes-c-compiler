@@ -9156,3 +9156,783 @@ mod encode_mul_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_mvn_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:280 "mvn" => encode_mvn; ARM ARM Logical (shifted register) MVN alias of ORN
+    // Stronger considered:
+    //   - State machine: rejected — encode_mvn is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree MVN decoder
+    // Weaker available: algebraic.metamorphic (ORN/ZR alias, sf XOR), algebraic.invariant (word layout),
+    //   negative_error (arity / extra operand / mixed width / SP / FP / shift range / NEON T)
+    // Differential: candidate=encode_mvn, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=operands <-> asm text `mvn Rd, Rm{, shift}` / `mvn Vd.T, Vn.T`
+
+    use super::encode_mvn;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn zr(is_64: bool) -> &'static str {
+        if is_64 { "xzr" } else { "wzr" }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_mvn(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn shift_kind() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["lsl", "lsr", "asr", "ror"])
+    }
+
+    fn amt_bound() -> impl Strategy<Value = u32> {
+        prop_oneof![
+            Just(0u32),
+            Just(1u32),
+            Just(31u32),
+            Just(32u32),
+            Just(63u32),
+            0u32..=63,
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x0".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 8,
+            }),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::Label("L0".into())),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_mvn_kat_llvm_mc_mvn_x0_x1() {
+        let want = 0xaa2103e0u32;
+        let mc = llvm_mc_word("mvn x0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_mvn_kat_llvm_mc_mvn_w0_w1() {
+        let want = 0x2a2103e0u32;
+        let mc = llvm_mc_word("mvn w0, w1").expect("llvm-mc W KAT");
+        assert_eq!(mc, want, "llvm-mc W KAT mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("w1".into())];
+        let sut = sut_word(&ops).expect("SUT W KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_mvn_kat_llvm_mc_orn_alias() {
+        let want = 0xaa2103e0u32;
+        let mc_mvn = llvm_mc_word("mvn x0, x1").expect("llvm-mc mvn KAT");
+        let mc_orn = llvm_mc_word("orn x0, xzr, x1").expect("llvm-mc orn KAT");
+        assert_eq!(mc_mvn, want);
+        assert_eq!(mc_orn, want, "orn Rd, ZR, Rm must alias mvn");
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops).expect("SUT orn-alias KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_mvn_kat_llvm_mc_neon_16b() {
+        let want = 0x6e205820u32;
+        let mc = llvm_mc_word("mvn v0.16b, v1.16b").expect("llvm-mc NEON KAT");
+        assert_eq!(mc, want, "llvm-mc NEON KAT mapping broken");
+        let not_mc = llvm_mc_word("not v0.16b, v1.16b").expect("llvm-mc NOT KAT");
+        assert_eq!(not_mc, want, "not must alias mvn");
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v1".into(),
+                arrangement: "16b".into(),
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT NEON KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_mvn_diff_gpr_llvm_mc(
+            rd in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in amt_bound(),
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let rd_n = gpr(is_64, rd);
+            let rm_n = gpr(is_64, rm);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rm_n.clone()),
+            ];
+            let mut asm = format!("mvn {}, {}", rd_n, rm_n);
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+                if !(kind == "lsl" && amt == 0) {
+                    asm.push_str(&format!(", {} #{}", kind, amt));
+                }
+            }
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_mvn_diff_orn_alias(
+            rd in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            use_shift in any::<bool>(),
+            amt in amt_bound(),
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = if use_shift { amt % (max + 1) } else { 0 };
+            let rd_n = gpr(is_64, rd);
+            let rm_n = gpr(is_64, rm);
+            let mut ops = vec![
+                Operand::Reg(rd_n.clone()),
+                Operand::Reg(rm_n.clone()),
+            ];
+            let mut mvn_asm = format!("mvn {}, {}", rd_n, rm_n);
+            let mut orn_asm = format!("orn {}, {}, {}", rd_n, zr(is_64), rm_n);
+            if use_shift {
+                ops.push(Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                });
+                if !(kind == "lsl" && amt == 0) {
+                    let sh = format!(", {} #{}", kind, amt);
+                    mvn_asm.push_str(&sh);
+                    orn_asm.push_str(&sh);
+                }
+            }
+            let mc_mvn = llvm_mc_word(&mvn_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", mvn_asm, e));
+            let mc_orn = llvm_mc_word(&orn_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", orn_asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", mvn_asm, e));
+            prop_assert_eq!(mc_mvn, mc_orn, "mvn vs orn alias {} / {}", mvn_asm, orn_asm);
+            prop_assert_eq!(sut, mc_orn, "SUT vs orn alias {}", orn_asm);
+        }
+
+        #[test]
+        fn encode_mvn_diff_neon_llvm_mc(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            t in prop::sample::select(vec!["8b", "16b"]),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: t.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: t.to_string(),
+                },
+            ];
+            let mvn_asm = format!("mvn v{vd}.{t}, v{vn}.{t}");
+            let not_asm = format!("not v{vd}.{t}, v{vn}.{t}");
+            let mc_mvn = llvm_mc_word(&mvn_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", mvn_asm, e));
+            let mc_not = llvm_mc_word(&not_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", not_asm, e));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", mvn_asm, e));
+            prop_assert_eq!(mc_mvn, mc_not, "mvn vs not alias");
+            prop_assert_eq!(sut, mc_mvn, "SUT vs llvm-mc mismatch for {}", mvn_asm);
+        }
+
+        #[test]
+        fn encode_mvn_metamorphic_sf_xor(
+            rd in reg_num(),
+            rm in reg_num(),
+            kind in shift_kind(),
+            amt in 0u32..=31,
+        ) {
+            let x_ops = [
+                Operand::Reg(gpr(true, rd)),
+                Operand::Reg(gpr(true, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let w_ops = [
+                Operand::Reg(gpr(false, rd)),
+                Operand::Reg(gpr(false, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let xw = sut_word(&x_ops).expect("64-bit MVN must encode");
+            let ww = sut_word(&w_ops).expect("32-bit MVN must encode");
+            prop_assert_eq!(xw ^ ww, 1u32 << 31, "sf must be the sole X/W difference (x={:#010x} w={:#010x})", xw, ww);
+        }
+
+        #[test]
+        fn encode_mvn_invariant_arm_fields(
+            rd in reg_num(),
+            rm in reg_num(),
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            amt in amt_bound(),
+        ) {
+            let max = if is_64 { 63u32 } else { 31 };
+            let amt = amt % (max + 1);
+            let st = match kind {
+                "lsl" => 0u32,
+                "lsr" => 1,
+                "asr" => 2,
+                "ror" => 3,
+                _ => 0,
+            };
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let w = sut_word(&ops).expect("valid MVN must encode");
+            let sf = if is_64 { 1u32 } else { 0 };
+            prop_assert_eq!((w >> 31) & 1, sf, "sf");
+            prop_assert_eq!((w >> 29) & 3, 0b01, "opc");
+            prop_assert_eq!((w >> 24) & 0x1f, 0b01010, "opcode 01010");
+            prop_assert_eq!((w >> 22) & 3, st, "shift");
+            prop_assert_eq!((w >> 21) & 1, 1, "N");
+            prop_assert_eq!((w >> 16) & 0x1f, rm, "Rm");
+            prop_assert_eq!((w >> 10) & 0x3f, amt, "imm6");
+            prop_assert_eq!((w >> 5) & 0x1f, 31, "Rn must be ZR");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_mvn_neg_too_few(
+            n in 0usize..=1,
+            is_64 in any::<bool>(),
+            r0 in 0u32..=31,
+        ) {
+            let all = [Operand::Reg(gpr(is_64, r0))];
+            let ops = &all[..n.min(1)];
+            prop_assert!(
+                encode_mvn(ops).is_err(),
+                "fewer than 2 operands must Err, n={}",
+                n
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_extra_operand(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                extra,
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "MVN 3rd operand must be a shift; extra non-shift must Err"
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_mixed_width(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            rd64 in any::<bool>(),
+            rm64 in any::<bool>(),
+        ) {
+            prop_assume!(rd64 != rm64);
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rm64, rm)),
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "mixed-width MVN registers must Err (rd64={} rm64={})",
+                rd64,
+                rm64
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_sp(
+            which in 0u32..=1,
+            is_64 in any::<bool>(),
+            other in 0u32..=30,
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let mut names = [gpr(is_64, other), sp.to_string()];
+            names.swap(1, which as usize);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "SP/WSP is not a valid MVN operand (which={} names={:?})",
+                which,
+                names
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_fp(
+            which in 0u32..=1,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+            ];
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "FP/SIMD register {} is not a valid MVN operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_shift_range(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            kind in shift_kind(),
+            amt_w in prop_oneof![Just(32u32), Just(33u32), Just(63u32), Just(64u32)],
+            amt_x in prop_oneof![Just(64u32), Just(65u32), Just(128u32)],
+        ) {
+            let amt = if is_64 { amt_x } else { amt_w };
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "shift amount {} out of range for {}-bit MVN must Err",
+                amt,
+                if is_64 { 64 } else { 32 }
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_neon_t(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            t in prop::sample::select(vec!["4h", "8h", "2s", "4s", "1d", "2d"]),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: t.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: t.to_string(),
+                },
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "NEON MVN T={} is not in {{8b,16b}}; must Err",
+                t
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_neon_mismatch_t(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            td in prop::sample::select(vec!["8b", "16b"]),
+            tn in prop::sample::select(vec!["8b", "16b"]),
+        ) {
+            prop_assume!(td != tn);
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: td.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: tn.to_string(),
+                },
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "NEON MVN requires matching T (td={} tn={})",
+                td,
+                tn
+            );
+        }
+
+        #[test]
+        fn encode_mvn_diff_lr(
+            which in 0u32..=1,
+            other in 0u32..=30,
+            kind in shift_kind(),
+            amt in 0u32..=63,
+        ) {
+            let mut names = [gpr(true, other), "lr".to_string()];
+            names.swap(1, which as usize);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Shift {
+                    kind: kind.to_string(),
+                    amount: amt,
+                },
+            ];
+            let mut asm = format!("mvn {}, {}", names[0], names[1]);
+            if !(kind == "lsl" && amt == 0) {
+                asm.push_str(&format!(", {} #{}", kind, amt));
+            }
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid MVN {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MVN {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {} (lr alias x30)", asm);
+        }
+
+        #[test]
+        fn encode_mvn_neg_bad_shift_kind(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            kind in prop_oneof![
+                Just("foo".to_string()),
+                Just("lslv".to_string()),
+                Just("rrx".to_string()),
+                Just("".to_string()),
+                Just("uxtw".to_string()),
+            ],
+            amt in 0u32..=31,
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: kind.clone(),
+                    amount: amt,
+                },
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "unknown shift kind {:?} must Err",
+                kind
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_trailing_after_shift(
+            rd in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 1,
+                },
+                extra,
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "trailing operand after a valid shift must Err"
+            );
+        }
+
+        #[test]
+        fn encode_mvn_neg_neon_extra(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: "16b".into(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: "16b".into(),
+                },
+                extra,
+            ];
+            prop_assert!(
+                encode_mvn(&ops).is_err(),
+                "NEON MVN has no 3rd operand; extra must Err"
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN w0, w0, x0 must Err; a 3rd non-shift operand is not valid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_mixed_width() {
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("x0".into())];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "mixed-width MVN w0, x0 must Err (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_sp() {
+        let ops = [Operand::Reg("wsp".into()), Operand::Reg("w0".into())];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN wsp, w0 must Err; register 31 is WZR not WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_fp_reg() {
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("x1".into())];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN d0, x1 must Err; FP/SIMD registers are not MVN operands (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_shift_range() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lsl".into(),
+                amount: 32,
+            },
+        ];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN w0, w0, lsl #32 must Err; 32-bit imm6 range is 0..31 (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_neon_t() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4h".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4h".into(),
+            },
+        ];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN v0.4h, v0.4h must Err; NEON MVN T is only 8b/16b (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_neon_mismatch_t() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            },
+        ];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN v0.16b, v0.8b must Err; NEON MVN requires matching T (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_bad_shift_kind() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "foo".into(),
+                amount: 0,
+            },
+        ];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN w0, w0, foo #0 must Err; unknown shift kind is not valid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_trailing_after_shift() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Shift {
+                kind: "lsl".into(),
+                amount: 1,
+            },
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN w0, w0, lsl #1, x0 must Err; trailing operand after shift is not valid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mvn_regression_neon_extra() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_mvn(&ops).is_err(),
+            "MVN v0.16b, v0.16b, x0 must Err; NEON MVN has no 3rd operand (llvm-mc rejects it)"
+        );
+    }
+}
