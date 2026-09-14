@@ -1,3 +1,31 @@
+# Confirmed invariants (encode_sxth)
+
+- Valid SXTH Wd, Wn and Xd, Wn with Rd/Rn in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Alternate spellings x31/w31, XZR, LR, uppercase, and Xd,Xn (llvm-mc canonicalizes to Xd,Wn) match llvm-mc (1000 cases).
+- encode_sxth(Rd, Rn) equals encode_sbfm(Rd, Rn, #0, #15) with matching dest width, and both match llvm-mc `sxth` (1000 cases).
+- Success-path word: sf at bit 31, opc=00 at [30:29], 100110 at [28:23], N=sf at 22, immr=0 at [21:16], imms=15 at [15:10], Rn at [9:5], Rd at [4:0]. Equivalently w = (is_64 ? 0x93403C00 : 0x13003C00) | (rn<<5) | rd.
+- Fewer than 2 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at GPR slots always Err.
+- Known-answer: `sxth w0, w1` = 0x13003c20; `sxth x0, w1` = 0x93403c20; `sxth wzr, wzr` = 0x13003fff; `sbfm w0, w1, #0, #15` aliases to the same word as `sxth w0, w1`.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM SXTH is the alias of SBFM Rd, Rn, #0, #15: sf 00 100110 N=sf immr=0 imms=15 Rn Rd. Assembler syntax: SXTH Wd, Wn or SXTH Xd, Wn. Register 31 is WZR/XZR, never SP/WSP. llvm-mc also accepts SXTH Xd, Xn (canonicalizes source to W).
+- Dispatch: encoder/mod.rs:294 `"sxth" => encode_sxth(operands)`.
+- Sibling encode_sbfm is the same format with caller immr/imms (alias at #0,#15). Sibling encode_sxtb is imms=7 (different job). Sibling encode_uxth is UBFM opc=10 (different job).
+- Callers: assembler README Extensions table lists sxth. Codegen emits `sxth x0, w0` in cast_ops.rs / atomics.rs / f128.rs.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- is_64 from source get_reg is discarded; W dest + X source is encoded as 32-bit SXTH (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / extra / width / SP / FP / non-Reg / invalid name / x31 / uppercase / lr / Xd,Xn).
+
+---
+
 # Confirmed invariants (encode_smull)
 
 - Valid SMULL Xd, Wn, Wm with Rd/Rn/Rm in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

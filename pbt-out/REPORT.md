@@ -1,57 +1,61 @@
-# PBT Campaign Report: encode_smull
+# PBT Campaign Report: encode_sxth
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_smull
-**Tests:** 9 properties (6 passing, 3 failing) + 4 passing KAT + 4 failing regression witnesses
-**Result:** 6 passing, 4 bugs
-**Effort tier:** standard (1 coverage-sweep round; coverage_gaps had no profraw — manual arm audit added alt-spelling differential)
+**Modules tested:** encode_sxth
+**Tests:** 11 properties (7 passing, 4 failing) plus 4 passing KAT and 4 failing regression witnesses
+**Result:** 7 passing, 4 bugs
+**Effort tier:** standard (1 coverage-driven sweep round; closed because the tier's round is done — coverage_gaps had no profraw, so the round was a manual ARM-contract audit)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_smull | 9 properties (6 pass / 3 fail) + 4 KAT + 4 regressions | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_sxth | 11 properties + 4 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **encode_smull silently ignores a 4th operand**
-   - Law: scalar SMULL is 3-operand; extra operand must Err (llvm-mc `invalid operand`).
-   - Shrunk input: `[Reg("x0"), Reg("w0"), Reg("w0"), Reg("x0")]` → `Ok(Word(0x9b207c00))`.
-   - Root cause: `get_reg` only reads indices 0..2.
-   - Severity: medium.
-   - Report: `pbt-out/bug_reports/encode_smull_extra_operand.md`
-   - Regression: `test_encode_smull_regression_extra_operand` (fails as witness).
-   - Serial reconfirmation: reproduced with `PBT_TEST_JOBS=1`.
+### encode_sxth_neg_extra_operand
+- **Failing property:** encode_sxth_neg_extra_operand (negative_error)
+- **Shrunk counterexample:** rd=0, rn=0, is_64=false, extra=Reg("x0") — `sxth w0, w0, x0`
+- **Expected:** Err
+- **Actual:** Ok(Word) — third operand ignored
+- **Law:** SXTH has exactly two register operands (llvm-mc rejects a third)
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_sxth_extra_operand.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_extra_operand -- --test-threads=1`
 
-2. **encode_smull accepts W dest and X sources**
-   - Law: ARM ARM form is `SMULL Xd, Wn, Wm` only; llvm-mc rejects W dest / X sources.
-   - Shrunk input: `[Reg("w0"), Reg("w0"), Reg("w0")]` → `Ok`.
-   - Root cause: `is_64` from `get_reg` is discarded; bit 31 is hardcoded 1.
-   - Severity: medium.
-   - Report: `pbt-out/bug_reports/encode_smull_wrong_width.md`
-   - Regression: `test_encode_smull_regression_wrong_width` (fails as witness).
-   - Serial reconfirmation: reproduced with `PBT_TEST_JOBS=1`.
+### encode_sxth_neg_wd_xn
+- **Failing property:** encode_sxth_neg_wd_xn (negative_error)
+- **Shrunk counterexample:** rd=0, rn=0 — `sxth w0, x0`
+- **Expected:** Err
+- **Actual:** Ok(Word) — 32-bit SXTH encoded
+- **Law:** ARM ARM 32-bit form is SXTH Wd, Wn; llvm-mc rejects W dest with X source
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_sxth_wd_xn.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_wd_xn -- --test-threads=1`
 
-3. **encode_smull encodes SP/WSP as XZR/WZR**
-   - Law: register 31 is XZR/WZR, never SP/WSP; llvm-mc rejects SP/WSP.
-   - Shrunk input: `[Reg("wsp"), Reg("w0"), Reg("w0")]` → `Ok` with Rd=31.
-   - Root cause: `parse_reg_num` maps `sp`/`wsp` to 31.
-   - Severity: medium.
-   - Report: `pbt-out/bug_reports/encode_smull_sp_as_zr.md`
-   - Regression: `test_encode_smull_regression_sp` (fails as witness).
-   - Serial reconfirmation: reproduced with `PBT_TEST_JOBS=1`.
+### encode_sxth_neg_sp
+- **Failing property:** encode_sxth_neg_sp (negative_error)
+- **Shrunk counterexample:** which=0, is_64_sp=false, a=0, dest64=false — `sxth wsp, w0`
+- **Expected:** Err
+- **Actual:** Ok(Word) — WSP encoded as WZR
+- **Law:** SXTH register 31 is WZR/XZR, never SP/WSP; llvm-mc rejects SP/WSP
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_sxth_sp.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_sp -- --test-threads=1`
 
-4. **encode_smull encodes FP/SIMD names as GPRs**
-   - Law: scalar SMULL operands are GPRs; llvm-mc rejects `d`/`s`/`q`/`v`/`h`/`b`.
-   - Shrunk input: `[Reg("d0"), Reg("w1"), Reg("w2")]` → `Ok` as if `x0`.
-   - Root cause: `parse_reg_num` accepts FP/SIMD prefixes.
-   - Severity: medium.
-   - Report: `pbt-out/bug_reports/encode_smull_fp_as_gpr.md`
-   - Regression: `test_encode_smull_regression_fp` (fails as witness).
-   - Serial reconfirmation: reproduced with `PBT_TEST_JOBS=1`.
+### encode_sxth_neg_fp
+- **Failing property:** encode_sxth_neg_fp (negative_error)
+- **Shrunk counterexample:** which=0, prefix="d", n=0 — `sxth d0, w1`
+- **Expected:** Err
+- **Actual:** Ok(Word) — FP name encoded as GPR w0
+- **Law:** SXTH is a GPR instruction; llvm-mc rejects FP/SIMD operands
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_sxth_fp.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_fp -- --test-threads=1`
 
 ## Design Caveats
 
@@ -61,32 +65,27 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_smull_pbt) | 8 passing PBT + 4 passing KAT + 4 failing PBT + 4 failing regressions |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_sxth_pbt) | 11 properties + 4 KAT + 4 regression witnesses |
 
 ## Output Directories
 
-- `pbt-out/PLAN.md` — campaign checklist
-- `pbt-out/PROPERTIES.md` — property ledger
-- `pbt-out/REPORT.md` — this report
-- `pbt-out/COVERAGE.md` — coverage ledger row for encode_smull
-- `pbt-out/COVERAGE_STATUS.md` — coverage statistics
-- `pbt-out/FUNCTION_INDEX.md` — encode_smull marked PBT candidate
-- `pbt-out/INVARIANTS.md` — encode_smull invariants prepended
-- `pbt-out/bug_reports/encode_smull_extra_operand.md`
-- `pbt-out/bug_reports/encode_smull_wrong_width.md`
-- `pbt-out/bug_reports/encode_smull_sp_as_zr.md`
-- `pbt-out/bug_reports/encode_smull_fp_as_gpr.md`
-
-## Sweep close-out
-
-Contract-surface sweep (standard, 1 round): `coverage_gaps` reported no instrumented profraw. Manual arm audit of `encode_smull` / `get_reg`: success path, arity 0..2, extra operand, wrong width, SP, FP, non-Reg kinds, invalid names. Added `encode_smull_diff_alt_spellings` (x31/w31, XZR/LR, uppercase) — passing, 1000 cases. Closed because the tier's one sweep round is done.
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_sxth_extra_operand.md
+- pbt-out/bug_reports/encode_sxth_wd_xn.md
+- pbt-out/bug_reports/encode_sxth_sp.md
+- pbt-out/bug_reports/encode_sxth_fp.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 12:53 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 56/253 total | PBT candidates: 56 | Tested: 56 (100%) | 0 pass, 56 fail
+> Last updated: 2026-09-14 13:08 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 57/253 total | PBT candidates: 57 | Tested: 57 (100%) | 0 pass, 57 fail
 
 ## Summary
 
@@ -95,10 +94,10 @@ Contract-surface sweep (standard, 1 round): `coverage_gaps` reported no instrume
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 56 |
-| **Tested (of PBT candidates)** | **56 / 56 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 56 / 0 |
-| **Overall (tested / all functions)** | **56 / 253 (22%)** |
+| PBT candidates (from FUNCTION_INDEX) | 57 |
+| **Tested (of PBT candidates)** | **57 / 57 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 57 / 0 |
+| **Overall (tested / all functions)** | **57 / 253 (23%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -106,13 +105,13 @@ Contract-surface sweep (standard, 1 round): `coverage_gaps` reported no instrume
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 56 | 56 | 0 | 100% |
+|  | 57 | 57 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 56 | 56 | 0 | 100% |
+| unknown | 57 | 57 | 0 | 100% |
 
 ## File Coverage
 
@@ -121,7 +120,7 @@ Contract-surface sweep (standard, 1 round): `coverage_gaps` reported no instrume
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 18 | 18 | 100% | covered |
+| data_processing.rs | 36 | 19 | 19 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 11 | 11 | 100% | covered |
@@ -190,3 +189,4 @@ Contract-surface sweep (standard, 1 round): `coverage_gaps` reported no instrume
 | encode_neon_shll | neon.rs |
 | encode_neon_sqshrun | neon.rs |
 | encode_smull | data_processing.rs |
+| encode_sxth | data_processing.rs |

@@ -1,256 +1,313 @@
-# Properties: encode_smull
+# Property ledger: encode_sxth
 
-## encode_smull_diff_valid_gpr
+## encode_sxth_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest evidenced oracle is Differential against llvm-mc (independent AArch64 assembler). State machine rejected: encode_smull is a pure function with no lifecycle. Round-trip rejected: no in-tree SMULL decoder. encode_umull fails the same-job gate (unsigned twin, U=1). SUT-boundary: internal-helper of the GNU-style assembler; public contract is encoding `smull Xd, Wn, Wm`. Doc evidence: README.md:1-14 "accepts the same textual assembly that GCC's gas would consume"; README.md:214 lists smull; ARM ARM SMULL alias of SMADDL Xd,Wn,Wm,XZR; encoder/mod.rs:1-7.
-- Seed: README.md:214 Data Processing table; encoder/mod.rs:247-256 dispatch; data_processing.rs:630 docstring. (none existing unit test)
-- Formal: ∀ rd,rn,rm ∈ {0..31}, dest ∈ {xN, xzr if rd=31, lr if rd=30}. encode_smull([Reg(dest), Reg(wN rn), Reg(wN rm)]) = llvm-mc("smull dest, Wn, Wm") as a little-endian u32 word.
+- Rationale: Strongest applicable oracle is Differential against llvm-mc (independent GNU-style AArch64 assembler). README asserts the built-in assembler "accepts the same textual assembly that GCC's gas would consume". State machine rejected: encode_sxth is a pure single-call encoder with no lifecycle. Round-trip rejected: no in-tree SXTH/SBFM decoder. encode_sxtb / encode_uxth fail the same-job gate (imms=7 / UBFM opc=10). encode_sbfm is the ARM ARM alias but shares get_reg and lives in the same crate, so it is algebraic.metamorphic not an independent differential.
+- Seed: README.md:217 Extensions table; encoder/mod.rs:294 `"sxth" => encode_sxth`; llvm-mc KAT `sxth w0, w1` = 0x13003c20, `sxth x0, w1` = 0x93403c20
+- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}. encode_sxth([Reg(gpr(is_64,rd)), Reg(W(rn))]) = Word(llvm-mc("sxth {X|W}d, Wn"))
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_smull
+function: encode_sxth
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  vars: [rd, rn, is_64]
+  domain: { rd: 0..31, rn: 0..31, is_64: bool }
   relation:
     op: eq
-    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
-    rhs: llvm_mc("smull Xd, Wn, Wm")
+    lhs: encode_sxth([Reg(gpr(is_64, rd)), Reg(wreg(rn))])
+    rhs: llvm_mc("sxth " + gpr(is_64, rd) + ", " + wreg(rn))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/arm/assembler/README.md:1-14; README.md:214; ARM ARM SMULL=SMADDL Ra=XZR; encoder/mod.rs:247-256
+  is_64: { gen: bool }
+evidence: src/backend/arm/assembler/README.md:7-14 GNU-style gas-compatible assembler; encoder/mod.rs:1-7; ARM ARM SXTH alias of SBFM #0,#15
 ```
 
-## encode_smull_alias_smaddl_xzr
-- Tier: 3
-- Rationale: ARM ARM and the SUT docstring state SMULL Xd, Wn, Wm is the alias of SMADDL Xd, Wn, Wm, XZR. Algebraic metamorphic (alias equality) plus llvm-mc agreement. Stronger differential vs encode_smaddl is rejected as independent differential (shared get_reg / same TU) but the alias equality is an evidenced algebraic law. encode_umull rejected as same-job sibling.
-- Seed: data_processing.rs:630 "Encode SMULL Xd, Wn, Wm -> SMADDL Xd, Wn, Wm, XZR"; llvm-mc prints `smull` for `smaddl ..., xzr`.
-- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_smull([Xrd, Wrn, Wrm]) = encode_smaddl([Xrd, Wrn, Wrm, XZR]) ∧ encode_smull(...) = llvm-mc("smull Xd, Wn, Wm") ∧ encode_smull(...) = llvm-mc("smaddl Xd, Wn, Wm, xzr").
+## encode_sxth_alias_sbfm
+- Tier: 4c
+- Rationale: ARM ARM documents SXTH as the assembler alias of SBFM Rd, Rn, #0, #15 (N=sf). Not an independent differential (encode_sbfm shares get_reg / same crate). Stronger differential vs llvm-mc is the sibling property above. Metamorphic required by standard tier in addition to differential.
+- Seed: ARM ARM C6 SXTH; llvm-mc `sbfm w0, w1, #0, #15` canonicalizes to `sxth w0, w1`
+- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}. encode_sxth([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]) = encode_sbfm([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(0), Imm(15)])
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_smull
+function: encode_sxth
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  vars: [rd, rn, is_64]
+  domain: { rd: 0..31, rn: 0..31, is_64: bool }
   relation:
     op: eq
-    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
-    rhs: encode_smaddl([Reg(x(rd)), Reg(w(rn)), Reg(w(rm)), Reg("xzr")])
+    lhs: encode_sxth([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn))])
+    rhs: encode_sbfm([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn)), Imm(0), Imm(15)])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: data_processing.rs:630; ARM ARM SMULL alias of SMADDL with Ra=XZR
+  is_64: { gen: bool }
+evidence: ARM ARM C6 SXTH = SBFM #0,#15; llvm-mc canonicalizes sbfm ..., #0, #15 to sxth
 ```
 
-## encode_smull_xor_umull_u_bit
-- Tier: 3
-- Rationale: ARM ARM Data-processing (3 source) documents SMULL (U=0) and UMULL (U=1) as the same format differing only at bit 23. Same-job differential rejected (signed vs unsigned). Metamorphic: XOR of the two encodings at equal register numbers is exactly 1<<23.
-- Seed: data_processing.rs:635 vs 646 opcode comments (001 vs 101 at bits [23:21]).
-- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_smull([Xrd, Wrn, Wrm]) XOR encode_umull([Xrd, Wrn, Wrm]) = 1<<23.
+## encode_sxth_arm_fields
+- Tier: 4d
+- Rationale: ARM ARM SBFM bit layout is an exact structural predicate on the success-path word: sf at 31, opc=00 at [30:29], 100110 at [28:23], N=sf at 22, immr=0 at [21:16], imms=15 at [15:10], Rn at [9:5], Rd at [4:0]. Weaker than differential / alias metamorphic; still pins the field packing independently of llvm-mc availability.
+- Seed: ARM ARM SBFM encoding diagram; llvm-mc KAT 0x13003c20 / 0x93403c20
+- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}. let w = encode_sxth([Reg(gpr(is_64,rd)), Reg(wreg(rn))]). w = (sf<<31) | (0b100110<<23) | (N<<22) | (15<<10) | (rn<<5) | rd with sf=N=is_64
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_smull
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
-  relation:
-    op: eq
-    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))]) XOR encode_umull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
-    rhs: 1u32 << 23
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Data-processing (3 source) U bit; data_processing.rs:635,646
-```
-
-## encode_smull_arm_fields
-- Tier: 3
-- Rationale: ARM ARM SMADDL/SMULL field layout is an algebraic invariant on every success-path word. Weaker than differential (does not check agreement with an independent assembler) but pins each field so a swapped Rn/Rm cannot hide behind a matching llvm-mc skip.
-- Seed: data_processing.rs:635 comment; llvm-mc KAT `smull x0, w1, w2` = 0x9b227c20.
-- Formal: ∀ rd,rn,rm ∈ {0..31}. let w = encode_smull([Xrd, Wrn, Wrm]). w[31]=1 ∧ w[30:21]=0b0011011001 ∧ w[20:16]=rm ∧ w[15]=0 ∧ w[14:10]=0b11111 ∧ w[9:5]=rn ∧ w[4:0]=rd. Equivalently w = 0x9B207C00 | (rm<<16) | (rn<<5) | rd.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_smull
+function: encode_sxth
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
+  vars: [rd, rn, is_64]
+  domain: { rd: 0..31, rn: 0..31, is_64: bool }
   relation:
     op: eq
-    lhs: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm))])
-    rhs: 0x9B207C00 | (rm << 16) | (rn << 5) | rd
+    lhs: encode_sxth([Reg(gpr(is_64, rd)), Reg(wreg(rn))])
+    rhs: ((sf(is_64) << 31) | (0b100110 << 23) | (N(is_64) << 22) | (15 << 10) | (rn << 5) | rd)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM SMADDL sf=1 U=0 o0=0 Ra=31; data_processing.rs:635
+  is_64: { gen: bool }
+evidence: ARM ARM SBFM sf 00 100110 N immr imms Rn Rd with N=sf immr=0 imms=15 for SXTH
 ```
 
-## encode_smull_diff_alt_spellings
-- Tier: 2
-- Rationale: Coverage-sweep differential. First valid-domain generator spelled ZR as xzr/wzr and used lowercase xN. parse_reg_num lowercases and accepts n=31 as ZR; llvm-mc accepts x31/w31, XZR/WZR, LR, and uppercase Xn/Wn. Same differential contract as encode_smull_diff_valid_gpr; generator skewed to those spellings.
-- Seed: parse_reg_num encoder/mod.rs:131-146 (to_lowercase, num<=31); llvm-mc `smull x31, w31, w31` / `smull X0, W1, W2` / `smull LR, W1, W2`.
-- Formal: ∀ rd,rn,rm ∈ {0..31}, dest_spell,src_spell covering {x31, XZR, LR, uppercase xN, xzr/xN} × {w31, uppercase wN, wzr/wN}. encode_smull([Reg(dest), Reg(src_n), Reg(src_m)]) = llvm-mc("smull dest, src_n, src_m").
+## encode_sxth_neg_arity
+- Tier: 4e
+- Rationale: llvm-mc rejects SXTH with fewer than 2 operands ("too few operands"). README gas-compatibility makes that the error contract. get_reg on a missing slot returns Err, which this property pins.
+- Seed: llvm-mc `sxth` / `sxth w0` → error: too few operands
+- Formal: ∀ ops with |ops| ∈ {0,1}. encode_sxth(ops) is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_smull
+function: encode_sxth
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [len]
+  domain: { len: 0..1 }
+  relation:
+    op: throws
+    lhs: encode_sxth(ops_of_len(len))
+    rhs: Err
+generators:
+  len: { gen: int, min: 0, max: 1, type: usize }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects sxth / sxth w0 as too few operands; README.md:7-14 gas-compatible
+```
+
+## encode_sxth_neg_extra_operand
+- Tier: 4e
+- Rationale: ARM ARM SXTH has exactly two register operands. llvm-mc rejects a third operand. README gas-compatibility. Documented bound: arity = 2; extra at bound+1 must Err.
+- Seed: llvm-mc `sxth w0, w1, x2` → invalid operand
+- Formal: ∀ rd,rn ∈ {0..31}, extra ∈ Operand. encode_sxth([Reg(Wd), Reg(Wn), extra]) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, is_64=false, extra=Reg("x0")  (sxth w0, w0, x0)
+- Bug report: pbt-out/bug_reports/encode_sxth_extra_operand.md
+
+```property
+function: encode_sxth
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, extra]
+  domain: { rd: 0..31, rn: 0..31, extra: Operand }
+  relation:
+    op: throws
+    lhs: encode_sxth([Reg(wreg(rd)), Reg(wreg(rn)), extra])
+    rhs: Err
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: oneof, variants: [Reg, Imm, Shift] }
+expected_error: String
+evidence: llvm-mc rejects sxth w0, w1, x2; ARM ARM SXTH is two-operand; README.md:7-14
+```
+
+## encode_sxth_neg_wd_xn
+- Tier: 4e
+- Rationale: ARM ARM SXTH assembler syntax is Wd,Wn or Xd,Wn. llvm-mc rejects W dest with X source (`sxth w0, x1`). Dest-X with source-X is accepted (canonicalizes to Wn) and is covered by the differential / alias properties, not this negative contract.
+- Seed: llvm-mc `sxth w0, x1` → invalid operand for instruction
+- Formal: ∀ rd,rn ∈ {0..31}. encode_sxth([Reg(W(rd)), Reg(X(rn))]) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0  (sxth w0, x0)
+- Bug report: pbt-out/bug_reports/encode_sxth_wd_xn.md
+
+```property
+function: encode_sxth
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn]
+  domain: { rd: 0..31, rn: 0..31 }
+  relation:
+    op: throws
+    lhs: encode_sxth([Reg(wreg(rd)), Reg(xreg(rn))])
+    rhs: Err
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc rejects sxth w0, x1; ARM ARM SXTH <Wd>, <Wn> (source of 32-bit form is Wn)
+```
+
+## encode_sxth_neg_sp
+- Tier: 4e
+- Rationale: ARM ARM SXTH uses GPR encodings where register 31 is WZR/XZR, never SP/WSP. llvm-mc rejects SP/WSP in either slot. README gas-compatibility.
+- Seed: llvm-mc `sxth sp, w1` / `sxth wsp, w1` / `sxth x0, sp` / `sxth x0, wsp` → invalid operand
+- Formal: ∀ which ∈ {0,1}, is_64_sp ∈ {false,true}, a ∈ {0..30}. ops with SP/WSP at slot which ⇒ encode_sxth(ops) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, is_64_sp=false, a=0, dest64=false  (sxth wsp, w0)
+- Bug report: pbt-out/bug_reports/encode_sxth_sp.md
+
+```property
+function: encode_sxth
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, is_64_sp, a]
+  domain: { which: 0..1, is_64_sp: bool, a: 0..30 }
+  relation:
+    op: throws
+    lhs: encode_sxth(ops_with_sp_at(which))
+    rhs: Err
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  is_64_sp: { gen: bool }
+  a: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: llvm-mc rejects SP/WSP as SXTH operands; ARM ARM register 31 is ZR not SP for SBFM/SXTH
+```
+
+## encode_sxth_neg_fp
+- Tier: 4e
+- Rationale: SXTH is a GPR bitfield alias. llvm-mc rejects FP/SIMD names (d/s/q/v/h/b) in either slot. parse_reg_num currently accepts those prefixes — this property asserts the gas-compatible rejection.
+- Seed: llvm-mc `sxth d0, w1` / `sxth w0, d1` → invalid operand
+- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. ops with prefixN at slot which ⇒ encode_sxth(ops) is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, prefix="d", n=0  (sxth d0, w1)
+- Bug report: pbt-out/bug_reports/encode_sxth_fp.md
+
+```property
+function: encode_sxth
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, prefix, n]
+  domain: { which: 0..1, prefix: {d,s,q,v,h,b}, n: 0..31 }
+  relation:
+    op: throws
+    lhs: encode_sxth(ops_with_fp_at(which, prefix, n))
+    rhs: Err
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  prefix: { gen: oneof, variants: ["d", "s", "q", "v", "h", "b"] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc rejects sxth d0, w1 and sxth w0, d1; README.md:7-14 gas-compatible GPR SXTH
+```
+
+## encode_sxth_diff_alt_spellings
+- Tier: 2
+- Rationale: Coverage-sweep (round 1). First differential generator under-sampled x31/w31, uppercase, LR, and the llvm-mc-accepted Xd,Xn form (canonicalizes to Xd,Wn). Same differential oracle and gas-compatibility evidence as encode_sxth_diff_valid_gpr.
+- Seed: llvm-mc `sxth x31, w31` / `sxth x0, x1` / uppercase; ARM ARM register 31 is ZR
+- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}, dest/src spellings in {canonical, x31/w31, XZR, LR, uppercase, X-source if is_64}. encode_sxth(ops) = Word(llvm-mc(asm))
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_sxth
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, dest_spell, src_spell]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, dest_spell: 0..4, src_spell: 0..2 }
+  vars: [rd, rn, is_64, dest_spell, src_spell]
+  domain: { rd: 0..31, rn: 0..31, is_64: bool, dest_spell: 0..4, src_spell: 0..3 }
   relation:
     op: eq
-    lhs: encode_smull([Reg(dest_spell(rd)), Reg(src_spell(rn)), Reg(src_spell(rm))])
-    rhs: llvm_mc("smull dest, Wn, Wm")
+    lhs: encode_sxth([Reg(dest_spelling), Reg(src_spelling)])
+    rhs: llvm_mc("sxth " + dest_spelling + ", " + src_spelling)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
   dest_spell: { gen: int, min: 0, max: 4, type: u32 }
-  src_spell: { gen: int, min: 0, max: 2, type: u32 }
-evidence: encoder/mod.rs:131-146 parse_reg_num; llvm-mc accepts x31/XZR/LR/uppercase
+  src_spell: { gen: int, min: 0, max: 3, type: u32 }
+evidence: llvm-mc accepts x31/w31, uppercase, LR, and sxth Xd, Xn; README.md:7-14 gas-compatible
 ```
 
-## encode_smull_neg_arity
+## encode_sxth_neg_nonreg
 - Tier: 4e
-- Rationale: GNU as / llvm-mc reject SMULL with fewer than 3 operands ("too few operands"). get_reg on a missing index returns Err. Negative/error contract. Stronger oracles do not apply to the invalid domain.
-- Seed: llvm-mc `smull` / `smull x0` / `smull x0, w1` → error: too few operands.
-- Formal: ∀ ops with len(ops) ∈ {0,1,2} and slots filled with valid X/W regs or other Operand kinds. encode_smull(ops) = Err.
+- Rationale: Coverage-sweep (round 1). get_reg requires Operand::Reg at each slot; Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement must Err. Documented by get_reg contract and llvm-mc (non-register tokens are invalid SXTH operands).
+- Seed: get_reg encoder/mod.rs:956 "expected register"; llvm-mc rejects non-register SXTH operands
+- Formal: ∀ which ∈ {0,1}, bad ∉ Reg. encode_sxth(ops with bad at slot which) is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_smull
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [ops]
-  domain: { ops: operand lists of length 0..2 }
-  relation:
-    op: throws
-    expr: encode_smull(ops)
-expected_error: String
-generators:
-  ops: { gen: list, elem: { gen: string }, maxLen: 2 }
-evidence: llvm-mc "too few operands for instruction"; get_reg encoder/mod.rs:956-966
-```
-
-## encode_smull_neg_extra_operand
-- Tier: 4e
-- Rationale: llvm-mc rejects a 4th operand on scalar SMULL ("invalid operand for instruction"). The assembler contract is GNU-style assembly. Extra operands must Err, not be silently ignored. get_reg only reads indices 0..2 so the current body ignores extras — this is the law, not a characterizing test of the body.
-- Seed: llvm-mc `smull x0, w1, w2, x3` and `smull x0, w1, w2, lsl #0` error.
-- Formal: ∀ rd,rn,rm ∈ {0..31}, extra ∈ Operand. encode_smull([Xrd, Wrn, Wrm, extra]) = Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, extra=Reg("x0") — encode_smull returns Ok(Word(0x9b207c00))
-- Bug report: pbt-out/bug_reports/encode_smull_extra_operand.md
-
-```property
-function: encoder.data_processing.encode_smull
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, extra]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, extra: Operand }
-  relation:
-    op: throws
-    expr: encode_smull([Reg(x(rd)), Reg(w(rn)), Reg(w(rm)), extra])
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, options: [Reg, Imm, Shift] }
-evidence: llvm-mc rejects 4th operand; README.md:1-14 GNU-style assembly
-```
-
-## encode_smull_neg_wrong_width
-- Tier: 4e
-- Rationale: ARM ARM SMULL form is Xd, Wn, Wm only. llvm-mc rejects W dest and X sources. Mixed or inverted widths must Err. The body discards is_64 from get_reg and always sets sf=1, so this law is independent of the producing statement.
-- Seed: llvm-mc `smull w0, w1, w2` / `smull x0, x1, x2` / `smull x0, w1, x2` error: invalid operand.
-- Formal: ∀ rd,rn,rm ∈ {0..30}, rd64,rn64,rm64 ∈ bool. (rd64,rn64,rm64) ≠ (true,false,false) ⇒ encode_smull([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))]) = Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=false — encode_smull(w0, w0, w0) returns Ok
-- Bug report: pbt-out/bug_reports/encode_smull_wrong_width.md
-
-```property
-function: encoder.data_processing.encode_smull
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30, widths: not (X,W,W) }
-  relation:
-    op: throws
-    expr: encode_smull([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))])
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-  rm64: { gen: bool }
-evidence: ARM ARM SMULL Xd,Wn,Wm; llvm-mc invalid operand for W dest / X source
-```
-
-## encode_smull_neg_sp_fp_nonreg
-- Tier: 4e
-- Rationale: ARM ARM register 31 is XZR/WZR, never SP/WSP. FP/SIMD names (d/s/q/v/h/b) are not SMULL GPR operands. Non-register Operand kinds at any of the three slots are not registers. llvm-mc rejects all three classes. parse_reg_num currently maps sp/wsp to 31 and accepts FP prefixes — the law is the assembler contract, not the helper.
-- Seed: llvm-mc `smull sp, w1, w2` / `smull x0, wsp, w2` / `smull d0, w1, w2` error.
-- Formal: ∀ which ∈ {0,1,2}, bad ∈ {sp,wsp} ∪ {d,s,q,v,h,b}{0..31} ∪ {Imm,Mem,Shift,RegArrangement,Label,Symbol}. encode_smull(ops with slot `which` = bad, other slots valid X/W) = Err. Also ∀ invalid name ∈ {foo, x32, w32, x, r0, ""} encode_smull = Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: SP which=0 is_64=false a=0 b=0 names=[wsp, w0, w0] returns Ok; FP which=0 prefix=d n=0 (d0, w1, w2) returns Ok. Sub-tests encode_smull_neg_nonreg and encode_smull_neg_invalid_name passed.
-- Bug report: pbt-out/bug_reports/encode_smull_sp_as_zr.md; pbt-out/bug_reports/encode_smull_fp_as_gpr.md
-
-```property
-function: encoder.data_processing.encode_smull
+function: encode_sxth
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, bad]
-  domain: { which: 0..2, bad: SP/WSP or FP/SIMD name or non-Reg Operand or invalid GPR name }
+  domain: { which: 0..1, bad: non-Reg Operand }
   relation:
     op: throws
-    expr: encode_smull(ops_with_slot(which, bad))
-expected_error: String
+    lhs: encode_sxth(ops_with_nonreg_at(which, bad))
+    rhs: Err
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  bad: { gen: oneof, options: [sp, wsp, fp_reg, non_reg, invalid_name] }
-evidence: ARM ARM Rd/Rn/Rm are XZR/WZR never SP; llvm-mc rejects SP/FP/non-reg; README.md:1-14
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  bad: { gen: oneof, variants: [Imm, Shift, Mem, Label, Symbol, Cond, RegArrangement] }
+expected_error: String
+evidence: encoder/mod.rs:956 get_reg requires Operand::Reg; llvm-mc rejects non-register SXTH operands
+```
+
+## encode_sxth_neg_invalid_name
+- Tier: 4e
+- Rationale: Coverage-sweep (round 1). parse_reg_num rejects names outside x0-x31/w0-w31/xzr/wzr/sp/lr. Documented bound: register number <= 31. Bound+1 (x32/w32) and non-alphabet names must Err.
+- Seed: parse_reg_num encoder/mod.rs:131; llvm-mc rejects x32/foo
+- Formal: ∀ which ∈ {0,1}, name ∈ {foo, x32, w32, x, r0, empty, x-1, x99, w}. encode_sxth with Reg(name) at slot which is Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_sxth
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, name]
+  domain: { which: 0..1, name: invalid GPR names }
+  relation:
+    op: throws
+    lhs: encode_sxth(ops_with_name_at(which, name))
+    rhs: Err
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  name: { gen: oneof, variants: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
+expected_error: String
+evidence: parse_reg_num encoder/mod.rs:131 num<=31; llvm-mc rejects x32/foo as SXTH operands
 ```
