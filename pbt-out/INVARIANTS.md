@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_fp_arith)
+
+- Valid FADD/FSUB/FMUL/FDIV/FMAX/FMIN/FMAXNM/FMINNM Sd,Sn,Sm / Dd,Dn,Dm including s31/d31 and uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `fadd s0, s1, s2` = 0x1e222820.
+- Success-path word is ARM Floating-point data-processing (2 source): 00011110 ftype 1 Rm opcode 10 Rn Rd with ftype 00=S / 01=D. Equivalently w = (0b00011110<<24)|(ftype<<22)|(1<<21)|(rm<<16)|(opcode<<12)|(0b10<<10)|(rn<<5)|rd. opcode 0000=FMUL, 0001=FDIV, 0010=FADD, 0011=FSUB, 0100=FMAX, 0101=FMIN, 0110=FMAXNM, 0111=FMINNM.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; Rm+1 increments bits[20:16] only; S vs D xor = 1<<22; FADD xor FSUB = 1<<12 (1000 cases).
+- Fewer than 3 operands, non-register kinds (Imm/Symbol/Label/Mem/Cond/Shift), and invalid names (foo/s32/empty/r0) always Err (1000 cases).
+- Known-answer: `fadd s0, s1, s2` = 0x1e222820; `fadd d0, d1, d2` = 0x1e622820; `fsub s0, s1, s2` = 0x1e223820; `fmul s0, s1, s2` = 0x1e220820; `fdiv s0, s1, s2` = 0x1e221820; `fmax s0, s1, s2` = 0x1e224820; `fmin s0, s1, s2` = 0x1e225820; `fmaxnm s0, s1, s2` = 0x1e226820; `fminnm s0, s1, s2` = 0x1e227820; `fadd s31, s31, s31` = 0x1e3f2bff; `fadd h0, h1, h2` = 0x1ee22820 (llvm-mc fp16).
+- Extra operand, mixed S/D, GPR, SP/WSP, Q/V/B, and H (wrong ftype) currently encode instead of matching llvm-mc/gas (see bugs).
+
+## Environment (encode_fp_arith)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (half: -mattr=+fullfp16). gas aarch64-linux-gnu-as agrees on `fadd s0, s1, s2` = 0x1e222820.
+- ARM ARM Floating-point data-processing (2 source): M=0 S=0 11110 ftype 1 Rm opcode 10 Rn Rd. ftype 00=S 01=D 11=H. Register 31 is a valid S/D/H index.
+- Dispatch: encoder/mod.rs:377-404 scalar fadd/fsub/fmul/fdiv/fmax/fmin/fmaxnm/fminnm => encode_fp_arith; RegArrangement => encode_neon_float_three_same.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_float_three_same is the vector form (not a differential sibling).
+- encode_fp_arith does not check operands.len() (extra ignored); takes ftype from Rd prefix only (`starts_with('d')` else 00); parse_reg_num maps sp/wsp/x/w/q/v/h/b.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_fp_arith (invalid-name).
+- Three failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_fp_arith_*.md.
+
 # Confirmed invariants (encode_fmov)
 
 - Valid FMOV Sd,Sn / Dd,Dn / Sd,Wn / Dd,Xn / Wd,Sn / Xd,Dn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `fmov s0, s1` = 0x1e204020 and `fmov s0, w1` = 0x1e270020.
