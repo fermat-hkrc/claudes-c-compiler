@@ -1,17 +1,17 @@
-# Property ledger: encode_cset
+# Property ledger: encode_csetm
 
-## encode_cset_diff_llvm_mc
+## encode_csetm_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest applicable oracle is Differential against llvm-mc `-triple=aarch64 -show-encoding`. State machine rejected: encode_cset is a pure function with no lifecycle. Round-trip rejected: no in-tree CSET decoder. encode_csinc / encode_cinc fail the same-job sibling gate as differential references (different mnemonics/arity). SUT-boundary: internal-helper of the GNU-style assembler; public contract is gas-compatible AArch64 text (README.md:5-14). Mapping: `[Reg(rd), Cond(c)]` <-> `cset rd, c`.
-- Seed: encode_cinc_pbt::encode_cinc_kat_cset_alias (compare_branch.rs:3757) and encode_cinc_diff_llvm_mc
-- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ Cond14. encode_cset([Reg(rd), Cond(c)]) = Word(w) ∧ llvm-mc("cset rd, c") = w
+- Rationale: Strongest applicable oracle is Differential against llvm-mc `-triple=aarch64 -show-encoding`. State machine rejected: encode_csetm is a pure function with no lifecycle. Round-trip rejected: no in-tree CSETM decoder. encode_csinv / encode_cinv fail the same-job sibling gate as differential references (different mnemonics/arity). SUT-boundary: internal-helper of the GNU-style assembler; public contract is gas-compatible AArch64 text (README.md:5-14). Mapping: `[Reg(rd), Cond(c)]` <-> `csetm rd, c`.
+- Seed: encode_cset_pbt::encode_cset_diff_llvm_mc; encode_cinv_pbt::encode_cinv_kat_csetm_alias (compare_branch.rs:4466)
+- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ Cond14. encode_csetm([Reg(rd), Cond(c)]) = Word(w) ∧ llvm-mc("csetm rd, c") = w
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: differential
 predicate:
   quantifier: forall
@@ -19,26 +19,26 @@ predicate:
   domain: { rd: GPR64_or_GPR32, c: Cond14_with_hs_lo }
   relation:
     op: eq
-    lhs: encode_cset([Reg(rd), Cond(c)])
-    rhs: llvm_mc("cset " + rd + ", " + c)
+    lhs: encode_csetm([Reg(rd), Cond(c)])
+    rhs: llvm_mc("csetm " + rd + ", " + c)
 generators:
   rd: { gen: oneof, options: [x_gpr, w_gpr] }
   c: { gen: oneof, options: [eq, ne, cs, hs, cc, lo, mi, pl, vs, vc, hi, ls, ge, lt, gt, le] }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compat; ARM ARM CSET alias of CSINC; llvm-mc -triple=aarch64
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compat; ARM ARM CSETM alias of CSINV; llvm-mc -triple=aarch64
 ```
 
-## encode_cset_meta_vs_csinc
+## encode_csetm_meta_vs_csinv
 - Tier: 4c
-- Rationale: Algebraic metamorphic: ARM ARM and the SUT comment state CSET Rd, cond is CSINC Rd, ZR, ZR, invert(cond). encode_csinc is not a same-job differential sibling (4-operand CSINC mnemonic) so it is used only as this alias transform. Stronger differential vs llvm-mc is a separate property.
-- Seed: encode_cinc_pbt::encode_cinc_meta_vs_csinc (compare_branch.rs:3814); comment compare_branch.rs:142
-- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ Cond14. encode_cset([Reg(rd), Cond(c)]) = encode_csinc([Reg(rd), Reg(ZR(rd)), Reg(ZR(rd)), Cond(invert(c))])
+- Rationale: Algebraic metamorphic: ARM ARM and the SUT comment state CSETM Rd, cond is CSINV Rd, ZR, ZR, invert(cond). encode_csinv is not a same-job differential sibling (4-operand CSINV mnemonic) so it is used only as this alias transform. Stronger differential vs llvm-mc is a separate property. Required metamorphic/differential property for STANDARD tier.
+- Seed: compare_branch.rs:156 CSETM Rd, cond -> CSINV Rd, XZR, XZR, invert(cond); encode_cset_pbt::encode_cset_meta_vs_csinc
+- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ Cond14. encode_csetm([Reg(rd), Cond(c)]) = encode_csinv([Reg(rd), Reg(ZR(rd)), Reg(ZR(rd)), Cond(invert(c))])
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
@@ -46,26 +46,26 @@ predicate:
   domain: { rd: GPR64_or_GPR32, c: Cond14_with_hs_lo }
   relation:
     op: eq
-    lhs: encode_cset([Reg(rd), Cond(c)])
-    rhs: encode_csinc([Reg(rd), Reg(ZR(rd)), Reg(ZR(rd)), Cond(invert(c))])
+    lhs: encode_csetm([Reg(rd), Cond(c)])
+    rhs: encode_csinv([Reg(rd), Reg(ZR(rd)), Reg(ZR(rd)), Cond(invert(c))])
 generators:
   rd: { gen: oneof, options: [x_gpr, w_gpr] }
   c: { gen: oneof, options: [eq, ne, cs, hs, cc, lo, mi, pl, vs, vc, hi, ls, ge, lt, gt, le] }
-evidence: compare_branch.rs:142 CSET Rd, cond -> CSINC Rd, XZR, XZR, invert(cond); ARM ARM CSET alias
+evidence: compare_branch.rs:156 CSETM Rd, cond -> CSINV Rd, XZR, XZR, invert(cond); ARM ARM CSETM alias
 ```
 
-## encode_cset_meta_vs_cinc
+## encode_csetm_meta_vs_cinv
 - Tier: 4c
-- Rationale: Algebraic metamorphic: CINC Rd, ZR, cond is the same CSINC encoding as CSET Rd, cond (Rm=Rn=ZR). encode_cinc is not a same-job differential sibling (3-operand CINC). Required metamorphic/differential property for STANDARD tier.
-- Seed: encode_cinc_pbt::encode_cinc_meta_vs_cset (compare_branch.rs:3853)
-- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ Cond14. encode_cset([Reg(rd), Cond(c)]) = encode_cinc([Reg(rd), Reg(ZR(rd)), Cond(c)])
+- Rationale: Algebraic metamorphic: CINV Rd, ZR, cond is the same CSINV encoding as CSETM Rd, cond (Rm=Rn=ZR). encode_cinv is not a same-job differential sibling (3-operand CINV).
+- Seed: encode_cinv_pbt::encode_cinv_meta_vs_csetm (compare_branch.rs:4562)
+- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ Cond14. encode_csetm([Reg(rd), Cond(c)]) = encode_cinv([Reg(rd), Reg(ZR(rd)), Cond(c)])
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
@@ -73,51 +73,53 @@ predicate:
   domain: { rd: GPR64_or_GPR32, c: Cond14_with_hs_lo }
   relation:
     op: eq
-    lhs: encode_cset([Reg(rd), Cond(c)])
-    rhs: encode_cinc([Reg(rd), Reg(ZR(rd)), Cond(c)])
+    lhs: encode_csetm([Reg(rd), Cond(c)])
+    rhs: encode_cinv([Reg(rd), Reg(ZR(rd)), Cond(c)])
 generators:
   rd: { gen: oneof, options: [x_gpr, w_gpr] }
   c: { gen: oneof, options: [eq, ne, cs, hs, cc, lo, mi, pl, vs, vc, hi, ls, ge, lt, gt, le] }
-evidence: ARM ARM CSET = CSINC Rd,ZR,ZR,invert(cond) = CINC Rd,ZR,cond; encode_cinc_pbt seed
+evidence: ARM ARM CINV with Rn=ZR is CSETM; encode_cinv_pbt::encode_cinv_meta_vs_csetm
 ```
 
-## encode_cset_word_layout
+## encode_csetm_word_layout
 - Tier: 4d
-- Rationale: Algebraic invariant from ARM ARM CSINC field layout with Rm=Rn=31 and cond=invert(user). Weaker than differential/metamorphic; pins each field independently so a coincidental word match cannot hide a swapped field.
-- Seed: encode_cinc_pbt::encode_cinc_word_layout (compare_branch.rs:3886)
-- Formal: ∀ rd_n ∈ 0..31, is_64 ∈ Bool, cond_enc ∈ 0..13. encode_cset([Reg(gpr(rd_n,is_64)), Cond(COND14[cond_enc])]) = Word(w) ⇒ (w[31]=sf) ∧ (w[30]=0) ∧ (w[29]=0) ∧ (w[28:21]=0b11010100) ∧ (w[20:16]=31) ∧ (w[15:12]=cond_enc⊕1) ∧ (w[11:10]=0b01) ∧ (w[9:5]=31) ∧ (w[4:0]=rd_n)
+- Rationale: Algebraic invariant from ARM ARM CSINV encoding with Rm=Rn=31, op2=00, op=1. Weaker than differential/metamorphic; pins each field independently so a swapped cond/Rd cannot hide behind a matching sibling.
+- Seed: encode_cset_pbt::encode_cset_word_layout; ARM ARM CSINV sf 1 0 11010100 Rm cond 00 Rn Rd
+- Formal: ∀ rd_n ∈ 0..31, is_64 ∈ Bool, c ∈ 0..13. encode_csetm([Reg(gpr(rd_n,is_64)), Cond(COND14[c])]) = Word(w) ⇒ w[31]=is_64 ∧ w[30]=1 ∧ w[29]=0 ∧ w[28:21]=0b11010100 ∧ w[20:16]=31 ∧ w[15:12]=c XOR 1 ∧ w[11:10]=00 ∧ w[9:5]=31 ∧ w[4:0]=rd_n
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd_n, is_64, cond_enc]
-  domain: { rd_n: 0..31, is_64: bool, cond_enc: 0..13 }
-  body: let w = encode_cset([Reg(gpr(rd_n,is_64)), Cond(COND14[cond_enc])]).word; (w>>31)&1 == sf(is_64) && (w>>30)&1 == 0 && (w>>29)&1 == 0 && (w>>21)&0xFF == 0b11010100 && (w>>16)&0x1F == 31 && (w>>12)&0xF == (cond_enc^1) && (w>>10)&0x3 == 0b01 && (w>>5)&0x1F == 31 && w&0x1F == rd_n
+  vars: [rd_n, is_64, c]
+  domain: { rd_n: 0..31, is_64: bool, c: 0..13 }
+  relation:
+    op: holds
+    expr: "let Word(w) = encode_csetm([Reg(gpr(rd_n,is_64)), Cond(COND14[c])])?; ((w>>31)&1)==is_64 && ((w>>30)&1)==1 && ((w>>29)&1)==0 && ((w>>21)&0xFF)==0b11010100 && ((w>>16)&0x1F)==31 && ((w>>12)&0xF)==(c^1) && ((w>>10)&0x3)==0 && ((w>>5)&0x1F)==31 && (w&0x1F)==rd_n"
 generators:
   rd_n: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-  cond_enc: { gen: int, min: 0, max: 13, type: u32 }
-evidence: ARM ARM CSINC encoding sf 0 0 11010100 Rm cond 01 Rn Rd with Rm=Rn=31 for CSET
+  c: { gen: int, min: 0, max: 13, type: u32 }
+evidence: ARM ARM CSINV encoding; compare_branch.rs:156-165
 ```
 
-## encode_cset_neg_arity
+## encode_csetm_neg_arity
 - Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects `cset` and `cset x0` as too few operands. ARM ARM CSET requires Rd and cond.
-- Seed: encode_cinc_pbt::encode_cinc_neg_arity
-- Formal: ∀ ops with |ops| < 2. encode_cset(ops) = Err
+- Rationale: Negative/error contract from llvm-mc (too few operands) and gas-compat README. CSETM requires Rd and cond.
+- Seed: encode_cset_pbt::encode_cset_neg_arity
+- Formal: ∀ ops. |ops| < 2 ⇒ encode_csetm(ops) is Err
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -125,55 +127,53 @@ predicate:
   domain: { arity: 0..1 }
   relation:
     op: throws
-    lhs: encode_cset(ops_of_len(arity))
-    rhs: String
+    expr: encode_csetm(ops_of_len(arity))
 generators:
   arity: { gen: int, min: 0, max: 1, type: u32 }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects bare cset and cset x0 (too few operands); ARM ARM CSET Rd, cond
+evidence: llvm-mc "too few operands for instruction"; README.md:5-14 gas-compat
 ```
 
-## encode_cset_neg_extra_operand
+## encode_csetm_neg_extra_operand
 - Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects a third operand (`cset x0, eq, x1`). gas-compat README.md:5-14. Documented extra-operand rejection.
-- Seed: encode_cinc_pbt::encode_cinc_neg_extra_operand
-- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ Cond14, extra ∈ ExtraOp. encode_cset([Reg(rd), Cond(c), extra]) = Err
+- Rationale: Negative/error: llvm-mc rejects a third operand (`invalid operand`). Documented gas-compat contract. Bound: exactly 2 operands.
+- Seed: encode_cset_pbt::encode_cset_neg_extra_operand
+- Formal: ∀ rd ∈ GPR, c ∈ Cond14, extra ∈ ExtraOperand. encode_csetm([Reg(rd), Cond(c), extra]) is Err
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: rd = "x0", cond = "eq", which = 0 (extra = Reg("x2"))
-- Bug report: pbt-out/bug_reports/encode_cset_extra_operand.md
+- Counterexample: [Reg("x0"), Cond("eq"), Reg("x2")]
+- Bug report: pbt-out/bug_reports/encode_csetm_extra_operand.md
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, c, extra]
-  domain: { rd: GPR64_or_GPR32, c: Cond14_with_hs_lo, extra: ExtraOp }
+  domain: { rd: GPR64_or_GPR32, c: Cond14_with_hs_lo, extra: ExtraOperand }
   relation:
     op: throws
-    lhs: encode_cset([Reg(rd), Cond(c), extra])
-    rhs: String
+    expr: encode_csetm([Reg(rd), Cond(c), extra])
 generators:
   rd: { gen: oneof, options: [x_gpr, w_gpr] }
   c: { gen: oneof, options: [eq, ne, cs, hs, cc, lo, mi, pl, vs, vc, hi, ls, ge, lt, gt, le] }
-  extra: { gen: oneof, options: [Reg(x2), Imm(0), Symbol(bar), Mem(x1,0)] }
+  extra: { gen: oneof, options: [Reg(x2), Imm(0), Symbol(bar), Mem] }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects cset x0, eq, x1 (invalid operand); README.md:5-14 gas-compat
+evidence: llvm-mc "invalid operand" for csetm x0, eq, x2; README.md:5-14 gas-compat
 ```
 
-## encode_cset_neg_al_nv
+## encode_csetm_neg_al_nv
 - Tier: 4e
-- Rationale: Negative/error contract. ARM ARM CSET alias is not valid for AL or NV; llvm-mc: "condition codes AL and NV are invalid for this instruction". Bound cond encodings 14 and 15 sampled exactly.
-- Seed: encode_cinc_pbt::encode_cinc_neg_al_nv
-- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ {al, nv}. encode_cset([Reg(rd), Cond(c)]) = Err
+- Rationale: Negative/error: ARM ARM CSETM alias is not valid when cond is AL or NV; llvm-mc rejects with "condition codes AL and NV are invalid for this instruction". Bound sampled exactly at AL=14 and NV=15.
+- Seed: encode_cset_pbt::encode_cset_neg_al_nv
+- Formal: ∀ rd ∈ GPR, c ∈ {al, nv}. encode_csetm([Reg(rd), Cond(c)]) is Err
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: rd = "x0", which = 0 (cond = "al")
-- Bug report: pbt-out/bug_reports/encode_cset_al_nv.md
+- Counterexample: [Reg("x0"), Cond("al")]
+- Bug report: pbt-out/bug_reports/encode_csetm_al_nv.md
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -181,121 +181,116 @@ predicate:
   domain: { rd: GPR64_or_GPR32, c: {al, nv} }
   relation:
     op: throws
-    lhs: encode_cset([Reg(rd), Cond(c)])
-    rhs: String
+    expr: encode_csetm([Reg(rd), Cond(c)])
 generators:
   rd: { gen: oneof, options: [x_gpr, w_gpr] }
   c: { gen: oneof, options: [al, nv] }
 expected_error: String
-evidence: ARM ARM CSET not valid for AL/NV; llvm-mc error "condition codes AL and NV are invalid for this instruction"
+evidence: ARM ARM CSETM not valid for AL/NV; llvm-mc "condition codes AL and NV are invalid for this instruction"
 ```
 
-## encode_cset_neg_wrong_reg
+## encode_csetm_neg_wrong_reg
 - Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects SP/WSP (register 31 is XZR/WZR), FP/SIMD (d/s/q/v/h/b), and invalid names (x32, foo, empty). ARM ARM CSET takes Wt/Xt only.
-- Seed: encode_cinc_pbt::encode_cinc_neg_wrong_reg
-- Formal: ∀ name ∈ {sp, wsp} ∪ FPRegs ∪ InvalidNames. encode_cset([Reg(name), Cond("eq")]) = Err
+- Rationale: Negative/error: llvm-mc rejects SP/WSP (register 31 is XZR/WZR for CSETM) and FP/SIMD names; parse_reg_num None for invalid names. Bound: SP/WSP plus d/s/q/v/h/b prefixes and invalid names.
+- Seed: encode_cset_pbt::encode_cset_neg_wrong_reg
+- Formal: ∀ name ∈ {sp, wsp} ∪ FP_SIMD ∪ InvalidReg. encode_csetm([Reg(name), Cond("eq")]) is Err
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: kind = 0, n = 0 (name = "sp"); also d0 (kind=2)
-- Bug report: pbt-out/bug_reports/encode_cset_sp_as_zr.md ; pbt-out/bug_reports/encode_cset_fp_reg.md
+- Counterexample: [Reg("sp"), Cond("eq")] (kind=0, n=0); also [Reg("d0"), Cond("eq")]
+- Bug report: pbt-out/bug_reports/encode_csetm_sp_as_zr.md; pbt-out/bug_reports/encode_csetm_fp_reg.md
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [name]
-  domain: { name: SP_or_FP_or_Invalid }
+  domain: { name: SP_or_WSP_or_FP_or_invalid }
   relation:
     op: throws
-    lhs: encode_cset([Reg(name), Cond("eq")])
-    rhs: String
+    expr: encode_csetm([Reg(name), Cond("eq")])
 generators:
   name: { gen: oneof, options: [sp, wsp, dN, sN, qN, vN, hN, bN, x32, w32, foo, empty, r0, x, x-1, x99] }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects cset sp/wsp/d0 (invalid operand); ARM ARM CSET Wt/Xt only, register 31 is XZR/WZR
+evidence: llvm-mc "invalid operand" for csetm sp, eq and csetm d0, eq; ARM ARM Wt/Xt only, register 31 is XZR/WZR
 ```
 
-## encode_cset_neg_unknown_cond
+## encode_csetm_neg_unknown_cond
 - Tier: 4e
-- Rationale: Coverage-sweep negative/error contract for encode_cond None. Unknown condition names are not in encode_cond's 16-name map (mod.rs:169-190) and llvm-mc rejects them.
-- Seed: encode_cinc_pbt::encode_cinc_neg_unknown_cond
-- Formal: ∀ rd ∈ GPR64∪GPR32, c ∈ {zz, foo, eqq, "", "eq ", always}. encode_cset([Reg(rd), Cond(c)]) = Err
+- Rationale: Coverage-sweep negative/error for encode_cond None arm. Unknown condition names must Err ("invalid cond"). Stronger oracles do not apply to this error path.
+- Seed: encode_cset_pbt::encode_cset_neg_unknown_cond
+- Formal: ∀ rd ∈ GPR, c ∈ {zz, foo, eqq, empty, "eq ", always}. encode_csetm([Reg(rd), Cond(c)]) is Err
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, c]
-  domain: { rd: GPR64_or_GPR32, c: UnknownCond }
+  domain: { rd: GPR64_or_GPR32, c: unknown_cond }
   relation:
     op: throws
-    lhs: encode_cset([Reg(rd), Cond(c)])
-    rhs: String
+    expr: encode_csetm([Reg(rd), Cond(c)])
 generators:
   rd: { gen: oneof, options: [x_gpr, w_gpr] }
-  c: { gen: oneof, options: [zz, foo, eqq, empty, eq_space, always] }
+  c: { gen: oneof, options: [zz, foo, eqq, empty, "eq ", always] }
 expected_error: String
-evidence: encoder/mod.rs:169-190 encode_cond returns None for unknown names; llvm-mc rejects unknown cond
+evidence: encode_cond None -> "invalid cond"; llvm-mc rejects unknown conditions
 ```
 
-## encode_cset_neg_invalid_name
+## encode_csetm_neg_invalid_name
 - Tier: 4e
-- Rationale: Coverage-sweep negative/error contract for get_reg parse_reg_num None. Invalid register names (x32, foo, empty, r0, x, x-1, x99) must be Err.
-- Seed: encode_cinc_pbt::encode_cinc_neg_invalid_name
-- Formal: ∀ name ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_cset([Reg(name), Cond("eq")]) = Err
+- Rationale: Coverage-sweep negative/error for parse_reg_num None arm. Invalid register names (x32, w32, foo, empty, r0, x, x-1, x99) must Err. Isolated from SP/FP so the None arm is actually executed (wrong_reg shrinks to SP).
+- Seed: encode_cset_pbt::encode_cset_neg_invalid_name
+- Formal: ∀ name ∈ {x32, w32, foo, empty, r0, x, x-1, x99}. encode_csetm([Reg(name), Cond("eq")]) is Err
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [name]
-  domain: { name: InvalidRegName }
+  domain: { name: invalid_reg_name }
   relation:
     op: throws
-    lhs: encode_cset([Reg(name), Cond("eq")])
-    rhs: String
+    expr: encode_csetm([Reg(name), Cond("eq")])
 generators:
   name: { gen: oneof, options: [x32, w32, foo, empty, r0, x, x-1, x99] }
 expected_error: String
-evidence: encoder/mod.rs:131-148 parse_reg_num returns None for these names; get_reg then Err
+evidence: parse_reg_num None -> "invalid register"; llvm-mc rejects these names
 ```
 
-## encode_cset_neg_bad_operand_kind
+## encode_csetm_neg_bad_operand_kind
 - Tier: 4e
-- Rationale: Coverage-sweep negative/error contract for get_reg non-Reg and cond-not-Cond arms. Imm/Mem/Symbol/Shift/Label in either slot must be Err.
-- Seed: encode_cinc_pbt::encode_cinc_neg_bad_operand_kind
-- Formal: ∀ slot ∈ {0,1}, bad ∈ {Imm, Mem, Symbol, Shift, Label}. encode_cset(ops with ops[slot]=bad) = Err
+- Rationale: Coverage-sweep negative/error for get_reg non-Reg and cond-not-Cond arms. Imm/Mem/Symbol/Shift/Label in either slot must Err.
+- Seed: encode_cset_pbt::encode_cset_neg_bad_operand_kind
+- Formal: ∀ slot ∈ {0,1}, bad ∈ {Imm, Mem, Symbol, Shift, Label}. encode_csetm(ops with slot replaced by bad) is Err
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cset
+function: encoder.compare_branch.encode_csetm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [slot, bad]
-  domain: { slot: 0..1, bad: NonRegNonCond }
+  vars: [slot, which]
+  domain: { slot: 0..1, which: 0..4 }
   relation:
     op: throws
-    lhs: encode_cset(ops_with_slot(slot, bad))
-    rhs: String
+    expr: encode_csetm(ops_with_bad_kind(slot, which))
 generators:
   slot: { gen: int, min: 0, max: 1, type: u32 }
-  bad: { gen: oneof, options: [Imm(0), Mem(x0,0), Symbol(foo), Shift(lsl,0), Label(foo)] }
+  which: { gen: int, min: 0, max: 4, type: u32 }
 expected_error: String
-evidence: get_reg (mod.rs:956) requires Operand::Reg; encode_cset match requires Operand::Cond at index 1
+evidence: get_reg non-Reg -> "expected register"; cond match arm -> "csetm requires condition"
 ```

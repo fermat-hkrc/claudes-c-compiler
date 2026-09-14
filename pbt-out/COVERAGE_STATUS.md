@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 03:38 (campaign: English campaign)
-> Files: 6/6 scanned (100%) | Functions: 20/184 total | PBT candidates: 20 | Tested: 20 (100%) | 0 pass, 20 fail
+> Last updated: 2026-09-14 04:00 (campaign: English campaign)
+> Files: 6/6 scanned (100%) | Functions: 22/184 total | PBT candidates: 22 | Tested: 22 (100%) | 0 pass, 22 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 20 |
-| **Tested (of PBT candidates)** | **20 / 20 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 20 / 0 |
-| **Overall (tested / all functions)** | **20 / 184 (11%)** |
+| PBT candidates (from FUNCTION_INDEX) | 22 |
+| **Tested (of PBT candidates)** | **22 / 22 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 22 / 0 |
+| **Overall (tested / all functions)** | **22 / 184 (12%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,20 +21,20 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 20 | 20 | 0 | 100% |
+|  | 22 | 22 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 20 | 20 | 0 | 100% |
+| unknown | 22 | 22 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 12 | 12 | 100% | covered |
+| compare_branch.rs | 21 | 14 | 14 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 4 | 4 | 100% | covered |
 | load_store.rs | 20 | 1 | 1 | 100% | covered |
@@ -67,3 +67,5 @@
 | encode_cmp | compare_branch.rs |
 | encode_cneg | compare_branch.rs |
 | encode_csel | compare_branch.rs |
+| encode_cset | compare_branch.rs |
+| encode_csetm | compare_branch.rs |
