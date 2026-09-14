@@ -29,3 +29,4 @@
 | encode_csneg | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 2 failing properties (4 bugs: extra operand, SP-as-ZR, mixed width, FP-as-GPR; 4 KAT pass; 4 regression witnesses fail) |
 | encode_div | data_processing.rs | data_processing.rs | cargo test --lib | 6 passing / 4 failing properties (plus 2 passing KAT + 4 failing regression witnesses) |
 | encode_eon | data_processing.rs | data_processing.rs | cargo test --lib | 5 passing / 6 failing properties (plus 2 passing KAT + 7 failing regression witnesses) |
+| encode_ldar_stlr | load_store.rs | load_store.rs | cargo test --lib | 5 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses) |

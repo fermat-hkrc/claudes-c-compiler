@@ -1,333 +1,228 @@
-# Properties: encode_eon
+# Properties: encode_ldar_stlr
 
-## encode_eon_diff_reg_llvm_mc
+## encode_ldar_stlr_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest applicable oracle is differential vs llvm-mc. State machine rejected — encode_eon is a pure function with no lifecycle. Algebraic round-trip rejected — no in-tree EON decoder. Same-job sibling gate: encode_orn/encode_bics/encode_logical(EOR) implement different opcodes, not EON. README claims gas-compatible AArch64 text; llvm-mc is an independent assembler of that contract. Shift amount bounds [0,31] (W) and [0,63] (X) are sampled at 0, 1, max-1, max.
-- Seed: encode_bics_pbt::encode_bics_diff_reg_llvm_mc at data_processing.rs:3274
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, use_shift ∈ Bool, amt ∈ [0, 31] if ¬is_64 else [0, 63]. let names = gpr(is_64, ·) using xzr/wzr for 31. encode_eon([Reg(rd),Reg(rn),Reg(rm)] ++ optional Shift(kind,amt)) = Word(w) ∧ w = llvm-mc("eon rd, rn, rm{, kind #amt}")
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Strongest applicable oracle is differential vs llvm-mc. State machine rejected — encode_ldar_stlr is a pure function with no lifecycle. Algebraic round-trip via an in-tree decoder rejected — no LDAR/STLR decoder exists. Same-job sibling gate: encode_ldaxr_stlxr / encode_ldxr_stxr are exclusive forms (Rs/Rt2/o0 differ), not LDAR/STLR. README claims gas-compatible AArch64 text; llvm-mc is an independent assembler of that contract. Documented bounds sampled exactly: size in {00,01,10,11}, Rt/Rn in {0,1,30,31}, offset #0.
+- Seed: encode_adr_pbt::encode_adr_diff_imm_llvm_mc at load_store.rs encode_adr_pbt; codegen atomics.rs:93-128
+- Formal: ∀ rt,rn ∈ {0..31}, is_load ∈ Bool, variant ∈ {word, byte, half}, is_64 ∈ Bool (word only). let rt_name = gpr_data(is_64, rt) using xzr/wzr for 31 (byte/half force 32-bit Wt). let rn_name = sp if rn=31 else xN (never xzr). encode_ldar_stlr([Reg(rt_name), Mem(rn_name, 0)], is_load, forced_size(variant)) = Word(w) ∧ w = llvm-mc("{ldar|stlr|ldarb|stlrb|ldarh|stlrh} rt_name, [rn_name]")
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_eon
+function: encoder.load_store.encode_ldar_stlr
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, use_shift, amt]
-  domain: { rd: "0..=31", rn: "0..=31", rm: "0..=31", amt: "0..=63 filtered by width" }
-  relation:
-    op: eq
-    lhs: encode_eon([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm))] ++ opt_shift)
-    rhs: llvm_mc_word("eon", gpr(is_64,rd), gpr(is_64,rn), gpr(is_64,rm), opt_shift)
+  vars: [rt, rn, is_load, variant, is_64]
+  domain: { rt: "0..=31", rn: "0..=31 meaning Xn|SP", variant: "word|byte|half", is_64: "word only" }
+  body: encode_ldar_stlr(ops, is_load, forced_size) == llvm_mc_word(mnemonic, rt_name, rn_name)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_load: { gen: bool }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
   is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  use_shift: { gen: bool }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:236 eon dispatch; ARM ARM EON (shifted register)
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:360-365 ldar/stlr dispatch; ARM ARM LDAR/STLR; llvm-mc ldar x0,[x1]=0xc8dffc20
 ```
 
-## encode_eon_diff_imm_llvm_mc
-- Tier: 2
-- Rationale: GNU as / llvm-mc treat `eon Rd, Rn, #imm` as the assembler alias of `eor Rd, Rn, #~imm` (ARM ARM logical-immediate). Same differential reference as the register form. encode_bic in this file already implements the analogous BIC #imm = AND #~imm alias, evidencing that inverted-immediate logical aliases are in-scope for this encoder. Stronger state machine / round-trip rejected as for the register form.
-- Seed: encode_bics_pbt::encode_bics_diff_imm_llvm_mc at data_processing.rs:3314
-- Formal: ∀ rd,rn ∈ {0..30}×{0..31}, is_64 ∈ Bool, m a valid AArch64 bitmask immediate of width. let imm = ~m (width-truncated). encode_eon([Reg(rd),Reg(rn),Imm(imm)]) = Word(w) ∧ w = llvm-mc("eon rd, rn, #imm")
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: eon w0, w0, #0xaaaaaaaa (rd=0, rn=0, is_64=false, seed=0) — SUT Err("expected register at operand 2, got Some(Imm(2863311530))") vs llvm-mc 0x5200f000
-- Bug report: pbt-out/bug_reports/encode_eon_imm_alias.md
-
-```property
-function: encoder.data_processing.encode_eon
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, is_64, imm]
-  domain: { rd: "0..=31", rn: "0..=31", imm: "bitwise-NOT of a valid bitmask immediate" }
-  relation:
-    op: eq
-    lhs: encode_eon([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(imm)])
-    rhs: llvm_mc_word("eon rd, rn, #imm")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  seed: { gen: int, min: 0, max: 9999, type: u32 }
-evidence: llvm-mc eon x0,x1,#1 -> eor x0,x1,#~1; ARM ARM EON (immediate) alias of EOR (immediate); encode_bic immediate path data_processing.rs:1034-1046
-```
-
-## encode_eon_metamorphic_n_bit_vs_eor
+## encode_ldar_stlr_roundtrip_arm_fields
 - Tier: 4
-- Rationale: ARM ARM Logical (shifted register) documents EOR opc=10 N=0 vs EON opc=10 N=1, i.e. they differ only by N at bit 21. Stronger differential already covers EON independently; this metamorphic checks the documented sibling transform without copying the SUT body. encode_logical(opc=0b10) is EOR (different job — same-job sibling gate rejects it as a differential reference).
-- Seed: encode_bics_pbt::encode_bics_meta_opc_vs_bic at data_processing.rs:3346
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ valid range. encode_eon(ops) XOR encode_logical(ops, 0b10) = 1<<21
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: ARM ARM Load/Store Exclusive/Acquire/Release layout is claimed by the body comment (size 001000 1 L 0 11111 1 11111 Rn Rt). Unpacking those fields is an independent inverse of packing, not a copy of the SUT. Stronger differential already covers llvm-mc agreement; this pins the architectural field map. No in-tree decoder for a true encode/decode round-trip.
+- Seed: encode_adr_pbt::encode_adr_roundtrip_arm_fields
+- Formal: ∀ rt,rn ∈ {0..31}, is_load ∈ Bool, variant ∈ {word, byte, half}, is_64 ∈ Bool (word only). let w = encode_ldar_stlr(...). unpack(w).rt = rt ∧ unpack(w).rn = rn ∧ unpack(w).L = is_load ∧ unpack(w).size = expected_size ∧ unpack(w).Rs = 31 ∧ unpack(w).o0 = 1 ∧ unpack(w).Rt2 = 31 ∧ bits[29:24]=001000 ∧ bit23=1 ∧ bit21=0
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_eon
+function: encoder.load_store.encode_ldar_stlr
+oracle: algebraic.round_trip
+predicate:
+  quantifier: forall
+  vars: [rt, rn, is_load, variant, is_64]
+  domain: { rt: "0..=31", rn: "0..=31", variant: "word|byte|half" }
+  body: unpack_ldar_stlr(word) == (rt, rn, is_load, expected_size, 31, 1, 31)
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  is_load: { gen: bool }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
+  is_64: { gen: bool }
+evidence: ARM ARM LDAR/STLR encoding size 001000 1 L 0 11111 1 11111 Rn Rt; load_store.rs:645 comment
+```
+
+## encode_ldar_stlr_metamorphic_l_bit
+- Tier: 4
+- Rationale: ARM ARM documents L=1 for LDAR/LDARB/LDARH and L=0 for STLR/STLRB/STLRH at bit 22, with all other fields identical for the same Rt/Rn/size. Stronger differential already covers each mnemonic independently; this metamorphic checks the documented L-bit transform without copying the SUT body.
+- Seed: encode_eon_pbt::encode_eon_metamorphic_n_bit_vs_eor
+- Formal: ∀ rt,rn ∈ {0..31}, variant, is_64. encode_ldar_stlr(ops, true, sz) XOR encode_ldar_stlr(ops, false, sz) = 1<<22
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_ldar_stlr
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { rd: "0..=31", rn: "0..=31", rm: "0..=31" }
+  vars: [rt, rn, variant, is_64]
+  domain: { rt: "0..=31", rn: "0..=31" }
   relation:
     op: eq
-    lhs: encode_eon(ops) XOR encode_logical(ops, 0b10)
-    rhs: 1u32 << 21
+    lhs: encode_ldar_stlr(ops, true, sz) ^ encode_ldar_stlr(ops, false, sz)
+    rhs: "1u32 << 22"
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
   is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: data_processing.rs:975 comment "opc=10, N=1"; ARM ARM Logical (shifted register) EOR N=0 / EON N=1
+evidence: ARM ARM LDAR L=1 vs STLR L=0 at bit 22; load_store.rs:644-647
 ```
 
-## encode_eon_invariant_arm_fields
+## encode_ldar_stlr_invariant_fixed_bits
 - Tier: 4
-- Rationale: ARM ARM field layout for Logical (shifted register) EON is an exact structural predicate on the output word. Weaker than differential (does not pin the full 32-bit value against an independent assembler) but independently evidenced.
-- Seed: encode_bics_pbt::encode_bics_word_layout at data_processing.rs:3391
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ valid range. let w = encode_eon([Reg,Reg,Reg,Shift]). w[4:0]=rd ∧ w[9:5]=rn ∧ w[20:16]=rm ∧ w[31]=sf(is_64) ∧ w[30:29]=0b10 ∧ w[28:24]=0b01010 ∧ w[23:22]=shift(kind) ∧ w[21]=1 ∧ w[15:10]=amt
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: ARM ARM Load-Acquire/Store-Release Register class fixes bits [29:24]=001000, bit 23=1 (not exclusive), bit 21=0, Rs=11111, o0=1, Rt2=11111 on every success-path word. Weaker than field round-trip; kept as a structural invariant over the valid domain including offset #0.
+- Seed: encode_adr_pbt fixed-opcode checks
+- Formal: ∀ valid (rt,rn,is_load,variant,is_64). let w = encode_ldar_stlr(...). (w>>24)&0x3F = 0b001000 ∧ (w>>23)&1 = 1 ∧ (w>>21)&1 = 0 ∧ (w>>16)&0x1F = 31 ∧ (w>>15)&1 = 1 ∧ (w>>10)&0x1F = 31
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_eon
+function: encoder.load_store.encode_ldar_stlr
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { rd: "0..=31" }
-  body: fields of encode_eon match ARM ARM Logical (shifted register) EON layout
+  vars: [rt, rn, is_load, variant, is_64]
+  domain: { rt: "0..=31", rn: "0..=31" }
+  relation:
+    op: holds
+    expr: fixed_ldar_stlr_bits(encode_ldar_stlr(ops, is_load, sz))
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_load: { gen: bool }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
   is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: ARM ARM Logical (shifted register) EON sf opc=10 01010 shift N=1 Rm imm6 Rn Rd; data_processing.rs:975
+evidence: ARM ARM LDAR/STLR fixed opcode bits; load_store.rs:645
 ```
 
-## encode_eon_neg_arity
+## encode_ldar_stlr_neg_arity_and_shape
 - Tier: 5
-- Rationale: Body and llvm-mc both require 3 operands (`eon requires 3 operands`). Documented error contract for too-few operands. Stronger oracles do not apply to the invalid-arity domain.
-- Seed: encode_bics_pbt::encode_bics_neg_arity at data_processing.rs:3430
-- Formal: ∀ n ∈ {0,1,2}, ops a length-n register list. encode_eon(ops) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: ARM ARM / GNU as syntax is exactly two operands: Rt then [Xn|SP]. llvm-mc rejects missing operands and a non-memory second operand (Imm, Symbol, pre/post-index, register-offset). Documented error is rejection (Err), not a wrong word.
+- Seed: encode_adr_pbt negative arity tests
+- Formal: ∀ ops with len<2 ∨ ops[0] not Reg ∨ ops[1] ∈ {Imm, Symbol, MemPreIndex, MemPostIndex, MemRegOffset, Reg} ∨ invalid base name. encode_ldar_stlr(ops, is_load, sz) is Err
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.data_processing.encode_eon
+function: encoder.load_store.encode_ldar_stlr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, is_64, r]
-  domain: { n: "0..=2" }
+  vars: [shape, is_load, variant]
+  domain: { shape: "empty|rt-only|non-mem second operand" }
   relation:
-    op: throws
-    expr: encode_eon(ops_of_len_n)
+    op: holds
+    expr: encode_ldar_stlr(ops, is_load, sz).is_err()
 generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
-  is_64: { gen: bool }
-  r: { gen: int, min: 0, max: 30, type: u32 }
+  is_load: { gen: bool }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
 expected_error: String
-evidence: data_processing.rs:953-955 "eon requires 3 operands"; llvm-mc rejects `eon x0, x1`
+evidence: ARM ARM LDAR syntax Rt, [Xn|SP]; llvm-mc rejects pre/post-index and extra/missing operands
 ```
 
-## encode_eon_neg_extra_operand
+## encode_ldar_stlr_neg_extra_operands
 - Tier: 5
-- Rationale: llvm-mc rejects a 4th non-shift operand (`eon x0, x1, x2, x3`). Gas-compatible assembler must reject it. Stronger oracles do not apply to this invalid domain.
-- Seed: encode_bics_pbt::encode_bics_neg_extra_operand at data_processing.rs:3579
-- Formal: ∀ rd,rn,rm ∈ {0..30}, is_64 ∈ Bool, extra ∈ {Reg, Imm, Mem, Symbol}. encode_eon([Reg,Reg,Reg, extra]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: llvm-mc / GNU as reject a third operand (ldar x0, [x1], x2 → invalid operand). README gas-compatible contract. SUT uses only operands[0] and operands[1] with no length check.
+- Seed: encode_eon_pbt extra-operand negative
+- Formal: ∀ valid 2-operand LDAR/STLR ops, extra ∈ Operand. encode_ldar_stlr(ops ++ [extra], is_load, sz) is Err
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: eon w0, w0, w0, w0 (is_64=false, rd=rn=rm=0, which=0 extra=Reg)
-- Bug report: pbt-out/bug_reports/encode_eon_extra_operand.md
+- Counterexample: rt=0, rn=0, is_load=false, variant=0, is_64=false, extra=Reg("x2") — stlr w0, [x0], x2 encodes instead of Err
+- Bug report: pbt-out/bug_reports/encode_ldar_stlr_extra_operand.md
 
 ```property
-function: encoder.data_processing.encode_eon
+function: encoder.load_store.encode_ldar_stlr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, extra]
+  vars: [rt, rn, is_load, variant, extra]
   domain: { extra: "Reg|Imm|Mem|Symbol" }
   relation:
-    op: throws
-    expr: encode_eon([Reg, Reg, Reg, extra])
+    op: holds
+    expr: encode_ldar_stlr(ops_plus_extra, is_load, sz).is_err()
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  which: { gen: int, min: 0, max: 3, type: u32 }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  is_load: { gen: bool }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
+  extra_kind: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: llvm-mc rejects `eon x0, x1, x2, x3`; README.md:5-14 gas-compatible
+evidence: llvm-mc ldar x0, [x1], x2 error invalid operand; ARM ARM two-operand syntax
 ```
 
-## encode_eon_neg_mixed_width
+## encode_ldar_stlr_neg_invalid_rt
 - Tier: 5
-- Rationale: ARM ARM EON requires all three registers to be Wt or all Xt. llvm-mc rejects mixed x/w. Gas-compatible assembler must reject it.
-- Seed: encode_bics_pbt::encode_bics_neg_mixed_width at data_processing.rs:3444
-- Formal: ∀ rd,rn,rm ∈ {0..30}, rd64,rn64,rm64 ∈ Bool. ¬(rd64=rn64=rm64) ⇒ encode_eon([Reg(gpr(rd64,rd)), …]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: ARM ARM Rt is Wt/Xt (31=WZR/XZR), never SP/WSP, never FP/SIMD. Byte/halfword forms take Wt only (llvm-mc rejects ldarb x0, [x1]). README gas-compatible contract. parse_reg_num maps sp/wsp and d/s/q/v/h/b prefixes onto GPR numbers, so the encoder may silently accept them.
+- Seed: encode_eon_pbt SP/FP negatives
+- Formal: ∀ is_load, variant. encode_ldar_stlr([Reg(bad_rt), Mem(x0,0)], is_load, sz) is Err where bad_rt ∈ {sp, wsp} ∪ FP {d,s,q,v,h,b}0 ∪ (Xt when variant ∈ {byte,half})
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: eon w0, w0, x0 (rd=rn=rm=0, rd64=false, rn64=false, rm64=true)
-- Bug report: pbt-out/bug_reports/encode_eon_mixed_width.md
+- Counterexample: is_load=false, kind=0, n=0 — stlr sp, [x0] encodes as stlr xzr, [x0]
+- Bug report: pbt-out/bug_reports/encode_ldar_stlr_sp_as_rt.md
 
 ```property
-function: encoder.data_processing.encode_eon
+function: encoder.load_store.encode_ldar_stlr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64]
-  domain: { rd: "0..=30", not_all_same_width: true }
+  vars: [bad_rt, is_load, variant]
+  domain: { bad_rt: "sp|wsp|d0|s0|q0|v0|h0|b0|xN-when-byte-half" }
   relation:
-    op: throws
-    expr: encode_eon([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Reg(gpr(rm64,rm))])
+    op: holds
+    expr: encode_ldar_stlr(ops, is_load, sz).is_err()
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-  rm64: { gen: bool }
+  bad_kind: { gen: int, min: 0, max: 8, type: u32 }
+  is_load: { gen: bool }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
 expected_error: String
-evidence: ARM ARM EON Wt,Wt,Wm / Xt,Xt,Xm; llvm-mc rejects `eon x0, w1, x2`
+evidence: ARM ARM LDAR Rt is Wt/Xt not SP; llvm-mc rejects ldar sp [x0], ldar d0 [x1], ldarb x0 [x1]
 ```
 
-## encode_eon_neg_sp_fp
+## encode_ldar_stlr_neg_invalid_base_offset
 - Tier: 5
-- Rationale: ARM ARM EON uses XZR/WZR for register 31, never SP/WSP; Wt/Xt only (no FP/SIMD). llvm-mc rejects `eon sp, ...` and `eon d0, ...`. Gas-compatible assembler must reject them.
-- Seed: encode_bics_pbt::encode_bics_neg_sp_fp at data_processing.rs:3471
-- Formal: ∀ which ∈ {0,1,2}, bad ∈ {sp,wsp,dN,sN,qN,vN,hN,bN}. encode_eon with bad at operand `which` and valid GPRs elsewhere = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: ARM ARM Rn is Xn|SP; offset absent or #0. llvm-mc rejects W/WSP/XZR/WZR as base (ldar x0, [w1] / [xzr]) and nonzero offset (index must be absent or #0). SUT takes Mem { base, .. } and ignores offset, and parse_reg_num does not check base width or SP-vs-ZR.
+- Seed: llvm-mc ldar x0, [x1, #8] error; ARM ARM {,#0}
+- Formal: ∀ is_load, variant, rt valid. encode_ldar_stlr([Reg(rt), Mem(bad_base, off)], ...) is Err when bad_base ∈ {wN, wsp, wzr, xzr} ∨ off ≠ 0. Bounds off ∈ {0±1, 8, i64::MIN, i64::MAX} sampled exactly.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: eon wsp, w0, w0 (which=0, is_64=false, kind=0); also eon d0, x1, x2
-- Bug report: pbt-out/bug_reports/encode_eon_sp_register_form.md ; pbt-out/bug_reports/encode_eon_fp_reg.md
+- Counterexample: rt=0, is_load=false, variant=0, is_64=false, kind=0, wn=0 — stlr w0, [w0] encodes as stlr w0, [x0]
+- Bug report: pbt-out/bug_reports/encode_ldar_stlr_w_base.md
 
 ```property
-function: encoder.data_processing.encode_eon
+function: encoder.load_store.encode_ldar_stlr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, is_64, a, b, kind, fp_n]
-  domain: { which: "0..=2", kind: "sp|wsp|d|s|q|v|h|b" }
+  vars: [rt, is_load, variant, bad_base, offset]
+  domain: { bad_base: "wN|wsp|wzr|xzr", offset: "nonzero or combined with valid base" }
   relation:
-    op: throws
-    expr: encode_eon(ops_with_bad_at_which)
+    op: holds
+    expr: encode_ldar_stlr(ops, is_load, sz).is_err()
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  is_64: { gen: bool }
-  a: { gen: int, min: 0, max: 30, type: u32 }
-  b: { gen: int, min: 0, max: 30, type: u32 }
-  kind: { gen: int, min: 0, max: 8, type: u32 }
-  fp_n: { gen: int, min: 0, max: 31, type: u32 }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  is_load: { gen: bool }
+  variant: { gen: int, min: 0, max: 2, type: u32 }
+  base_kind: { gen: int, min: 0, max: 5, type: u32 }
+  offset: { gen: int, min: -8, max: 8, type: i64 }
 expected_error: String
-evidence: ARM ARM EON Xt/Wt only, R31=XZR/WZR; llvm-mc rejects `eon sp, x0, x1` and `eon d0, d1, d2`
-```
-
-## encode_eon_neg_shift_range
-- Tier: 5
-- Rationale: ARM ARM EON shift amount is [0,31] for 32-bit and [0,63] for 64-bit. llvm-mc rejects lsl #32 (W) and lsl #64 (X). Documented bound must be exercised at bound+1. Stronger oracles do not apply to this invalid domain.
-- Seed: encode_bics_pbt::encode_bics_neg_shift_range at data_processing.rs:3514
-- Formal: ∀ rd,rn,rm ∈ {0..30}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}. let amt = 32|33|63 if ¬is_64 else 64|65|128. encode_eon([Reg,Reg,Reg,Shift(kind,amt)]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: eon w0, w0, w0, lsl #32 (rd=rn=rm=0, is_64=false, kind="lsl", amt_w=32)
-- Bug report: pbt-out/bug_reports/encode_eon_shift_out_of_range.md
-
-```property
-function: encoder.data_processing.encode_eon
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { amt: "32|33|63 if 32-bit else 64|65|128" }
-  relation:
-    op: throws
-    expr: encode_eon([Reg, Reg, Reg, Shift(kind, amt)])
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt_w: { gen: oneof, items: [32, 33, 63] }
-  amt_x: { gen: oneof, items: [64, 65, 128] }
-expected_error: String
-evidence: ARM ARM EON amount [0,31]/[0,63]; llvm-mc rejects `eon w0, w1, w2, lsl #32` and `eon x0, x1, x2, lsl #64`
-```
-
-## encode_eon_neg_unknown_shift
-- Tier: 5
-- Rationale: Coverage-sweep (round 1). ARM ARM EON shift is {LSL,LSR,ASR,ROR} only; llvm-mc rejects unknown kinds. The `_ => 0b00` arm in encode_eon was not executed by the first batch. Stronger oracles do not apply to this invalid domain.
-- Seed: encode_bics_pbt::encode_bics_neg_unknown_shift at data_processing.rs:3546
-- Formal: ∀ rd,rn,rm ∈ {0..30}, is_64 ∈ Bool, unknown ∉ {lsl,lsr,asr,ror}, amt ∈ {0,1,31}. encode_eon([Reg,Reg,Reg,Shift(unknown,amt)]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: eon w0, w0, w0, lslx #0 (rd=rn=rm=0, is_64=false, unknown="lslx", amt_ok=0)
-- Bug report: pbt-out/bug_reports/encode_eon_unknown_shift_kind.md
-
-```property
-function: encoder.data_processing.encode_eon
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, unknown, amt]
-  domain: { unknown: "lslx|rrx|rol|empty|asr " }
-  relation:
-    op: throws
-    expr: encode_eon([Reg, Reg, Reg, Shift(unknown, amt)])
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  unknown: { gen: oneof, items: ["lslx", "rrx", "rol", "", "asr "] }
-  amt: { gen: oneof, items: [0, 1, 31] }
-expected_error: String
-evidence: ARM ARM EON shift in {LSL,LSR,ASR,ROR}; llvm-mc rejects `eon w0, w0, w0, lslx #0`
-```
-
-## encode_eon_neg_invalid_name
-- Tier: 5
-- Rationale: Coverage-sweep (round 1). parse_reg_num None path (x32, w32, empty, foo, r0, x, x-1, x99) was not forced by the first batch. get_reg must Err on an invalid register name.
-- Seed: encode_bics_pbt::encode_bics_neg_invalid_rm at data_processing.rs:3570
-- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..30}, bad ∈ {x32,w32,x99,"",foo,r0,x}. encode_eon([Reg(rd),Reg(rn),Reg(bad)]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.data_processing.encode_eon
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_64, rd, rn, bad]
-  domain: { bad: "x32|w32|x99|empty|foo|r0|x" }
-  relation:
-    op: throws
-    expr: encode_eon([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(bad)])
-generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  bad: { gen: oneof, items: ["x32", "w32", "x99", "", "foo", "r0", "x"] }
-expected_error: String
-evidence: encoder/mod.rs:131-148 parse_reg_num returns None outside x/w 0..31 and aliases
+evidence: ARM ARM Rn is Xn|SP offset {,#0}; llvm-mc ldar x0 [x1, #8] index must be absent or #0; llvm-mc rejects [w1]/[xzr]/[wzr]/[wsp]
 ```

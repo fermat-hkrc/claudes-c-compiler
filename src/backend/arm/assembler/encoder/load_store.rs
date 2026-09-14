@@ -1511,3 +1511,571 @@ mod encode_adr_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_ldar_stlr_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:360-365 ldar/stlr/ldarb/stlrb/ldarh/stlrh dispatch;
+    //   ARM ARM LDAR/STLR: size 001000 1 L 0 11111 1 11111 Rn Rt; Rt is Wt/Xt (31=ZR); Rn is Xn|SP; offset {,#0}.
+    // Stronger considered:
+    //   - State machine: rejected — encode_ldar_stlr is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no LDAR/STLR decoder
+    //   - encode_ldaxr_stlxr / encode_ldxr_stxr as differential siblings: rejected — exclusive forms, different job
+    // Weaker available: algebraic.round_trip (ARM field unpack), algebraic.metamorphic (L bit),
+    //   algebraic.invariant (fixed opcode bits), negative_error (arity / extra / SP / FP / W-base / offset)
+    // Differential: candidate=encode_ldar_stlr, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=(Reg(Rt), Mem{Rn, 0}, is_load, forced_size) <-> `{ldar|stlr|ldarb|stlrb|ldarh|stlrh} Rt, [Rn]`
+
+    use super::encode_ldar_stlr;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn rt_name(n: u32, is_64: bool) -> String {
+        if is_64 {
+            if n == 31 {
+                "xzr".into()
+            } else {
+                format!("x{}", n)
+            }
+        } else if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn rn_name(n: u32) -> String {
+        if n == 31 {
+            "sp".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn forced_size(variant: u32) -> Option<u32> {
+        match variant {
+            0 => None,
+            1 => Some(0b00),
+            _ => Some(0b01),
+        }
+    }
+
+    fn mnemonic(is_load: bool, variant: u32) -> &'static str {
+        match (is_load, variant) {
+            (true, 0) => "ldar",
+            (false, 0) => "stlr",
+            (true, 1) => "ldarb",
+            (false, 1) => "stlrb",
+            (true, _) => "ldarh",
+            (false, _) => "stlrh",
+        }
+    }
+
+    fn expected_size(variant: u32, data_is_64: bool) -> u32 {
+        match variant {
+            1 => 0b00,
+            2 => 0b01,
+            _ if data_is_64 => 0b11,
+            _ => 0b10,
+        }
+    }
+
+    fn data_is_64(variant: u32, is_64: bool) -> bool {
+        variant == 0 && is_64
+    }
+
+    fn valid_ops(rt: u32, rn: u32, variant: u32, is_64: bool) -> Vec<Operand> {
+        let wide = data_is_64(variant, is_64);
+        vec![
+            Operand::Reg(rt_name(rt, wide)),
+            Operand::Mem {
+                base: rn_name(rn),
+                offset: 0,
+            },
+        ]
+    }
+
+    fn sut_word(ops: &[Operand], is_load: bool, variant: u32) -> Result<u32, String> {
+        match encode_ldar_stlr(ops, is_load, forced_size(variant))? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    /// Unpack LDAR/STLR fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_ldar_stlr(word: u32) -> (u32, u32, u32, u32, u32, u32, u32) {
+        let size = (word >> 30) & 0b11;
+        let l = (word >> 22) & 1;
+        let rs = (word >> 16) & 0x1f;
+        let o0 = (word >> 15) & 1;
+        let rt2 = (word >> 10) & 0x1f;
+        let rn = (word >> 5) & 0x1f;
+        let rt = word & 0x1f;
+        (size, l, rs, o0, rt2, rn, rt)
+    }
+
+    fn fixed_ldar_stlr_bits(word: u32) -> bool {
+        ((word >> 24) & 0x3f) == 0b001000
+            && ((word >> 23) & 1) == 1
+            && ((word >> 21) & 1) == 0
+            && ((word >> 16) & 0x1f) == 31
+            && ((word >> 15) & 1) == 1
+            && ((word >> 10) & 0x1f) == 31
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn variant_strat() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(2u32)]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x2".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x3".into(),
+                offset: 0
+            }),
+        ]
+    }
+
+    fn nonzero_offset() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(-1i64),
+            Just(1i64),
+            Just(8i64),
+            Just(-8i64),
+            Just(256i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            1i64..=4096,
+            -4096i64..=-1,
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ldar_stlr_kat_llvm_mc_ldar_x0_x1() {
+        let want = 0xc8dffc20u32;
+        let mc = llvm_mc_word("ldar x0, [x1]").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = valid_ops(0, 1, 0, true);
+        let sut = sut_word(&ops, true, 0).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldar_stlr_kat_llvm_mc_stlr_x0_x1() {
+        let want = 0xc89ffc20u32;
+        let mc = llvm_mc_word("stlr x0, [x1]").expect("llvm-mc KAT stlr");
+        assert_eq!(mc, want, "llvm-mc KAT stlr mapping broken");
+        let ops = valid_ops(0, 1, 0, true);
+        let sut = sut_word(&ops, false, 0).expect("SUT KAT stlr");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldar_stlr_kat_llvm_mc_ldar_w0_x1() {
+        let want = 0x88dffc20u32;
+        let mc = llvm_mc_word("ldar w0, [x1]").expect("llvm-mc KAT w");
+        assert_eq!(mc, want, "llvm-mc KAT w mapping broken");
+        let ops = valid_ops(0, 1, 0, false);
+        let sut = sut_word(&ops, true, 0).expect("SUT KAT w");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldar_stlr_kat_llvm_mc_ldarb_w0_x1() {
+        let want = 0x08dffc20u32;
+        let mc = llvm_mc_word("ldarb w0, [x1]").expect("llvm-mc KAT b");
+        assert_eq!(mc, want, "llvm-mc KAT ldarb mapping broken");
+        let ops = valid_ops(0, 1, 1, false);
+        let sut = sut_word(&ops, true, 1).expect("SUT KAT b");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldar_stlr_kat_llvm_mc_ldarh_w0_x1() {
+        let want = 0x48dffc20u32;
+        let mc = llvm_mc_word("ldarh w0, [x1]").expect("llvm-mc KAT h");
+        assert_eq!(mc, want, "llvm-mc KAT ldarh mapping broken");
+        let ops = valid_ops(0, 1, 2, false);
+        let sut = sut_word(&ops, true, 2).expect("SUT KAT h");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldar_stlr_kat_llvm_mc_ldar_xzr_sp() {
+        let want = 0xc8dfffffu32;
+        let mc = llvm_mc_word("ldar xzr, [sp]").expect("llvm-mc KAT xzr/sp");
+        assert_eq!(mc, want, "llvm-mc KAT xzr/sp mapping broken");
+        let ops = valid_ops(31, 31, 0, true);
+        let sut = sut_word(&ops, true, 0).expect("SUT KAT xzr/sp");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn test_encode_ldar_stlr_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_ldar_stlr(&ops, false, None).is_err(),
+            "stlr w0, [x0], x2 must Err; llvm-mc rejects a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldar_stlr_regression_sp_as_rt() {
+        let ops = [
+            Operand::Reg("sp".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldar_stlr(&ops, false, None).is_err(),
+            "stlr sp, [x0] must Err; llvm-mc rejects SP as Rt"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldar_stlr_regression_w_base() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "w0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldar_stlr(&ops, false, None).is_err(),
+            "stlr w0, [w0] must Err; llvm-mc rejects a W register as base"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldar_stlr
+        #[test]
+        fn encode_ldar_stlr_diff_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            is_load in any::<bool>(),
+            variant in variant_strat(),
+            is_64 in any::<bool>(),
+        ) {
+            let wide = data_is_64(variant, is_64);
+            let rt_n = rt_name(rt, wide);
+            let rn_n = rn_name(rn);
+            let mnem = mnemonic(is_load, variant);
+            let asm = format!("{} {}, [{}]", mnem, rt_n, rn_n);
+            let ops = valid_ops(rt, rn, variant, is_64);
+            let sut = sut_word(&ops, is_load, variant)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.round_trip
+        // Target: encoder.load_store.encode_ldar_stlr
+        #[test]
+        fn encode_ldar_stlr_roundtrip_arm_fields(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            is_load in any::<bool>(),
+            variant in variant_strat(),
+            is_64 in any::<bool>(),
+        ) {
+            let ops = valid_ops(rt, rn, variant, is_64);
+            let word = sut_word(&ops, is_load, variant)
+                .unwrap_or_else(|e| panic!("SUT rejected valid LDAR/STLR: {}", e));
+            let (size, l, rs, o0, rt2, got_rn, got_rt) = unpack_ldar_stlr(word);
+            let want_size = expected_size(variant, data_is_64(variant, is_64));
+            prop_assert_eq!(size, want_size, "size field mismatch word={:#010x}", word);
+            prop_assert_eq!(l, if is_load { 1 } else { 0 }, "L bit mismatch word={:#010x}", word);
+            prop_assert_eq!(rs, 31, "Rs must be 11111 word={:#010x}", word);
+            prop_assert_eq!(o0, 1, "o0 must be 1 (acquire/release) word={:#010x}", word);
+            prop_assert_eq!(rt2, 31, "Rt2 must be 11111 word={:#010x}", word);
+            prop_assert_eq!(got_rn, rn, "Rn field mismatch word={:#010x}", word);
+            prop_assert_eq!(got_rt, rt, "Rt field mismatch word={:#010x}", word);
+            prop_assert!(
+                ((word >> 24) & 0x3f) == 0b001000,
+                "bits [29:24] must be 001000 word={:#010x}",
+                word
+            );
+            prop_assert!(((word >> 23) & 1) == 1, "bit 23 must be 1 word={:#010x}", word);
+            prop_assert!(((word >> 21) & 1) == 0, "bit 21 must be 0 word={:#010x}", word);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_ldar_stlr
+        #[test]
+        fn encode_ldar_stlr_metamorphic_l_bit(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            variant in variant_strat(),
+            is_64 in any::<bool>(),
+        ) {
+            let ops = valid_ops(rt, rn, variant, is_64);
+            let load = sut_word(&ops, true, variant)
+                .unwrap_or_else(|e| panic!("SUT rejected load: {}", e));
+            let store = sut_word(&ops, false, variant)
+                .unwrap_or_else(|e| panic!("SUT rejected store: {}", e));
+            prop_assert_eq!(
+                load ^ store,
+                1u32 << 22,
+                "LDAR vs STLR must differ only by L at bit 22 load={:#010x} store={:#010x}",
+                load,
+                store
+            );
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_ldar_stlr
+        #[test]
+        fn encode_ldar_stlr_invariant_fixed_bits(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            is_load in any::<bool>(),
+            variant in variant_strat(),
+            is_64 in any::<bool>(),
+        ) {
+            let ops = valid_ops(rt, rn, variant, is_64);
+            let word = sut_word(&ops, is_load, variant)
+                .unwrap_or_else(|e| panic!("SUT rejected valid LDAR/STLR: {}", e));
+            prop_assert!(
+                fixed_ldar_stlr_bits(word),
+                "fixed LDAR/STLR bits violated word={:#010x}",
+                word
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldar_stlr
+        // Invalid domain: fewer than 2 operands, or second operand not Mem.
+        #[test]
+        fn encode_ldar_stlr_neg_arity_and_shape(
+            is_load in any::<bool>(),
+            variant in variant_strat(),
+            shape in 0u32..=8,
+            rt in reg_edge(),
+            off in -8i64..=8,
+        ) {
+            let sz = forced_size(variant);
+            let rt_n = rt_name(rt, data_is_64(variant, true));
+            let ops: Vec<Operand> = match shape {
+                0 => vec![],
+                1 => vec![Operand::Reg(rt_n)],
+                2 => vec![Operand::Reg(rt_n.clone()), Operand::Imm(0)],
+                3 => vec![Operand::Reg(rt_n.clone()), Operand::Symbol("foo".into())],
+                4 => vec![
+                    Operand::Reg(rt_n.clone()),
+                    Operand::MemPreIndex {
+                        base: "x0".into(),
+                        offset: off,
+                    },
+                ],
+                5 => vec![
+                    Operand::Reg(rt_n.clone()),
+                    Operand::MemPostIndex {
+                        base: "x0".into(),
+                        offset: off,
+                    },
+                ],
+                6 => vec![
+                    Operand::Reg(rt_n),
+                    Operand::MemRegOffset {
+                        base: "x0".into(),
+                        index: "x1".into(),
+                        extend: None,
+                        shift: None,
+                    },
+                ],
+                7 => vec![
+                    Operand::Imm(0),
+                    Operand::Mem {
+                        base: "x0".into(),
+                        offset: 0,
+                    },
+                ],
+                _ => vec![
+                    Operand::Reg(rt_n),
+                    Operand::Mem {
+                        base: if off >= 0 { "foo".into() } else { "x32".into() },
+                        offset: 0,
+                    },
+                ],
+            };
+            prop_assert!(
+                encode_ldar_stlr(&ops, is_load, sz).is_err(),
+                "expected Err for arity/shape {} got {:?}",
+                shape,
+                encode_ldar_stlr(&ops, is_load, sz)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldar_stlr
+        // Invalid domain: a third operand.
+        #[test]
+        fn encode_ldar_stlr_neg_extra_operands(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            is_load in any::<bool>(),
+            variant in variant_strat(),
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let mut ops = valid_ops(rt, rn, variant, is_64);
+            ops.push(extra);
+            prop_assert!(
+                encode_ldar_stlr(&ops, is_load, forced_size(variant)).is_err(),
+                "extra operand must Err; llvm-mc rejects a 3rd operand"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldar_stlr
+        // Invalid domain: SP/WSP/FP as Rt, or Xt for byte/halfword forms.
+        #[test]
+        fn encode_ldar_stlr_neg_invalid_rt(
+            is_load in any::<bool>(),
+            kind in 0u32..=3,
+            n in 0u32..=31,
+        ) {
+            let (bad_rt, variant): (String, u32) = match kind {
+                0 => ("sp".into(), 0),
+                1 => ("wsp".into(), 0),
+                2 => {
+                    let prefixes = ["d", "s", "q", "v", "h", "b"];
+                    (format!("{}{}", prefixes[(n as usize) % 6], n % 32), 0)
+                }
+                _ => (rt_name(n, true), if n % 2 == 0 { 1 } else { 2 }),
+            };
+            let ops = [
+                Operand::Reg(bad_rt.clone()),
+                Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+            ];
+            prop_assert!(
+                encode_ldar_stlr(&ops, is_load, forced_size(variant)).is_err(),
+                "invalid Rt {} for variant {} must Err",
+                bad_rt,
+                variant
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldar_stlr
+        // Invalid domain: W/WSP/XZR/WZR as base, or nonzero offset.
+        #[test]
+        fn encode_ldar_stlr_neg_invalid_base_offset(
+            rt in reg_edge(),
+            is_load in any::<bool>(),
+            variant in variant_strat(),
+            is_64 in any::<bool>(),
+            kind in 0u32..=4,
+            wn in 0u32..=30,
+            off in nonzero_offset(),
+        ) {
+            let wide = data_is_64(variant, is_64);
+            let (base, offset) = match kind {
+                0 => (format!("w{}", wn), 0i64),
+                1 => ("wsp".into(), 0),
+                2 => ("wzr".into(), 0),
+                3 => ("xzr".into(), 0),
+                _ => (rn_name(wn), off),
+            };
+            let ops = [
+                Operand::Reg(rt_name(rt, wide)),
+                Operand::Mem { base: base.clone(), offset },
+            ];
+            prop_assert!(
+                encode_ldar_stlr(&ops, is_load, forced_size(variant)).is_err(),
+                "invalid base/offset [{}], #{} must Err",
+                base,
+                offset
+            );
+        }
+    }
+}

@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_ldar_stlr)
+
+- Valid LDAR/STLR/LDARB/STLRB/LDARH/STLRH with Wt/Xt Rt (31=XZR/WZR) and Xn|SP base, offset 0, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_ldar_stlr(ops, true, sz) XOR encode_ldar_stlr(ops, false, sz) = 1<<22 (ARM ARM L bit) (1000 cases).
+- Success-path word: size at [31:30], bits [29:24]=001000, bit 23=1, L at 22, bit 21=0, Rs=31 at [20:16], o0=1 at 15, Rt2=31 at [14:10], Rn at [9:5], Rt at [4:0].
+- Fewer than 2 operands, non-Reg first operand, non-Mem second operand (Imm/Symbol/pre/post/reg-offset), and invalid base names (foo, x32) always Err.
+- Known-answer: `ldar x0, [x1]` encodes as 0xc8dffc20; `stlr x0, [x1]` as 0xc89ffc20; `ldar w0, [x1]` as 0x88dffc20; `ldarb w0, [x1]` as 0x08dffc20; `ldarh w0, [x1]` as 0x48dffc20; `ldar xzr, [sp]` as 0xc8dfffff.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- LDAR/STLR Rt register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `ldar sp, ...`).
+- Rn is Xn|SP (llvm-mc rejects [wN], [xzr], [wzr], [wsp]).
+- Offset must be absent or #0 (llvm-mc: "index must be absent or #0").
+- Byte/halfword forms take Wt only (llvm-mc rejects `ldarb x0, [x1]`).
+- LDAR/STLR take GPR only (llvm-mc rejects `ldar d0, ...`).
+- Mixed W data + X base is valid (`ldar w0, [x1]`).
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `stlr sp, [x0]` encodes as `stlr xzr, [x0]` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- W-register base is accepted and encoded as the same number X register (see bugs).
+- XZR as base encodes as SP (register 31) (same property as W-base).
+- `Mem { base, .. }` ignores a nonzero offset (same property as W-base).
+- Xt for ldarb/ldarh/stlrb/stlrh is accepted (size forced; Rt number still encoded).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg non-Reg / parse_reg_num None).
+
+---
+
 # Confirmed invariants (encode_eon)
 
 - Same-width GPR EON (x0–x30/xzr/lr and w0–w30/wzr, optional lsl/lsr/asr/ror with amount in [0,31] W / [0,63] X) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
