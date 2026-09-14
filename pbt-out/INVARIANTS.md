@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_extr)
+
+- Valid EXTR Wd,Wn,Wm / Xd,Xn,Xm with 0 <= lsb < R (R=32/64), including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `extr w0, w1, w2, #0` = 0x13820020.
+- Success-path word is ARM Extract EXTR: sf 00 100111 N 0 Rm imms Rn Rd with N=sf, imms=lsb. Equivalently w = (sf<<31)|(0b00100111<<23)|(sf<<22)|(rm<<16)|(lsb<<10)|(rn<<5)|rd. bits[30:23]=00100111; bit21=0.
+- Algebraic alias: encode_extr(Rd,Rn,Rn,#lsb) = llvm-mc("ror Rd, Rn, #lsb") (ARM ROR immediate alias when Rn=Rm) (1000 cases).
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; Rm+1 increments bits[20:16] only (1000 cases).
+- Fewer than 4 operands, non-register/non-imm kinds at the wrong slot, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `extr w0, w1, w2, #0` = 0x13820020; `extr w0, w1, w2, #1` = 0x13820420; `extr w0, w1, w2, #31` = 0x13827c20; `extr x0, x1, x2, #0` = 0x93c20020; `extr x0, x1, x2, #63` = 0x93c2fc20; `extr wzr, wzr, wzr, #0` = 0x139f03ff; `extr lr, x1, x2, #8` = 0x93c2203e; `ror w0, w1, #1` = 0x13810420.
+- Extra operand, SP/WSP, mixed W/X, FP/SIMD prefixes, and out-of-range lsb currently encode or panic instead of Err (see bugs).
+
+## Environment (encode_extr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on `extr w0, w1, w2, #0` = 0x13820020.
+- ARM ARM Extract EXTR: EXTR <Wd>, <Wn>, <Wm>, #<lsb> / EXTR <Xd>, <Xn>, <Xm>, #<lsb>. Encoding sf 00 100111 N 0 Rm imms Rn Rd; N=sf; 0 <= lsb <= 31 (W) / 63 (X); register 31 is ZR not SP. ROR (immediate) is the alias of EXTR when Rn=Rm.
+- Dispatch: encoder/mod.rs:894 "extr" => encode_extr.
+- Callers: encoder dispatch only.
+- Sibling encode_shift ROR is a different mnemonic (3-operand shift) — not a differential sibling; used only as ARM alias when Rn=Rm.
+- encode_extr does not check operands.len() (extra ignored); takes sf from Rd without checking Rn/Rm width or FP prefix; parse_reg_num maps sp/wsp to 31; lsb is `as u32` with no ARM range check (negative panics on `lsb << 10` in debug).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_extr (arity / extra / SP / mixed W-X / FP / lsb / nonreg / invalid-name / alt-spellings).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_extr_*.md.
+
 # Confirmed invariants (encode_clz)
 
 - Valid CLZ Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `clz w0, w1` = 0x5ac01020.

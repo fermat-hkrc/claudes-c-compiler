@@ -1,68 +1,80 @@
-# PBT Campaign Report: encode_clz
+# PBT Campaign Report: encode_extr
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** claudes-c-compiler
-**Modules tested:** encode_clz
-**Tests:** 11 properties (7 passing, 4 failing) plus 6 passing KAT gates and 4 failing regression witnesses
-**Result:** 7 passing, 4 bugs
+**Modules tested:** encode_extr
+**Tests:** 13 properties (8 passing, 5 failing) plus 8 passing KAT gates and 5 failing regression witnesses
+**Result:** 8 passing, 5 bugs
 **Effort tier:** standard (5–8 properties, ≥1000 cases, 1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_clz | 11 properties (7 pass / 4 fail) + 6 KAT + 4 regression | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_extr | 13 properties (8 pass / 5 fail) + 8 KAT + 5 regression | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
 ### 1. Extra operand silently ignored
-- **Law:** CLZ is two-operand; a third operand must Err (llvm-mc: invalid operand).
-- **Shrunk counterexample:** `[Reg("w0"), Reg("w0"), Reg("x0")]` (`clz w0, w0, x0`)
+- **Law:** EXTR is four-operand; a fifth operand must Err (llvm-mc: invalid operand).
+- **Shrunk counterexample:** `[Reg("w0"), Reg("w0"), Reg("w0"), Imm(0), Reg("x0")]` (`extr w0, w0, w0, #0, x0`)
 - **Expected:** Err
-- **Actual:** Ok(Word(0x5ac01000)) — same as `clz w0, w0`
-- **Root cause:** encode_clz never checks `operands.len()`; get_reg only reads indices 0 and 1.
+- **Actual:** Ok(Word) — same as `extr w0, w0, w0, #0`
+- **Root cause:** encode_extr never checks `operands.len()`; get_reg/get_imm only read indices 0..3.
 - **Impact:** Trailing garbage is assembled instead of rejected.
 - **Severity:** medium
-- **Fix:** Reject `operands.len() != 2`.
-- **Bug report:** pbt-out/bug_reports/encode_clz_extra_operand.md
-- **Serial reconfirmation:** reproduced with `PBT_TEST_JOBS=1 cargo test --lib encode_clz_neg -- --test-threads=1`
+- **Fix:** Reject `operands.len() != 4`.
+- **Bug report:** pbt-out/bug_reports/encode_extr_extra_operand.md
+- **Serial reconfirmation:** reproduced with `cargo test --lib encode_extr -- --test-threads=1`
 
 ### 2. SP/WSP accepted as register 31
-- **Law:** ARM CLZ register 31 is ZR not SP; SP/WSP must Err.
-- **Shrunk counterexample:** `[Reg("wsp"), Reg("w0")]` (`clz wsp, w0`)
+- **Law:** ARM EXTR register 31 is ZR not SP; SP/WSP in Rd/Rn/Rm must Err.
+- **Shrunk counterexample:** `[Reg("wsp"), Reg("w0"), Reg("w0"), Imm(0)]` (`extr wsp, w0, w0, #0`)
 - **Expected:** Err
-- **Actual:** Ok(Word(0x5ac0101f)) — parse_reg_num maps sp/wsp to 31
+- **Actual:** Ok(Word) — parse_reg_num maps sp/wsp to 31
 - **Root cause:** No SP rejection; register 31 is treated as ZR.
 - **Impact:** SP operands encode as ZR.
 - **Severity:** medium
-- **Fix:** Reject SP/WSP in Rd and Rn.
-- **Bug report:** pbt-out/bug_reports/encode_clz_sp.md
+- **Fix:** Reject SP/WSP in Rd, Rn, and Rm.
+- **Bug report:** pbt-out/bug_reports/encode_extr_sp.md
 - **Serial reconfirmation:** reproduced serially as above
 
-### 3. Mixed W/X widths accepted
-- **Law:** CLZ requires matching W/W or X/X; mixed width must Err.
-- **Shrunk counterexample:** `[Reg("x0"), Reg("w0")]` (`clz x0, w0`)
+### 3. Out-of-range #lsb panics or encodes
+- **Law:** EXTR requires 0 <= lsb <= 31 (W) / 63 (X). Out-of-range immediates must Err.
+- **Shrunk counterexample:** `[Reg("w0"), Reg("w0"), Reg("w0"), Imm(-1)]` (`extr w0, w0, w0, #-1`)
 - **Expected:** Err
-- **Actual:** Ok(Word(0xdac01000)) — encoded as `clz x0, x0` (sf from Rd only)
-- **Root cause:** `let (rn, _) = get_reg(operands, 1)?` discards Rn width.
+- **Actual:** panic in debug (`attempt to shift left with overflow` at `lsb << 10` after `-1i64 as u32`). Related: lsb=32 for W encodes Ok(Word) with imms overlapping neighbouring fields.
+- **Root cause:** `get_imm(...) as u32` truncates; no ARM range check before shifting into bits[15:10].
+- **Impact:** Assembler crash on negative lsb; silent illegal encodings for lsb >= R.
+- **Severity:** high
+- **Fix:** Reject lsb outside 0..=31 (W) / 0..=63 (X) before packing imms.
+- **Bug report:** pbt-out/bug_reports/encode_extr_lsb.md
+- **Serial reconfirmation:** reproduced serially as above
+
+### 4. Mixed W/X widths accepted
+- **Law:** EXTR requires matching W/W/W or X/X/X; mixed width must Err.
+- **Shrunk counterexample:** `[Reg("w0"), Reg("x0"), Reg("w0"), Imm(0)]` (`extr w0, x0, w0, #0`)
+- **Expected:** Err
+- **Actual:** Ok(Word) — encoded as 32-bit EXTR (sf from Rd only)
+- **Root cause:** `let (rn, _) = get_reg(operands, 1)?` and `let (rm, _) = get_reg(operands, 2)?` discard Rn/Rm width.
 - **Impact:** Source text and encoding disagree on operand size.
 - **Severity:** medium
-- **Fix:** Require Rd and Rn to have the same GPR width.
-- **Bug report:** pbt-out/bug_reports/encode_clz_mixed_width.md
+- **Fix:** Require Rd, Rn, and Rm to have the same GPR width.
+- **Bug report:** pbt-out/bug_reports/encode_extr_mixed_width.md
 - **Serial reconfirmation:** reproduced serially as above
 
-### 4. FP/SIMD registers accepted as scalar CLZ operands
-- **Law:** Scalar CLZ operands are GPRs only; `clz d0, x1` must Err. (NEON vector CLZ is a different dispatch path.)
-- **Shrunk counterexample:** `[Reg("d0"), Reg("x1")]` (`clz d0, x1`)
+### 5. FP/SIMD registers accepted as EXTR operands
+- **Law:** EXTR operands are GPRs only; `extr d0, x1, x2, #0` must Err.
+- **Shrunk counterexample:** `[Reg("d0"), Reg("x1"), Reg("x2"), Imm(0)]` (`extr d0, x1, x2, #0`)
 - **Expected:** Err
-- **Actual:** Ok(Word(0x5ac01020)) — same as `clz w0, w1`
-- **Root cause:** parse_reg_num accepts d/s/q/v/h/b; get_reg does not call is_fp_reg.
+- **Actual:** Ok(Word) — parse_reg_num accepts 'd' prefix
+- **Root cause:** parse_reg_num accepts d/s/q/v/h/b; encode_extr does not call is_fp_reg.
 - **Impact:** FP names are silently remapped to GPR encodings.
 - **Severity:** medium
-- **Fix:** Reject FP/SIMD names in Rd and Rn.
-- **Bug report:** pbt-out/bug_reports/encode_clz_fp.md
+- **Fix:** Reject FP/SIMD names in Rd, Rn, and Rm.
+- **Bug report:** pbt-out/bug_reports/encode_extr_fp.md
 - **Serial reconfirmation:** reproduced serially as above
 
 ## Design Caveats
@@ -73,30 +85,31 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_clz_pbt) | 11 properties + 6 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_extr_pbt) | 13 properties + 8 KAT + 5 regression witnesses |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — per-function coverage ledger
+- pbt-out/FUNCTION_INDEX.md — merged function index (encode_extr now a candidate)
+- pbt-out/COVERAGE.md — coverage ledger row for encode_extr
 - pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/FUNCTION_INDEX.md — merged function index (encode_clz marked yes)
-- pbt-out/INVARIANTS.md — confirmed encode_clz invariants
-- pbt-out/bug_reports/encode_clz_extra_operand.md
-- pbt-out/bug_reports/encode_clz_sp.md
-- pbt-out/bug_reports/encode_clz_mixed_width.md
-- pbt-out/bug_reports/encode_clz_fp.md
+- pbt-out/INVARIANTS.md — confirmed encode_extr invariants
+- pbt-out/REPORT.md — this report
+- pbt-out/bug_reports/encode_extr_extra_operand.md
+- pbt-out/bug_reports/encode_extr_sp.md
+- pbt-out/bug_reports/encode_extr_lsb.md
+- pbt-out/bug_reports/encode_extr_mixed_width.md
+- pbt-out/bug_reports/encode_extr_fp.md
 
-Sweep close-out: coverage_gaps had no LLVM profraw; one manual arm-audit round of encode_clz (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings). Added encode_clz_diff_alt_spellings, encode_clz_neg_nonreg, encode_clz_neg_invalid_name (all passing). Closed: tier round spent and documented surface covered.
+Sweep close: coverage_gaps had no LLVM profraw; manual arm audit of encode_extr (arity / extra / SP / mixed W-X / FP / lsb / nonreg / invalid-name / alt-spellings). Added encode_extr_diff_alt_spellings, encode_extr_neg_mixed_width, encode_extr_neg_fp, encode_extr_neg_nonreg, encode_extr_neg_invalid_name. Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 19:03 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 80/284 total | PBT candidates: 80 | Tested: 80 (100%) | 0 pass, 80 fail
+> Last updated: 2026-09-14 19:28 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 81/284 total | PBT candidates: 81 | Tested: 81 (100%) | 0 pass, 81 fail
 
 ## Summary
 
@@ -105,10 +118,10 @@ Sweep close-out: coverage_gaps had no LLVM profraw; one manual arm-audit round o
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 284 |
-| PBT candidates (from FUNCTION_INDEX) | 80 |
-| **Tested (of PBT candidates)** | **80 / 80 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 80 / 0 |
-| **Overall (tested / all functions)** | **80 / 284 (28%)** |
+| PBT candidates (from FUNCTION_INDEX) | 81 |
+| **Tested (of PBT candidates)** | **81 / 81 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 81 / 0 |
+| **Overall (tested / all functions)** | **81 / 284 (29%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -116,13 +129,13 @@ Sweep close-out: coverage_gaps had no LLVM profraw; one manual arm-audit round o
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 80 | 80 | 0 | 100% |
+|  | 81 | 81 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 80 | 80 | 0 | 100% |
+| unknown | 81 | 81 | 0 | 100% |
 
 ## File Coverage
 
@@ -225,3 +238,4 @@ Sweep close-out: coverage_gaps had no LLVM profraw; one manual arm-audit round o
 | encode_cas | load_store.rs |
 | encode_cls | bitfield.rs |
 | encode_clz | bitfield.rs |
+| encode_extr | bitfield.rs |

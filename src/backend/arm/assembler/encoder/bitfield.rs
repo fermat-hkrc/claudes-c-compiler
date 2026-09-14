@@ -2372,3 +2372,613 @@ mod encode_clz_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_extr_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md:11 "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:894 "extr" => encode_extr; README.md:216 lists extr;
+    //   bitfield.rs:132 purpose comment EXTR Rd, Rn, Rm, #lsb;
+    //   ARM ARM Extract EXTR: sf 00 100111 N 0 Rm imms Rn Rd, N=sf, imms=lsb;
+    //   0 <= lsb <= 31 (W) / 63 (X); register 31 is ZR not SP.
+    //   ROR (immediate) is the ARM alias of EXTR when Rn=Rm.
+    // Stronger considered:
+    //   - State machine: rejected — encode_extr is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree EXTR decoder
+    //   - encode_shift ROR as differential sibling: rejected — same-job gate fails
+    //     (ROR is a 3-operand shift mnemonic; EXTR is 4-operand extract);
+    //     used only as algebraic alias after the ARM mapping when Rn=Rm
+    //   - encode_ubfx / encode_sbfx / encode_bfm: rejected — different opc / class
+    // Weaker available: algebraic.metamorphic (ROR alias when Rn=Rm; Rd/Rn/Rm field independence),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / SP / lsb)
+    // Differential: candidate=encode_extr, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(Rd), Reg(Rn), Reg(Rm), Imm(lsb)] <-> `extr Rd, Rn, Rm, #lsb`
+
+    use super::encode_extr;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if is_64 {
+            if n == 31 {
+                "xzr".into()
+            } else {
+                format!("x{n}")
+            }
+        } else if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{n}")
+        }
+    }
+
+    fn lsb_valid(r: u32) -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(r - 1), 0u32..r]
+    }
+
+    fn extr_valid() -> impl Strategy<Value = (bool, u32, u32, u32, u32)> {
+        any::<bool>().prop_flat_map(|is_64| {
+            let r = if is_64 { 64u32 } else { 32 };
+            (
+                Just(is_64),
+                0u32..=31,
+                0u32..=31,
+                0u32..=31,
+                lsb_valid(r),
+            )
+                .prop_map(|(is_64, rd, rn, rm, lsb)| (is_64, rd, rn, rm, lsb))
+        })
+    }
+
+    fn invalid_lsb(is_64: bool) -> impl Strategy<Value = i64> {
+        let r = if is_64 { 64i64 } else { 32 };
+        prop_oneof![
+            Just(-1i64),
+            Just(-2i64),
+            Just(r),
+            Just(r + 1),
+            Just(128i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+        ]
+    }
+
+    fn ops4(is_64: bool, rd: u32, rn: u32, rm: u32, lsb: i64) -> [Operand; 4] {
+        [
+            Operand::Reg(gpr(is_64, rd)),
+            Operand::Reg(gpr(is_64, rn)),
+            Operand::Reg(gpr(is_64, rm)),
+            Operand::Imm(lsb),
+        ]
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_extr(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn must_err(ops: &[Operand]) -> bool {
+        match catch_unwind(AssertUnwindSafe(|| encode_extr(ops))) {
+            Ok(Err(_)) => true,
+            _ => false,
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(-1)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8h".into(),
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_extr_kat_llvm_mc_w0_w1_w2_lsb0() {
+        let want = 0x13820020u32;
+        let mc = llvm_mc_word("extr w0, w1, w2, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(false, 0, 1, 2, 0)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_extr_kat_llvm_mc_w0_w1_w2_lsb1() {
+        let want = 0x13820420u32;
+        let mc = llvm_mc_word("extr w0, w1, w2, #1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(false, 0, 1, 2, 1)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_extr_kat_llvm_mc_w0_w1_w2_lsb31() {
+        let want = 0x13827c20u32;
+        let mc = llvm_mc_word("extr w0, w1, w2, #31").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(false, 0, 1, 2, 31)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_extr_kat_llvm_mc_x0_x1_x2_lsb0() {
+        let want = 0x93c20020u32;
+        let mc = llvm_mc_word("extr x0, x1, x2, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(true, 0, 1, 2, 0)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_extr_kat_llvm_mc_x0_x1_x2_lsb63() {
+        let want = 0x93c2fc20u32;
+        let mc = llvm_mc_word("extr x0, x1, x2, #63").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(true, 0, 1, 2, 63)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_extr_kat_llvm_mc_wzr_wzr_wzr_lsb0() {
+        let want = 0x139f03ffu32;
+        let mc = llvm_mc_word("extr wzr, wzr, wzr, #0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops4(false, 31, 31, 31, 0)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_extr_kat_llvm_mc_lr_x1_x2_lsb8() {
+        let want = 0x93c2203eu32;
+        let mc = llvm_mc_word("extr lr, x1, x2, #8").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [
+            Operand::Reg("lr".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Imm(8),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_extr_kat_llvm_mc_ror_alias_w0_w1_lsb1() {
+        let want = 0x13810420u32;
+        let mc = llvm_mc_word("ror w0, w1, #1").expect("llvm-mc ROR KAT");
+        assert_eq!(mc, want, "llvm-mc ROR KAT mapping broken");
+        let sut = sut_word(&ops4(false, 0, 1, 1, 1)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_extr_diff_valid_gpr((is_64, rd, rn, rm, lsb) in extr_valid()) {
+            let dest = gpr(is_64, rd);
+            let src_n = gpr(is_64, rn);
+            let src_m = gpr(is_64, rm);
+            let asm = format!("extr {}, {}, {}, #{}", dest, src_n, src_m, lsb);
+            let ops = ops4(is_64, rd, rn, rm, lsb as i64);
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "EXTR mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_extr_arm_fields((is_64, rd, rn, rm, lsb) in extr_valid()) {
+            let sf = if is_64 { 1u32 } else { 0 };
+            let w = sut_word(&ops4(is_64, rd, rn, rm, lsb as i64)).expect("SUT");
+            let want = (sf << 31)
+                | (0b00100111 << 23)
+                | (sf << 22)
+                | (rm << 16)
+                | (lsb << 10)
+                | (rn << 5)
+                | rd;
+            prop_assert_eq!(w, want, "ARM ARM EXTR field layout");
+            prop_assert_eq!(w >> 31, sf, "sf");
+            prop_assert_eq!((w >> 23) & 0xff, 0b00100111, "bits[30:23]=00100111");
+            prop_assert_eq!((w >> 22) & 1, sf, "N=sf");
+            prop_assert_eq!((w >> 21) & 1, 0, "bit21=0");
+            prop_assert_eq!((w >> 16) & 0x1f, rm, "Rm");
+            prop_assert_eq!((w >> 10) & 0x3f, lsb, "imms=lsb");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_extr_metamorphic_rd_rn_rm(
+            is_64 in any::<bool>(),
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            lsb in 0u32..=1,
+        ) {
+            let r = if is_64 { 64u32 } else { 32 };
+            prop_assume!(lsb < r);
+            let base = sut_word(&ops4(is_64, rd, rn, rm, lsb as i64)).expect("base");
+            let w_rd = sut_word(&ops4(is_64, rd + 1, rn, rm, lsb as i64)).expect("rd+1");
+            let w_rn = sut_word(&ops4(is_64, rd, rn + 1, rm, lsb as i64)).expect("rn+1");
+            let w_rm = sut_word(&ops4(is_64, rd, rn, rm + 1, lsb as i64)).expect("rm+1");
+            prop_assert_eq!(w_rd & 0x1f, rd + 1, "Rd+1 updates Rd field");
+            prop_assert_eq!(w_rd & !0x1fu32, base & !0x1fu32, "Rd+1 leaves other fields unchanged");
+            prop_assert_eq!((w_rn >> 5) & 0x1f, rn + 1, "Rn+1 updates Rn field");
+            prop_assert_eq!(w_rn & !(0x1fu32 << 5), base & !(0x1fu32 << 5), "Rn+1 leaves other fields unchanged");
+            prop_assert_eq!((w_rm >> 16) & 0x1f, rm + 1, "Rm+1 updates Rm field");
+            prop_assert_eq!(w_rm & !(0x1fu32 << 16), base & !(0x1fu32 << 16), "Rm+1 leaves other fields unchanged");
+        }
+
+        #[test]
+        fn encode_extr_alias_ror((is_64, rd, rn, _rm, lsb) in extr_valid()) {
+            let dest = gpr(is_64, rd);
+            let src = gpr(is_64, rn);
+            let asm = format!("ror {}, {}, #{}", dest, src, lsb);
+            let ops = ops4(is_64, rd, rn, rn, lsb as i64);
+            let mc = llvm_mc_word(&asm).expect("llvm-mc ror");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "EXTR Rd,Rn,Rn,#lsb must alias ROR Rd,Rn,#lsb for {}", asm);
+        }
+
+        #[test]
+        fn encode_extr_neg_arity(
+            len in 0usize..=3,
+            is_64 in any::<bool>(),
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+        ) {
+            let mut ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Imm(0),
+            ];
+            ops.truncate(len);
+            prop_assert!(
+                encode_extr(&ops).is_err(),
+                "EXTR with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_extr_neg_extra_operand(
+            (is_64, rd, rn, rm, lsb) in extr_valid(),
+            extra in extra_operand(),
+        ) {
+            let mut ops = ops4(is_64, rd, rn, rm, lsb as i64).to_vec();
+            ops.push(extra);
+            prop_assert!(
+                encode_extr(&ops).is_err(),
+                "EXTR has no 5th operand; extra operand must Err (llvm-mc rejects it)"
+            );
+        }
+
+        #[test]
+        fn encode_extr_neg_sp(
+            which in 0u32..=2,
+            sp64 in any::<bool>(),
+            is_64 in any::<bool>(),
+            other in 0u32..=30,
+        ) {
+            let sp = if sp64 { "sp" } else { "wsp" };
+            let mut ops = ops4(is_64, other, other, other, 0);
+            ops[which as usize] = Operand::Reg(sp.to_string());
+            prop_assert!(
+                encode_extr(&ops).is_err(),
+                "SP/WSP is not a valid EXTR operand (which={} sp={})",
+                which,
+                sp
+            );
+        }
+
+        #[test]
+        fn encode_extr_neg_lsb(
+            (is_64, rd, rn, rm, lsb) in any::<bool>().prop_flat_map(|is_64| {
+                (Just(is_64), 0u32..=31, 0u32..=31, 0u32..=31, invalid_lsb(is_64))
+                    .prop_map(|(is_64, rd, rn, rm, lsb)| (is_64, rd, rn, rm, lsb))
+            }),
+        ) {
+            let r = if is_64 { 64i64 } else { 32 };
+            prop_assume!(lsb < 0 || lsb >= r);
+            let ops = ops4(is_64, rd, rn, rm, lsb);
+            prop_assert!(
+                must_err(&ops),
+                "EXTR lsb={} R={} must Err (ARM: 0<=lsb<R)",
+                lsb,
+                r
+            );
+        }
+
+        #[test]
+        fn encode_extr_diff_alt_spellings(
+            (is_64, rd, rn, rm, lsb) in extr_valid(),
+            dest_spell in 0u32..=4,
+            src_n_spell in 0u32..=4,
+            src_m_spell in 0u32..=4,
+        ) {
+            let dest = spell(is_64, rd, dest_spell);
+            let src_n = spell(is_64, rn, src_n_spell);
+            let src_m = spell(is_64, rm, src_m_spell);
+            let asm = format!("extr {}, {}, {}, #{}", dest, src_n, src_m, lsb);
+            let ops = [
+                Operand::Reg(dest),
+                Operand::Reg(src_n),
+                Operand::Reg(src_m),
+                Operand::Imm(lsb as i64),
+            ];
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "EXTR alt-spelling mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_extr_neg_mixed_width(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+            rm64 in any::<bool>(),
+        ) {
+            prop_assume!(rd64 != rn64 || rn64 != rm64 || rd64 != rm64);
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+                Operand::Reg(gpr(rm64, rm)),
+                Operand::Imm(0),
+            ];
+            prop_assert!(
+                encode_extr(&ops).is_err(),
+                "EXTR mixed W/X (rd64={} rn64={} rm64={}) must Err (llvm-mc rejects it)",
+                rd64,
+                rn64,
+                rm64
+            );
+        }
+
+        #[test]
+        fn encode_extr_neg_fp(
+            which in 0u32..=2,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in 0u32..=31,
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = ops4(true, 0, 1, 2, 0);
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_extr(&ops).is_err(),
+                "FP/SIMD register {} is not a valid EXTR operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_extr_neg_nonreg(
+            which in 0u32..=3,
+            bad in non_reg_operand(),
+        ) {
+            if which == 3 {
+                prop_assume!(!matches!(bad, Operand::Imm(_)));
+            }
+            let mut ops = ops4(false, 0, 1, 2, 0).to_vec();
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_extr(&ops).is_err(),
+                "wrong operand kind at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_extr_neg_invalid_name(
+            which in 0u32..=2,
+            name in invalid_name(),
+        ) {
+            let mut ops = ops4(false, 0, 1, 2, 0);
+            ops[which as usize] = Operand::Reg(name.clone());
+            prop_assert!(
+                encode_extr(&ops).is_err(),
+                "invalid register name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+    }
+
+    fn spell(is_64: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 if n == 31 => {
+                if is_64 {
+                    "x31".into()
+                } else {
+                    "w31".into()
+                }
+            }
+            1 if n == 31 => {
+                if is_64 {
+                    "XZR".into()
+                } else {
+                    "WZR".into()
+                }
+            }
+            2 if n == 30 && is_64 => "LR".into(),
+            3 => gpr(is_64, n).to_uppercase(),
+            _ => gpr(is_64, n),
+        }
+    }
+
+    fn invalid_name() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "foo".into(),
+            "x32".into(),
+            "w32".into(),
+            "x".into(),
+            "r0".into(),
+            "".into(),
+            "x-1".into(),
+            "x99".into(),
+            "w".into(),
+        ])
+    }
+
+    fn non_reg_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            any::<i64>().prop_map(Operand::Imm),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            }),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            }),
+        ]
+    }
+
+    #[test]
+    fn test_encode_extr_regression_extra_operand() {
+        let mut ops = ops4(false, 0, 0, 0, 0).to_vec();
+        ops.push(Operand::Reg("x0".into()));
+        assert!(
+            encode_extr(&ops).is_err(),
+            "EXTR w0, w0, w0, #0, x0 must Err; extra operand is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_extr_regression_sp() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_extr(&ops).is_err(),
+            "EXTR wsp, w0, w0, #0 must Err; register 31 is ZR not SP/WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_extr_regression_lsb_neg() {
+        let ops = ops4(false, 0, 0, 0, -1);
+        let result = catch_unwind(AssertUnwindSafe(|| encode_extr(&ops)));
+        assert!(
+            matches!(result, Ok(Err(_))),
+            "EXTR w0, w0, w0, #-1 must Err; lsb=-1 is outside 0..=31 (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_extr_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_extr(&ops).is_err(),
+            "EXTR w0, x0, w0, #0 must Err; mixed W/X is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_extr_regression_fp() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Imm(0),
+        ];
+        assert!(
+            encode_extr(&ops).is_err(),
+            "EXTR d0, x1, x2, #0 must Err; FP/SIMD registers are not EXTR operands (llvm-mc rejects it)"
+        );
+    }
+}
