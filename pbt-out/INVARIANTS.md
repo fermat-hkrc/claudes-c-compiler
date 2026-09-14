@@ -1,3 +1,22 @@
+# Confirmed invariants (encode_fcvt_rounding)
+
+- Valid integer FCVT* Wd|Xd, Sn|Dn (including wzr/xzr, w31/x31, lr, uppercase, all 10 mnemonics fcvtzs/zu/as/au/ns/nu/ms/mu/ps/pu) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: sf 00 11110 ftype 1 rmode opcode 000000 Rn Rd. Equivalently w = (sf<<31)|(0b11110<<24)|(ftype<<22)|(1<<21)|(rmode<<19)|(opcode<<16)|(rn<<5)|rd. bits[30:29]=00, bits[15:10]=0, bit21=1.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; W vs X flips only bit 31; S vs D flips only bit 22; FCVTZS XOR FCVTZU = 1<<16 (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/x32/s32/empty/r0) always Err (1000 cases).
+- Known-answer: `fcvtzs w0, s1` = 0x1e380020; `fcvtzs x0, d1` = 0x9e780020; `fcvtzu w0, s1` = 0x1e390020; `fcvtas w0, s1` = 0x1e240020; `fcvtzs xzr, d0` = 0x9e78001f; `fcvtzs lr, s0` = 0x9e38001e; llvm-mc +fullfp16 `fcvtzs w0, h1` = 0x1ef80020 (SUT currently 0x1e380020, see bugs).
+- Extra operand, SP/WSP dest, FP dest / GP source / QVB, and H source currently encode incorrectly (see bugs).
+
+## Environment (encode_fcvt_rounding)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (half: -mattr=+fullfp16). gas aarch64-linux-gnu-as agrees on `fcvtzs w0, s1` = 0x1e380020.
+- ARM ARM Conversion between floating-point and integer: sf 00 11110 ftype 1 rmode opcode 000000 Rn Rd. sf 0=W dest 1=X dest; ftype 00=S 01=D 11=H; register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:440-453 fcvtzs/fcvtzu/fcvtas/au/ns/nu/ms/mu/ps/pu => encode_fcvt_rounding. fcvtzs/fcvtzu with RegArrangement go to NEON instead.
+- Callers: encoder dispatch; codegen/cast_ops.rs emits `fcvtzs`/`fcvtzu`.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_fcvt_rounding (arity / extra / SP dest / FP dest / GP source / QVB / H ftype / nonreg / invalid-name).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_fcvt_rounding_*.md.
+
 # Confirmed invariants (encode_smulh)
 
 - Valid SMULH Xd, Xn, Xm (including xzr, lr, x31, uppercase, LR/XZR) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

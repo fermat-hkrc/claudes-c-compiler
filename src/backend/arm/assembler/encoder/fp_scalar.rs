@@ -269,3 +269,540 @@ pub(crate) fn encode_fcvt_precision(operands: &[Operand]) -> Result<EncodeResult
         | (opc << 15) | (0b10000 << 10) | (rn << 5) | rd;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod encode_fcvt_rounding_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:440-453 fcvtzs/fcvtzu/fcvtas/au/ns/nu/ms/mu/ps/pu dispatch;
+    //   ARM ARM Conversion between floating-point and integer:
+    //   sf 00 11110 ftype 1 rmode opcode 000000 Rn Rd;
+    //   fp_scalar.rs:180-183 purpose comment (sf W/X, ftype S/D);
+    //   README.md:223 lists the 10 scalar mnemonics.
+    // Stronger considered:
+    //   - State machine: rejected — encode_fcvt_rounding is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree FCVT* integer decoder
+    //   - encode_int_to_float / encode_scvtf / encode_ucvtf as differential sibling:
+    //     rejected — same-job gate fails (integer-to-float, different ARM class)
+    //   - encode_fcvt_precision: rejected — float-to-float precision conversion
+    //   - encode_neon_float_two_misc: rejected — vector/SIMD-scalar form
+    // Weaker available: algebraic.metamorphic (sf/ftype/rmode/opcode/Rd/Rn),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / SP / wrong type)
+    // Differential: candidate=encode_fcvt_rounding, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler (caller-reachable from encode_instruction),
+    //   mapping=[Reg(Wd|Xd), Reg(Sn|Dn)]+(rmode,opcode) <-> `fcvt* Wd|Xd, Sn|Dn`
+
+    use super::encode_fcvt_rounding;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    /// Documented integer-conversion (rmode, opcode, mnemonic) triples from encoder/mod.rs:440-453.
+    const FCVT_INT: &[(u32, u32, &str)] = &[
+        (0b11, 0b000, "fcvtzs"),
+        (0b11, 0b001, "fcvtzu"),
+        (0b00, 0b100, "fcvtas"),
+        (0b00, 0b101, "fcvtau"),
+        (0b00, 0b000, "fcvtns"),
+        (0b00, 0b001, "fcvtnu"),
+        (0b10, 0b000, "fcvtms"),
+        (0b10, 0b001, "fcvtmu"),
+        (0b01, 0b000, "fcvtps"),
+        (0b01, 0b001, "fcvtpu"),
+    ];
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn fp(is_d: bool, n: u32) -> String {
+        format!("{}{}", if is_d { "d" } else { "s" }, n)
+    }
+
+    fn sut_word(ops: &[Operand], rmode: u32, opcode: u32) -> Result<u32, String> {
+        match encode_fcvt_rounding(ops, rmode, opcode)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word_with(asm: &str, extra_args: &[&str]) -> Result<u32, String> {
+        let mut args = vec!["-triple=aarch64", "-show-encoding"];
+        args.extend_from_slice(extra_args);
+        let mut child = Command::new(LLVM_MC)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &[])
+    }
+
+    fn llvm_mc_fp16_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &["-mattr=+fullfp16"])
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Imm(32)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            }),
+        ]
+    }
+
+    fn dest_spelling(is_64: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 if n == 31 && is_64 => "x31".into(),
+            0 if n == 31 && !is_64 => "w31".into(),
+            1 if n == 31 && is_64 => "XZR".into(),
+            1 if n == 31 && !is_64 => "WZR".into(),
+            2 if n == 30 && is_64 => "LR".into(),
+            2 if n == 30 && is_64 => "lr".into(),
+            3 => gpr(is_64, n).to_uppercase(),
+            _ => gpr(is_64, n),
+        }
+    }
+
+    fn src_spelling(is_d: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 => fp(is_d, n).to_uppercase(),
+            _ => fp(is_d, n),
+        }
+    }
+
+    fn wrong_type_pair() -> impl Strategy<Value = (String, String)> {
+        let n = 0u32..=31;
+        prop_oneof![
+            // FP dest (including SIMD-scalar S/D) + S/D source
+            (n.clone(), n.clone(), 0u32..=5, any::<bool>()).prop_map(|(d, s, p, src_d)| {
+                let pref = ["s", "d", "h", "q", "v", "b"][p as usize];
+                (format!("{pref}{d}"), fp(src_d, s))
+            }),
+            // W/X dest + GP source
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(d, s, d64, s64)| {
+                (gpr(d64, d), gpr(s64, s))
+            }),
+            // W/X dest + Q/V/B source
+            (n.clone(), n.clone(), any::<bool>(), 0u32..=2).prop_map(|(d, s, d64, p)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (gpr(d64, d), format!("{pref}{s}"))
+            }),
+            // Q/V/B dest + S/D source
+            (n.clone(), n.clone(), 0u32..=2, any::<bool>()).prop_map(|(d, s, p, src_d)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (format!("{pref}{d}"), fp(src_d, s))
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_fcvt_rounding_kat_llvm_mc_fcvtzs_w0_s1() {
+        let want = 0x1e380020u32;
+        let mc = llvm_mc_word("fcvtzs w0, s1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops, 0b11, 0b000).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_rounding_kat_llvm_mc_fcvtzs_x0_d1() {
+        let want = 0x9e780020u32;
+        let mc = llvm_mc_word("fcvtzs x0, d1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("d1".into())];
+        let sut = sut_word(&ops, 0b11, 0b000).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_rounding_kat_llvm_mc_fcvtzu_w0_s1() {
+        let want = 0x1e390020u32;
+        let mc = llvm_mc_word("fcvtzu w0, s1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops, 0b11, 0b001).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_rounding_kat_llvm_mc_fcvtas_w0_s1() {
+        let want = 0x1e240020u32;
+        let mc = llvm_mc_word("fcvtas w0, s1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops, 0b00, 0b100).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_rounding_kat_llvm_mc_fcvtzs_xzr_d0() {
+        let want = 0x9e78001fu32;
+        let mc = llvm_mc_word("fcvtzs xzr, d0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("xzr".into()), Operand::Reg("d0".into())];
+        let sut = sut_word(&ops, 0b11, 0b000).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_rounding_kat_llvm_mc_fcvtzs_lr_s0() {
+        let want = 0x9e38001eu32;
+        let mc = llvm_mc_word("fcvtzs lr, s0").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [Operand::Reg("lr".into()), Operand::Reg("s0".into())];
+        let sut = sut_word(&ops, 0b11, 0b000).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_rounding_kat_llvm_mc_half_fcvtzs_w0_h1() {
+        let want = 0x1ef80020u32;
+        let mc = llvm_mc_fp16_word("fcvtzs w0, h1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+    }
+
+    #[test]
+    fn test_encode_fcvt_rounding_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("s1".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+            "integer FCVT* must reject a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_rounding_regression_sp_dest() {
+        let ops = [Operand::Reg("wsp".into()), Operand::Reg("s0".into())];
+        assert!(
+            encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+            "WSP/SP is not a valid integer FCVT* dest"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_rounding_regression_fp_dest() {
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("s0".into())];
+        assert!(
+            encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+            "FP dest is SIMD-scalar FCVTZS, not integer conversion"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_rounding_regression_half_ftype() {
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("h1".into())];
+        let sut = sut_word(&ops, 0b11, 0b000).expect("H source is a valid fp16 integer FCVTZS");
+        assert_eq!(
+            sut, 0x1ef80020u32,
+            "H source must use ftype=11 (0x1ef80020), not ftype=00 S"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_fcvt_rounding_diff_valid(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest64 in any::<bool>(),
+            src_d in any::<bool>(),
+            idx in 0usize..FCVT_INT.len(),
+            dest_kind in 0u32..=4,
+            src_kind in 0u32..=1,
+        ) {
+            let (rmode, opcode, mnem) = FCVT_INT[idx];
+            let dest = dest_spelling(dest64, rd, dest_kind);
+            let src = src_spelling(src_d, rn, src_kind);
+            let asm = format!("{mnem} {dest}, {src}");
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src.clone())];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, rmode, opcode)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FCVT* mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_arm_fields(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest64 in any::<bool>(),
+            src_d in any::<bool>(),
+            idx in 0usize..FCVT_INT.len(),
+        ) {
+            let (rmode, opcode, _) = FCVT_INT[idx];
+            let ops = [
+                Operand::Reg(gpr(dest64, rd)),
+                Operand::Reg(fp(src_d, rn)),
+            ];
+            let w = sut_word(&ops, rmode, opcode).expect("SUT");
+            let sf = if dest64 { 1u32 } else { 0 };
+            let ftype = if src_d { 0b01u32 } else { 0b00 };
+            let want = (sf << 31)
+                | (0b11110 << 24)
+                | (ftype << 22)
+                | (1 << 21)
+                | (rmode << 19)
+                | (opcode << 16)
+                | (rn << 5)
+                | rd;
+            prop_assert_eq!(w, want, "ARM ARM FCVT* integer field layout");
+            prop_assert_eq!((w >> 31) & 1, sf, "sf");
+            prop_assert_eq!((w >> 29) & 0b11, 0, "bits[30:29] must be 00");
+            prop_assert_eq!((w >> 24) & 0b11111, 0b11110, "bits[28:24]");
+            prop_assert_eq!((w >> 22) & 0b11, ftype, "ftype");
+            prop_assert_eq!((w >> 21) & 1, 1, "bit21 must be 1 (integer, not fixed-point)");
+            prop_assert_eq!((w >> 19) & 0b11, rmode, "rmode");
+            prop_assert_eq!((w >> 16) & 0b111, opcode, "opcode");
+            prop_assert_eq!((w >> 10) & 0b111111, 0, "scale/bits[15:10] must be 0");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_metamorphic_fields(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            dest64 in any::<bool>(),
+            src_d in any::<bool>(),
+        ) {
+            let ops = |
+                d: u32,
+                n: u32,
+                d64: bool,
+                sd: bool,
+            | {
+                [
+                    Operand::Reg(gpr(d64, d)),
+                    Operand::Reg(fp(sd, n)),
+                ]
+            };
+            let w = sut_word(&ops(rd, rn, dest64, src_d), 0b11, 0b000).expect("base FCVTZS");
+            let w_rd = sut_word(&ops(rd + 1, rn, dest64, src_d), 0b11, 0b000).expect("Rd+1");
+            let w_rn = sut_word(&ops(rd, rn + 1, dest64, src_d), 0b11, 0b000).expect("Rn+1");
+            let w_sf = sut_word(&ops(rd, rn, !dest64, src_d), 0b11, 0b000).expect("sf flip");
+            let w_ft = sut_word(&ops(rd, rn, dest64, !src_d), 0b11, 0b000).expect("ftype flip");
+            let w_u = sut_word(&ops(rd, rn, dest64, src_d), 0b11, 0b001).expect("FCVTZU");
+            prop_assert_eq!(w_rd, w + 1, "Rd+1 must increment bits[4:0] only");
+            prop_assert_eq!(w_rn, w + (1 << 5), "Rn+1 must increment bits[9:5] only");
+            prop_assert_eq!(w_sf ^ w, 1u32 << 31, "W vs X dest must flip only sf bit 31");
+            prop_assert_eq!(w_ft ^ w, 1u32 << 22, "S vs D source must flip only ftype bit 22");
+            prop_assert_eq!(w_u ^ w, 1u32 << 16, "FCVTZS XOR FCVTZU must be opcode LSB bit 16");
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_neg_arity(
+            len in 0usize..=1,
+            n in 0u32..=31,
+        ) {
+            let mut ops = Vec::new();
+            if len >= 1 {
+                ops.push(Operand::Reg(gpr(false, n)));
+            }
+            prop_assert!(
+                encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+                "FCVT* integer form with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_neg_extra_operand(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest64 in any::<bool>(),
+            src_d in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(gpr(dest64, rd)),
+                Operand::Reg(fp(src_d, rn)),
+                extra,
+            ];
+            prop_assert!(
+                encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+                "FCVT* integer form has no 3rd operand; extra must Err (fixed-point is a different encoding)"
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_neg_sp_dest(
+            is_64 in any::<bool>(),
+            rn in 0u32..=31,
+            src_d in any::<bool>(),
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let ops = [
+                Operand::Reg(sp.into()),
+                Operand::Reg(fp(src_d, rn)),
+            ];
+            prop_assert!(
+                encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+                "SP/WSP is not a valid FCVT* integer dest (sp={})",
+                sp
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_neg_wrong_types(
+            (dest, src) in wrong_type_pair(),
+        ) {
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src.clone())];
+            prop_assert!(
+                encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+                "FCVT* integer form requires Wd|Xd, Sn|Dn; dest={} src={} must Err",
+                dest,
+                src
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_neg_nonreg(
+            which in 0u32..=1,
+            kind in 0u32..=5,
+        ) {
+            let bad = match kind {
+                0 => Operand::Imm(0),
+                1 => Operand::Symbol("foo".into()),
+                2 => Operand::Label("1f".into()),
+                3 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+            };
+            let mut ops = vec![
+                Operand::Reg("w0".into()),
+                Operand::Reg("s0".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+                "non-register at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_neg_invalid_name(
+            which in 0u32..=1,
+            name in prop::sample::select(vec![
+                "foo", "x32", "w32", "s32", "d32", "r0", "x", "s", "",
+            ]),
+        ) {
+            let mut ops = vec![
+                Operand::Reg("w0".into()),
+                Operand::Reg("s0".into()),
+            ];
+            ops[which as usize] = Operand::Reg(name.to_string());
+            prop_assert!(
+                encode_fcvt_rounding(&ops, 0b11, 0b000).is_err(),
+                "invalid name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_rounding_diff_half(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest64 in any::<bool>(),
+            idx in 0usize..FCVT_INT.len(),
+        ) {
+            let (rmode, opcode, mnem) = FCVT_INT[idx];
+            let dest = gpr(dest64, rd);
+            let src = format!("h{rn}");
+            let asm = format!("{mnem} {dest}, {src}");
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src)];
+            let mc = llvm_mc_fp16_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc fp16 rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, rmode, opcode)
+                .unwrap_or_else(|e| panic!("SUT rejected valid fp16 {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FCVT* half-precision mismatch for {}", asm);
+        }
+    }
+}

@@ -1,4 +1,4 @@
-> Total files: 8 | Total functions: 253 | PBT candidates: 69 | Excluded: 184
+> Total files: 9 | Total functions: 267 | PBT candidates: 70 | Excluded: 197
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -260,3 +260,17 @@
 | encode_xchg | gp_integer.rs | 1089 | method | no | out of campaign scope |
 | encode_cmpxchg | gp_integer.rs | 1116 | method | no | out of campaign scope |
 | encode_xadd | gp_integer.rs | 1134 | method | no | out of campaign scope |
+| encode_fmov | fp_scalar.rs | 6 | function | no | out of campaign scope |
+| encode_fp_arith | fp_scalar.rs | 68 | function | no | out of campaign scope |
+| encode_fneg | fp_scalar.rs | 82 | function | no | out of campaign scope |
+| encode_fabs | fp_scalar.rs | 93 | function | no | out of campaign scope |
+| encode_fsqrt | fp_scalar.rs | 104 | function | no | out of campaign scope |
+| encode_fp_1src | fp_scalar.rs | 117 | function | no | out of campaign scope |
+| encode_fmadd_fmsub | fp_scalar.rs | 130 | function | no | out of campaign scope |
+| encode_fnmadd_fnmsub | fp_scalar.rs | 146 | function | no | out of campaign scope |
+| encode_fcmp | fp_scalar.rs | 160 | function | no | out of campaign scope |
+| encode_fcvt_rounding | fp_scalar.rs | 178 | function | yes | - |
+| encode_ucvtf | fp_scalar.rs | 202 | function | no | out of campaign scope |
+| encode_scvtf | fp_scalar.rs | 206 | function | no | out of campaign scope |
+| encode_int_to_float | fp_scalar.rs | 210 | function | no | out of campaign scope |
+| encode_fcvt_precision | fp_scalar.rs | 235 | function | no | out of campaign scope |

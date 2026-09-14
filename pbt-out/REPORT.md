@@ -1,29 +1,29 @@
-# PBT Campaign Report: encode_smulh
+# PBT Campaign Report: encode_fcvt_rounding
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_smulh
-**Tests:** 13 properties (plus 4 KAT + 5 regression witnesses)
-**Result:** 8 passing, 5 failing properties, 4 unique SUT bugs (wzr is the register-31 case of wrong-width)
-**Effort tier:** standard (1 strengthening round + 1 contract-surface sweep)
+**Modules tested:** encode_fcvt_rounding
+**Tests:** 10 properties (plus 7 KAT + 4 regression witnesses)
+**Result:** 6 passing, 4 failing properties, 4 unique SUT bugs
+**Effort tier:** standard (first batch found bugs so no extra strengthening round of the same shape; 1 contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_smulh | 13 properties (8 passing, 5 failing) | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_fcvt_rounding | 10 properties (6 passing, 4 failing) | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **encode_smulh ignores extra operands.** Law: SMULH takes exactly three registers. Counterexample: `[Reg("x0"), Reg("x0"), Reg("x0"), Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg only reads indices 0..2. Severity: medium. Root cause: no operands.len() check. Impact: invalid GNU-style assembly is silently encoded. Fix: reject operands.len() != 3. Report: pbt-out/bug_reports/encode_smulh_extra_operand.md
+1. **encode_fcvt_rounding ignores extra operands.** Law: integer FCVT* takes exactly two registers; a third operand is invalid or the unimplemented fixed-point form. Counterexample: `[Reg("w0"), Reg("s0"), Reg("x0")]`. Expected Err; actual Ok(Word) because the function only checks `operands.len() < 2`. Severity: medium. Root cause: extra operands past index 1 are ignored. Impact: invalid GNU-style assembly (and `#fbits` fixed-point form) is silently encoded as the integer instruction. Fix: reject `operands.len() != 2`. Report: pbt-out/bug_reports/encode_fcvt_rounding_extra_operand.md
 
-2. **encode_smulh accepts 32-bit W registers (including WZR).** Law: SMULH is 64-bit only (Xd, Xn, Xm). Counterexample: `smulh w0, w0, w0`; sweep also `smulh wzr, x0, x0`. Expected Err; actual Ok(Word) because is_64 from get_reg is discarded. Severity: medium. Impact: W-form assembly that llvm-mc rejects is encoded as the X-form with the same numbers. Fix: require is_64 on all three registers. Report: pbt-out/bug_reports/encode_smulh_wrong_width.md
+2. **encode_fcvt_rounding encodes SP/WSP dest as ZR.** Law: dest is Wd|Xd using WZR/XZR at 31, never SP/WSP. Counterexample: `fcvtzs wsp, s0`. Expected Err; actual Ok(Word) for FCVTZS WZR, S0 because parse_reg_num maps wsp/sp to 31. Severity: medium. Impact: invalid GNU-style assembly assembles to a different well-formed instruction. Fix: reject sp/wsp as dest. Report: pbt-out/bug_reports/encode_fcvt_rounding_sp_dest.md
 
-3. **encode_smulh treats SP/WSP as XZR.** Law: register 31 is XZR, not SP. Counterexample: `smulh wsp, x0, x0`. Expected Err; actual Ok(Word) because parse_reg_num maps sp/wsp to 31. Severity: medium. Impact: SP operands encode as XZR. Fix: reject sp/wsp (or require XZR/Xn). Report: pbt-out/bug_reports/encode_smulh_sp_as_zr.md
+3. **encode_fcvt_rounding encodes FP dest as integer W-form.** Law: integer FCVT* dest must be GPR W/X; `fcvtzs s0, s0` is Advanced SIMD scalar FCVTZS (different encoding). Counterexample: `[Reg("s0"), Reg("s0")]`. Expected Err from this helper (SIMD-scalar is a different encoder); actual Ok(Word(0x1e380000)) = integer `fcvtzs w0, s0`. Public dispatch sends scalar `fcvtzs s0, s0` here. GP / Q / V / B sources similarly encode as S. Severity: high. Impact: valid SIMD-scalar assembly and invalid GP-source assembly both become the wrong integer conversion. Fix: require W/X dest and S/D (or H) source. Report: pbt-out/bug_reports/encode_fcvt_rounding_fp_dest.md
 
-4. **encode_smulh accepts FP/SIMD registers as GPRs.** Law: operands must be 64-bit GPRs. Counterexample: `smulh d0, x1, x2`. Expected Err; actual Ok(Word) because parse_reg_num accepts d/s/q/v/h/b and encode_smulh never calls is_fp_reg. Severity: medium. Impact: FP names encode using the numeric suffix. Fix: reject FP prefixes. Report: pbt-out/bug_reports/encode_smulh_fp_as_gpr.md
+4. **encode_fcvt_rounding encodes H source as ftype=00 (single).** Law: ARM ARM ftype=11 for half-precision source. Counterexample: `fcvtzs w0, h0`. Expected Word(0x1ef80000); actual Word(0x1e380000) because `src_name.starts_with('d')` is the only ftype check. Severity: high. Impact: half-precision float-to-int silently uses the S view of the same number. Fix: map h→ftype=11 (and reject other non-S/D prefixes). Report: pbt-out/bug_reports/encode_fcvt_rounding_half_ftype.md
 
 Serial reconfirm: all four reproduced with `PBT_TEST_JOBS=1`.
 
@@ -35,43 +35,41 @@ Serial reconfirm: all four reproduced with `PBT_TEST_JOBS=1`.
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_smulh_pbt) | 13 properties + 4 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fcvt_rounding_pbt) | 10 properties + 7 KAT + 4 regression witnesses |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PROPERTIES.md — property ledger (encode_fcvt_rounding entries appended)
+- pbt-out/FUNCTION_INDEX.md — merged fp_scalar.rs functions
+- pbt-out/COVERAGE.md — coverage ledger row
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/INVARIANTS.md — confirmed invariants for the next campaign
 - pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger row for encode_smulh
-- pbt-out/COVERAGE_STATUS.md — campaign coverage stats
-- pbt-out/FUNCTION_INDEX.md — encode_smulh marked as PBT candidate
-- pbt-out/INVARIANTS.md — confirmed encode_smulh invariants
-- pbt-out/bug_reports/encode_smulh_extra_operand.md
-- pbt-out/bug_reports/encode_smulh_wrong_width.md
-- pbt-out/bug_reports/encode_smulh_sp_as_zr.md
-- pbt-out/bug_reports/encode_smulh_fp_as_gpr.md
-- pbt-out/bug_reports/encode_smulh_wzr.md
-
-Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm audit added encode_smulh_neg_wzr (failing, same wrong-width bug). Tier round spent; documented SMULH surface covered (arity / extra / W-width / WZR / SP / FP / nonreg / invalid-name / alt-spellings / field independence / llvm-mc differential).
+- pbt-out/bug_reports/encode_fcvt_rounding_extra_operand.md
+- pbt-out/bug_reports/encode_fcvt_rounding_sp_dest.md
+- pbt-out/bug_reports/encode_fcvt_rounding_fp_dest.md
+- pbt-out/bug_reports/encode_fcvt_rounding_half_ftype.md
+- proptest-regressions/backend/arm/assembler/encoder/fp_scalar.txt — shrunk witnesses
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 16:17 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 69/253 total | PBT candidates: 69 | Tested: 69 (100%) | 0 pass, 69 fail
+> Last updated: 2026-09-14 16:33 (campaign: coverage)
+> Files: 9/9 scanned (100%) | Functions: 70/267 total | PBT candidates: 70 | Tested: 70 (100%) | 0 pass, 70 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 8 |
-| Files scanned | 8 / 8 (100%) |
-| Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 69 |
-| **Tested (of PBT candidates)** | **69 / 69 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 69 / 0 |
-| **Overall (tested / all functions)** | **69 / 253 (27%)** |
+| Total source files | 9 |
+| Files scanned | 9 / 9 (100%) |
+| Total functions (all files) | 267 |
+| PBT candidates (from FUNCTION_INDEX) | 70 |
+| **Tested (of PBT candidates)** | **70 / 70 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 70 / 0 |
+| **Overall (tested / all functions)** | **70 / 267 (26%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -79,13 +77,13 @@ Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm aud
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 69 | 69 | 0 | 100% |
+|  | 70 | 70 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 69 | 69 | 0 | 100% |
+| unknown | 70 | 70 | 0 | 100% |
 
 ## File Coverage
 
@@ -95,6 +93,7 @@ Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm aud
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
+| fp_scalar.rs | 14 | 1 | 1 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
@@ -176,3 +175,4 @@ Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm aud
 | encode_ldtr_sized | load_store.rs |
 | encode_prfm | load_store.rs |
 | encode_smulh | data_processing.rs |
+| encode_fcvt_rounding | fp_scalar.rs |
