@@ -1,3 +1,38 @@
+# Confirmed invariants (encode_ldxp_stxp)
+
+- Valid LDXP/LDAXP/STXP/STLXP with Rt/Rt2 in x0–x30/xzr or w0–w30/wzr, Rn in x0–x30/sp, Ws in w0–w30/wzr not aliasing Rt/Rt2/Xn, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_ldxp_stxp(..., acqrel=true) XOR encode_ldxp_stxp(..., acqrel=false) = 1<<15 (ARM ARM o0 bit) (1000 cases).
+- encode_ldxp_stxp(X-ops) XOR encode_ldxp_stxp(W-ops) = 1<<30 at equal register numbers (ARM ARM sz) (1000 cases).
+- Success-path word: bit 31=1, size 11/10 at [31:30], bits [29:24]=001000, bit 23=0, L at 22, o1=1 at 21, Rs=31 on load else Ws at [20:16], o0 at 15, Rt2 at [14:10], Rn at [9:5], Rt at [4:0].
+- Fewer than 3 (load) / 4 (store) operands, non-Reg first operand, non-Mem memory slot (Imm/Symbol/pre/post-index), and invalid base names (foo, x32) always Err.
+- Known-answer: `ldxp x0, x1, [x2]` encodes as 0xc87f0440; `ldxp w0, w1, [x2]` as 0x887f0440; `ldaxp x0, x1, [x2]` as 0xc87f8440; `stxp w0, x1, x2, [x3]` as 0xc8200861; `stlxp w0, x1, x2, [x3]` as 0xc8208861; `ldxp x0, x1, [sp]` as 0xc87f07e0; `ldxp lr, x1, [x2]` as 0xc87f045e.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Load/Store Exclusive Pair: `size 001000 0 L 1 Rs o0 Rt2 Rn Rt`. size=10 (W pair) / 11 (X pair). Offset absent or #0.
+- Rt/Rt2 register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `ldxp sp, ...`).
+- Rn is Xn|SP (llvm-mc rejects [wN], [xzr], [wzr], [wsp]).
+- STXP Ws is Wt (31=WZR); llvm-mc rejects Xt/SP as status and rejects Ws aliasing Rt/Rt2/Xn ("status is also a source"). WZR vs SP is allowed.
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg).
+- Dispatch: encoder/mod.rs:366-369 ldxp/ldaxp/stxp/stlxp.
+
+## Quirks
+
+- Extra operands beyond the memory slot are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `stxp w0, sp, ...` encodes as ZR (see bugs).
+- W-register base is accepted and encoded as the same-number X register (see bugs).
+- XZR as base encodes as SP (register 31) (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- sz is taken only from the first data register; mixed X/W encodes (see bugs).
+- X as STXP status is accepted; only the number is used (see bugs).
+- `Mem { base, .. }` ignores a nonzero offset (see bugs).
+- STXP Ws overlapping Rt/Rt2/Rn is encoded (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (too-few / non-Reg / non-Mem / parse_reg_num None).
+
+---
+
 # Confirmed invariants (encode_ldur_stur)
 
 - Valid GPR LDUR/STUR/LDTR/STTR with Rt in x0–x30/xzr or w0–w30/wzr, Rn in x0–x30/sp, offset in [-256, 255] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

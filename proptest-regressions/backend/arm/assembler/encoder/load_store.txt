@@ -7,3 +7,4 @@
 cc efb3c8e6553b801128247aca69af819321f631f81fd5f83c36a8159d362dd248 # shrinks to rd = 0, mod_kind = "lo12", suffix = 0
 cc b99ef865d4ca16c04cc633cd34bcf5e453b57277ea9056d7243204c6f8e157c0 # shrinks to prefix = "d", n = 0, imm = -1048576
 cc 30d50a81a785af8811fe7ab2de4876fdbd5cc975625445a522389d674282818b # shrinks to rd = 0, imm = -1048577
+cc a5b70e27b04af6081db7d05d726990be7ae952a914521d71799cd44e8d95a0b4 # shrinks to rt = 0, rt2 = 0, rn = 0, ws = 0, is_load = false, acqrel = false, is_64 = false, offset = -1, shape = 0
