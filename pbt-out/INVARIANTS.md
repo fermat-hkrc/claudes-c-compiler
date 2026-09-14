@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_cmn)
+
+- Same-width GPR CMN immediate form (x0–x30/sp/lr and w0–w30/wsp, imm in unshifted 0..4095 or N<<12 with N in 1..4095, plus explicit lsl #12) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Same-width GPR CMN shifted-register form (x0–x30/xzr/lr and w0–w30/wzr, lsl/lsr/asr in range) matches llvm-mc (1000 cases).
+- Extended-register CMN (sxtw/uxtw/sxtx/uxtx, amount 0..4 including bounds) matches llvm-mc (1000 cases).
+- Negative immediate `cmn Rn, #-N` for N in 1..4095 matches llvm-mc's gas rewrite to `cmp Rn, #N` (1000 cases).
+- encode_cmn(ops) equals encode_add_sub([ZR] ++ ops, is_sub=false, set_flags=true) where ZR is WZR if Rn is 32-bit else XZR (1000 cases).
+- Success-path immediate word: Rd=31, S=1, op=0, bits[28:24]=0b10001, sf from Rn width, unshifted imm12, Rn at [9:5].
+- 0 or 1 operands always Err.
+- Non-register first operand (Imm/Symbol/Mem/Cond/Shift) with a second operand always Err.
+- Known-answer: `cmn x0, #42` encodes as 0xb100a81f; `cmn w0, #42` as 0x3100a81f; `cmn x0, x1` as 0xab01001f; `cmn sp, #0` as 0xb10003ff; `cmn x0, w1, sxtw` as 0xab21c01f; `cmn x0, #-1` as 0xf100041f (`cmp x0, #1`).
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- CMN immediate-form register 31 is SP/WSP, never XZR/WZR (llvm-mc rejects `cmn xzr, #0`).
+- CMN shifted-register Rm=31 is XZR/WZR; SP as Rm without extend is rejected by llvm-mc.
+- Known-answer: `adds xzr, x0, #42` disassembles as `cmn x0, #42` with the same encoding.
+
+## Quirks
+
+- Extra operands beyond a Shift/Extend are ignored (see bugs).
+- encode_cmn does not reject XZR/WZR as immediate-form Rn, so `cmn xzr, #0` encodes as `cmn sp, #0` (see bugs).
+- sf is taken from the prepended ZR; mixed x/w is not rejected (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- parse_reg_num maps sp to 31, so `cmn x0, sp` encodes as `cmn x0, xzr` (see bugs).
+- encode_add_sub negates a negative Imm with `-imm_signed`, which panics on i64::MIN in debug (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (non-Reg first operand, extended-register form, negative-imm rewrite).
+
+---
+
 # Confirmed invariants (encode_cinv)
 
 - Same-width GPR CINV (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond14 including hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

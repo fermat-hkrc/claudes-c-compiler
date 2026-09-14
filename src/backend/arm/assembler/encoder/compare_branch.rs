@@ -4856,3 +4856,834 @@ mod encode_cinv_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_cmn_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler (CMN Rn, #imm / Rn, Rm{, shift});
+    //   algebraic.metamorphic (CMN vs ADDS XZR/WZR); algebraic.invariant (ADDS-imm
+    //   field layout with Rd=31); negative_error (arity / imm range / extra / wrong-reg).
+    // Evidence: src/backend/arm/assembler/README.md:5-14 gas-compat;
+    //   README.md:218 Compare lists cmn; README.md:507 compare_branch.rs CMP/CMN/TST;
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:302 cmn dispatch;
+    //   compare_branch.rs:23 CMN Rn, op -> ADDS XZR, Rn, op; codegen/emit.rs:511-562
+    //   cmn wN/xN, #imm12; ARM ARM Compare Negative alias of ADDS (Rd=XZR/WZR).
+    // Stronger considered:
+    //   - State machine: rejected — encode_cmn is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no CMN decoder
+    //   - encode_cmp as differential sibling: rejected — different job (CMP/SUBS-XZR)
+    //   - encode_add_sub as differential sibling: rejected — different job (3-operand
+    //     ADDS mnemonic/arity); used only as metamorphic alias transform
+    // Weaker available: algebraic.invariant (Rd=31/S=1/op=0/imm12 fields),
+    //   algebraic.metamorphic (vs encode_add_sub), negative_error
+    //   (arity/imm-oor/extra/XZR-imm/mixed/FP/SP-as-Rm)
+    // Differential: candidate=encode_cmn, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(rn), Imm(imm)] <-> `cmn rn, #imm`;
+    //   [Reg(rn), Reg(rm){, Shift}] <-> `cmn rn, rm{, shift}`
+
+    use super::encode_cmn;
+    use super::super::{encode_add_sub, EncodeResult};
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const IMM12_MAX: i64 = 4095;
+    const IMM12_SHIFTED_MAX: i64 = 4095 << 12; // 16773120
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn word_of(r: Result<EncodeResult, String>) -> Result<u32, TestCaseError> {
+        match r {
+            Ok(EncodeResult::Word(w)) => Ok(w),
+            other => Err(TestCaseError::fail(format!("expected Word, got {:?}", other))),
+        }
+    }
+
+    /// Immediate-form Rn: X/W GPR plus SP/WSP/LR. XZR/WZR are invalid for CMN #imm.
+    fn imm_rn_name(n: u32) -> String {
+        match n {
+            31 => "sp".to_string(),
+            32 => "lr".to_string(),
+            33 => "wsp".to_string(),
+            n if n >= 34 => format!("w{}", (n - 34).min(30)),
+            n => format!("x{}", n.min(30)),
+        }
+    }
+
+    fn imm_rn_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("x0".to_string()),
+            Just("x30".to_string()),
+            Just("sp".to_string()),
+            Just("lr".to_string()),
+            Just("w0".to_string()),
+            Just("w30".to_string()),
+            Just("wsp".to_string()),
+            Just("X0".to_string()),
+            (0u32..=63).prop_map(imm_rn_name),
+        ]
+    }
+
+    /// Unshifted imm12 and auto-shifted (N<<12). Bounds 0/1/4095/4096/16773120 forced.
+    fn imm_strat() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(1i64),
+            Just(IMM12_MAX),
+            Just(4096i64),
+            Just(8192i64),
+            Just(IMM12_SHIFTED_MAX),
+            0i64..=IMM12_MAX,
+            (1i64..=IMM12_MAX).prop_map(|n| n << 12),
+        ]
+    }
+
+    fn explicit_imm12_strat() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(1i64),
+            Just(IMM12_MAX),
+            0i64..=IMM12_MAX,
+        ]
+    }
+
+    fn x_name(n: u32) -> String {
+        match n {
+            31 => "xzr".to_string(),
+            32 => "lr".to_string(),
+            n => format!("x{}", n.min(30)),
+        }
+    }
+
+    fn w_name(n: u32) -> String {
+        match n {
+            31 => "wzr".to_string(),
+            n => format!("w{}", n.min(30)),
+        }
+    }
+
+    fn x_name_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("x0".to_string()),
+            Just("x30".to_string()),
+            Just("xzr".to_string()),
+            Just("lr".to_string()),
+            Just("X0".to_string()),
+            (0u32..=32).prop_map(x_name),
+        ]
+    }
+
+    fn w_name_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("w0".to_string()),
+            Just("w30".to_string()),
+            Just("wzr".to_string()),
+            (0u32..=31).prop_map(w_name),
+        ]
+    }
+
+    fn same_width_pair() -> impl Strategy<Value = (String, String)> {
+        prop_oneof![
+            (x_name_strat(), x_name_strat()),
+            (w_name_strat(), w_name_strat()),
+        ]
+    }
+
+    fn is_32_name(rn: &str) -> bool {
+        let l = rn.to_ascii_lowercase();
+        l.starts_with('w') || l == "wsp" || l == "wzr"
+    }
+
+    fn zr_of(rn: &str) -> String {
+        if is_32_name(rn) {
+            "wzr".to_string()
+        } else {
+            "xzr".to_string()
+        }
+    }
+
+    fn shift_kind_strat() -> impl Strategy<Value = Option<(String, u32)>> {
+        prop_oneof![
+            Just(None),
+            Just(Some(("lsl".to_string(), 0u32))),
+            Just(Some(("lsl".to_string(), 3u32))),
+            Just(Some(("lsr".to_string(), 0u32))),
+            Just(Some(("asr".to_string(), 4u32))),
+            (0u32..=2, 0u32..=63).prop_map(|(k, a)| {
+                let kind = match k {
+                    0 => "lsl",
+                    1 => "lsr",
+                    _ => "asr",
+                };
+                Some((kind.to_string(), a))
+            }),
+        ]
+    }
+
+    fn extra_operand(which: u32) -> Operand {
+        match which {
+            0 => Operand::Reg("x2".into()),
+            1 => Operand::Imm(0),
+            2 => Operand::Symbol("bar".into()),
+            _ => Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        }
+    }
+
+    fn unencodable_imm() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(4097i64),
+            Just(4098i64),
+            Just(8191i64),
+            Just(IMM12_SHIFTED_MAX + 1),
+            Just(IMM12_SHIFTED_MAX + 4096),
+            Just(-4097i64),
+            Just(-8191i64),
+            Just(i64::MAX),
+            Just(i64::MIN),
+            (1i64..=4095).prop_map(|n| 4096 + n), // 4097..=8191, none are N<<12
+            (1i64..=1024).prop_map(|k| IMM12_SHIFTED_MAX + k),
+            (1i64..=1024).prop_map(|k| -(4096 + k)),
+        ]
+    }
+
+    fn reg_num(name: &str) -> u32 {
+        let n = name.to_ascii_lowercase();
+        match n.as_str() {
+            "sp" | "wsp" | "xzr" | "wzr" => 31,
+            "lr" => 30,
+            s => s[1..].parse().unwrap_or(0),
+        }
+    }
+
+    fn sf_of(name: &str) -> u32 {
+        if is_32_name(name) {
+            0
+        } else {
+            1
+        }
+    }
+
+    fn extend_case() -> impl Strategy<Value = (String, String, String, u32)> {
+        // (rn, rm, extend, amount in 0..=4). Amount bounds 0 and 4 forced.
+        let amt = prop_oneof![Just(0u32), Just(4u32), 0u32..=4u32];
+        prop_oneof![
+            // 64-bit Rn, Wm, sxtw/uxtw
+            (
+                prop_oneof![
+                    Just("x0".to_string()),
+                    Just("x30".to_string()),
+                    Just("sp".to_string()),
+                    Just("lr".to_string()),
+                    (0u32..=30).prop_map(|n| format!("x{}", n)),
+                ],
+                (0u32..=30).prop_map(|n| format!("w{}", n)),
+                prop_oneof![Just("sxtw".to_string()), Just("uxtw".to_string())],
+                amt.clone(),
+            ),
+            // 64-bit Rn, Xm, sxtx/uxtx
+            (
+                prop_oneof![
+                    Just("x0".to_string()),
+                    Just("sp".to_string()),
+                    (0u32..=30).prop_map(|n| format!("x{}", n)),
+                ],
+                x_name_strat(),
+                prop_oneof![Just("sxtx".to_string()), Just("uxtx".to_string())],
+                amt.clone(),
+            ),
+            // 32-bit Rn, Wm, uxtw
+            (
+                prop_oneof![
+                    Just("w0".to_string()),
+                    Just("wsp".to_string()),
+                    (0u32..=30).prop_map(|n| format!("w{}", n)),
+                ],
+                w_name_strat(),
+                Just("uxtw".to_string()),
+                amt,
+            ),
+        ]
+    }
+
+    fn neg_imm_strat() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(1i64),
+            Just(4095i64),
+            1i64..=4095i64,
+        ]
+    }
+
+    fn non_reg_first(kind: u32) -> Operand {
+        match kind {
+            0 => Operand::Imm(0),
+            1 => Operand::Symbol("foo".into()),
+            2 => Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+            3 => Operand::Cond("eq".into()),
+            _ => Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            },
+        }
+    }
+
+    fn invalid_name(which: u32) -> String {
+        match which {
+            0 => "x32".to_string(),
+            1 => "w32".to_string(),
+            2 => "foo".to_string(),
+            3 => "".to_string(),
+            4 => "r0".to_string(),
+            5 => "x".to_string(),
+            6 => "x-1".to_string(),
+            _ => "x99".to_string(),
+        }
+    }
+
+    fn wrong_reg_ops(kind: u32, n: u32, imm: i64) -> Vec<Operand> {
+        let n = n.min(31);
+        match kind {
+            0 => vec![Operand::Reg("xzr".into()), Operand::Imm(imm.abs() % 4096)],
+            1 => vec![Operand::Reg("wzr".into()), Operand::Imm(imm.abs() % 4096)],
+            2 => vec![
+                Operand::Reg(format!("x{}", n.min(30))),
+                Operand::Reg(format!("w{}", n.min(30))),
+            ],
+            3 => vec![
+                Operand::Reg(format!("w{}", n.min(30))),
+                Operand::Reg(format!("x{}", n.min(30))),
+            ],
+            4 => vec![Operand::Reg(format!("d{}", n)), Operand::Imm(0)],
+            5 => vec![
+                Operand::Reg(format!("x{}", n.min(30))),
+                Operand::Reg(format!("d{}", n)),
+            ],
+            6 => vec![
+                Operand::Reg(format!("x{}", n.min(30))),
+                Operand::Reg("sp".into()),
+            ],
+            7 => vec![Operand::Reg(invalid_name(n % 8)), Operand::Imm(0)],
+            _ => vec![
+                Operand::Reg(format!("s{}", n)),
+                Operand::Reg("w0".into()),
+            ],
+        }
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_cmn_kat_llvm_mc_x0_imm42() {
+        let want = 0xb100a81fu32;
+        let mc = llvm_mc_word("cmn x0, #42").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(42)];
+        match encode_cmn(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cmn x0, #42, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cmn_kat_llvm_mc_w0_imm42() {
+        let want = 0x3100a81fu32;
+        let mc = llvm_mc_word("cmn w0, #42").expect("llvm-mc KAT w");
+        assert_eq!(mc, want, "llvm-mc KAT w mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Imm(42)];
+        match encode_cmn(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cmn w0, #42, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cmn_kat_llvm_mc_x0_x1() {
+        let want = 0xab01001fu32;
+        let mc = llvm_mc_word("cmn x0, x1").expect("llvm-mc KAT reg");
+        assert_eq!(mc, want, "llvm-mc KAT reg mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("x1".into())];
+        match encode_cmn(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cmn x0, x1, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cmn_kat_llvm_mc_sp_imm0() {
+        let want = 0xb10003ffu32;
+        let mc = llvm_mc_word("cmn sp, #0").expect("llvm-mc KAT sp");
+        assert_eq!(mc, want, "llvm-mc KAT sp mapping broken");
+        let ops = [Operand::Reg("sp".into()), Operand::Imm(0)];
+        match encode_cmn(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cmn sp, #0, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cmn_kat_llvm_mc_extend_sxtw() {
+        let want = 0xab21c01fu32;
+        let mc = llvm_mc_word("cmn x0, w1, sxtw").expect("llvm-mc KAT extend");
+        assert_eq!(mc, want, "llvm-mc KAT extend mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Extend {
+                kind: "sxtw".into(),
+                amount: 0,
+            },
+        ];
+        match encode_cmn(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cmn x0, w1, sxtw, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cmn_kat_llvm_mc_neg_imm() {
+        let want = 0xf100041fu32; // cmp x0, #1
+        let mc = llvm_mc_word("cmn x0, #-1").expect("llvm-mc KAT neg");
+        assert_eq!(mc, want, "llvm-mc KAT neg mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(-1)];
+        match encode_cmn(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for cmn x0, #-1, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_cmn_kat_adds_alias() {
+        let mc = llvm_mc_word("adds xzr, x0, #42").expect("llvm-mc ADDS alias");
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(42)];
+        match encode_cmn(&ops) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, mc),
+            other => panic!("CMN must match ADDS XZR alias, got {:?}", other),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_diff_imm_llvm_mc(
+            rn in imm_rn_strat(),
+            imm in imm_strat(),
+            mode in 0u32..=2u32,
+            expl in explicit_imm12_strat(),
+        ) {
+            let (ops, asm) = if mode == 2 {
+                let ops = vec![
+                    Operand::Reg(rn.clone()),
+                    Operand::Imm(expl),
+                    Operand::Shift { kind: "lsl".into(), amount: 12 },
+                ];
+                let asm = format!("cmn {}, #{}, lsl #12", rn, expl);
+                (ops, asm)
+            } else {
+                let ops = vec![Operand::Reg(rn.clone()), Operand::Imm(imm)];
+                let asm = format!("cmn {}, #{}", rn, imm);
+                (ops, asm)
+            };
+            let sut = match encode_cmn(&ops) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "SUT rejected valid CMN {}: {:?}",
+                        asm, other
+                    )));
+                }
+            };
+            let mc = llvm_mc_word(&asm)
+                .map_err(|e| TestCaseError::fail(format!(
+                    "llvm-mc rejected valid CMN {}: {}",
+                    asm, e
+                )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_diff_reg_llvm_mc(
+            pair in same_width_pair(),
+            shift in shift_kind_strat(),
+        ) {
+            let (rn, rm) = pair;
+            let is32 = is_32_name(&rn);
+            let mut ops = vec![Operand::Reg(rn.clone()), Operand::Reg(rm.clone())];
+            let mut asm = format!("cmn {}, {}", rn, rm);
+            if let Some((kind, raw_amt)) = shift {
+                let max_amt = if is32 { 31u32 } else { 63u32 };
+                let amt = raw_amt.min(max_amt);
+                ops.push(Operand::Shift { kind: kind.clone(), amount: amt });
+                asm = format!("cmn {}, {}, {} #{}", rn, rm, kind, amt);
+            }
+            let sut = match encode_cmn(&ops) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "SUT rejected valid CMN {}: {:?}",
+                        asm, other
+                    )));
+                }
+            };
+            let mc = llvm_mc_word(&asm)
+                .map_err(|e| TestCaseError::fail(format!(
+                    "llvm-mc rejected valid CMN {}: {}",
+                    asm, e
+                )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_meta_vs_adds(
+            rn in imm_rn_strat(),
+            imm in imm_strat(),
+            pair in same_width_pair(),
+            use_reg in any::<bool>(),
+            shift in shift_kind_strat(),
+        ) {
+            let ops: Vec<Operand> = if use_reg {
+                let (a, b) = pair;
+                let is32 = is_32_name(&a);
+                let mut o = vec![Operand::Reg(a), Operand::Reg(b)];
+                if let Some((kind, raw_amt)) = shift {
+                    let max_amt = if is32 { 31u32 } else { 63u32 };
+                    o.push(Operand::Shift { kind, amount: raw_amt.min(max_amt) });
+                }
+                o
+            } else {
+                vec![Operand::Reg(rn), Operand::Imm(imm)]
+            };
+            let zr = match &ops[0] {
+                Operand::Reg(r) => zr_of(r),
+                _ => "xzr".to_string(),
+            };
+            let mut adds_ops = vec![Operand::Reg(zr)];
+            adds_ops.extend(ops.iter().cloned());
+            let cmn = encode_cmn(&ops);
+            let adds = encode_add_sub(&adds_ops, false, true);
+            prop_assert_eq!(
+                format!("{:?}", cmn),
+                format!("{:?}", adds),
+                "CMN must equal ADDS ZR, ..."
+            );
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_word_layout_imm(
+            rn in imm_rn_strat(),
+            imm in 0i64..=IMM12_MAX,
+        ) {
+            let ops = [Operand::Reg(rn.clone()), Operand::Imm(imm)];
+            match encode_cmn(&ops) {
+                Ok(EncodeResult::Word(w)) => {
+                    let sf = sf_of(&rn);
+                    let rn_n = reg_num(&rn);
+                    prop_assert_eq!(w & 0x1F, 31u32, "Rd must be XZR/WZR (31)");
+                    prop_assert_eq!((w >> 29) & 1, 1u32, "S bit");
+                    prop_assert_eq!((w >> 30) & 1, 0u32, "op must be ADD (0)");
+                    prop_assert_eq!((w >> 24) & 0x1F, 0b10001u32, "imm form opcode");
+                    prop_assert_eq!(w >> 31, sf, "sf from Rn width");
+                    prop_assert_eq!((w >> 22) & 1, 0u32, "unshifted sh");
+                    prop_assert_eq!((w >> 10) & 0xFFF, imm as u32, "imm12");
+                    prop_assert_eq!((w >> 5) & 0x1F, rn_n, "Rn");
+                }
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "expected Word for cmn {}, #{}, got {:?}",
+                        rn, imm, other
+                    )));
+                }
+            }
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_neg_arity(arity in 0u32..=1u32, n in 0u32..=30u32) {
+            let ops: Vec<Operand> = if arity == 0 {
+                vec![]
+            } else {
+                vec![Operand::Reg(format!("x{}", n))]
+            };
+            prop_assert!(
+                encode_cmn(&ops).is_err(),
+                "cmn with {} operand(s) must Err (llvm-mc: too few operands)",
+                arity
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_neg_imm_oor(rn in imm_rn_strat(), imm in unencodable_imm()) {
+            let ops = [Operand::Reg(rn.clone()), Operand::Imm(imm)];
+            prop_assert!(
+                encode_cmn(&ops).is_err(),
+                "cmn {}, #{} is not an encodable imm12 / (imm12<<12) and must Err",
+                rn, imm
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_neg_extra_operand(
+            pair in same_width_pair(),
+            which in 0u32..=3u32,
+        ) {
+            let (rn, rm) = pair;
+            let extra = extra_operand(which);
+            let ops = [
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                extra,
+            ];
+            prop_assert!(
+                encode_cmn(&ops).is_err(),
+                "cmn {}, {}, extra (which={}) must Err (llvm-mc: invalid operand)",
+                rn, rm, which
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_neg_wrong_reg(kind in 0u32..=8u32, n in 0u32..=31u32, imm in 0i64..=IMM12_MAX) {
+            let ops = wrong_reg_ops(kind, n, imm);
+            prop_assert!(
+                encode_cmn(&ops).is_err(),
+                "cmn wrong-reg kind={} n={} must Err (llvm-mc rejects XZR-imm/mixed/FP/SP-Rm/invalid)",
+                kind, n
+            );
+        }
+
+        // Oracle: differential (coverage sweep: extended-register form)
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_diff_extend_llvm_mc(case in extend_case()) {
+            let (rn, rm, ext, amt) = case;
+            let ops = [
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                Operand::Extend { kind: ext.clone(), amount: amt },
+            ];
+            let asm = if amt == 0 {
+                format!("cmn {}, {}, {}", rn, rm, ext)
+            } else {
+                format!("cmn {}, {}, {} #{}", rn, rm, ext, amt)
+            };
+            let sut = match encode_cmn(&ops) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "SUT rejected valid CMN {}: {:?}",
+                        asm, other
+                    )));
+                }
+            };
+            let mc = llvm_mc_word(&asm)
+                .map_err(|e| TestCaseError::fail(format!(
+                    "llvm-mc rejected valid CMN {}: {}",
+                    asm, e
+                )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential (coverage sweep: gas negative-imm rewrite)
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_diff_neg_imm_llvm_mc(
+            rn in imm_rn_strat(),
+            n in neg_imm_strat(),
+        ) {
+            let ops = [Operand::Reg(rn.clone()), Operand::Imm(-n)];
+            let asm = format!("cmn {}, #-{}", rn, n);
+            let sut = match encode_cmn(&ops) {
+                Ok(EncodeResult::Word(w)) => w,
+                other => {
+                    return Err(TestCaseError::fail(format!(
+                        "SUT rejected gas-valid CMN {}: {:?}",
+                        asm, other
+                    )));
+                }
+            };
+            let mc = llvm_mc_word(&asm)
+                .map_err(|e| TestCaseError::fail(format!(
+                    "llvm-mc rejected gas-valid CMN {}: {}",
+                    asm, e
+                )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: negative_error (coverage sweep: first operand not Reg)
+        // Target: encoder.compare_branch.encode_cmn
+        #[test]
+        fn encode_cmn_neg_non_reg_first(kind in 0u32..=4u32, second in 0u32..=1u32) {
+            let first = non_reg_first(kind);
+            let snd = if second == 0 {
+                Operand::Reg("x0".into())
+            } else {
+                Operand::Imm(0)
+            };
+            let ops = [first, snd];
+            prop_assert!(
+                encode_cmn(&ops).is_err(),
+                "cmn with non-register first operand (kind={}) must Err",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_cmn_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_cmn(&ops).is_err(),
+            "cmn x0, x0, x2 must Err; llvm-mc rejects a third register operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_cmn_regression_xzr_imm() {
+        let ops = [Operand::Reg("xzr".into()), Operand::Imm(0)];
+        assert!(
+            encode_cmn(&ops).is_err(),
+            "cmn xzr, #0 must Err; llvm-mc rejects XZR as CMN-immediate Rn (Rn=31 is SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_cmn_regression_wzr_imm() {
+        let ops = [Operand::Reg("wzr".into()), Operand::Imm(0)];
+        assert!(
+            encode_cmn(&ops).is_err(),
+            "cmn wzr, #0 must Err; llvm-mc rejects WZR as CMN-immediate Rn (Rn=31 is WSP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_cmn_regression_mixed_width() {
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("w0".into())];
+        assert!(
+            encode_cmn(&ops).is_err(),
+            "cmn x0, w0 must Err; llvm-mc rejects mixed x/w without an extend"
+        );
+    }
+
+    #[test]
+    fn test_encode_cmn_regression_fp_reg() {
+        let ops = [Operand::Reg("d0".into()), Operand::Imm(0)];
+        assert!(
+            encode_cmn(&ops).is_err(),
+            "cmn d0, #0 must Err; llvm-mc rejects FP/SIMD registers"
+        );
+    }
+
+    #[test]
+    fn test_encode_cmn_regression_sp_rm() {
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("sp".into())];
+        assert!(
+            encode_cmn(&ops).is_err(),
+            "cmn x0, sp must Err; llvm-mc rejects SP as Rm without an extend"
+        );
+    }
+
+    #[test]
+    fn test_encode_cmn_regression_imm_min_overflow() {
+        let ops = [Operand::Reg("x0".into()), Operand::Imm(i64::MIN)];
+        assert!(
+            encode_cmn(&ops).is_err(),
+            "cmn x0, #i64::MIN must Err, not panic on negate overflow"
+        );
+    }
+}
