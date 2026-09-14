@@ -1,31 +1,27 @@
-# PBT Campaign Report: encode_neon_float_two_misc
+# PBT Campaign Report: encode_fabs
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_float_two_misc
-**Tests:** 13 properties (plus 2 KAT + 5 regression witnesses)
-**Result:** 8 passing, 5 bugs
+**Modules tested:** encode_fabs
+**Tests:** 9 properties (plus 6 KAT + 3 regression witnesses)
+**Result:** 6 passing, 3 bugs
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_float_two_misc | 13 properties (8 passing, 5 failing) + 2 KAT + 5 regressions | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fabs | 9 properties (6 passing, 3 failing) + 6 KAT + 3 regressions | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_neon_float_two_misc_neg_extra_operands** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, extra=0, t="2s", insn=(1,1,15,"fneg"), extra_kind=0` → `fneg v0.2s, v0.2s, v0.2s`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_neon_float_two_misc_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
+1. **encode_fabs_neg_extra_operand** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, is_d=false, extra=Reg("s0")` → `fabs s0, s0, s0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_fabs_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
 
-2. **encode_neon_float_two_misc_neg_arrangement_mismatch** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, td="2s", tn="4s", insn=(1,1,15,"fneg")` → `fneg v0.2s, v0.4s`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_neon_float_two_misc_arrangement_mismatch.md. Serial: PBT_TEST_JOBS=1 failed.
+2. **encode_fabs_neg_wrong_types** (Negative/Error Contract). Shrunk counterexample: `dest="s0", src="d0"` → `fabs s0, d0`. Expected Err; actual Ok(Word) using dest ftype only. Report: pbt-out/bug_reports/encode_fabs_wrong_types.md. Serial: PBT_TEST_JOBS=1 failed.
 
-3. **encode_neon_float_two_misc_neg_non_v_prefix** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, t="2s", insn=(1,1,15,"fneg"), prefix="x", which=0` → `fneg x0.2s, v0.2s`. Expected Err; actual Ok(Word) Rd=0. Report: pbt-out/bug_reports/encode_neon_float_two_misc_non_v_prefix.md. Serial: PBT_TEST_JOBS=1 failed.
-
-4. **encode_neon_float_two_misc_neg_bare_src** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, t="2s", insn=(1,1,15,"fneg")` → `fneg v0.2s, v0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_neon_float_two_misc_bare_src.md. Serial: PBT_TEST_JOBS=1 failed.
-
-5. **encode_neon_float_two_misc_neg_sp** (Negative/Error Contract). Shrunk counterexample: `t="2s", insn=(1,1,15,"fneg"), alias="sp", which=0` → `fneg sp.2s, v0.2s`. Expected Err; actual Ok(Word) Rd=31. Report: pbt-out/bug_reports/encode_neon_float_two_misc_sp.md. Serial: PBT_TEST_JOBS=1 failed.
+3. **encode_fabs_diff_half** (Differential vs llvm-mc +fullfp16). Shrunk counterexample: `rd=0, rn=0` → `fabs h0, h0`. Expected Word(0x1ee0c000) ftype=11; actual Word(0x1e20c000) ftype=00. Report: pbt-out/bug_reports/encode_fabs_half_ftype.md. Serial: PBT_TEST_JOBS=1 failed.
 
 ## Design Caveats
 
@@ -35,7 +31,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_float_two_misc_pbt) | 13 properties + 2 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fabs_pbt) | 9 properties + 6 KAT + 3 regressions |
 
 ## Output Directories
 
@@ -43,22 +39,20 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/FUNCTION_INDEX.md (merged; encode_neon_float_two_misc now a candidate)
-- pbt-out/INVARIANTS.md (encode_neon_float_two_misc section)
-- pbt-out/bug_reports/encode_neon_float_two_misc_extra_operand.md
-- pbt-out/bug_reports/encode_neon_float_two_misc_arrangement_mismatch.md
-- pbt-out/bug_reports/encode_neon_float_two_misc_non_v_prefix.md
-- pbt-out/bug_reports/encode_neon_float_two_misc_bare_src.md
-- pbt-out/bug_reports/encode_neon_float_two_misc_sp.md
+- pbt-out/FUNCTION_INDEX.md (merged; encode_fabs now a candidate)
+- pbt-out/INVARIANTS.md (encode_fabs section)
+- pbt-out/bug_reports/encode_fabs_extra_operand.md
+- pbt-out/bug_reports/encode_fabs_wrong_types.md
+- pbt-out/bug_reports/encode_fabs_half_ftype.md
 
-Sweep: coverage_gaps had no LLVM profraw; manual arm audit added alt-spellings (passing) and SP (failing). Closed: tier round spent and documented surface covered.
+Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (passing). Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 22:36 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 95/289 total | PBT candidates: 95 | Tested: 95 (100%) | 0 pass, 95 fail
+> Last updated: 2026-09-14 22:49 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 96/289 total | PBT candidates: 96 | Tested: 96 (100%) | 0 pass, 96 fail
 
 ## Summary
 
@@ -67,10 +61,10 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added alt-spellings (
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 95 |
-| **Tested (of PBT candidates)** | **95 / 95 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 95 / 0 |
-| **Overall (tested / all functions)** | **95 / 289 (33%)** |
+| PBT candidates (from FUNCTION_INDEX) | 96 |
+| **Tested (of PBT candidates)** | **96 / 96 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 96 / 0 |
+| **Overall (tested / all functions)** | **96 / 289 (33%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -78,13 +72,13 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added alt-spellings (
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 95 | 95 | 0 | 100% |
+|  | 96 | 96 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 95 | 95 | 0 | 100% |
+| unknown | 96 | 96 | 0 | 100% |
 
 ## File Coverage
 
@@ -94,7 +88,7 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added alt-spellings (
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 13 | 6 | 7 | 117% | covered |
+| fp_scalar.rs | 13 | 7 | 8 | 114% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 10 | 10 | 100% | covered |
 | neon.rs | 68 | 15 | 15 | 100% | covered |
@@ -202,3 +196,4 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added alt-spellings (
 | encode_ubfiz | bitfield.rs |
 | encode_bfm | bitfield.rs |
 | encode_neon_float_two_misc | neon.rs |
+| encode_fabs | fp_scalar.rs |
