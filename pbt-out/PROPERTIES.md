@@ -1,312 +1,374 @@
-# Property ledger: encode_rev
+# Property ledger: encode_sbfiz
 
-## encode_rev_diff_valid_gpr
+## encode_sbfiz_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree REV decoder). Sibling encode_rev16/encode_rev32/encode_rbit/encode_clz/encode_cls rejected (different opcode). Doc evidence: README.md:11 GNU-style assembly; README.md:240 lists rev; encoder/mod.rs:910 dispatch; ARM ARM Data-processing (1 source) REV Wd,Wn / Xd,Xn with opc=000010 (W) / 000011 (X).
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_diff_valid_gpr
-- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}. encode_rev([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]) = llvm-mc("rev Rd, Rn") as LE word
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (README.md:11 gas-compatible assembler; encoder/mod.rs encodes AArch64 32-bit words). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree SBFIZ decoder). encode_sbfm same-job gate fails (raw immr/imms vs alias lsb/width).
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_diff_valid_gpr
+- Formal: ∀ is_64 ∈ {false,true}, rd,rn ∈ 0..31, lsb ∈ 0..R-1, width ∈ 1..R-lsb (R=64 if is_64 else 32). encode_sbfiz([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(lsb), Imm(width)]) = Word(w) ∧ w = llvm-mc("sbfiz gpr(rd), gpr(rn), #lsb, #width")
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn]
-  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31 }
+  vars: [is_64, rd, rn, lsb, width]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31, lsb: 0..R-1, width: 1..R-lsb }
   relation:
     op: eq
-    lhs: encode_rev([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn))])
-    rhs: llvm_mc_word("rev " + gpr(is_64, rd) + ", " + gpr(is_64, rn))
+    lhs: encode_sbfiz([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(lsb), Imm(width)])
+    rhs: llvm_mc_word("sbfiz gpr(rd), gpr(rn), #lsb, #width")
 generators:
   is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:11 GNU-style gas contract; ARM ARM REV Wd/Xd; llvm-mc -triple=aarch64 -show-encoding
+  lsb: { gen: int, min: 0, max: 63, type: u32 }
+  width: { gen: int, min: 1, max: 64, type: u32 }
+evidence: src/backend/arm/assembler/README.md:11; encoder/mod.rs:890; ARM ARM SBFIZ alias of SBFM
 ```
 
-## encode_rev_arm_fields
-- Tier: 4
-- Rationale: Algebraic invariant from ARM ARM encoding diagram. Stronger rejected as above. Weaker than differential but pins each field independently, including the sf-dependent opcode (000010 W / 000011 X) that distinguishes REV from REV16/REV32.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_arm_fields
-- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}. let w = encode_rev([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]), sf = ⟦is_64⟧, opc = is_64 ? 000011 : 000010. w[31]=sf ∧ w[30]=1 ∧ w[29]=0 ∧ w[28:21]=11010110 ∧ w[20:16]=00000 ∧ w[15:10]=opc ∧ w[9:5]=rn ∧ w[4:0]=rd
+## encode_sbfiz_alias_sbfm
+- Tier: 4c
+- Rationale: Purpose comment bitfield.rs:60 states SBFIZ is an alias for SBFM Rd, Rn, #(-lsb MOD regsize), #(width-1). Not a same-job differential (different operand jobs); algebraic metamorphic after the ARM mapping.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_alias_bfm
+- Formal: ∀ valid (is_64,rd,rn,lsb,width). encode_sbfiz(Rd,Rn,#lsb,#width) = encode_sbfm(Rd,Rn,#(-lsb rem_euclid R),#(width-1))
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [is_64, rd, rn]
-  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31 }
-  relation:
-    op: eq
-    lhs: encode_rev([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn))])
-    rhs: (sf << 31) | (1 << 30) | (0b011010110 << 21) | (opc << 10) | (rn << 5) | rd
-generators:
-  is_64: { gen: bool }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Data-processing (1 source) REV encoding sf 1 0 11010110 00000 opc Rn Rd; opc=000010 (32-bit) / 000011 (64-bit)
-```
-
-## encode_rev_metamorphic_rd_rn_sf
-- Tier: 4
-- Rationale: Algebraic metamorphic: incrementing Rd/Rn must touch only that 5-bit field. W vs X must flip sf and the opcode LSB (bit 10), not only sf — unlike REV16/CLZ/RBIT whose opcode is width-invariant. Stronger rejected as above.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_metamorphic_rd_rn_sf
-- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..30}. let b = encode_rev(gpr(is_64,rd), gpr(is_64,rn)). encode_rev(rd+1,rn) & 0x1f = rd+1 ∧ agrees with b outside bits[4:0]; encode_rev(rd,rn+1) bits[9:5] = rn+1 ∧ agrees with b outside bits[9:5]; encode_rev(!is_64, rd, rn) xor b = (1<<31)|(1<<10)
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn]
-  domain: { is_64: bool, rd: u32 0..=30, rn: u32 0..=30 }
+  vars: [is_64, rd, rn, lsb, width]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31, lsb: 0..R-1, width: 1..R-lsb }
+  relation:
+    op: eq
+    lhs: encode_sbfiz([Reg(gpr(rd)), Reg(gpr(rn)), Imm(lsb), Imm(width)])
+    rhs: encode_sbfm([Reg(gpr(rd)), Reg(gpr(rn)), Imm((-lsb).rem_euclid(R)), Imm(width-1)])
+generators:
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  lsb: { gen: int, min: 0, max: 63, type: u32 }
+  width: { gen: int, min: 1, max: 64, type: u32 }
+evidence: src/backend/arm/assembler/encoder/bitfield.rs:60 purpose comment; ARM ARM SBFIZ alias of SBFM
+```
+
+## encode_sbfiz_arm_fields
+- Tier: 4d
+- Rationale: ARM ARM Bitfield Move SBFM field layout is the encoding contract claimed by the assembler (encoder/mod.rs:3). Weaker than differential; still pins each field independently so a matching llvm-mc word cannot hide a swapped field that happens to agree on a sparse sample.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_arm_fields
+- Formal: ∀ valid (is_64,rd,rn,lsb,width). let w = encode_sbfiz(...). w[31]=sf ∧ w[30:29]=00 ∧ w[28:23]=100110 ∧ w[22]=sf ∧ w[21:16]=(-lsb MOD R) ∧ w[15:10]=width-1 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.bitfield.encode_sbfiz
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [is_64, rd, rn, lsb, width]
+  domain: { is_64: bool, rd: 0..31, rn: 0..31, lsb: 0..R-1, width: 1..R-lsb }
+  relation:
+    op: eq
+    lhs: encode_sbfiz([Reg(gpr(rd)), Reg(gpr(rn)), Imm(lsb), Imm(width)])
+    rhs: (sf<<31)|(0b100110<<23)|(sf<<22)|(((-lsb).rem_euclid(R))<<16)|((width-1)<<10)|(rn<<5)|rd
+generators:
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  lsb: { gen: int, min: 0, max: 63, type: u32 }
+  width: { gen: int, min: 1, max: 64, type: u32 }
+evidence: ARM ARM SBFM encoding sf 00 100110 N immr imms Rn Rd; bitfield.rs:60
+```
+
+## encode_sbfiz_metamorphic_rd_rn
+- Tier: 4c
+- Rationale: ARM field layout places Rd in bits[4:0] and Rn in bits[9:5]; incrementing one register must change only that field (metamorphic independence).
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_metamorphic_rd_rn
+- Formal: ∀ is_64, rd,rn ∈ 0..30, lsb∈{0,1}, width=1. let b=encode_sbfiz(rd,rn,...); let d=encode_sbfiz(rd+1,rn,...); let n=encode_sbfiz(rd,rn+1,...). (d & 0x1f = rd+1) ∧ (d & !0x1f = b & !0x1f) ∧ ((n>>5)&0x1f = rn+1) ∧ (n & !(0x1f<<5) = b & !(0x1f<<5))
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.bitfield.encode_sbfiz
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [is_64, rd, rn, lsb]
+  domain: { is_64: bool, rd: 0..30, rn: 0..30, lsb: {0,1}, width: 1 }
   relation:
     op: holds
-    expr: field_independence(encode_rev, is_64, rd, rn) && (encode_rev(!is_64,rd,rn) xor encode_rev(is_64,rd,rn) == (1<<31)|(1<<10))
+    expr: "(encode_sbfiz(rd+1,rn) & 0x1f == rd+1) && (encode_sbfiz(rd+1,rn) & !0x1f == encode_sbfiz(rd,rn) & !0x1f) && ((encode_sbfiz(rd,rn+1)>>5)&0x1f == rn+1) && (encode_sbfiz(rd,rn+1) & !(0x1f<<5) == encode_sbfiz(rd,rn) & !(0x1f<<5))"
 generators:
   is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-evidence: ARM ARM REV field layout Rd bits[4:0] Rn bits[9:5] sf bit31 opc bits[15:10] (000010 W / 000011 X)
+  lsb: { gen: int, min: 0, max: 1, type: u32 }
+evidence: ARM ARM SBFM Rd bits[4:0] Rn bits[9:5]
 ```
 
-## encode_rev_neg_arity
-- Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects too few operands ("too few operands for instruction"). get_reg on a missing slot returns Err. Stronger rejected as above.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_arity
-- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}, len ∈ {0,1}. encode_rev(prefix([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))], len)) = Err
+## encode_sbfiz_neg_arity
+- Tier: 4e
+- Rationale: llvm-mc rejects `sbfiz` with fewer than 4 operands ("unrecognized instruction mnemonic"). README.md:11 gas-compatible. get_reg/get_imm fail on missing slots; contract is Err not Word.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_arity
+- Formal: ∀ len ∈ 0..3, valid prefix registers. encode_sbfiz(ops truncated to len) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [len, is_64, rd, rn]
-  domain: { len: usize 0..=1, is_64: bool, rd: u32 0..=31, rn: u32 0..=31 }
+  domain: { len: 0..3, is_64: bool, rd: 0..31, rn: 0..31 }
   relation:
-    op: holds
-    expr: encode_rev(ops[0..len]).is_err()
+    op: throws
+    expr: encode_sbfiz(ops4.truncate(len))
+expected_error: String
 generators:
-  len: { gen: int, min: 0, max: 1, type: usize }
+  len: { gen: int, min: 0, max: 3, type: usize }
   is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: llvm-mc "too few operands for instruction" on `rev w0`; get_reg missing slot -> Err
+evidence: llvm-mc rejects too-few-operand sbfiz; README.md:11
 ```
 
-## encode_rev_neg_extra_operand
-- Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects a 3rd operand ("invalid operand for instruction"). GNU-style assembler contract (README.md:11). encode_rev does not check operands.len(), so extra operands are currently ignored — expected to fail.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_extra_operand
-- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}, extra ∈ Operand. encode_rev([Reg(Rd), Reg(Rn), extra]) = Err
+## encode_sbfiz_neg_extra_operand
+- Tier: 4e
+- Rationale: llvm-mc rejects `sbfiz w0, w1, #0, #1, x0` ("unrecognized instruction mnemonic"). GNU-style SBFIZ has exactly four operands. Extra operand must Err, not be silently ignored.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_extra_operand
+- Formal: ∀ valid 4-operand SBFIZ, extra ∈ Operand. encode_sbfiz(ops ++ [extra]) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: [Reg("w0"), Reg("w0"), Reg("x0")]
-- Bug report: pbt-out/bug_reports/encode_rev_extra_operand.md
+- Counterexample: is_64=false, rd=0, rn=0, lsb=0, width=1, extra=Reg("x0") — sbfiz w0, w0, #0, #1, x0 encodes instead of Err
+- Bug report: pbt-out/bug_reports/encode_sbfiz_extra_operand.md
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, extra]
-  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31, extra: Operand }
+  vars: [is_64, rd, rn, lsb, width, extra]
+  domain: { valid SBFIZ 4-tuple, extra: Operand }
   relation:
-    op: holds
-    expr: encode_rev([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), extra]).is_err()
+    op: throws
+    expr: encode_sbfiz(ops4 ++ [extra])
+expected_error: String
 generators:
   is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, variants: [Reg, Imm, Shift, RegArrangement] }
-expected_error: String
-evidence: llvm-mc rejects `rev w0, w1, w2` and `rev w0, w1, #0`; README.md:11 GNU-style gas contract
+  extra: { gen: oneof, options: [Reg, Imm, Shift, RegArrangement] }
+evidence: llvm-mc extra-operand rejection; README.md:11
 ```
 
-## encode_rev_neg_sp
-- Tier: 4
-- Rationale: Negative/error contract. ARM ARM Data-processing (1 source) uses ZR at register 31, not SP. llvm-mc rejects SP/WSP as REV operands. parse_reg_num maps sp/wsp to 31, so the SUT currently encodes them as ZR — expected to fail.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_sp
-- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, is_64 ∈ Bool, other ∈ {0..30}. encode_rev(ops with slot `which` = Reg(sp)) = Err
+## encode_sbfiz_neg_sp
+- Tier: 4e
+- Rationale: ARM ARM SBFIZ uses GPR/ZR; register 31 is ZR not SP. llvm-mc rejects `sbfiz wsp, w0, #0, #1` and `sbfiz w0, wsp, #0, #1`. parse_reg_num maps sp/wsp to 31, which would silently encode ZR.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_sp
+- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, other GPR. encode_sbfiz with ops[which]=Reg(sp) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: [Reg("wsp"), Reg("w0")]
-- Bug report: pbt-out/bug_reports/encode_rev_sp.md
+- Counterexample: which=0, sp64=false, is_64=false, other=0 — sbfiz wsp, w0, #0, #1 encodes as wzr instead of Err
+- Bug report: pbt-out/bug_reports/encode_sbfiz_sp.md
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, sp64, is_64, other]
-  domain: { which: u32 0..=1, sp64: bool, is_64: bool, other: u32 0..=30 }
+  domain: { which: 0..1, sp64: bool, is_64: bool, other: 0..30 }
   relation:
-    op: holds
-    expr: encode_rev(ops_with_sp).is_err()
+    op: throws
+    expr: encode_sbfiz(ops_with_sp_at(which))
+expected_error: String
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
   sp64: { gen: bool }
   is_64: { gen: bool }
   other: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: ARM ARM REV register 31 is ZR not SP; llvm-mc rejects `rev sp, x0` and `rev wsp, w0`
+evidence: llvm-mc "invalid operand for instruction" on SP/WSP; ARM ARM register 31 is ZR
 ```
 
-## encode_rev_neg_mixed_width
-- Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects mixed W/X (`rev w0, x1` / `rev x0, w1`). encode_rev takes sf from Rd and ignores Rn width — expected to fail.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_mixed_width
-- Formal: ∀ rd,rn ∈ {0..31}, rd64,rn64 ∈ Bool. rd64 ≠ rn64 ⇒ encode_rev([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn))]) = Err
+## encode_sbfiz_neg_lsb_width
+- Tier: 4e
+- Rationale: ARM/llvm-mc require 0<=lsb<R and 1<=width<=R-lsb. llvm-mc: width=0 → "expected integer in range [1, 32]"; lsb=32 → "expected integer in range [0, 31]". Out-of-range must Err, not panic or encode an illegal immr/imms. Documented bounds sampled at 0, R-1, R, R+1, width=0/-1, width=R-lsb+1.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_lsb_width
+- Formal: ∀ is_64, rd,rn, (lsb,width) ∉ valid ARM range. encode_sbfiz(...) ∈ {Err} (no panic)
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: [Reg("x0"), Reg("w0")]
-- Bug report: pbt-out/bug_reports/encode_rev_mixed_width.md
+- Counterexample: is_64=false, rd=0, rn=0, lsb=0, width=0 — sbfiz w0, w0, #0, #0 panics (debug overflow at width-1) rather than Err
+- Bug report: pbt-out/bug_reports/encode_sbfiz_lsb_width.md
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rd64, rn64]
-  domain: { rd: u32 0..=31, rn: u32 0..=31, rd64: bool, rn64: bool }
+  vars: [is_64, rd, rn, lsb, width]
+  domain: { (lsb,width) outside 0<=lsb<R and 1<=width<=R-lsb }
   relation:
-    op: holds
-    expr: (rd64 != rn64) => encode_rev([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn))]).is_err()
+    op: throws
+    expr: encode_sbfiz([Reg(gpr(rd)), Reg(gpr(rn)), Imm(lsb), Imm(width))
+expected_error: String
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-expected_error: String
-evidence: llvm-mc rejects `rev w0, x1` and `rev x0, w1`; ARM ARM REV requires matching W/W or X/X
+  lsb: { gen: int, min: -1, max: 65, type: i64 }
+  width: { gen: int, min: -1, max: 65, type: i64 }
+evidence: llvm-mc range errors; ARM ARM SBFIZ 0<=lsb<datasize, 1<=width<=datasize-lsb
 ```
 
-## encode_rev_neg_fp
-- Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects FP/SIMD prefixes as REV operands. parse_reg_num accepts d/s/q/v/h/b, so the SUT currently encodes them as GPR numbers — expected to fail.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_fp
-- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_rev(ops with slot `which` = Reg(prefix{n})) = Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: failing
-- Counterexample: [Reg("d0"), Reg("x1")]
-- Bug report: pbt-out/bug_reports/encode_rev_fp.md
-
-```property
-function: encode_rev
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, prefix, n]
-  domain: { which: u32 0..=1, prefix: {d,s,q,v,h,b}, n: u32 0..=31 }
-  relation:
-    op: holds
-    expr: encode_rev(ops_with_fp).is_err()
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
-  prefix: { gen: oneof, variants: ["d", "s", "q", "v", "h", "b"] }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: llvm-mc rejects `rev d0, d1`; ARM ARM REV operands are W/X GPRs; README.md:11
-```
-
-## encode_rev_diff_alt_spellings
+## encode_sbfiz_diff_alt_spellings
 - Tier: 2
-- Rationale: Differential vs llvm-mc for GNU-style alternate spellings (x31/w31, XZR/WZR, LR, uppercase). README.md:11 GNU-style gas contract. Sweep: documented spelling surface not covered by the wzr/xzr-only valid-GPR generator.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_diff_alt_spellings
-- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}, dest_spell,src_spell ∈ {0..4}. encode_rev([Reg(spell(is_64,rd,dest_spell)), Reg(spell(is_64,rn,src_spell))]) = llvm-mc("rev " + spell + ", " + spell)
+- Rationale: Differential vs llvm-mc for x31/w31, XZR/WZR, LR, and uppercase spellings of the same GPR. README.md:11 gas-compatible; parse_reg_num lowercases names.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_diff_alt_spellings
+- Formal: ∀ valid (is_64,rd,rn,lsb,width), dest_spell,src_spell ∈ 0..4. encode_sbfiz([Reg(spell(rd)), Reg(spell(rn)), Imm(lsb), Imm(width)]) = llvm-mc("sbfiz spell(rd), spell(rn), #lsb, #width")
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_64, rd, rn, dest_spell, src_spell]
-  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31, dest_spell: u32 0..=4, src_spell: u32 0..=4 }
+  vars: [is_64, rd, rn, lsb, width, dest_spell, src_spell]
+  domain: { valid SBFIZ 4-tuple, dest_spell: 0..4, src_spell: 0..4 }
   relation:
     op: eq
-    lhs: encode_rev([Reg(spell(is_64, rd, dest_spell)), Reg(spell(is_64, rn, src_spell))])
-    rhs: llvm_mc_word("rev " + spell(is_64, rd, dest_spell) + ", " + spell(is_64, rn, src_spell))
+    lhs: encode_sbfiz([Reg(spell(rd)), Reg(spell(rn)), Imm(lsb), Imm(width)])
+    rhs: llvm_mc_word("sbfiz spell(rd), spell(rn), #lsb, #width")
 generators:
   is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   dest_spell: { gen: int, min: 0, max: 4, type: u32 }
   src_spell: { gen: int, min: 0, max: 4, type: u32 }
-evidence: README.md:11 GNU-style gas contract; llvm-mc accepts x31/w31, XZR/WZR, LR, uppercase
+evidence: README.md:11; parse_reg_num lowercases; llvm-mc accepts x31/XZR/LR
 ```
 
-## encode_rev_neg_nonreg
-- Tier: 4
-- Rationale: Negative/error contract. get_reg requires Operand::Reg; llvm-mc rejects non-register operand kinds. Sweep: Imm/Shift/Mem/Label/Symbol/Cond not in first-batch generators.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_nonreg
-- Formal: ∀ which ∈ {0,1}, bad ∈ {Imm, Shift, Mem, Label, Symbol, Cond}. encode_rev(ops with slot which = bad) = Err
+## encode_sbfiz_neg_mixed_width
+- Tier: 4e
+- Rationale: llvm-mc rejects mixed W/X (`sbfiz x0, w0, #0, #1` invalid operand). ARM SBFIZ requires matching datasize. encode_sbfiz takes sf from Rd and discards Rn width.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_mixed_width
+- Formal: ∀ rd,rn ∈ 0..31, rd64 ≠ rn64. encode_sbfiz([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Imm(0), Imm(1)]) = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rd64=true, rn64=false — sbfiz x0, w0, #0, #1 encodes instead of Err
+- Bug report: pbt-out/bug_reports/encode_sbfiz_mixed_width.md
+
+```property
+function: encoder.bitfield.encode_sbfiz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rd64, rn64]
+  domain: { rd: 0..31, rn: 0..31, rd64 != rn64 }
+  relation:
+    op: throws
+    expr: encode_sbfiz([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn)), Imm(0), Imm(1)])
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+evidence: llvm-mc mixed W/X rejection; ARM ARM matching datasize
+```
+
+## encode_sbfiz_neg_fp
+- Tier: 4e
+- Rationale: llvm-mc rejects FP/SIMD registers as SBFIZ operands (`sbfiz d0, x1, #0, #1`). parse_reg_num accepts d/s/q/v/h/b prefixes as GPR numbers.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_fp
+- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_sbfiz with ops[which]=Reg(prefix n) = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: failing
+- Counterexample: which=0, prefix="d", n=0 — sbfiz d0, x1, #0, #1 encodes as w0 instead of Err
+- Bug report: pbt-out/bug_reports/encode_sbfiz_fp.md
+
+```property
+function: encoder.bitfield.encode_sbfiz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, prefix, n]
+  domain: { which: 0..1, prefix: {d,s,q,v,h,b}, n: 0..31 }
+  relation:
+    op: throws
+    expr: encode_sbfiz(ops_with_fp_at(which))
+expected_error: String
+generators:
+  which: { gen: int, min: 0, max: 1, type: u32 }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+evidence: llvm-mc "invalid operand for instruction" on FP/SIMD; ARM ARM GPR-only SBFIZ
+```
+
+## encode_sbfiz_neg_nonreg
+- Tier: 4e
+- Rationale: get_reg/get_imm require Reg at slots 0/1 and Imm at slots 2/3. Wrong Operand kind must Err. llvm-mc rejects non-register/non-imm tokens.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_nonreg
+- Formal: ∀ which ∈ 0..3, bad ∈ Operand \ required kind at slot. encode_sbfiz(ops with bad at which) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, bad]
-  domain: { which: u32 0..=1, bad: non_reg Operand }
+  domain: { which: 0..3, bad: Operand of wrong kind for slot }
   relation:
-    op: holds
-    expr: encode_rev(ops_with_nonreg).is_err()
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
-  bad: { gen: oneof, variants: [Imm, Shift, Mem, Label, Symbol, Cond] }
+    op: throws
+    expr: encode_sbfiz(ops_with_bad_at(which))
 expected_error: String
-evidence: get_reg expected register; llvm-mc rejects non-register REV operands
+generators:
+  which: { gen: int, min: 0, max: 3, type: u32 }
+evidence: get_reg/get_imm error paths; llvm-mc operand-kind rejection
 ```
 
-## encode_rev_neg_invalid_name
-- Tier: 4
-- Rationale: Negative/error contract. parse_reg_num returns None for foo/x32/empty/r0. llvm-mc rejects invalid register names. Sweep: invalid-name domain not in first batch.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_invalid_name
-- Formal: ∀ which ∈ {0,1}, name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_rev(ops with slot which = Reg(name)) = Err
+## encode_sbfiz_neg_invalid_name
+- Tier: 4e
+- Rationale: parse_reg_num returns None for foo/x32/empty/r0. llvm-mc rejects invalid register names. Contract is Err.
+- Seed: bitfield.rs encode_bfi_pbt encode_bfi_neg_invalid_name
+- Formal: ∀ which ∈ {0,1}, name ∈ {foo,x32,w32,x,r0,"",x-1,x99,w}. encode_sbfiz with ops[which]=Reg(name) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev
+function: encoder.bitfield.encode_sbfiz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, name]
-  domain: { which: u32 0..=1, name: invalid register spelling }
+  domain: { which: 0..1, name: invalid GPR spelling }
   relation:
-    op: holds
-    expr: encode_rev(ops_with_bad_name).is_err()
+    op: throws
+    expr: encode_sbfiz(ops_with_invalid_name_at(which))
+expected_error: String
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
-  name: { gen: oneof, variants: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
-expected_error: String
-evidence: parse_reg_num None for those names; llvm-mc rejects invalid register names
+evidence: parse_reg_num None; llvm-mc invalid register
 ```
