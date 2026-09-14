@@ -8479,3 +8479,680 @@ mod encode_msub_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_mul_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:238-244 mul dispatch; ARM ARM Data-processing (3 source) MUL
+    //   sf 00 11011 000 Rm 0 11111 Rn Rd; data_processing.rs:589 MUL is MADD with Ra=XZR;
+    //   ARM ARM Advanced SIMD MUL 0 Q 0 01110 size 1 Rm 10011 1 Rn Rd, T in {8B,16B,4H,8H,2S,4S}
+    // Stronger considered:
+    //   - State machine: rejected — encode_mul is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree MUL decoder
+    //   - encode_madd as differential sibling: rejected — same-job gate fails (4-operand MADD vs 3-operand MUL)
+    // Weaker available: algebraic.metamorphic (sf bit), algebraic.invariant (ARM fields),
+    //   negative_error (arity / extra operand / mixed width / SP / FP / invalid name / NEON 2d)
+    // Differential: candidate=encode_mul, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=operands <-> asm text `mul Rd, Rn, Rm` or `mul Vd.T, Vn.T, Vm.T`
+
+    use super::encode_mul;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_mul(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+        ]
+    }
+
+    fn neon_t() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "16b", "4h", "8h", "2s", "4s"])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_mul_kat_llvm_mc_x0_x1_x2() {
+        let want = 0x9b027c20u32;
+        let mc = llvm_mc_word("mul x0, x1, x2").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_mul_kat_llvm_mc_w0_w1_w2() {
+        let want = 0x1b027c20u32;
+        let mc = llvm_mc_word("mul w0, w1, w2").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Reg("w2".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_mul_kat_llvm_mc_alias_madd_zr() {
+        let want = 0x9b027c20u32;
+        let mc_mul = llvm_mc_word("mul x0, x1, x2").expect("llvm-mc MUL KAT");
+        let mc_madd = llvm_mc_word("madd x0, x1, x2, xzr").expect("llvm-mc MADD ZR KAT");
+        assert_eq!(mc_mul, want, "llvm-mc MUL KAT mapping broken");
+        assert_eq!(mc_madd, want, "llvm-mc MADD ZR KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_mul_kat_llvm_mc_neon_v0_16b() {
+        let want = 0x4e229c20u32;
+        let mc = llvm_mc_word("mul v0.16b, v1.16b, v2.16b").expect("llvm-mc NEON KAT");
+        assert_eq!(mc, want, "llvm-mc NEON KAT mapping broken");
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v1".into(),
+                arrangement: "16b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v2".into(),
+                arrangement: "16b".into(),
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT NEON KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_mul_diff_gpr(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            is_64 in any::<bool>(),
+        ) {
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let rm_n = gpr(is_64, rm);
+            let asm = format!("mul {}, {}, {}", rd_n, rn_n, rm_n);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Reg(rm_n),
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid MUL {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MUL {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_mul_diff_alias_madd_zr(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            is_64 in any::<bool>(),
+        ) {
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let rm_n = gpr(is_64, rm);
+            let zr = gpr(is_64, 31);
+            let mul_asm = format!("mul {}, {}, {}", rd_n, rn_n, rm_n);
+            let madd_asm = format!("madd {}, {}, {}, {}", rd_n, rn_n, rm_n, zr);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Reg(rm_n),
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid MUL {}: {}", mul_asm, e));
+            let mc_mul = llvm_mc_word(&mul_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MUL {}: {}", mul_asm, e));
+            let mc_madd = llvm_mc_word(&madd_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MADD ZR {}: {}", madd_asm, e));
+            prop_assert_eq!(mc_mul, mc_madd, "llvm-mc MUL vs MADD ZR mismatch");
+            prop_assert_eq!(sut, mc_mul, "SUT vs llvm-mc MUL mismatch for {}", mul_asm);
+        }
+
+        #[test]
+        fn encode_mul_metamorphic_sf_bit(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+        ) {
+            let x_ops = [
+                Operand::Reg(gpr(true, rd)),
+                Operand::Reg(gpr(true, rn)),
+                Operand::Reg(gpr(true, rm)),
+            ];
+            let w_ops = [
+                Operand::Reg(gpr(false, rd)),
+                Operand::Reg(gpr(false, rn)),
+                Operand::Reg(gpr(false, rm)),
+            ];
+            let xw = sut_word(&x_ops)
+                .unwrap_or_else(|e| panic!("64-bit MUL rejected: {}", e));
+            let ww = sut_word(&w_ops)
+                .unwrap_or_else(|e| panic!("32-bit MUL rejected: {}", e));
+            prop_assert_eq!(
+                xw ^ ww,
+                1u32 << 31,
+                "X vs W MUL must differ only by sf bit 31 (x={:#010x} w={:#010x})",
+                xw,
+                ww
+            );
+        }
+
+        #[test]
+        fn encode_mul_invariant_arm_fields(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            is_64 in any::<bool>(),
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+            ];
+            let w = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("MUL rejected: {}", e));
+            let sf = if is_64 { 1u32 } else { 0 };
+            prop_assert_eq!(w & 0x1F, rd, "Rd field");
+            prop_assert_eq!((w >> 5) & 0x1F, rn, "Rn field");
+            prop_assert_eq!((w >> 10) & 0x1F, 31, "Ra field must be XZR/WZR (31)");
+            prop_assert_eq!((w >> 15) & 1, 0, "o0 bit 15 must be 0 (MUL/MADD not MSUB)");
+            prop_assert_eq!((w >> 16) & 0x1F, rm, "Rm field");
+            prop_assert_eq!((w >> 21) & 0x3FF, 0b0011011000u32, "bits 30:21 must be 0011011000");
+            prop_assert_eq!((w >> 31) & 1, sf, "sf bit");
+        }
+
+        #[test]
+        fn encode_mul_diff_neon(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            t in neon_t(),
+        ) {
+            let asm = format!("mul v{}.{t}, v{}.{t}, v{}.{t}", vd, vn, vm);
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: t.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: t.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vm}"),
+                    arrangement: t.to_string(),
+                },
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid NEON MUL {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid NEON MUL {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_mul_neg_too_few(
+            n in 0usize..=2,
+            is_64 in any::<bool>(),
+            r0 in 0u32..=31,
+            r1 in 0u32..=31,
+        ) {
+            let all = [
+                Operand::Reg(gpr(is_64, r0)),
+                Operand::Reg(gpr(is_64, r1)),
+            ];
+            let ops = &all[..n.min(2)];
+            prop_assert!(
+                encode_mul(ops).is_err(),
+                "fewer than 3 operands must Err, n={}",
+                n
+            );
+        }
+
+        #[test]
+        fn encode_mul_neg_extra_operand(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                extra,
+            ];
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "MUL has no 4th operand; extra operand must Err"
+            );
+        }
+
+        #[test]
+        fn encode_mul_neg_mixed_width(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+            rm64 in any::<bool>(),
+        ) {
+            prop_assume!(!(rd64 == rn64 && rn64 == rm64));
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+                Operand::Reg(gpr(rm64, rm)),
+            ];
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "mixed-width MUL registers must Err (rd64={} rn64={} rm64={})",
+                rd64,
+                rn64,
+                rm64
+            );
+        }
+
+        #[test]
+        fn encode_mul_diff_lr(
+            which in 0u32..=2,
+            a in 0u32..=30,
+            b in 0u32..=30,
+        ) {
+            let mut names = [
+                gpr(true, a),
+                gpr(true, b),
+                "lr".to_string(),
+            ];
+            names.swap(2, which as usize);
+            let asm = format!("mul {}, {}, {}", names[0], names[1], names[2]);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid MUL {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MUL {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {} (lr alias x30)", asm);
+        }
+
+        #[test]
+        fn encode_mul_neg_sp(
+            which in 0u32..=2,
+            is_64 in any::<bool>(),
+            a in 0u32..=30,
+            b in 0u32..=30,
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let mut names = [
+                gpr(is_64, a),
+                gpr(is_64, b),
+                sp.to_string(),
+            ];
+            names.swap(2, which as usize);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "SP/WSP is not a valid MUL operand (which={} names={:?})",
+                which,
+                names
+            );
+        }
+
+        #[test]
+        fn encode_mul_neg_fp(
+            which in 0u32..=2,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+            ];
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "FP/SIMD register {} is not a valid MUL operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_mul_neg_neon_d(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            t in prop::sample::select(vec!["1d", "2d"]),
+        ) {
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: t.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: t.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vm}"),
+                    arrangement: t.to_string(),
+                },
+            ];
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "NEON MUL size==11 (T={}) is UNDEFINED; must Err",
+                t
+            );
+        }
+
+        #[test]
+        fn encode_mul_neg_invalid_reg(
+            which in 0u32..=2,
+            bad in prop_oneof![
+                Just("x32".to_string()),
+                Just("w32".to_string()),
+                Just("x99".to_string()),
+                Just("w99".to_string()),
+                Just("".to_string()),
+                Just("foo".to_string()),
+                Just("r0".to_string()),
+                Just("x".to_string()),
+                Just("x-1".to_string()),
+            ],
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+            ];
+            ops[which as usize] = Operand::Reg(bad.clone());
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "invalid register name {:?} at {} must Err",
+                bad,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_mul_neg_non_register(
+            which in 0u32..=2,
+            bad in prop_oneof![
+                any::<i64>().prop_map(Operand::Imm),
+                Just(Operand::Symbol("foo".into())),
+                Just(Operand::Mem {
+                    base: "x0".into(),
+                    offset: 8,
+                }),
+                Just(Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                }),
+                Just(Operand::Cond("eq".into())),
+                Just(Operand::Label("L0".into())),
+            ],
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "non-register operand at position {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_mul_neg_neon_mismatch_t(
+            vd in 0u32..=31,
+            vn in 0u32..=31,
+            vm in 0u32..=31,
+            td in neon_t(),
+            tn in neon_t(),
+            tm in neon_t(),
+        ) {
+            prop_assume!(td != tn || tn != tm);
+            let ops = [
+                Operand::RegArrangement {
+                    reg: format!("v{vd}"),
+                    arrangement: td.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vn}"),
+                    arrangement: tn.to_string(),
+                },
+                Operand::RegArrangement {
+                    reg: format!("v{vm}"),
+                    arrangement: tm.to_string(),
+                },
+            ];
+            prop_assert!(
+                encode_mul(&ops).is_err(),
+                "NEON MUL requires matching T (td={} tn={} tm={})",
+                td,
+                tn,
+                tm
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_mul_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_mul(&ops).is_err(),
+            "MUL w0, w0, w0, x0 must Err; a 4th operand is not valid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mul_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_mul(&ops).is_err(),
+            "mixed-width MUL w0, w0, x0 must Err (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mul_regression_sp() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_mul(&ops).is_err(),
+            "MUL wsp, w0, w0 must Err; register 31 is WZR not WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mul_regression_fp_reg() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_mul(&ops).is_err(),
+            "MUL d0, x1, x2 must Err; FP/SIMD registers are not MUL operands (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mul_regression_neon_d() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "1d".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "1d".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "1d".into(),
+            },
+        ];
+        assert!(
+            encode_mul(&ops).is_err(),
+            "MUL v0.1d, v0.1d, v0.1d must Err; size==11 is UNDEFINED (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_mul_regression_neon_mismatch_t() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            },
+            Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "16b".into(),
+            },
+        ];
+        assert!(
+            encode_mul(&ops).is_err(),
+            "MUL v0.8b, v0.8b, v0.16b must Err; NEON MUL requires matching T (llvm-mc rejects it)"
+        );
+    }
+}

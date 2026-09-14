@@ -1,3 +1,36 @@
+# Confirmed invariants (encode_mul)
+
+- Valid three-GPR same-width MUL with Rd/Rn/Rm in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_mul(Rd, Rn, Rm) equals llvm-mc `mul Rd, Rn, Rm` and llvm-mc `madd Rd, Rn, Rm, ZR` (1000 cases). Documented alias at data_processing.rs:589.
+- encode_mul(X-ops) XOR encode_mul(W-ops) at equal register numbers = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path word: sf at 31, bits [30:21]=0011011000, Rm at [20:16], o0=0 at 15, Ra=31 at [14:10], Rn at [9:5], Rd at [4:0].
+- Valid NEON MUL with T in {8b,16b,4h,8h,2s,4s}, Vd/Vn/Vm in v0–v31, matches llvm-mc (1000 cases).
+- `lr` in any of the three scalar slots encodes as X30 and matches llvm-mc (1000 cases).
+- Fewer than 3 operands, non-register operands (Imm/Symbol/Mem/Shift/Cond/Label), and invalid names (foo, x32, w32, x, r0, empty) always Err.
+- Known-answer: `mul x0, x1, x2` encodes as 0x9b027c20; `mul w0, w1, w2` as 0x1b027c20; `madd x0, x1, x2, xzr` as 0x9b027c20; `mul v0.16b, v1.16b, v2.16b` as 0x4e229c20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) MUL (alias of MADD): `sf 00 11011 000 Rm 0 11111 Rn Rd`. Register 31 is XZR/WZR, never SP/WSP. All three registers same width. Exactly three operands. o0 (bit 15) is 0. Ra (bits 14:10) is 31.
+- ARM ARM Advanced SIMD MUL (vector): `0 Q 0 01110 size 1 Rm 10011 1 Rn Rd`. T in {8B,16B,4H,8H,2S,4S}. size==11 is UNDEFINED.
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg).
+- Dispatch: encoder/mod.rs:238-244 mul. NEON dest is routed to encode_neon_three_same / encode_neon_elem; scalar dest to encode_mul. encode_mul itself still has a RegArrangement branch to encode_neon_mul.
+- Callers: alu.rs:168,202 `mul w0, w1, w2` / `mul x0, x1, x2`; i128_ops.rs:77 `mul x0, x2, x4`.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- Mixed X/W is accepted; sf is taken only from Rd (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- neon_arr_to_q_size accepts 1d/2d, so size==11 encodes (see bugs).
+- encode_neon_mul uses dest arrangement only; source T is discarded (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg 0..2 / sf / Ra=31 / neon_arr_to_q_size / source T).
+
+---
+
 # Confirmed invariants (encode_msub)
 
 - Valid four-GPR same-width MSUB with Rd/Rn/Rm/Ra in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
