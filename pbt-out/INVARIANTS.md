@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_shift)
+
+- Valid GP dest matching mnemonic size b/w/l/q, Imm count 0..255 matches llvm-mc `-triple=x86_64 -show-encoding` (1000 cases).
+- Valid %cl count form matches llvm-mc (1000 cases).
+- 1-operand form matches llvm-mc omitted-count encoding (1000 cases).
+- 1-operand encoding equals Imm(1) two-operand encoding (GAS omitted count is 1) (1000 cases).
+- Changing only Group 2 /digit (ROL/ROR/RCL/RCR/SHL/SHR/SAR) differs only in ModR/M bits [5:3] (1000 cases).
+- Memory dest without segment, including (%rsp)/(%r12) SIB and (%rbp)/(%r13) disp8, matches llvm-mc (1000 cases).
+- RIP-relative memory with trailing imm8 (count 2..255) produces one R_X86_64_PC32 reloc with addend -5 (1000 cases).
+- Arity 0/3/4 and non-CL register count always Err (1000 cases).
+- 1-operand Imm/Label/Indirect always Err (1000 cases).
+- Known-answer: `shlq $1, %rax` / `shlq %rax` = [0x48,0xd1,0xe0]; `shll $1, %eax` = [0xd1,0xe0]; `shlw $1, %ax` = [0x66,0xd1,0xe0]; `shlb $1, %al` = [0xd0,0xe0]; `shlq %cl, %rax` = [0x48,0xd3,0xe0]; `shlq $2, %rax` = [0x48,0xc1,0xe0,0x02].
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=x86_64 -show-encoding
+- Intel SDM Group 2: D0/D2/C0 r/m8; D1/D3/C1 r/m16/32/64; /0 ROL /1 ROR /2 RCL /3 RCR /4 SHL/SAL /5 SHR /7 SAR. 66 prefix for 16-bit; REX.W for 64-bit. Count is 1, CL, or imm8. GAS omitted count is 1. AT&T operand order is count, dest. SAL is alias of SHL.
+- Dispatch: encoder/mod.rs:196-200,670-671 suffixed forms; suffix-less shl/sal/shr/sar/rol/ror/rcl/rcr go through encode_suffixless_shift then encode_shift.
+- Callers: assembler README Shifts/Rotates table; codegen/emit.rs:151-153 emits shll/shlq, sarl/sarq, shrl/shrq.
+- Siblings encode_double_shift (SHLD/SHRD), encode_sse_shift, encode_avx_shift, encode_bmi2_shift are different jobs.
+
+## Quirks
+
+- FS/GS segment override is not emitted (see bugs).
+- Size-mismatched and non-GP dest registers are encoded via reg_num aliases (see bugs).
+- Imm count is truncated with `as u8` so 256 encodes as 0 (see bugs).
+- llvm-mc accepts `$ -1` as 255; SUT does the same via `as u8` (agreement, not a bug).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (1-op Reg/Mem/other, arity, Imm+Reg, Imm+Mem count==1 vs else, CL+Reg, CL+Mem, RIP reloc addend, extra/non-CL, mixed size, non-GP, segment).
+
+---
+
 # Confirmed invariants (encode_sbc)
 
 - Valid three-GPR same-width SBC/SBCS with Rd/Rn/Rm in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

@@ -1149,3 +1149,600 @@ impl super::InstructionEncoder {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_shift_pbt {
+    // Oracle: differential — llvm-mc x86-64 assembler
+    // Evidence: src/backend/x86/assembler/README.md "translates AT&T-syntax assembly";
+    //   README.md:567 Shifts/Rotates shl/shr/sar/rol/ror/rcl/rcr (b/w/l/q);
+    //   encoder/mod.rs:196-200,670-671 dispatch; codegen/emit.rs:151-153 shll/shlq;
+    //   Intel SDM Group 2; GAS omitted count is 1; AT&T operand order count, dest
+    // Stronger considered:
+    //   - State machine: rejected — encode_shift is a single encoding call, no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree x86 shift decoder
+    // Weaker available: algebraic.metamorphic (1-op == $1, /digit), negative_error (arity / non-CL / mixed size / non-GP)
+    // Differential: candidate=encode_shift, reference=llvm-mc -triple=x86_64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style AT&T assembler,
+    //   mapping=(ops, mnemonic, shift_op) <-> AT&T `mnemonic src, dst`
+
+    use super::super::{
+        Displacement, ImmediateValue, InstructionEncoder, MemoryOperand, Operand, Register,
+        R_X86_64_PC32,
+    };
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    const KINDS: &[(&str, u8)] = &[
+        ("shl", 4),
+        ("shr", 5),
+        ("sar", 7),
+        ("rol", 0),
+        ("ror", 1),
+        ("rcl", 2),
+        ("rcr", 3),
+    ];
+    const GP64: &[&str] = &[
+        "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+        "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+    ];
+    const GP32: &[&str] = &[
+        "eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi",
+        "r8d", "r9d", "r10d", "r11d", "r12d", "r13d", "r14d", "r15d",
+    ];
+    const GP16: &[&str] = &[
+        "ax", "cx", "dx", "bx", "sp", "bp", "si", "di",
+        "r8w", "r9w", "r10w", "r11w", "r12w", "r13w", "r14w", "r15w",
+    ];
+    const GP8: &[&str] = &[
+        "al", "cl", "dl", "bl", "ah", "ch", "dh", "bh",
+        "spl", "bpl", "sil", "dil",
+        "r8b", "r9b", "r10b", "r11b", "r12b", "r13b", "r14b", "r15b",
+    ];
+    const NON_GP: &[&str] = &["xmm0", "ymm0", "mm0", "st", "es", "cs"];
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn shift_op_of(kind: &str) -> u8 {
+        KINDS.iter().find(|(k, _)| *k == kind).map(|(_, o)| *o).unwrap()
+    }
+
+    fn mnemonic(kind: &str, suf: char) -> String {
+        format!("{}{}", kind, suf)
+    }
+
+    fn gp_list(suf: char) -> &'static [&'static str] {
+        match suf {
+            'b' => GP8,
+            'w' => GP16,
+            'l' => GP32,
+            _ => GP64,
+        }
+    }
+
+    fn reg_op(name: &str) -> Operand {
+        Operand::Register(Register::new(name))
+    }
+
+    fn imm_op(n: i64) -> Operand {
+        Operand::Immediate(ImmediateValue::Integer(n))
+    }
+
+    fn mem_op(base: &str, seg: Option<&str>) -> Operand {
+        Operand::Memory(MemoryOperand {
+            segment: seg.map(|s| s.to_string()),
+            displacement: Displacement::None,
+            base: Some(Register::new(base)),
+            index: None,
+            scale: None,
+        })
+    }
+
+    fn sut_bytes(ops: &[Operand], mnemonic: &str, shift_op: u8) -> Result<Vec<u8>, String> {
+        let mut enc = InstructionEncoder::new();
+        enc.encode_shift(ops, mnemonic, shift_op)?;
+        Ok(enc.bytes)
+    }
+
+    fn sut_enc(ops: &[Operand], mnemonic: &str, shift_op: u8) -> Result<InstructionEncoder, String> {
+        let mut enc = InstructionEncoder::new();
+        enc.encode_shift(ops, mnemonic, shift_op)?;
+        Ok(enc)
+    }
+
+    fn mem_rip(sym: &str) -> Operand {
+        Operand::Memory(MemoryOperand {
+            segment: None,
+            displacement: Displacement::Symbol(sym.to_string()),
+            base: Some(Register::new("rip")),
+            index: None,
+            scale: None,
+        })
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<Vec<u8>, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = Vec::new();
+        for p in inner.split(',') {
+            let p = p.trim();
+            if p.is_empty() {
+                continue;
+            }
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes.push(u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?);
+        }
+        if bytes.is_empty() {
+            return Err(format!("empty encoding: {stdout}"));
+        }
+        Ok(bytes)
+    }
+
+    fn llvm_mc_bytes(asm: &str) -> Result<Vec<u8>, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=x86_64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn kind_strat() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["shl", "shr", "sar", "rol", "ror", "rcl", "rcr"])
+    }
+
+    fn suf_and_dst() -> impl Strategy<Value = (char, String)> {
+        prop_oneof![
+            prop::sample::select(GP8.to_vec()).prop_map(|r| ('b', r.to_string())),
+            prop::sample::select(GP16.to_vec()).prop_map(|r| ('w', r.to_string())),
+            prop::sample::select(GP32.to_vec()).prop_map(|r| ('l', r.to_string())),
+            prop::sample::select(GP64.to_vec()).prop_map(|r| ('q', r.to_string())),
+        ]
+    }
+
+    fn count_strat() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(1i64),
+            Just(2i64),
+            Just(8i64),
+            Just(31i64),
+            Just(32i64),
+            Just(63i64),
+            Just(64i64),
+            Just(255i64),
+            0i64..=255,
+        ]
+    }
+
+    fn mem_base_strat() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec![
+            "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+            "r8", "r12", "r13", "r15",
+        ])
+    }
+
+    fn seg_strat() -> impl Strategy<Value = Option<&'static str>> {
+        prop::sample::select(vec![None, Some("fs"), Some("gs")])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_shift_kat_shlq_imm1_rax() {
+        let want = vec![0x48, 0xd1, 0xe0];
+        let mc = llvm_mc_bytes("shlq $1, %rax").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_bytes(&[imm_op(1), reg_op("rax")], "shlq", 4).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_shift_kat_shll_eax() {
+        let want = vec![0xd1, 0xe0];
+        let mc = llvm_mc_bytes("shll $1, %eax").expect("llvm-mc KAT shll");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for shll");
+        let sut = sut_bytes(&[imm_op(1), reg_op("eax")], "shll", 4).expect("SUT KAT shll");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_shift_kat_shlw_ax() {
+        let want = vec![0x66, 0xd1, 0xe0];
+        let mc = llvm_mc_bytes("shlw $1, %ax").expect("llvm-mc KAT shlw");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for shlw");
+        let sut = sut_bytes(&[imm_op(1), reg_op("ax")], "shlw", 4).expect("SUT KAT shlw");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_shift_kat_shlb_al() {
+        let want = vec![0xd0, 0xe0];
+        let mc = llvm_mc_bytes("shlb $1, %al").expect("llvm-mc KAT shlb");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for shlb");
+        let sut = sut_bytes(&[imm_op(1), reg_op("al")], "shlb", 4).expect("SUT KAT shlb");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_shift_kat_shlq_cl_rax() {
+        let want = vec![0x48, 0xd3, 0xe0];
+        let mc = llvm_mc_bytes("shlq %cl, %rax").expect("llvm-mc KAT cl");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for cl");
+        let sut = sut_bytes(&[reg_op("cl"), reg_op("rax")], "shlq", 4).expect("SUT KAT cl");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_shift_kat_shlq_imm2_rax() {
+        let want = vec![0x48, 0xc1, 0xe0, 0x02];
+        let mc = llvm_mc_bytes("shlq $2, %rax").expect("llvm-mc KAT imm2");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for imm2");
+        let sut = sut_bytes(&[imm_op(2), reg_op("rax")], "shlq", 4).expect("SUT KAT imm2");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_shift_diff_imm_reg(
+            kind in kind_strat(),
+            (suf, dst) in suf_and_dst(),
+            count in count_strat(),
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let asm = format!("{} ${}, %{}", mnem, count, dst);
+            let ops = [imm_op(count), reg_op(&dst)];
+            let sut = sut_bytes(&ops, &mnem, op)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_bytes(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_shift_diff_cl_reg(
+            kind in kind_strat(),
+            (suf, dst) in suf_and_dst(),
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let asm = format!("{} %cl, %{}", mnem, dst);
+            let ops = [reg_op("cl"), reg_op(&dst)];
+            let sut = sut_bytes(&ops, &mnem, op)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_bytes(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_shift_diff_one_operand(
+            kind in kind_strat(),
+            (suf, dst) in suf_and_dst(),
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let asm = format!("{} %{}", mnem, dst);
+            let ops = [reg_op(&dst)];
+            let sut = sut_bytes(&ops, &mnem, op)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_bytes(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_shift_meta_one_eq_imm1(
+            kind in kind_strat(),
+            (suf, dst) in suf_and_dst(),
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let one = sut_bytes(&[reg_op(&dst)], &mnem, op)
+                .unwrap_or_else(|e| panic!("1-op rejected {}: {}", mnem, e));
+            let imm1 = sut_bytes(&[imm_op(1), reg_op(&dst)], &mnem, op)
+                .unwrap_or_else(|e| panic!("$1 rejected {}: {}", mnem, e));
+            prop_assert_eq!(one, imm1, "1-operand must equal Imm(1) for {} %{}", mnem, dst);
+        }
+
+        #[test]
+        fn encode_shift_meta_shift_op_digit(
+            dst in prop::sample::select(GP64.to_vec()).prop_map(|s| s.to_string()),
+            count in count_strat(),
+            op_a in prop::sample::select(vec![0u8, 1, 2, 3, 4, 5, 7]),
+            op_b in prop::sample::select(vec![0u8, 1, 2, 3, 4, 5, 7]),
+        ) {
+            prop_assume!(op_a != op_b);
+            let ops = [reg_op("cl"), reg_op(&dst)];
+            let a = sut_bytes(&ops, "shlq", op_a)
+                .unwrap_or_else(|e| panic!("op_a rejected: {}", e));
+            let b = sut_bytes(&ops, "shlq", op_b)
+                .unwrap_or_else(|e| panic!("op_b rejected: {}", e));
+            prop_assert_eq!(a.len(), b.len(), "length mismatch dst={} count={}", dst, count);
+            let mut diffs = Vec::new();
+            for (i, (xa, xb)) in a.iter().zip(b.iter()).enumerate() {
+                if xa != xb {
+                    diffs.push(i);
+                }
+            }
+            prop_assert_eq!(diffs.len(), 1, "must differ in exactly one byte a={:?} b={:?}", a, b);
+            let i = diffs[0];
+            let xa = a[i];
+            let xb = b[i];
+            prop_assert_eq!(xa & 0b1100_0111, xb & 0b1100_0111, "only /digit bits may change");
+            prop_assert_eq!((xa >> 3) & 7, op_a & 7);
+            prop_assert_eq!((xb >> 3) & 7, op_b & 7);
+            let _ = count;
+        }
+
+        #[test]
+        fn encode_shift_diff_mem(
+            kind in kind_strat(),
+            suf in prop::sample::select(vec!['b', 'w', 'l', 'q']),
+            base in mem_base_strat(),
+            form in prop::sample::select(vec!["imm", "cl", "one"]),
+            count in count_strat(),
+            seg in seg_strat(),
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let mem_att = match seg {
+                Some(s) => format!("%{}:(%{})", s, base),
+                None => format!("(%{})", base),
+            };
+            let (asm, ops): (String, Vec<Operand>) = match form {
+                "imm" => (
+                    format!("{} ${}, {}", mnem, count, mem_att),
+                    vec![imm_op(count), mem_op(base, seg)],
+                ),
+                "cl" => (
+                    format!("{} %cl, {}", mnem, mem_att),
+                    vec![reg_op("cl"), mem_op(base, seg)],
+                ),
+                _ => (
+                    format!("{} {}", mnem, mem_att),
+                    vec![mem_op(base, seg)],
+                ),
+            };
+            let sut = sut_bytes(&ops, &mnem, op)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_bytes(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_shift_neg_arity_non_cl(
+            kind in kind_strat(),
+            (suf, dst) in suf_and_dst(),
+            arity in prop::sample::select(vec![0usize, 3, 4]),
+            count_reg in prop::sample::select(
+                GP64.iter().chain(GP32.iter()).chain(GP16.iter()).chain(GP8.iter())
+                    .copied()
+                    .filter(|n| *n != "cl")
+                    .collect::<Vec<_>>(),
+            ),
+            extra in prop::sample::select(vec!["rax", "eax", "al"]),
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let empty: [Operand; 0] = [];
+            let three = [imm_op(1), reg_op(&dst), reg_op(extra)];
+            let four = [imm_op(1), reg_op(&dst), reg_op(extra), reg_op("rbx")];
+            let arity_ops: &[Operand] = match arity {
+                0 => &empty,
+                3 => &three,
+                _ => &four,
+            };
+            prop_assert!(
+                sut_bytes(arity_ops, &mnem, op).is_err(),
+                "arity {} must Err for {}",
+                arity,
+                mnem
+            );
+            let non_cl = [reg_op(count_reg), reg_op(&dst)];
+            prop_assert!(
+                sut_bytes(&non_cl, &mnem, op).is_err(),
+                "non-CL count %{} must Err for {} %{}",
+                count_reg,
+                mnem,
+                dst
+            );
+        }
+
+        #[test]
+        fn encode_shift_neg_mixed_size_and_non_gp(
+            kind in kind_strat(),
+            suf in prop::sample::select(vec!['b', 'w', 'l', 'q']),
+            dest in prop::sample::select({
+                let mut v = Vec::new();
+                v.extend(GP8.iter().copied());
+                v.extend(GP16.iter().copied());
+                v.extend(GP32.iter().copied());
+                v.extend(GP64.iter().copied());
+                v.extend(NON_GP.iter().copied());
+                v
+            }),
+        ) {
+            let matching = gp_list(suf);
+            prop_assume!(!matching.contains(&dest));
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let ops = [imm_op(1), reg_op(dest)];
+            prop_assert!(
+                sut_bytes(&ops, &mnem, op).is_err(),
+                "mismatched/non-GP dest %{} must Err for {}",
+                dest,
+                mnem
+            );
+        }
+
+        #[test]
+        fn encode_shift_diff_mem_no_seg(
+            kind in kind_strat(),
+            suf in prop::sample::select(vec!['b', 'w', 'l', 'q']),
+            base in mem_base_strat(),
+            form in prop::sample::select(vec!["imm", "cl", "one"]),
+            count in count_strat(),
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let mem_att = format!("(%{})", base);
+            let (asm, ops): (String, Vec<Operand>) = match form {
+                "imm" => (
+                    format!("{} ${}, {}", mnem, count, mem_att),
+                    vec![imm_op(count), mem_op(base, None)],
+                ),
+                "cl" => (
+                    format!("{} %cl, {}", mnem, mem_att),
+                    vec![reg_op("cl"), mem_op(base, None)],
+                ),
+                _ => (
+                    format!("{} {}", mnem, mem_att),
+                    vec![mem_op(base, None)],
+                ),
+            };
+            let sut = sut_bytes(&ops, &mnem, op)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_bytes(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_shift_neg_imm_overflow(
+            kind in kind_strat(),
+            (suf, dst) in suf_and_dst(),
+            count in 256i64..=1024,
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let ops = [imm_op(count), reg_op(&dst)];
+            prop_assert!(
+                sut_bytes(&ops, &mnem, op).is_err(),
+                "imm count {} does not fit in imm8; {} ${}, %{} must Err",
+                count,
+                mnem,
+                count,
+                dst
+            );
+        }
+
+        #[test]
+        fn encode_shift_neg_one_operand_non_rm(
+            kind in kind_strat(),
+            suf in prop::sample::select(vec!['b', 'w', 'l', 'q']),
+            which in 0u8..=2,
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let ops = match which {
+                0 => vec![imm_op(1)],
+                1 => vec![Operand::Label("foo".into())],
+                _ => vec![Operand::Indirect(Box::new(reg_op("rax")))],
+            };
+            prop_assert!(
+                sut_bytes(&ops, &mnem, op).is_err(),
+                "1-operand non-r/m {:?} must Err for {}",
+                ops,
+                mnem
+            );
+        }
+
+        #[test]
+        fn encode_shift_rip_reloc_addend(
+            kind in kind_strat(),
+            suf in prop::sample::select(vec!['b', 'w', 'l', 'q']),
+            count in 2i64..=255,
+        ) {
+            let mnem = mnemonic(kind, suf);
+            let op = shift_op_of(kind);
+            let ops = [imm_op(count), mem_rip("foo")];
+            let enc = sut_enc(&ops, &mnem, op)
+                .unwrap_or_else(|e| panic!("RIP mem rejected: {}", e));
+            prop_assert_eq!(enc.relocations.len(), 1, "expected one RIP reloc");
+            let r = &enc.relocations[0];
+            prop_assert_eq!(r.reloc_type, R_X86_64_PC32);
+            prop_assert_eq!(&r.symbol, "foo");
+            prop_assert_eq!(
+                r.addend, -5,
+                "trailing imm8 must adjust RIP addend from -4 to -5 (count={})",
+                count
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_shift_regression_mixed_size_shlw_al() {
+        let r = sut_bytes(&[imm_op(1), reg_op("al")], "shlw", 4);
+        assert!(
+            r.is_err(),
+            "shlw $1, %al must be rejected (size mismatch), got {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn test_encode_shift_regression_non_gp_xmm0() {
+        let r = sut_bytes(&[imm_op(1), reg_op("xmm0")], "shlq", 4);
+        assert!(
+            r.is_err(),
+            "shlq $1, %xmm0 must be rejected (non-GP dest), got {:?}",
+            r
+        );
+    }
+
+    #[test]
+    fn test_encode_shift_regression_fs_segment_prefix() {
+        let ops = [imm_op(0), mem_op("rax", Some("fs"))];
+        let sut = sut_bytes(&ops, "shlb", 4).expect("encode shlb $0, %fs:(%rax)");
+        let mc = llvm_mc_bytes("shlb $0, %fs:(%rax)").expect("llvm-mc");
+        assert_eq!(
+            sut, mc,
+            "FS override prefix 0x64 must be emitted before the shift opcode"
+        );
+    }
+
+    #[test]
+    fn test_encode_shift_regression_imm8_overflow_256() {
+        let r = sut_bytes(&[imm_op(256), reg_op("rax")], "shlq", 4);
+        assert!(
+            r.is_err(),
+            "shlq $256, %rax must be rejected (imm8 overflow), got {:?}",
+            r
+        );
+    }
+}

@@ -1,31 +1,51 @@
-# PBT Campaign Report: encode_sbc
+# PBT Campaign Report: encode_shift
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sbc
-**Tests:** 13
-**Result:** 9 passing, 4 bugs
-**Effort tier:** standard (1 coverage-driven sweep round; coverage_gaps had no profraw — manual arm audit of get_reg success / None / other / extra / mixed width / SP / FP / lr)
+**Modules tested:** encode_shift (src/backend/x86/assembler/encoder/gp_integer.rs)
+**Tests:** 12 properties + 6 KAT + 4 regression witnesses
+**Result:** 9 passing properties, 3 failing properties (3 bugs); 6 KAT passing; 4 regression witnesses failing as intended
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 metamorphic/differential required, 1 strengthening/coverage-sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sbc | 13 properties + 3 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_shift | 12 properties (9 pass / 3 fail), 6 KAT, 4 regressions | 3 | differential (llvm-mc x86_64), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **Extra shift operand ignored.** Failing property `encode_sbc_neg_extra_shift`. Shrunk witness: rd=0, rn=0, rm=0, is_64=false, kind="lsl", amt=0 — `sbc w0, w0, w0, lsl #0` encodes as Word(0x5a000000) instead of Err. llvm-mc: invalid operand. Law: ARM ARM Add/subtract (with carry) has no shift field (bits 15:10 fixed 000000); README.md:14 gas-compat. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_extra_shift_ignored.md`.
+### 1. encode_shift_diff_mem — missing FS segment prefix
+- **Failing property:** encode_shift_diff_mem (differential vs llvm-mc)
+- **Shrunk counterexample:** kind=shl, suf=b, base=rax, form=imm, count=0, seg=Some("fs") → AT&T `shlb $0, %fs:(%rax)`
+- **Expected:** `[0x64, 0xc0, 0x20, 0x00]`
+- **Actual:** `[0xc0, 0x20, 0x00]`
+- **Severity:** high
+- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced.
+- **Bug report:** pbt-out/bug_reports/encode_shift_missing_segment_prefix.md
+- **Regression test:** `test_encode_shift_regression_fs_segment_prefix`
 
-2. **Mixed X/W widths accepted.** Failing property `encode_sbc_neg_mixed_width`. Shrunk witness: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=true — `sbc w0, w0, x0` encodes as Word(0x5a000000) instead of Err. llvm-mc rejects mixed width; ARM ARM Rd/Rn/Rm same width; sf is taken only from Rd. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_mixed_width.md`.
+### 2. encode_shift_neg_mixed_size_and_non_gp — size-mismatched dest accepted
+- **Failing property:** encode_shift_neg_mixed_size_and_non_gp (negative_error)
+- **Shrunk counterexample:** kind=shl, suf=w, dest=al → AT&T `shlw $1, %al`
+- **Expected:** Err
+- **Actual:** Ok([0x66, 0xd1, 0xe0]) (encodes as `shlw %ax`)
+- **Severity:** high
+- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced.
+- **Bug report:** pbt-out/bug_reports/encode_shift_accepts_mismatched_and_non_gp_dest.md
+- **Regression test:** `test_encode_shift_regression_mixed_size_shlw_al`
 
-3. **SP/WSP encoded as ZR.** Failing property `encode_sbc_neg_sp`. Shrunk witness: which=0, is_64=false, a=0, b=0 — `sbc wsp, w0, w0` encodes as Word(0x5a00001f) instead of Err. llvm-mc rejects SP; ARM ARM register 31 is XZR/WZR never SP. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_sp_as_zr.md`.
-
-4. **FP/SIMD names encoded as GPRs.** Failing property `encode_sbc_neg_fp_reg`. Shrunk witness: which=0, prefix="d", n=0 — `sbc d0, x1, x2` encodes as Word(0x5a020020) instead of Err. llvm-mc rejects FP operands; ARM ARM Rd/Rn/Rm are GPRs. Severity: medium. Report: `pbt-out/bug_reports/encode_sbc_fp_reg.md`.
-
-All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
+### 3. encode_shift_neg_imm_overflow — imm8 count truncated
+- **Failing property:** encode_shift_neg_imm_overflow (negative_error)
+- **Shrunk counterexample:** kind=shl, suf=b, dst=al, count=256 → AT&T `shlb $256, %al`
+- **Expected:** Err
+- **Actual:** Ok (256 truncated to 0 via `count as u8`)
+- **Severity:** medium
+- **Serial reconfirm:** deterministic regression `shlq $256, %rax` → Ok([0x48, 0xc1, 0xe0, 0x00])
+- **Bug report:** pbt-out/bug_reports/encode_shift_truncates_imm8_count.md
+- **Regression test:** `test_encode_shift_regression_imm8_overflow_256`
 
 ## Design Caveats
 
@@ -35,40 +55,50 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_sbc_pbt) | 3 KAT + 13 properties + 4 regression witnesses |
+| src/backend/x86/assembler/encoder/gp_integer.rs (mod encode_shift_pbt) | 12 properties, 6 KAT, 4 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/FUNCTION_INDEX.md — encode_sbc marked yes
-- pbt-out/COVERAGE.md — encode_sbc row appended
-- pbt-out/COVERAGE_STATUS.md — updated
-- pbt-out/INVARIANTS.md — encode_sbc section prepended
-- pbt-out/bug_reports/encode_sbc_extra_shift_ignored.md
-- pbt-out/bug_reports/encode_sbc_mixed_width.md
-- pbt-out/bug_reports/encode_sbc_sp_as_zr.md
-- pbt-out/bug_reports/encode_sbc_fp_reg.md
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_shift_missing_segment_prefix.md
+- pbt-out/bug_reports/encode_shift_accepts_mismatched_and_non_gp_dest.md
+- pbt-out/bug_reports/encode_shift_truncates_imm8_count.md
+
+## Contract-surface sweep
+
+STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw; sweep was a manual arm audit of encode_shift. Added `encode_shift_neg_one_operand_non_rm` (1-operand Imm/Label/Indirect Err) and `encode_shift_rip_reloc_addend` (RIP + trailing imm8 addend -5). Both passing. Close: tier round done.
+
+## Harness
+
+- **Test layout:** inline `#[cfg(test)] mod encode_shift_pbt` in gp_integer.rs
+- **Buildability probe:** `cargo test --lib test_ascii_passthrough` → 1 passed
+- **Harness placement:** rung 1, `cargo test --lib encode_shift_pbt`, proptest 1.11 already in Cargo.toml
+- **Build contract:** `cargo check --lib`; tests via `cargo test --lib` (official cargo harness)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 11:43 (campaign: coverage)
-> Files: 7/7 scanned (100%) | Functions: 52/229 total | PBT candidates: 52 | Tested: 52 (100%) | 0 pass, 52 fail
+> Last updated: 2026-09-14 12:01 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 53/253 total | PBT candidates: 53 | Tested: 53 (100%) | 0 pass, 53 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 7 |
-| Files scanned | 7 / 7 (100%) |
-| Total functions (all files) | 229 |
-| PBT candidates (from FUNCTION_INDEX) | 52 |
-| **Tested (of PBT candidates)** | **52 / 52 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 52 / 0 |
-| **Overall (tested / all functions)** | **52 / 229 (23%)** |
+| Total source files | 8 |
+| Files scanned | 8 / 8 (100%) |
+| Total functions (all files) | 253 |
+| PBT candidates (from FUNCTION_INDEX) | 53 |
+| **Tested (of PBT candidates)** | **53 / 53 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 53 / 0 |
+| **Overall (tested / all functions)** | **53 / 253 (21%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -76,13 +106,13 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 52 | 52 | 0 | 100% |
+|  | 53 | 53 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 52 | 52 | 0 | 100% |
+| unknown | 53 | 53 | 0 | 100% |
 
 ## File Coverage
 
@@ -92,6 +122,7 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 17 | 17 | 100% | covered |
+| gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 9 | 9 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
@@ -103,6 +134,7 @@ All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 
 | Function | Source |
 |----------|--------|
+| encode_shift | gp_integer.rs |
 | encode_add_sub | data_processing.rs |
 | cast_float_to_target | constants.rs |
 | classify_cast_with_f128 | cast.rs |

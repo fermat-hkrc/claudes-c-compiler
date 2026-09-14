@@ -1,4 +1,4 @@
-> Total files: 7 | Total functions: 229 | PBT candidates: 52 | Excluded: 177
+> Total files: 8 | Total functions: 253 | PBT candidates: 53 | Excluded: 200
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -231,3 +231,32 @@
 | encode_fneg_d | pseudo.rs | 564 | function | no | out of campaign scope |
 | extract_modifier_symbol | pseudo.rs | 573 | function | no | out of campaign scope |
 | parse_reloc_modifier | pseudo.rs | 583 | function | no | out of campaign scope |
+| encode_mov | gp_integer.rs | 6 | method | no | out of campaign scope |
+| encode_mov_imm_reg | gp_integer.rs | 58 | method | no | out of campaign scope |
+| encode_mov_rr | gp_integer.rs | 127 | method | no | out of campaign scope |
+| encode_mov_mem_reg | gp_integer.rs | 144 | method | no | out of campaign scope |
+| encode_mov_reg_mem | gp_integer.rs | 162 | method | no | out of campaign scope |
+| encode_mov_imm_mem | gp_integer.rs | 179 | method | no | out of campaign scope |
+| encode_movabs | gp_integer.rs | 222 | method | no | out of campaign scope |
+| encode_movsx | gp_integer.rs | 250 | method | no | out of campaign scope |
+| encode_movzx | gp_integer.rs | 284 | method | no | out of campaign scope |
+| encode_lea | gp_integer.rs | 321 | method | no | out of campaign scope |
+| encode_push | gp_integer.rs | 336 | method | no | out of campaign scope |
+| encode_pop | gp_integer.rs | 378 | method | no | out of campaign scope |
+| encode_alu | gp_integer.rs | 404 | method | no | out of campaign scope |
+| encode_test | gp_integer.rs | 562 | method | no | out of campaign scope |
+| encode_imul | gp_integer.rs | 641 | method | no | out of campaign scope |
+| encode_unary_rm | gp_integer.rs | 707 | method | no | out of campaign scope |
+| encode_inc_dec | gp_integer.rs | 733 | method | no | out of campaign scope |
+| encode_shift | gp_integer.rs | 756 | method | yes | - |
+| encode_double_shift | gp_integer.rs | 836 | method | no | out of campaign scope |
+| encode_bswap | gp_integer.rs | 863 | method | no | out of campaign scope |
+| encode_bit_count | gp_integer.rs | 878 | method | no | out of campaign scope |
+| encode_setcc | gp_integer.rs | 915 | method | no | out of campaign scope |
+| encode_cmovcc | gp_integer.rs | 949 | method | no | out of campaign scope |
+| encode_jmp | gp_integer.rs | 988 | method | no | out of campaign scope |
+| encode_jcc | gp_integer.rs | 1028 | method | no | out of campaign scope |
+| encode_call | gp_integer.rs | 1050 | method | no | out of campaign scope |
+| encode_xchg | gp_integer.rs | 1089 | method | no | out of campaign scope |
+| encode_cmpxchg | gp_integer.rs | 1116 | method | no | out of campaign scope |
+| encode_xadd | gp_integer.rs | 1134 | method | no | out of campaign scope |
