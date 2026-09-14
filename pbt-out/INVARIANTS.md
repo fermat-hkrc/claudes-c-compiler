@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_ubfiz)
+
+- Valid UBFIZ Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as UBFX/LSL/LSR aliases; the 32-bit word still matches.
+- Success-path word is ARM Bitfield Move UBFM: sf 10 100110 N immr imms Rn Rd with N=sf, immr=(-lsb MOD R), imms=width-1. Equivalently w = (sf<<31)|(0b10<<29)|(0b100110<<23)|(sf<<22)|(immr<<16)|(imms<<10)|(rn<<5)|rd. opc bits[30:29]=10.
+- Algebraic alias: encode_ubfiz(Rd,Rn,#lsb,#width) = encode_ubfm(Rd,Rn,#(-lsb rem_euclid R),#(width-1)) (1000 cases).
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only (1000 cases).
+- Fewer than 4 operands, non-register/non-imm kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `ubfiz w0, w1, #0, #1` = 0x53000020; `ubfiz w0, w1, #1, #1` = 0x531f0020; `ubfiz x0, x1, #1, #8` = 0xd37f1c20; `ubfiz wzr, wzr, #31, #1` = 0x530103ff; `ubfiz x0, xzr, #63, #1` = 0xd34103e0; `ubfiz lr, x1, #8, #16` = 0xd3783c3e.
+- Extra operand, SP/WSP, mixed W/X, FP/SIMD prefixes, and out-of-range lsb/width currently encode or panic instead of Err (see bugs).
+
+## Environment (encode_ubfiz)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Bitfield Move UBFIZ alias of UBFM: UBFIZ <Rd>, <Rn>, #<lsb>, #<width> equivalent to UBFM <Rd>, <Rn>, #(-lsb MOD datasize), #(width-1). Encoding sf 10 100110 N immr imms Rn Rd; N=sf; register 31 is ZR not SP. Constraints 0<=lsb<datasize, 1<=width<=datasize-lsb.
+- Dispatch: encoder/mod.rs:889 "ubfiz" => encode_ubfiz(operands).
+- Callers: encoder dispatch only.
+- Sibling encode_ubfm is the raw immr/imms form (algebraic alias after ARM mapping, not a same-job differential). Sibling encode_sbfiz/encode_ubfx/encode_bfi are different opc or alias mapping.
+- encode_ubfiz does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31; `width - 1` panics in debug when width=0; immr uses wrapping_sub so lsb>=R encodes rather than Err.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_ubfiz (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / lsb-width).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ubfiz_*.md.
+
 # Confirmed invariants (encode_sbfiz)
 
 - Valid SBFIZ Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as SBFX or ASR aliases; the 32-bit word still matches.

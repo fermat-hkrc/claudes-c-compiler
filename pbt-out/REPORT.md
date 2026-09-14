@@ -1,66 +1,31 @@
-# PBT Campaign Report: encode_sbfiz
+# PBT Campaign Report: encode_ubfiz
 
 ## Summary
 
 **Date:** 2026-09-14
-**Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sbfiz
-**Tests:** 13 properties (8 passing, 5 failing) plus 6 passing KAT and 5 failing regression witnesses
+**Repository:** claudes-c-compiler
+**Modules tested:** encode_ubfiz
+**Tests:** 13 properties (plus 6 KAT + 5 regression witnesses)
 **Result:** 8 passing, 5 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening/sweep round)
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 contract-surface sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sbfiz | 13 properties + 6 KAT + 5 regressions | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_ubfiz | 13 properties (8 pass / 5 fail); 6 KAT pass; 5 regression witnesses fail | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### encode_sbfiz ignores extra operands
-- **Failing property:** encode_sbfiz_neg_extra_operand (negative_error)
-- **Shrunk counterexample:** is_64=false, rd=0, rn=0, lsb=0, width=1, extra=Reg("x0")
-- **Falsifiable:** ∀ extra. encode_sbfiz([w{rd}, w{rn}, #lsb, #width, extra]) is Err — fails on extra=Reg("x0")
-- **Expected:** Err (llvm-mc rejects a 5th operand)
-- **Actual:** Ok(Word) — encode_sbfiz never checks operands.len()
-- **reproduce:** PBT_TEST_JOBS=1 cargo test --lib encode_sbfiz_neg_extra_operand -- --test-threads=1
-- **Bug report:** pbt-out/bug_reports/encode_sbfiz_extra_operand.md
+1. **encode_ubfiz silently ignores a 5th operand** — law: UBFIZ has exactly four operands. Minimal input: `ubfiz w0, w0, #0, #1, x0`. Expected Err; actual Ok(Word) because `encode_ubfiz` never checks `operands.len()`. Serial reconfirm with `PBT_TEST_JOBS=1`. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_extra_operand.md`. Regression: `test_encode_ubfiz_regression_extra_operand`.
 
-### encode_sbfiz accepts SP/WSP as register 31
-- **Failing property:** encode_sbfiz_neg_sp (negative_error)
-- **Shrunk counterexample:** which=0, sp64=false, is_64=false, other=0 (wsp, w0, #0, #1)
-- **Falsifiable:** ∀ which,sp. encode_sbfiz(ops with SP) is Err — fails on wsp at slot 0
-- **Expected:** Err (ARM ARM register 31 is ZR not SP)
-- **Actual:** Ok(Word) — parse_reg_num maps sp/wsp to 31
-- **reproduce:** PBT_TEST_JOBS=1 cargo test --lib encode_sbfiz_neg_sp -- --test-threads=1
-- **Bug report:** pbt-out/bug_reports/encode_sbfiz_sp.md
+2. **encode_ubfiz accepts SP/WSP as register 31** — law: register 31 is ZR not SP. Minimal input: `ubfiz wsp, w0, #0, #1`. Expected Err; actual Ok(Word) via `parse_reg_num` mapping sp/wsp to 31. Serial reconfirm. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_sp.md`. Regression: `test_encode_ubfiz_regression_sp`.
 
-### encode_sbfiz panics or encodes out-of-range #lsb/#width
-- **Failing property:** encode_sbfiz_neg_lsb_width (negative_error)
-- **Shrunk counterexample:** is_64=false, rd=0, rn=0, lsb=0, width=0
-- **Falsifiable:** ∀ (lsb,width) outside ARM range. encode_sbfiz is Err (no panic) — fails on width=0
-- **Expected:** Err (llvm-mc: expected integer in range [1, 32])
-- **Actual:** panic in debug (`attempt to subtract with overflow` at bitfield.rs:70 `width - 1`)
-- **reproduce:** PBT_TEST_JOBS=1 cargo test --lib encode_sbfiz_neg_lsb_width -- --test-threads=1
-- **Bug report:** pbt-out/bug_reports/encode_sbfiz_lsb_width.md
+3. **encode_ubfiz panics or encodes out-of-range #lsb/#width** — law: 0<=lsb<R, 1<=width<=R-lsb. Minimal input: `ubfiz w0, w0, #0, #0` panics in debug at `width - 1` (bitfield.rs:85). llvm-mc rejects with range error. Serial reconfirm. Severity: high. Report: `pbt-out/bug_reports/encode_ubfiz_lsb_width.md`. Regression: `test_encode_ubfiz_regression_width_zero`.
 
-### encode_sbfiz accepts mixed W/X widths
-- **Failing property:** encode_sbfiz_neg_mixed_width (negative_error)
-- **Shrunk counterexample:** rd=0, rn=0, rd64=true, rn64=false (x0, w0)
-- **Falsifiable:** ∀ rd,rn,rd64≠rn64. encode_sbfiz mixed W/X is Err — fails on x0, w0
-- **Expected:** Err (llvm-mc rejects mixed widths)
-- **Actual:** Ok(Word) — sf taken from Rd only; Rn is_64 discarded
-- **reproduce:** PBT_TEST_JOBS=1 cargo test --lib encode_sbfiz_neg_mixed_width -- --test-threads=1
-- **Bug report:** pbt-out/bug_reports/encode_sbfiz_mixed_width.md
+4. **encode_ubfiz accepts mixed W/X register widths** — law: Rd and Rn must share datasize. Minimal input: `ubfiz x0, w0, #0, #1`. Expected Err; actual Ok(Word) because sf is taken from Rd only. Serial reconfirm. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_mixed_width.md`. Regression: `test_encode_ubfiz_regression_mixed_width`.
 
-### encode_sbfiz accepts FP/SIMD registers as GPR
-- **Failing property:** encode_sbfiz_neg_fp (negative_error)
-- **Shrunk counterexample:** which=0, prefix="d", n=0 (d0, x1)
-- **Falsifiable:** ∀ which,prefix,n. encode_sbfiz FP prefix is Err — fails on d0 at slot 0
-- **Expected:** Err (llvm-mc rejects d/s/q/v/h/b)
-- **Actual:** Ok(Word) — parse_reg_num accepts those prefixes
-- **reproduce:** PBT_TEST_JOBS=1 cargo test --lib encode_sbfiz_neg_fp -- --test-threads=1
-- **Bug report:** pbt-out/bug_reports/encode_sbfiz_fp.md
+5. **encode_ubfiz accepts FP/SIMD registers as GPR operands** — law: UBFIZ operands are GPRs only. Minimal input: `ubfiz d0, x1, #0, #1`. Expected Err; actual Ok(Word) because `parse_reg_num` accepts d/s/q/v/h/b. Serial reconfirm. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_fp.md`. Regression: `test_encode_ubfiz_regression_fp`.
 
 ## Design Caveats
 
@@ -70,31 +35,35 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_sbfiz_pbt) | 13 properties + 6 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_ubfiz_pbt) | 13 properties + 6 KAT + 5 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_sbfiz_extra_operand.md
-- pbt-out/bug_reports/encode_sbfiz_sp.md
-- pbt-out/bug_reports/encode_sbfiz_lsb_width.md
-- pbt-out/bug_reports/encode_sbfiz_mixed_width.md
-- pbt-out/bug_reports/encode_sbfiz_fp.md
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — coverage ledger row for encode_ubfiz
+- pbt-out/COVERAGE_STATUS.md — scanned vs tested
+- pbt-out/FUNCTION_INDEX.md — encode_ubfiz marked PBT candidate
+- pbt-out/INVARIANTS.md — confirmed encode_ubfiz invariants
+- pbt-out/bug_reports/encode_ubfiz_extra_operand.md
+- pbt-out/bug_reports/encode_ubfiz_sp.md
+- pbt-out/bug_reports/encode_ubfiz_lsb_width.md
+- pbt-out/bug_reports/encode_ubfiz_mixed_width.md
+- pbt-out/bug_reports/encode_ubfiz_fp.md
 
-Sweep close: coverage_gaps had no LLVM profraw; manual ARM audit added encode_sbfiz_diff_alt_spellings, encode_sbfiz_neg_nonreg, encode_sbfiz_neg_invalid_name (passing) and encode_sbfiz_neg_mixed_width / encode_sbfiz_neg_fp (failing, filed as bugs). Tier round spent and documented surface covered.
+## Sweep
+
+Contract-surface sweep round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_ubfiz (invalid-name / nonreg / alt-spellings / mixed / FP). Added encode_ubfiz_diff_alt_spellings, encode_ubfiz_neg_nonreg, encode_ubfiz_neg_invalid_name (passing) and encode_ubfiz_neg_mixed_width / encode_ubfiz_neg_fp (failing, filed). Closed: tier round spent and documented surface covered.
+
+First batch was not all-green (3 negative contracts failed), so the extra all-pass strengthening round was not owed; the required metamorphic/differential properties ran (llvm-mc differential + UBFIZ/UBFM alias + Rd/Rn field independence).
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 21:00 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 88/289 total | PBT candidates: 88 | Tested: 88 (100%) | 0 pass, 88 fail
+> Last updated: 2026-09-14 21:13 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 89/289 total | PBT candidates: 89 | Tested: 89 (100%) | 0 pass, 89 fail
 
 ## Summary
 
@@ -103,10 +72,10 @@ Sweep close: coverage_gaps had no LLVM profraw; manual ARM audit added encode_sb
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 88 |
-| **Tested (of PBT candidates)** | **88 / 88 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 88 / 0 |
-| **Overall (tested / all functions)** | **88 / 289 (30%)** |
+| PBT candidates (from FUNCTION_INDEX) | 89 |
+| **Tested (of PBT candidates)** | **89 / 89 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 89 / 0 |
+| **Overall (tested / all functions)** | **89 / 289 (31%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -114,13 +83,13 @@ Sweep close: coverage_gaps had no LLVM profraw; manual ARM audit added encode_sb
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 88 | 88 | 0 | 100% |
+|  | 89 | 89 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 88 | 88 | 0 | 100% |
+| unknown | 89 | 89 | 0 | 100% |
 
 ## File Coverage
 
@@ -231,3 +200,4 @@ Sweep close: coverage_gaps had no LLVM profraw; manual ARM audit added encode_sb
 | encode_rev | bitfield.rs |
 | encode_rev16 | bitfield.rs |
 | encode_rev32 | bitfield.rs |
+| encode_ubfiz | bitfield.rs |

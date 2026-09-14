@@ -90,3 +90,4 @@
 | encode_rev | bitfield.rs | bitfield.rs | cargo test --lib | 7 passing / 4 failing properties (plus 6 passing KAT + 4 failing regression witnesses; 4 bugs; sweep invalid-name/nonreg/alt-spellings passing) |
 | encode_rev16 | bitfield.rs | bitfield.rs | cargo test --lib | 7 passing / 4 failing properties (plus 6 passing KAT + 4 failing regression witnesses; 4 bugs; sweep invalid-name/nonreg/alt-spellings passing) |
 | encode_rev32 | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 6 failing properties (plus 8 passing KAT + 6 failing regression witnesses; 6 bugs; sweep invalid-name/nonreg/alt-spellings passing, mixed/fp/neon-invalid-arr failing) |
+| encode_ubfiz | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing) |
