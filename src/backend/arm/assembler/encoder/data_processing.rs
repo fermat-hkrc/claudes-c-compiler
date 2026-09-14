@@ -16049,3 +16049,617 @@ mod encode_uxtw_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_smulh_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:275 smulh dispatch; ARM ARM Data-processing (3 source)
+    //   SMULH Xd, Xn, Xm: sf=1 op54=00 11011 op31=010 Rm o0=0 Ra=11111 Rn Rd;
+    //   data_processing.rs:697-703; README.md:214 lists smulh
+    // Stronger considered:
+    //   - State machine: rejected — encode_smulh is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree SMULH decoder
+    //   - encode_umulh as differential sibling: rejected — same-job gate fails (U=1 unsigned)
+    // Weaker available: algebraic.metamorphic (U bit vs UMULH),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / wrong width / SP)
+    // Differential: candidate=encode_smulh, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=operands <-> asm text `smulh Xd, Xn, Xm`
+
+    use super::{encode_smulh, encode_umulh};
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const SMULH_BASE: u32 = 0x9B40_7C00; // sf=1 op31=010 o0=0 Ra=31, Rd=Rn=Rm=0
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn xreg(n: u32) -> String {
+        if n == 31 {
+            "xzr".into()
+        } else {
+            format!("x{n}")
+        }
+    }
+
+    fn wreg(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{n}")
+        }
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if is_64 {
+            xreg(n)
+        } else {
+            wreg(n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_smulh(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn umulh_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_umulh(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(-1)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8h".into(),
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_smulh_kat_llvm_mc_x0_x1_x2() {
+        let want = 0x9b427c20u32;
+        let mc = llvm_mc_word("smulh x0, x1, x2").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_smulh_kat_llvm_mc_xzr_xzr_xzr() {
+        let want = 0x9b5f7fffu32;
+        let mc = llvm_mc_word("smulh xzr, xzr, xzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("xzr".into()),
+            Operand::Reg("xzr".into()),
+            Operand::Reg("xzr".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_smulh_kat_llvm_mc_lr_x1_x30() {
+        let want = 0x9b5e7c3eu32;
+        let mc = llvm_mc_word("smulh lr, x1, x30").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [
+            Operand::Reg("lr".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x30".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_smulh_kat_llvm_mc_x0_x1_xzr() {
+        let want = 0x9b5f7c20u32;
+        let mc = llvm_mc_word("smulh x0, x1, xzr").expect("llvm-mc XZR Rm KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("xzr".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_smulh_diff_valid_gpr(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            use_lr in any::<bool>(),
+        ) {
+            let dest = if use_lr && rd == 30 {
+                "lr".to_string()
+            } else {
+                xreg(rd)
+            };
+            let src_n = if use_lr && rn == 30 {
+                "lr".to_string()
+            } else {
+                xreg(rn)
+            };
+            let src_m = if use_lr && rm == 30 {
+                "lr".to_string()
+            } else {
+                xreg(rm)
+            };
+            let asm = format!("smulh {}, {}, {}", dest, src_n, src_m);
+            let ops = [
+                Operand::Reg(dest),
+                Operand::Reg(src_n),
+                Operand::Reg(src_m),
+            ];
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "SMULH mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_smulh_xor_umulh_u_bit(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+        ) {
+            let ops = [
+                Operand::Reg(xreg(rd)),
+                Operand::Reg(xreg(rn)),
+                Operand::Reg(xreg(rm)),
+            ];
+            let s = sut_word(&ops).expect("SMULH");
+            let u = umulh_word(&ops).expect("UMULH");
+            prop_assert_eq!(s ^ u, 1u32 << 23, "SMULH XOR UMULH must be U bit 23");
+        }
+
+        #[test]
+        fn encode_smulh_arm_fields(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+        ) {
+            let ops = [
+                Operand::Reg(xreg(rd)),
+                Operand::Reg(xreg(rn)),
+                Operand::Reg(xreg(rm)),
+            ];
+            let w = sut_word(&ops).expect("SUT");
+            let want = SMULH_BASE | (rm << 16) | (rn << 5) | rd;
+            prop_assert_eq!(w, want, "ARM ARM SMULH field layout");
+            prop_assert_eq!(w >> 31, 1, "sf must be 1");
+            prop_assert_eq!((w >> 21) & 0x3ff, 0b00_11011_010, "bits[30:21]");
+            prop_assert_eq!((w >> 16) & 0x1f, rm, "Rm");
+            prop_assert_eq!((w >> 15) & 1, 0, "o0 must be 0");
+            prop_assert_eq!((w >> 10) & 0x1f, 31, "Ra must be 11111");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_smulh_neg_arity(
+            len in 0usize..=2,
+            a in 0u32..=31,
+            b in 0u32..=31,
+        ) {
+            let mut ops = Vec::new();
+            if len >= 1 {
+                ops.push(Operand::Reg(xreg(a)));
+            }
+            if len >= 2 {
+                ops.push(Operand::Reg(xreg(b)));
+            }
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "SMULH with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_smulh_neg_extra_operand(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(xreg(rd)),
+                Operand::Reg(xreg(rn)),
+                Operand::Reg(xreg(rm)),
+                extra,
+            ];
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "SMULH has no 4th operand; extra operand must Err (llvm-mc rejects it)"
+            );
+        }
+
+        #[test]
+        fn encode_smulh_neg_wrong_width(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+            rm64 in any::<bool>(),
+        ) {
+            prop_assume!(!(rd64 && rn64 && rm64));
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+                Operand::Reg(gpr(rm64, rm)),
+            ];
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "SMULH requires Xd, Xn, Xm; rd64={} rn64={} rm64={} must Err (llvm-mc rejects it)",
+                rd64,
+                rn64,
+                rm64
+            );
+        }
+
+        #[test]
+        fn encode_smulh_neg_sp(
+            which in 0u32..=2,
+            is_64 in any::<bool>(),
+            a in 0u32..=30,
+            b in 0u32..=30,
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let mut names = [xreg(a), xreg(b), xreg(a)];
+            names[which as usize] = sp.to_string();
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "SP/WSP is not a valid SMULH operand (which={} names={:?})",
+                which,
+                names
+            );
+        }
+
+        #[test]
+        fn encode_smulh_diff_alt_spellings(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            dest_spell in 0u32..=4,
+            src_n_spell in 0u32..=4,
+            src_m_spell in 0u32..=4,
+        ) {
+            let dest = match dest_spell {
+                0 if rd == 31 => "x31".to_string(),
+                1 if rd == 31 => "XZR".to_string(),
+                2 if rd == 30 => "LR".to_string(),
+                3 => xreg(rd).to_uppercase(),
+                _ => xreg(rd),
+            };
+            let src_n = match src_n_spell {
+                0 if rn == 31 => "x31".to_string(),
+                1 if rn == 31 => "XZR".to_string(),
+                2 if rn == 30 => "LR".to_string(),
+                3 => xreg(rn).to_uppercase(),
+                _ => xreg(rn),
+            };
+            let src_m = match src_m_spell {
+                0 if rm == 31 => "x31".to_string(),
+                1 if rm == 31 => "XZR".to_string(),
+                2 if rm == 30 => "LR".to_string(),
+                3 => xreg(rm).to_uppercase(),
+                _ => xreg(rm),
+            };
+            let asm = format!("smulh {}, {}, {}", dest, src_n, src_m);
+            let ops = [
+                Operand::Reg(dest),
+                Operand::Reg(src_n),
+                Operand::Reg(src_m),
+            ];
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "SMULH alt-spelling mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_smulh_metamorphic_fields(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+        ) {
+            let base_ops = [
+                Operand::Reg(xreg(rd)),
+                Operand::Reg(xreg(rn)),
+                Operand::Reg(xreg(rm)),
+            ];
+            let w = sut_word(&base_ops).expect("base");
+            let w_rd = sut_word(&[
+                Operand::Reg(xreg(rd + 1)),
+                Operand::Reg(xreg(rn)),
+                Operand::Reg(xreg(rm)),
+            ]).expect("rd+1");
+            let w_rn = sut_word(&[
+                Operand::Reg(xreg(rd)),
+                Operand::Reg(xreg(rn + 1)),
+                Operand::Reg(xreg(rm)),
+            ]).expect("rn+1");
+            let w_rm = sut_word(&[
+                Operand::Reg(xreg(rd)),
+                Operand::Reg(xreg(rn)),
+                Operand::Reg(xreg(rm + 1)),
+            ]).expect("rm+1");
+            prop_assert_eq!(w_rd & 0x1f, rd + 1, "Rd+1 updates Rd field");
+            prop_assert_eq!(w_rd & !0x1fu32, w & !0x1fu32, "Rd+1 leaves other fields unchanged");
+            prop_assert_eq!((w_rn >> 5) & 0x1f, rn + 1, "Rn+1 updates Rn field");
+            prop_assert_eq!(w_rn & !(0x1fu32 << 5), w & !(0x1fu32 << 5), "Rn+1 leaves other fields unchanged");
+            prop_assert_eq!((w_rm >> 16) & 0x1f, rm + 1, "Rm+1 updates Rm field");
+            prop_assert_eq!(w_rm & !(0x1fu32 << 16), w & !(0x1fu32 << 16), "Rm+1 leaves other fields unchanged");
+        }
+
+        #[test]
+        fn encode_smulh_neg_fp(
+            which in 0u32..=2,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+            ];
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "FP/SIMD register {} is not a valid SMULH operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_smulh_neg_nonreg(
+            which in 0u32..=2,
+            bad in non_reg_operand(),
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "non-register operand at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_smulh_neg_invalid_name(
+            which in 0u32..=2,
+            name in invalid_name(),
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+            ];
+            ops[which as usize] = Operand::Reg(name.clone());
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "invalid register name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_smulh_neg_wzr(
+            which in 0u32..=2,
+            a in 0u32..=30,
+            b in 0u32..=30,
+        ) {
+            let mut names = [xreg(a), xreg(b), xreg(a)];
+            names[which as usize] = "wzr".to_string();
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+            ];
+            prop_assert!(
+                encode_smulh(&ops).is_err(),
+                "WZR is the 32-bit form of XZR; SMULH has no W form (which={} names={:?})",
+                which,
+                names
+            );
+        }
+    }
+
+    fn non_reg_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            any::<i64>().prop_map(Operand::Imm),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            }),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8b".into(),
+            }),
+        ]
+    }
+
+    fn invalid_name() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "foo".into(),
+            "x32".into(),
+            "w32".into(),
+            "x".into(),
+            "r0".into(),
+            "".into(),
+            "x-1".into(),
+            "x99".into(),
+            "w".into(),
+        ])
+    }
+
+    #[test]
+    fn test_encode_smulh_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_smulh(&ops).is_err(),
+            "SMULH x0, x0, x0, x0 must Err; extra operand is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_smulh_regression_wrong_width() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_smulh(&ops).is_err(),
+            "SMULH w0, w0, w0 must Err; all three operands must be 64-bit X registers (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_smulh_regression_sp() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_smulh(&ops).is_err(),
+            "SMULH wsp, x0, x0 must Err; register 31 is XZR/WZR not SP/WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_smulh_regression_wzr() {
+        let ops = [
+            Operand::Reg("wzr".into()),
+            Operand::Reg("x0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_smulh(&ops).is_err(),
+            "SMULH wzr, x0, x0 must Err; WZR is the 32-bit form of XZR and SMULH has no W form (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_smulh_regression_fp() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_smulh(&ops).is_err(),
+            "SMULH d0, x1, x2 must Err; FP/SIMD registers are not SMULH operands (llvm-mc rejects it)"
+        );
+    }
+}

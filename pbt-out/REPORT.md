@@ -1,97 +1,65 @@
-# PBT Campaign Report: encode_prfm
+# PBT Campaign Report: encode_smulh
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_prfm
-**Tests:** 11 properties (plus 6 KAT + 9 regression witnesses)
-**Result:** 6 passing properties, 5 failing properties, 7 bugs
-**Effort tier:** standard (5–8 properties, ≥1000 cases, 1 coverage-driven sweep round)
+**Modules tested:** encode_smulh
+**Tests:** 13 properties (plus 4 KAT + 5 regression witnesses)
+**Result:** 8 passing, 5 failing properties, 4 unique SUT bugs (wzr is the register-31 case of wrong-width)
+**Effort tier:** standard (1 strengthening round + 1 contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_prfm | 6 passing / 5 failing properties (5 passing KAT, 1 failing KAT, 9 failing regressions) | 7 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_smulh | 13 properties (8 passing, 5 failing) | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **PRFM (register) wrong opcode bits** — `encode_prfm` uses `(0b10 << 23)` instead of `(0b10 << 22)`. `prfm pldl1keep, [x0, x1]` encodes as 0xF9216800 vs llvm-mc/ARM ARM 0xF8A16800.
-   - Law: ARM ARM / load_store.rs:764 `11 111 0 00 10 1 Rm option S 10 Rn Rt`
-   - Minimal input: `prfm pldl1keep, [x0, x1]` (also shrunk `[x0, x0]`)
-   - Expected: 0xF8A16800 — Actual: 0xF9216800
-   - Severity: high
-   - Report: pbt-out/bug_reports/encode_prfm_regoff_encoding.md
+1. **encode_smulh ignores extra operands.** Law: SMULH takes exactly three registers. Counterexample: `[Reg("x0"), Reg("x0"), Reg("x0"), Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg only reads indices 0..2. Severity: medium. Root cause: no operands.len() check. Impact: invalid GNU-style assembly is silently encoded. Fix: reject operands.len() != 3. Report: pbt-out/bug_reports/encode_smulh_extra_operand.md
 
-2. **Extra operands ignored** — `operands.len() < 2` does not reject a third operand. `prfm #0, [x0]` plus `Reg("x2")` encodes as 0xF9800000.
-   - Expected: Err — Actual: Ok(Word)
-   - Severity: medium
-   - Report: pbt-out/bug_reports/encode_prfm_extra_operand.md
+2. **encode_smulh accepts 32-bit W registers (including WZR).** Law: SMULH is 64-bit only (Xd, Xn, Xm). Counterexample: `smulh w0, w0, w0`; sweep also `smulh wzr, x0, x0`. Expected Err; actual Ok(Word) because is_64 from get_reg is discarded. Severity: medium. Impact: W-form assembly that llvm-mc rejects is encoded as the X-form with the same numbers. Fix: require is_64 on all three registers. Report: pbt-out/bug_reports/encode_smulh_wrong_width.md
 
-3. **W/WSP base accepted** — `prfm #0, [w0]` encodes as `[x0]`; `[wsp]` as `[sp]`.
-   - Expected: Err — Actual: Ok(Word)
-   - Severity: medium
-   - Report: pbt-out/bug_reports/encode_prfm_w_base.md
+3. **encode_smulh treats SP/WSP as XZR.** Law: register 31 is XZR, not SP. Counterexample: `smulh wsp, x0, x0`. Expected Err; actual Ok(Word) because parse_reg_num maps sp/wsp to 31. Severity: medium. Impact: SP operands encode as XZR. Fix: reject sp/wsp (or require XZR/Xn). Report: pbt-out/bug_reports/encode_smulh_sp_as_zr.md
 
-4. **XZR/x31 base accepted** — `prfm #0, [xzr]` and `[x31]` encode as `[sp]`.
-   - Expected: Err — Actual: Ok(Word)
-   - Severity: medium
-   - Report: pbt-out/bug_reports/encode_prfm_xzr_base.md
+4. **encode_smulh accepts FP/SIMD registers as GPRs.** Law: operands must be 64-bit GPRs. Counterexample: `smulh d0, x1, x2`. Expected Err; actual Ok(Word) because parse_reg_num accepts d/s/q/v/h/b and encode_smulh never calls is_fp_reg. Severity: medium. Impact: FP names encode using the numeric suffix. Fix: reject FP prefixes. Report: pbt-out/bug_reports/encode_smulh_fp_as_gpr.md
 
-5. **FP/SIMD base accepted** — `prfm #0, [d0]` encodes as `[x0]`.
-   - Expected: Err — Actual: Ok(Word)
-   - Severity: medium
-   - Report: pbt-out/bug_reports/encode_prfm_fp_base.md
+Serial reconfirm: all four reproduced with `PBT_TEST_JOBS=1`.
 
-6. **Bare W-index accepted** — `prfm pldl1keep, [x0, w0]` encodes as UXTW; llvm-mc requires explicit uxtw/sxtw.
-   - Expected: Err — Actual: Ok(Word)
-   - Severity: medium
-   - Report: pbt-out/bug_reports/encode_prfm_w_index.md
+## Design Caveats
 
-7. **Illegal shift amount accepted** — `lsl #1` encodes as S=1 (same as `lsl #3`). llvm-mc requires #0 or #3.
-   - Expected: Err — Actual: Ok(Word)
-   - Severity: medium
-   - Report: pbt-out/bug_reports/encode_prfm_bad_shift.md
-
-Serial reconfirm: all seven reproduced with `PBT_TEST_JOBS=1` / `--test-threads=1`.
-
-## Design Caveats (if any)
-
-- **PRFM (literal) is not implemented.** `Operand::Symbol` as the address operand returns `Err("prfm with symbol/label operand not yet supported")`.
-  Doc evidence: load_store.rs:759-761 — quote: `// PRFM (literal) with symbol reference is not yet supported` / `Err("prfm with symbol/label operand not yet supported")`.
-  Property `encode_prfm_neg_bad_prfop_and_name` (kind=Symbol address) asserts this Err and passes. README.md:11 gas-compatibility would include `prfm pldl1keep, label` (llvm-mc emits a PC-relative fixup); that is a documented gap, not a silent wrong encoding.
+(none)
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/load_store.rs (mod encode_prfm_pbt) | 11 properties + 6 KAT + 9 regressions |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_smulh_pbt) | 13 properties + 4 KAT + 5 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_prfm_regoff_encoding.md
-- pbt-out/bug_reports/encode_prfm_extra_operand.md
-- pbt-out/bug_reports/encode_prfm_w_base.md
-- pbt-out/bug_reports/encode_prfm_xzr_base.md
-- pbt-out/bug_reports/encode_prfm_fp_base.md
-- pbt-out/bug_reports/encode_prfm_w_index.md
-- pbt-out/bug_reports/encode_prfm_bad_shift.md
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — coverage ledger row for encode_smulh
+- pbt-out/COVERAGE_STATUS.md — campaign coverage stats
+- pbt-out/FUNCTION_INDEX.md — encode_smulh marked as PBT candidate
+- pbt-out/INVARIANTS.md — confirmed encode_smulh invariants
+- pbt-out/bug_reports/encode_smulh_extra_operand.md
+- pbt-out/bug_reports/encode_smulh_wrong_width.md
+- pbt-out/bug_reports/encode_smulh_sp_as_zr.md
+- pbt-out/bug_reports/encode_smulh_fp_as_gpr.md
+- pbt-out/bug_reports/encode_smulh_wzr.md
 
-Sweep close: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual arm audit added encode_prfm_neg_w_index (failing), encode_prfm_neg_bad_shift (failing), and encode_prfm_neg_bad_prfop_and_name (passing). Documented surface covered.
+Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm audit added encode_smulh_neg_wzr (failing, same wrong-width bug). Tier round spent; documented SMULH surface covered (arity / extra / W-width / WZR / SP / FP / nonreg / invalid-name / alt-spellings / field independence / llvm-mc differential).
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 16:03 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 68/253 total | PBT candidates: 68 | Tested: 68 (100%) | 0 pass, 68 fail
+> Last updated: 2026-09-14 16:17 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 69/253 total | PBT candidates: 69 | Tested: 69 (100%) | 0 pass, 69 fail
 
 ## Summary
 
@@ -100,10 +68,10 @@ Sweep close: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual a
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 68 |
-| **Tested (of PBT candidates)** | **68 / 68 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 68 / 0 |
-| **Overall (tested / all functions)** | **68 / 253 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 69 |
+| **Tested (of PBT candidates)** | **69 / 69 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 69 / 0 |
+| **Overall (tested / all functions)** | **69 / 253 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -111,13 +79,13 @@ Sweep close: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual a
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 68 | 68 | 0 | 100% |
+|  | 69 | 69 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 68 | 68 | 0 | 100% |
+| unknown | 69 | 69 | 0 | 100% |
 
 ## File Coverage
 
@@ -126,7 +94,7 @@ Sweep close: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual a
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 24 | 24 | 100% | covered |
+| data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
@@ -207,3 +175,4 @@ Sweep close: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual a
 | encode_ldrsw | load_store.rs |
 | encode_ldtr_sized | load_store.rs |
 | encode_prfm | load_store.rs |
+| encode_smulh | data_processing.rs |

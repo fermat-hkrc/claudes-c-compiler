@@ -1,4 +1,4 @@
-> Total files: 8 | Total functions: 253 | PBT candidates: 68 | Excluded: 185
+> Total files: 8 | Total functions: 253 | PBT candidates: 69 | Excluded: 184
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -21,7 +21,7 @@
 | encode_umaddl | data_processing.rs | 665 | function | yes | - |
 | encode_mneg | data_processing.rs | 677 | function | no | out of campaign scope |
 | encode_umulh | data_processing.rs | 688 | function | yes | - |
-| encode_smulh | data_processing.rs | 697 | function | no | out of campaign scope |
+| encode_smulh | data_processing.rs | 697 | function | yes | - |
 | encode_neg | data_processing.rs | 706 | function | no | out of campaign scope |
 | encode_negs | data_processing.rs | 727 | function | yes | - |
 | encode_mvn | data_processing.rs | 748 | function | yes | - |

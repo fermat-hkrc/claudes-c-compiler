@@ -1,290 +1,365 @@
-# Properties: encode_prfm
+# Properties: encode_smulh
 
-## encode_prfm_diff_imm_llvm_mc
+## encode_smulh_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest applicable oracle is differential vs llvm-mc, which implements the same GNU-style PRFM (immediate) contract the assembler README claims. State machine rejected (pure function). Round-trip rejected (no in-tree PRFM decoder). encode_ldr_str rejected as sibling (different job: GPR/SIMD dest, not prfop Rt).
-- Seed: load_store.rs encode_ldtr_sized_pbt llvm-mc differential
-- Formal: ∀ prfop ∈ named∪{0..31}, ∀ rn ∈ {0..31} with 31=SP, ∀ pimm ∈ {0,8,...,32760}. encode_prfm([prfop, Mem(Xn|SP, pimm)]) = llvm-mc("prfm prfop, [Xn|SP{, #pimm}]")
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: Strongest evidenced oracle is Differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function). Round-trip rejected (no in-tree SMULH decoder). encode_umulh rejected as same-job sibling (unsigned vs signed). Doc evidence: README.md:11 GNU-style assembly; README.md:214 lists smulh; encoder/mod.rs:275 dispatch; ARM ARM Data-processing (3 source) SMULH Xd,Xn,Xm.
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_diff_valid_gpr
+- Formal: ∀ rd,rn,rm ∈ {0..31}, spell ∈ {xN, xzR-if-31, lr-if-30}. encode_smulh([Reg(spell(rd)), Reg(spell(rn)), Reg(spell(rm))]) = Word(w) ∧ llvm-mc("smulh "+asm) = w
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_prfm
+function: encode_smulh
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [prfop, rn, pimm]
+  vars: [rd, rn, rm]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: encode_prfm([prfop, Mem(rn, pimm)])
-    rhs: llvm_mc(prfm_imm_asm(prfop, rn, pimm))
+    lhs: encode_smulh([Reg(xreg(rd)), Reg(xreg(rn)), Reg(xreg(rm))])
+    rhs: llvm_mc_word("smulh " + xreg(rd) + ", " + xreg(rn) + ", " + xreg(rm))
 generators:
-  prfop: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  pimm: { gen: int, min: 0, max: 32760, type: i64 }
-evidence: README.md:11 GNU gas compatibility; ARM ARM PRFM (immediate) 1111 1001 10 imm12 Rn Rt; encoder/mod.rs:917
-```
-
-## encode_prfm_diff_regoff_llvm_mc
-- Tier: 2
-- Rationale: Same differential contract for PRFM (register). ARM ARM and the SUT comment at load_store.rs:764 both specify 11 111 0 00 10 1 Rm option S 10 Rn Rt. llvm-mc is an independent assembler of that encoding.
-- Seed: load_store.rs encode_ldrsw_pbt register-offset differential
-- Formal: ∀ prfop ∈ named, ∀ rn ∈ {0..30}∪SP, ∀ rm ∈ {0..31} with 31=XZR, ∀ (index_width, extend, amount) ∈ valid PRFM extend set. encode_prfm([prfop, MemRegOffset(Xn|SP, Xm|Wm, extend, amount)]) = llvm-mc of the same assembly.
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: prfm pldl1keep, [x0, x0] — SUT 0xF9206800 vs llvm-mc 0xF8A06800 (idx=0, rn=0, rm=0, ext_kind=0, use_shift=false)
-- Bug report: pbt-out/bug_reports/encode_prfm_regoff_encoding.md
-
-```property
-function: encoder.load_store.encode_prfm
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [prfop, rn, rm, extend, amount]
-  relation:
-    op: eq
-    lhs: encode_prfm([prfop, MemRegOffset(rn, rm, extend, amount)])
-    rhs: llvm_mc(prfm_regoff_asm(prfop, rn, rm, extend, amount))
-generators:
-  prfop: { gen: int, min: 0, max: 17, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  extend: { gen: int, min: 0, max: 3, type: u32 }
-  amount: { gen: int, min: 0, max: 1, type: u32 }
-evidence: ARM ARM PRFM (register) 11 111 0 00 10 1 Rm option S 10 Rn Rt; load_store.rs:764 purpose comment; llvm-mc
+evidence: README.md:11 GNU-style assembly; encoder/mod.rs:275 "smulh" => encode_smulh; ARM ARM SMULH Xd,Xn,Xm
 ```
 
-## encode_prfm_arm_fields
-- Tier: 4
-- Rationale: Algebraic invariant from ARM ARM PRFM (immediate) bitfields. Stronger differential is also written; this unpacks the word independently of llvm-mc so a reference-connection failure cannot hide a packing bug. Not a copy of the SUT packer.
-- Seed: load_store.rs encode_ldtr_sized_arm_fields
-- Formal: ∀ prfop ∈ 0..31, ∀ rn ∈ 0..31, ∀ imm12 ∈ 0..4095. let w = encode_prfm([#prfop, Mem(Xn|SP, imm12*8)]). unpack(w) = (size=0b11, bits[29:24]=0b111001, opc=0b10, imm12, rn, rt=prfop)
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+## encode_smulh_xor_umulh_u_bit
+- Tier: 4c
+- Rationale: Algebraic metamorphic. SMULH and UMULH share the Data-processing (3 source) layout and differ only in op31 bit U (bit 23). Not a same-job differential (signed vs unsigned). Round-trip rejected. Doc evidence: ARM ARM op31=010 (SMULH) vs op31=110 (UMULH); data_processing.rs:692/701 purpose comments.
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_xor_smulh_u_bit
+- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_smulh(ops) XOR encode_umulh(ops) = 1<<23 where ops=[xrd,xrn,xrm]
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_prfm
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [prfop, rn, imm12]
-  relation:
-    op: holds
-    expr: unpack_prfm_imm(encode_prfm([Imm(prfop), Mem(rn, imm12*8)])) == (0b11, 0b111001, 0b10, imm12, rn, prfop)
-generators:
-  prfop: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  imm12: { gen: int, min: 0, max: 4095, type: u32 }
-evidence: ARM ARM PRFM (immediate) encoding 1111 1001 10 imm12 Rn Rt; load_store.rs:723-725
-```
-
-## encode_prfm_metamorphic_fields
-- Tier: 4
-- Rationale: Metamorphic independence of Rt (prfop), Rn, and imm12. Stronger round-trip rejected (no decoder). Documented field positions imply XOR/add relations.
-- Seed: load_store.rs encode_ldtr_sized_metamorphic_fields
-- Formal: ∀ prfop ∈ 0..30, ∀ rn ∈ 0..30, ∀ imm12 ∈ 0..4094. let w = encode(prfop, rn, imm12*8). encode(prfop+1) differs only in Rt (=prfop+1); encode(rn+1) differs only in Rn (=rn+1); encode(imm12+1) differs only in imm12 (=imm12+1)
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.load_store.encode_prfm
+function: encode_smulh
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [prfop, rn, imm12]
+  vars: [rd, rn, rm]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
-    op: holds
-    expr: encode(p+1,rn,i) ^ encode(p,rn,i) == 1 && encode(p,rn+1,i) ^ encode(p,rn,i) == 32 && encode(p,rn,i+1) ^ encode(p,rn,i) == (1<<10)
+    op: eq
+    lhs: encode_smulh(ops) XOR encode_umulh(ops)
+    rhs: 1u32 << 23
 generators:
-  prfop: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  imm12: { gen: int, min: 0, max: 4094, type: u32 }
-evidence: ARM ARM PRFM (immediate) Rt at [4:0], Rn at [9:5], imm12 at [21:10]
-```
-
-## encode_prfm_neg_arity
-- Tier: 4e
-- Rationale: Documented 2-operand syntax (load_store.rs:723, error string "prfm requires 2 operands"). llvm-mc rejects missing operands.
-- Seed: load_store.rs encode_ldtr_sized_neg_arity
-- Formal: ∀ ops with |ops| < 2. encode_prfm(ops) is Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.load_store.encode_prfm
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [ops]
-  relation:
-    op: throws
-    expr: encode_prfm(ops)
-expected_error: String
-generators:
-  ops: { gen: list, elem: { gen: int, min: 0, max: 3, type: u32 }, maxLen: 1 }
-evidence: load_store.rs:723 Format PRFM prfop, [Xn|SP{, #pimm}]; load_store.rs:728 prfm requires 2 operands
-```
-
-## encode_prfm_neg_extra_operand
-- Tier: 4e
-- Rationale: Two-operand GNU syntax; llvm-mc rejects a third operand. Extra operands must Err, not be ignored.
-- Seed: load_store.rs encode_ldtr_sized_neg_extra_operand
-- Formal: ∀ valid 2-operand PRFM immediate ops, ∀ extra. encode_prfm(ops ++ [extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: prfop=#0, rn=x0, pimm=0, extra=Reg("x2")
-- Bug report: pbt-out/bug_reports/encode_prfm_extra_operand.md
-
-```property
-function: encoder.load_store.encode_prfm
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [prfop, rn, pimm, extra]
-  relation:
-    op: throws
-    expr: encode_prfm([prfop, Mem(rn, pimm), extra])
-expected_error: String
-generators:
-  prfop: { gen: int, min: 0, max: 31, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  pimm: { gen: int, min: 0, max: 32760, type: i64 }
-  extra: { gen: int, min: 0, max: 3, type: u32 }
-evidence: README.md:11 gas compatibility; llvm-mc rejects extra operands on prfm
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM Data-processing (3 source) SMULH op31=010 vs UMULH op31=110 (bit 23)
 ```
 
-## encode_prfm_neg_invalid_base
-- Tier: 4e
-- Rationale: ARM ARM PRFM base is Xn|SP only. llvm-mc rejects W-base, XZR/x31, WSP, and SIMD/FP names.
-- Seed: load_store.rs encode_ldtr_sized_neg_invalid_regs
-- Formal: ∀ prfop, ∀ invalid base ∈ {Wn, wzr, wsp, xzr, x31, [bhsdqv]n}. encode_prfm([prfop, Mem(base, 0)]) is Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: prfop=#0, kind=0, n=0 — base w0 (also xzr/x31/wsp/d0)
-- Bug report: pbt-out/bug_reports/encode_prfm_w_base.md
-
-```property
-function: encoder.load_store.encode_prfm
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [prfop, base]
-  relation:
-    op: throws
-    expr: encode_prfm([prfop, Mem(base, 0)])
-expected_error: String
-generators:
-  prfop: { gen: int, min: 0, max: 31, type: u32 }
-  base: { gen: int, min: 0, max: 5, type: u32 }
-evidence: ARM ARM PRFM Rn is Xn|SP; llvm-mc rejects [w0], [xzr], [x31]
-```
-
-## encode_prfm_neg_offset_and_form
-- Tier: 4e
-- Rationale: ARM unsigned PRFM offset is multiple of 8 in [0, 32760]; llvm-mc error "index must be a multiple of 8 in range [0, 32760]". Pre/post-index are not PRFM forms (PRFUM is a different mnemonic). Unknown prfop and #imm5 outside 0..31 must Err.
-- Seed: load_store.rs encode_ldtr_sized_neg_offset_and_form
-- Formal: ∀ (bad_offset ∉ {0,8,...,32760} on Mem) ∨ (addr ∈ {MemPreIndex, MemPostIndex, Imm, Label, Cond}) ∨ (unknown prfop name) ∨ (imm5 ∉ 0..31). encode_prfm is Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+## encode_smulh_arm_fields
+- Tier: 4d
+- Rationale: Algebraic invariant from ARM ARM field layout. Stronger differential already covered by encode_smulh_diff_valid_gpr. This pins the documented bitfields independently of llvm-mc. Doc evidence: data_processing.rs:701 purpose comment; ARM ARM sf=1 op54=00 11011 op31=010 o0=0 Ra=11111.
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_arm_fields
+- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_smulh([xrd,xrn,xrm]) = 0x9B407C00 | (rm<<16) | (rn<<5) | rd ∧ sf=1 ∧ bits[30:21]=0b0011011010 ∧ o0=0 ∧ Ra=31
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_prfm
-oracle: negative_error
+function: encode_smulh
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [kind]
+  vars: [rd, rn, rm]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
-    op: throws
-    expr: encode_prfm(ops(kind))
-expected_error: String
+    op: eq
+    lhs: encode_smulh([Reg(xreg(rd)), Reg(xreg(rn)), Reg(xreg(rm))])
+    rhs: 0x9B407C00 | (rm << 16) | (rn << 5) | rd
 generators:
-  kind: { gen: int, min: 0, max: 6, type: u32 }
-evidence: ARM ARM PRFM pimm multiple of 8 in [0,32760]; llvm-mc same; load_store.rs:736-737 imm5 range; encode_prfop unknown name Err
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM Data-processing (3 source) SMULH; data_processing.rs:701
 ```
 
-## encode_prfm_neg_w_index
+## encode_smulh_neg_arity
 - Tier: 4e
-- Rationale: Sweep. ARM ARM W-index for PRFM (register) requires UXTW or SXTW; llvm-mc rejects bare `[Xn, Wm]`.
-- Seed: (none) — coverage sweep of MemRegOffset W-index default
-- Formal: ∀ prfop ∈ named, ∀ rn,rm ∈ 0..30. encode_prfm([prfop, MemRegOffset(Xn, Wm, extend=None)]) is Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: prfm pldl1keep, [x0, w0] (idx=0, rn=0, rm=0)
-- Bug report: pbt-out/bug_reports/encode_prfm_w_index.md
+- Rationale: Negative/error contract. SMULH requires exactly three register operands. llvm-mc rejects too few operands. Doc evidence: ARM ARM SMULH Xd, Xn, Xm; README.md:11 gas-compatible assembly.
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_neg_arity
+- Formal: ∀ ops with |ops| ∈ {0,1,2} and each element a valid X register. encode_smulh(ops) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_prfm
+function: encode_smulh
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [prfop, rn, rm]
+  vars: [len]
+  domain: { len: 0..2 }
   relation:
     op: throws
-    expr: encode_prfm([prfop, MemRegOffset(xn, wm, None, None)])
-expected_error: String
+    expr: encode_smulh(ops_of_len(len))
 generators:
-  prfop: { gen: int, min: 0, max: 17, type: u32 }
+  len: { gen: int, min: 0, max: 2, type: usize }
+expected_error: String
+evidence: ARM ARM SMULH Xd, Xn, Xm (exactly three registers); llvm-mc too few operands
+```
+
+## encode_smulh_neg_extra_operand
+- Tier: 4e
+- Rationale: Negative/error contract. A fourth operand is invalid; llvm-mc rejects it. encode_smulh only reads indices 0..2 so extra operands are a documented-contract risk. Doc evidence: ARM ARM three-operand SMULH; README.md:11.
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_neg_extra_operand
+- Formal: ∀ rd,rn,rm ∈ {0..31}, extra ∈ ExtraOperand. encode_smulh([xrd,xrn,xrm,extra]) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, extra=Reg("x0") — serial reconfirm PBT_TEST_JOBS=1
+- Bug report: pbt-out/bug_reports/encode_smulh_extra_operand.md
+
+```property
+function: encode_smulh
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, extra]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, extra: ExtraOperand }
+  relation:
+    op: throws
+    expr: encode_smulh([Reg(xreg(rd)), Reg(xreg(rn)), Reg(xreg(rm)), extra])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: oneof, options: [Reg, Imm, Shift, RegArrangement] }
+expected_error: String
+evidence: ARM ARM SMULH Xd, Xn, Xm (no 4th operand); llvm-mc rejects extra operand
+```
+
+## encode_smulh_neg_wrong_width
+- Tier: 4e
+- Rationale: Negative/error contract. SMULH has no 32-bit form; all three operands must be 64-bit X registers. llvm-mc rejects W operands. Documented bound: 64-bit only. Doc evidence: ARM ARM SMULH Xd,Xn,Xm; llvm-mc "invalid operand".
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_neg_wrong_width
+- Formal: ∀ rd,rn,rm ∈ {0..30}, (rd64,rn64,rm64) ≠ (true,true,true). encode_smulh([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm)]) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=false — smulh w0, w0, w0; serial reconfirm PBT_TEST_JOBS=1
+- Bug report: pbt-out/bug_reports/encode_smulh_wrong_width.md
+
+```property
+function: encode_smulh
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, rd64, rn64, rm64]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30 }
+  relation:
+    op: throws
+    expr: encode_smulh([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm)])
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
   rm: { gen: int, min: 0, max: 30, type: u32 }
-evidence: ARM ARM PRFM (register) option UXTW/SXTW for Wm; llvm-mc expected uxtw or sxtw
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+  rm64: { gen: bool }
+expected_error: String
+evidence: ARM ARM SMULH Xd, Xn, Xm (64-bit only); llvm-mc rejects W registers
 ```
 
-## encode_prfm_neg_bad_shift
+## encode_smulh_neg_sp
 - Tier: 4e
-- Rationale: Sweep. llvm-mc requires PRFM (register) shift amount in {0, 3}; ARM S bit encodes amount 0 or 3 only.
-- Seed: (none) — coverage sweep of shift_amount > 0 path
-- Formal: ∀ amount ∉ {0,3}. encode_prfm([prfop, MemRegOffset(Xn, Xm, lsl, amount)]) is Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: Negative/error contract. Register 31 in SMULH is XZR, not SP/WSP. llvm-mc rejects SP/WSP. Doc evidence: ARM ARM SMULH uses Xd|XZR not SP; llvm-mc "invalid operand".
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_neg_sp
+- Formal: ∀ which ∈ {0,1,2}, is_64 ∈ Bool, a,b ∈ {0..30}. encode_smulh(ops with slot which = SP/WSP) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: prfm pldl1keep, [x0, x0, lsl #1] (idx=0, rn=0, rm=0, amount=1)
-- Bug report: pbt-out/bug_reports/encode_prfm_bad_shift.md
+- Counterexample: which=0, is_64=false, a=0, b=0 — smulh wsp, x0, x0; serial reconfirm PBT_TEST_JOBS=1
+- Bug report: pbt-out/bug_reports/encode_smulh_sp_as_zr.md
 
 ```property
-function: encoder.load_store.encode_prfm
+function: encode_smulh
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [prfop, rn, rm, amount]
+  vars: [which, is_64, a, b]
+  domain: { which: 0..2, a: 0..30, b: 0..30 }
   relation:
     op: throws
-    expr: encode_prfm([prfop, MemRegOffset(xn, xm, lsl, amount)])
-expected_error: String
+    expr: encode_smulh(ops_with_sp_at(which))
 generators:
-  amount: { gen: int, min: 1, max: 7, type: u8 }
-evidence: ARM ARM PRFM (register) S amount 0 or 3; llvm-mc expected lsl or sxtx with #0 or #3
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  is_64: { gen: bool }
+  a: { gen: int, min: 0, max: 30, type: u32 }
+  b: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: ARM ARM SMULH Xd/Xn/Xm use XZR not SP; llvm-mc rejects sp/wsp
 ```
 
-## encode_prfm_neg_bad_prfop_and_name
-- Tier: 4e
-- Rationale: Sweep. First operand must be Symbol(prfop) or Imm(0..31); base/index must parse as registers; PRFM literal is documented as not yet supported (Err).
-- Seed: (none) — coverage sweep of error arms at load_store.rs:740, 746, 761, 766
-- Formal: ∀ kind ∈ {Reg-as-prfop, base foo, base x32, index foo, addr Symbol}. encode_prfm is Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+## encode_smulh_diff_alt_spellings
+- Tier: 2
+- Rationale: Differential vs llvm-mc over documented alternate spellings of the same registers (x31=XZR, uppercase, LR=x30). Documented bounds sampled: Rd/Rn/Rm = 0, 30, 31. Doc evidence: parse_reg_num maps lr/xzr/x31; README.md:11 case-insensitive GNU assembly.
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_diff_alt_spellings
+- Formal: ∀ rd,rn,rm ∈ {0..31}, dest/src spellings ∈ {xN, x31-if-31, XZR-if-31, LR-if-30, UPPER}. encode_smulh(ops) = llvm-mc(asm)
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_prfm
+function: encode_smulh
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, dest_spell, src_n_spell, src_m_spell]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, dest_spell: 0..4, src_n_spell: 0..4, src_m_spell: 0..4 }
+  relation:
+    op: eq
+    lhs: encode_smulh([Reg(dest), Reg(src_n), Reg(src_m)])
+    rhs: llvm_mc_word("smulh " + dest + ", " + src_n + ", " + src_m)
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
+  src_n_spell: { gen: int, min: 0, max: 4, type: u32 }
+  src_m_spell: { gen: int, min: 0, max: 4, type: u32 }
+evidence: README.md:11 GNU-style assembly; encoder/mod.rs:131 parse_reg_num lr/xzr/x31
+```
+
+## encode_smulh_metamorphic_fields
+- Tier: 4c
+- Rationale: Algebraic metamorphic. Incrementing Rd/Rn/Rm by 1 (staying in 0..30) must flip only that field's LSB. Strengthens the ARM field invariant independently of llvm-mc. Doc evidence: ARM ARM SMULH Rd bits[4:0], Rn bits[9:5], Rm bits[20:16].
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_arm_fields
+- Formal: ∀ rd,rn,rm ∈ {0..30}. let w=encode_smulh(rd,rn,rm). encode_smulh(rd+1,rn,rm) differs from w only in Rd=rd+1; encode_smulh(rd,rn+1,rm) differs only in Rn=rn+1; encode_smulh(rd,rn,rm+1) differs only in Rm=rm+1
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_smulh
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30 }
+  relation:
+    op: holds
+    expr: field_independent(encode_smulh(rd,rn,rm), encode_smulh(rd+1,rn,rm), encode_smulh(rd,rn+1,rm), encode_smulh(rd,rn,rm+1))
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+evidence: ARM ARM SMULH Rd[4:0] Rn[9:5] Rm[20:16]
+```
+
+## encode_smulh_neg_fp
+- Tier: 4e
+- Rationale: Negative/error contract. FP/SIMD registers (d/s/q/v/h/b) are not SMULH operands. llvm-mc rejects them. parse_reg_num accepts those prefixes so this is a documented-contract risk. Doc evidence: ARM ARM SMULH Xd,Xn,Xm; llvm-mc "invalid operand".
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_neg_fp
+- Formal: ∀ which ∈ {0,1,2}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_smulh(ops with slot which = prefix+n) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, prefix="d", n=0 — smulh d0, x1, x2; serial reconfirm PBT_TEST_JOBS=1
+- Bug report: pbt-out/bug_reports/encode_smulh_fp_as_gpr.md
+
+```property
+function: encode_smulh
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [kind]
+  vars: [which, prefix, n]
+  domain: { which: 0..2, n: 0..31 }
   relation:
     op: throws
-    expr: encode_prfm(ops(kind))
-expected_error: String
+    expr: encode_smulh(ops_with_fp_at(which, prefix, n))
 generators:
-  kind: { gen: int, min: 0, max: 4, type: u32 }
-evidence: load_store.rs:740 expected prefetch operation name; 746 invalid base; 761 not yet supported; 766 invalid index
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: ARM ARM SMULH Xd,Xn,Xm (GPR only); llvm-mc rejects d/s/q/v/h/b
+```
+
+## encode_smulh_neg_nonreg
+- Tier: 4e
+- Rationale: Negative/error contract. Non-register operands (Imm, Mem, Label, Symbol, Cond, Shift, RegArrangement) must be rejected at any slot. Doc evidence: ARM ARM SMULH three GPRs; get_reg error "expected register".
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_neg_nonreg
+- Formal: ∀ which ∈ {0,1,2}, bad ∈ NonRegOperand. encode_smulh(ops with slot which = bad) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_smulh
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, bad]
+  domain: { which: 0..2 }
+  relation:
+    op: throws
+    expr: encode_smulh(ops_with_nonreg_at(which, bad))
+generators:
+  which: { gen: int, min: 0, max: 2, type: u32 }
+expected_error: String
+evidence: ARM ARM SMULH Xd,Xn,Xm; get_reg expected register
+```
+
+## encode_smulh_neg_invalid_name
+- Tier: 4e
+- Rationale: Negative/error contract. Invalid register names (foo, x32, empty, r0, ...) must Err. Documented bound: GPR numbers 0..31. Doc evidence: parse_reg_num returns None outside x/w 0..31 and aliases; llvm-mc rejects unknown names.
+- Seed: data_processing.rs encode_umulh_pbt::encode_umulh_neg_invalid_name
+- Formal: ∀ which ∈ {0,1,2}, name ∈ InvalidName. encode_smulh(ops with slot which = Reg(name)) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_smulh
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, name]
+  domain: { which: 0..2 }
+  relation:
+    op: throws
+    expr: encode_smulh(ops_with_name_at(which, name))
+generators:
+  which: { gen: int, min: 0, max: 2, type: u32 }
+expected_error: String
+evidence: encoder/mod.rs:131 parse_reg_num; ARM ARM GPR 0..31
+```
+
+## encode_smulh_neg_wzr
+- Tier: 4e
+- Rationale: Contract-surface sweep. encode_smulh_neg_wrong_width samples rd/rn/rm in 0..30 so it never hits WZR (W form of register 31). Documented bound: SMULH is 64-bit only; register 31 is XZR not WZR. llvm-mc rejects wzr. Doc evidence: ARM ARM SMULH Xd|XZR; llvm-mc invalid operand.
+- Seed: data_processing.rs encode_smulh_pbt::encode_smulh_neg_wrong_width
+- Formal: ∀ which ∈ {0,1,2}, a,b ∈ {0..30}. encode_smulh(ops with slot which = wzr and other slots Xa/Xb) = Err
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, a=0, b=0 — smulh wzr, x0, x0; serial reconfirm PBT_TEST_JOBS=1
+- Bug report: pbt-out/bug_reports/encode_smulh_wzr.md
+
+```property
+function: encode_smulh
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, a, b]
+  domain: { which: 0..2, a: 0..30, b: 0..30 }
+  relation:
+    op: throws
+    expr: encode_smulh(ops_with_wzr_at(which))
+generators:
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  a: { gen: int, min: 0, max: 30, type: u32 }
+  b: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: ARM ARM SMULH 64-bit only, register 31 is XZR not WZR; llvm-mc rejects wzr
 ```

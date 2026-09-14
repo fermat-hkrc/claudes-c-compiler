@@ -1,3 +1,21 @@
+# Confirmed invariants (encode_smulh)
+
+- Valid SMULH Xd, Xn, Xm (including xzr, lr, x31, uppercase, LR/XZR) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: sf=1 op54=00 11011 op31=010 o0=0 Ra=11111; w = 0x9B407C00 | (rm<<16) | (rn<<5) | rd.
+- Metamorphic: SMULH XOR UMULH is bit 23 (U); Rd+1 / Rn+1 / Rm+1 update only that field (1000 cases).
+- Fewer than 3 operands, non-register operands, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `smulh x0, x1, x2` = 0x9B427C20; `smulh xzr, xzr, xzr` = 0x9B5F7FFF; `smulh lr, x1, x30` = 0x9B5E7C3E; `smulh x0, x1, xzr` = 0x9B5F7C20.
+- Extra operand, W registers (including wzr), SP/WSP, and FP/SIMD prefixes currently encode instead of Err (see bugs).
+
+## Environment (encode_smulh)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) SMULH: 1 00 11011 010 Rm 0 11111 Rn Rd; 64-bit only; register 31 is XZR not SP.
+- Dispatch: encoder/mod.rs:275 "smulh" => encode_smulh.
+- Callers: encoder dispatch; no codegen emitter of smulh found (umulh is used in i128_ops.rs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_smulh (arity / extra / W-width / WZR / SP / FP / nonreg / invalid-name / alt-spellings / field independence).
+
 # Confirmed invariants (encode_prfm)
 
 - Valid PRFM (immediate) with named prfop or #imm5 in 0..31, base Xn|SP, pimm = imm12*8 in [0, 32760] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Uppercase prfop/Xn/SP spellings match llvm-mc (1000 cases).
