@@ -1,55 +1,79 @@
-# PBT Campaign Report: encode_neon_sli
+# PBT Campaign Report: encode_ldur_stur
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** claudes-c-compiler
-**Modules tested:** encode_neon_sli
-**Tests:** 8 properties (plus 2 KAT + 6 regression witnesses)
-**Result:** 5 passing, 4 bugs
+**Modules tested:** encode_ldur_stur
+**Tests:** 10 properties (plus 3 KAT + 8 regression witnesses)
+**Result:** 6 passing, 7 bugs
 **Effort tier:** standard (1 coverage-driven contract-surface sweep; generator runs=1000)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_sli | 8 properties (5 pass, 3 fail) + 2 KAT pass + 6 regression fail | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_ldur_stur | 10 properties (6 pass, 4 fail) + 3 KAT pass + 8 regression fail | 7 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
 ### 1. Extra operands ignored
-- **Law:** Vector SLI takes `Vd.T, Vn.T, #shift` only; a fourth operand must be Err.
-- **Shrunk counterexample:** `sli v0.8b, v0.8b, #0, v0.8b` (rd=0, rn=0, extra=0, t="8b", extra_kind=0).
-- **Expected:** Err. **Actual:** Ok(Word) — arity check is `operands.len() < 3`.
+- **Law:** LDUR/STUR/LDTR/STTR take exactly two operands; a third must be Err.
+- **Shrunk counterexample:** `stur w0, [x0, #-256], x2` (rt=0, rn=0, offset=-256, extra=Reg("x2")).
+- **Expected:** Err. **Actual:** Ok(Word) — arity check is `operands.len() < 2`.
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_sli_extra_operand.md
-- **Regression test:** `test_encode_neon_sli_regression_extra_operand` (fails, as intended)
+- **Bug report:** pbt-out/bug_reports/encode_ldur_stur_extra_operand.md
+- **Regression test:** `test_encode_ldur_stur_regression_extra_operand` (fails, as intended)
 
-### 2. Out-of-range shift not rejected
-- **Law:** SLI shift must be in [0, esize(T)-1]; llvm-mc rejects values outside that range.
-- **Shrunk counterexample:** `sli v0.8b, v0.8b, #-1` (rd=0, rn=0, t="8b", shift=-1) panics in debug (`8 + (-1 as u32)` overflow). Also `sli v0.8b, v0.8b, #8` returns Ok with immh:immb masked to 0 (reserved).
-- **Expected:** Err. **Actual:** debug panic on negative; Ok(Word) with wrapped/masked immh:immb on shift >= esize.
+### 2. Out-of-range simm9 silently wraps
+- **Law:** Unscaled/unprivileged offset is signed 9-bit in [-256, 255]; llvm-mc rejects values outside that range.
+- **Shrunk counterexample:** `stur w0, [x0, #-257]` (rt=0, rn=0, offset=-257). Encodes as `stur w0, [x0, #255]` because `(-257 as u32) & 0x1FF == 0xFF`.
+- **Expected:** Err. **Actual:** Ok(Word) with wrapped imm9.
 - **Severity:** high
-- **Bug report:** pbt-out/bug_reports/encode_neon_sli_shift_out_of_range.md
-- **Regression test:** `test_encode_neon_sli_regression_negative_shift` and `test_encode_neon_sli_regression_shift_eq_esize` (fail, as intended)
+- **Bug report:** pbt-out/bug_reports/encode_ldur_stur_imm9_range.md
+- **Regression test:** `test_encode_ldur_stur_regression_imm9_range` (fails, as intended)
 
-### 3. Source arrangement ignored
-- **Law:** ARM ARM requires the same T on dest and source (`<Vd>.<T>, <Vn>.<T>, #shift`).
-- **Shrunk counterexample:** `sli v0.8b, v0.16b, #0` (rd=0, rn=0, td="8b", tn="16b"). Encodes as `sli v0.8b, v0.8b, #0`. Coverage sweep: `sli v0.8b, v0, #0` (src Operand::Reg) also Ok.
-- **Expected:** Err. **Actual:** Ok(Word) — Q/immh taken only from dest; `let (rn, _) = get_neon_reg(operands, 1)`.
+### 3. SP/WSP accepted as Rt
+- **Law:** Rt is Wt/Xt (31 = ZR), never SP/WSP.
+- **Shrunk counterexample:** `stur sp, [x0, #-256]` (kind=0, offset=-256). Encodes as `stur wzr, [x0, #-256]` (0xbc10001f) because `"sp"` does not start with `x` so size=32-bit and parse_reg_num maps SP→31.
+- **Expected:** Err. **Actual:** Ok(Word) of STUR WZR.
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_sli_arrangement_mismatch.md
-- **Regression test:** `test_encode_neon_sli_regression_arrangement_mismatch` and `test_encode_neon_sli_regression_src_reg_no_arrangement` (fail, as intended)
+- **Bug report:** pbt-out/bug_reports/encode_ldur_stur_sp_as_rt.md
+- **Regression test:** `test_encode_ldur_stur_regression_sp_as_rt` (fails, as intended)
 
-### 4. Non-V register prefix accepted
-- **Law:** Vector SLI takes V registers; x/w/d/s/q/h/b prefixes must be Err.
-- **Shrunk counterexample:** `sli x0.8b, v0.8b, #0` (rd=0, rn=0, t="8b", prefix="x", which=0). Encodes as `sli v0.8b, v0.8b, #0`.
-- **Expected:** Err. **Actual:** Ok(Word) — `parse_reg_num` maps x/w/d/s/q/v/h/b with num<=31 to the same 5-bit number.
+### 4. W register (or XZR/WZR/WSP) accepted as base
+- **Law:** Rn is Xn|SP; W-width bases and XZR/WZR must be Err (register 31 as base is SP, never ZR).
+- **Shrunk counterexample:** `ldur x0, [w0]`. Encodes as `ldur x0, [x0]`. Same path treats `[xzr]` as `[sp]`.
+- **Expected:** Err. **Actual:** Ok(Word) of the X-width encoding.
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_sli_non_v_prefix.md
-- **Regression test:** `test_encode_neon_sli_regression_non_v_prefix` (fails, as intended)
+- **Bug report:** pbt-out/bug_reports/encode_ldur_stur_w_base.md
+- **Regression test:** `test_encode_ldur_stur_regression_w_base` / `test_encode_ldur_stur_regression_xzr_base` (fail, as intended)
 
-Serial reconfirmation: all four failures reproduced with `PBT_TEST_JOBS=1 cargo test --lib encode_neon_sli_neg -- --test-threads=1`.
+### 5. SIMD Rt encoded on LDTR/STTR
+- **Law:** LDTR/STTR take Wt/Xt only; llvm-mc rejects `ldtr d0, [x1]`.
+- **Shrunk counterexample:** kind=6 SIMD Rt with op2=0b10. Encodes V=1 unprivileged form, which is not a valid instruction.
+- **Expected:** Err. **Actual:** Ok(Word) with V=1 and bits [11:10]=10.
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_ldur_stur_simd_ldtr.md
+- **Regression test:** `test_encode_ldur_stur_regression_simd_ldtr` (fails, as intended)
+
+### 6. V-register Rt encoded as D
+- **Law:** SIMD unscaled Rt is Bt/Ht/St/Dt/Qt; llvm-mc rejects `ldur v0, [x1]`.
+- **Shrunk counterexample:** kind=7 `ldur v0, [x0]`. `is_fp_reg('v')` is true, then the q/d/s/h/b chain falls through to size=11 opc=01 — `ldur d0, [x0]`.
+- **Expected:** Err. **Actual:** Ok(Word) of LDUR D0.
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_ldur_stur_v_reg.md
+- **Regression test:** `test_encode_ldur_stur_regression_v_reg` (fails, as intended)
+
+### 7. LR encoded as 32-bit W30
+- **Law:** `lr` is the alias of X30. llvm-mc accepts `ldur lr, [x0]` as `ldur x30, [x0]`. Siblings `is_64bit_reg` and `encode_ldr_str_auto` treat `lr` as 64-bit.
+- **Shrunk counterexample:** `stur lr, [x0, #-256]` (rn=0, offset=-256, is_load=false, unpriv=false). SUT 0xb810001e (`stur w30`) vs llvm-mc 0xf810001e (`stur x30`).
+- **Expected:** 64-bit X30 encoding. **Actual:** 32-bit W30 encoding (`starts_with('x')` is false for `"lr"`).
+- **Severity:** high
+- **Bug report:** pbt-out/bug_reports/encode_ldur_stur_lr_as_w30.md
+- **Regression test:** `test_encode_ldur_stur_regression_lr_as_x30` (fails, as intended)
+
+Serial reconfirmation: all failures reproduced with `PBT_TEST_JOBS=1 cargo test --lib encode_ldur_stur -- --test-threads=1`.
 
 ## Design Caveats
 
@@ -59,7 +83,7 @@ Serial reconfirmation: all four failures reproduced with `PBT_TEST_JOBS=1 cargo 
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_sli_pbt) | 8 properties (9 proptest cases) + 2 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldur_stur_pbt) | 10 properties + 3 KAT + 8 regression witnesses |
 
 ## Output Directories
 
@@ -70,19 +94,22 @@ Serial reconfirmation: all four failures reproduced with `PBT_TEST_JOBS=1 cargo 
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_sli_extra_operand.md
-- pbt-out/bug_reports/encode_neon_sli_shift_out_of_range.md
-- pbt-out/bug_reports/encode_neon_sli_arrangement_mismatch.md
-- pbt-out/bug_reports/encode_neon_sli_non_v_prefix.md
+- pbt-out/bug_reports/encode_ldur_stur_extra_operand.md
+- pbt-out/bug_reports/encode_ldur_stur_imm9_range.md
+- pbt-out/bug_reports/encode_ldur_stur_sp_as_rt.md
+- pbt-out/bug_reports/encode_ldur_stur_w_base.md
+- pbt-out/bug_reports/encode_ldur_stur_simd_ldtr.md
+- pbt-out/bug_reports/encode_ldur_stur_v_reg.md
+- pbt-out/bug_reports/encode_ldur_stur_lr_as_w30.md
 
-Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had no LLVM profraw; manual arm audit of get_neon_reg Operand::Reg source (empty arrangement accepted — folded into bug 3) and dest Operand::Reg (Err as specified). Sweep closed because the tier's one round is done.
+Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had no LLVM profraw; manual arm audit of `len < 2` / get_reg non-Reg / non-Mem second operand / parse_reg_num None (arity/shape property passes) and the `lr` alias (bug 7). Sweep closed because the tier's one round is done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 05:59 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 31/184 total | PBT candidates: 31 | Tested: 31 (100%) | 0 pass, 31 fail
+> Last updated: 2026-09-14 06:31 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 32/184 total | PBT candidates: 32 | Tested: 32 (100%) | 0 pass, 32 fail
 
 ## Summary
 
@@ -91,10 +118,10 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 31 |
-| **Tested (of PBT candidates)** | **31 / 31 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 31 / 0 |
-| **Overall (tested / all functions)** | **31 / 184 (17%)** |
+| PBT candidates (from FUNCTION_INDEX) | 32 |
+| **Tested (of PBT candidates)** | **32 / 32 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 32 / 0 |
+| **Overall (tested / all functions)** | **32 / 184 (17%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -102,13 +129,13 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 31 | 31 | 0 | 100% |
+|  | 32 | 32 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 31 | 31 | 0 | 100% |
+| unknown | 32 | 32 | 0 | 100% |
 
 ## File Coverage
 
@@ -118,7 +145,7 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 | compare_branch.rs | 21 | 17 | 17 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 6 | 6 | 100% | covered |
-| load_store.rs | 20 | 2 | 2 | 100% | covered |
+| load_store.rs | 20 | 3 | 3 | 100% | covered |
 | neon.rs | 68 | 4 | 4 | 100% | covered |
 
 ## Recommended Focus
@@ -159,3 +186,4 @@ Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had
 | encode_neon_across_long | neon.rs |
 | encode_neon_float_cmp_zero | neon.rs |
 | encode_neon_sli | neon.rs |
+| encode_ldur_stur | load_store.rs |

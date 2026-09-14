@@ -1,4 +1,4 @@
-> Total files: 6 | Total functions: 184 | PBT candidates: 31 | Excluded: 153
+> Total files: 6 | Total functions: 184 | PBT candidates: 32 | Excluded: 152
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -80,7 +80,7 @@
 | f128_const_halves | cast.rs | 253 | function | no | out of campaign scope |
 | encode_ldr_str_auto | load_store.rs | 7 | function | no | out of campaign scope |
 | encode_ldr_str | load_store.rs | 33 | function | no | out of campaign scope |
-| encode_ldur_stur | load_store.rs | 248 | function | no | out of campaign scope |
+| encode_ldur_stur | load_store.rs | 248 | function | yes | - |
 | encode_ldtr_sized | load_store.rs | 292 | function | no | out of campaign scope |
 | encode_ldrsw | load_store.rs | 311 | function | no | out of campaign scope |
 | encode_ldrs | load_store.rs | 382 | function | no | out of campaign scope |

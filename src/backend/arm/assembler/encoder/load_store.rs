@@ -2079,3 +2079,805 @@ mod encode_ldar_stlr_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_ldur_stur_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:336-339 ldur/stur/ldtr/sttr dispatch;
+    //   ARM ARM LDUR/STUR: size 111 V 00 opc 0 imm9 00 Rn Rt; LDTR/STTR: bits [11:10]=10;
+    //   Rt is Wt/Xt (31=ZR) or Bt/Ht/St/Dt/Qt; Rn is Xn|SP; simm9 in [-256, 255].
+    // Stronger considered:
+    //   - State machine: rejected — encode_ldur_stur is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no LDUR decoder
+    //   - encode_ldr_str / encode_ldtr_sized as differential siblings: rejected — different job
+    // Weaker available: algebraic.invariant (ARM field unpack), algebraic.metamorphic (opc / op2),
+    //   negative_error (extra / range / SP / W-base / XZR-base / SIMD-LDTR / V-Rt)
+    // Differential: candidate=encode_ldur_stur, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=(Reg(Rt), Mem{Rn, imm9}, is_load, op2) <-> `{ldur|stur|ldtr|sttr} Rt, [Rn{, #imm}]`
+
+    use super::encode_ldur_stur;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const IMM_MIN: i64 = -256;
+    const IMM_MAX: i64 = 255;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn rt_gpr(n: u32, is_64: bool) -> String {
+        if is_64 {
+            if n == 31 {
+                "xzr".into()
+            } else {
+                format!("x{}", n)
+            }
+        } else if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn rt_simd(n: u32, kind: char) -> String {
+        format!("{}{}", kind, n)
+    }
+
+    fn rn_name(n: u32) -> String {
+        if n == 31 {
+            "sp".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn op2_bits(unpriv: bool) -> u32 {
+        if unpriv {
+            0b10
+        } else {
+            0b00
+        }
+    }
+
+    fn mnemonic(is_load: bool, unpriv: bool) -> &'static str {
+        match (is_load, unpriv) {
+            (true, false) => "ldur",
+            (false, false) => "stur",
+            (true, true) => "ldtr",
+            (false, true) => "sttr",
+        }
+    }
+
+    fn asm_mem(rn: &str, offset: i64) -> String {
+        if offset == 0 {
+            format!("[{}]", rn)
+        } else {
+            format!("[{}, #{}]", rn, offset)
+        }
+    }
+
+    fn valid_gpr_ops(rt: u32, rn: u32, offset: i64, is_64: bool) -> Vec<Operand> {
+        vec![
+            Operand::Reg(rt_gpr(rt, is_64)),
+            Operand::Mem {
+                base: rn_name(rn),
+                offset,
+            },
+        ]
+    }
+
+    fn valid_simd_ops(rt: u32, rn: u32, offset: i64, kind: char) -> Vec<Operand> {
+        vec![
+            Operand::Reg(rt_simd(rt, kind)),
+            Operand::Mem {
+                base: rn_name(rn),
+                offset,
+            },
+        ]
+    }
+
+    fn sut_word(ops: &[Operand], is_load: bool, op2: u32) -> Result<u32, String> {
+        match encode_ldur_stur(ops, is_load, op2)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    /// Unpack LDUR/STUR/LDTR/STTR fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_ldur(word: u32) -> (u32, u32, u32, i64, u32, u32, u32) {
+        let size = (word >> 30) & 0b11;
+        let v = (word >> 26) & 1;
+        let opc = (word >> 22) & 0b11;
+        let imm9_raw = (word >> 12) & 0x1ff;
+        let imm9 = if (imm9_raw & 0x100) != 0 {
+            (imm9_raw as i64) | !0x1ffi64
+        } else {
+            imm9_raw as i64
+        };
+        let op2 = (word >> 10) & 0b11;
+        let rn = (word >> 5) & 0x1f;
+        let rt = word & 0x1f;
+        (size, v, opc, imm9, op2, rn, rt)
+    }
+
+    fn fixed_ldur_bits(word: u32) -> bool {
+        ((word >> 27) & 0b111) == 0b111
+            && ((word >> 24) & 0b11) == 0b00
+            && ((word >> 21) & 1) == 0
+    }
+
+    fn expected_gpr_size_opc(is_64: bool, is_load: bool) -> (u32, u32) {
+        let size = if is_64 { 0b11 } else { 0b10 };
+        let opc = if is_load { 0b01 } else { 0b00 };
+        (size, opc)
+    }
+
+    fn expected_simd_size_opc(kind: char, is_load: bool) -> (u32, u32) {
+        match kind {
+            'q' => (0b00, if is_load { 0b11 } else { 0b10 }),
+            'd' => (0b11, if is_load { 0b01 } else { 0b00 }),
+            's' => (0b10, if is_load { 0b01 } else { 0b00 }),
+            'h' => (0b01, if is_load { 0b01 } else { 0b00 }),
+            _ => (0b00, if is_load { 0b01 } else { 0b00 }), // b
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn imm9_in_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN),
+            Just(IMM_MIN + 1),
+            Just(-1i64),
+            Just(0i64),
+            Just(1i64),
+            Just(IMM_MAX - 1),
+            Just(IMM_MAX),
+            IMM_MIN..=IMM_MAX,
+        ]
+    }
+
+    fn imm9_out_of_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN - 1),
+            Just(IMM_MAX + 1),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            Just(512i64),
+            Just(-512i64),
+            Just(1i64 << 40),
+            (i64::MIN..=IMM_MIN - 1),
+            (IMM_MAX + 1..=i64::MAX),
+        ]
+    }
+
+    fn simd_kind() -> impl Strategy<Value = char> {
+        prop_oneof![
+            Just('b'),
+            Just('h'),
+            Just('s'),
+            Just('d'),
+            Just('q'),
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x2".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x3".into(),
+                offset: 0
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ldur_stur_kat_llvm_mc_ldur_x0_x1() {
+        let want = 0xf8400020u32;
+        let mc = llvm_mc_word("ldur x0, [x1]").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops, true, 0b00).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldur_stur_kat_llvm_mc_ldur_q0_x1() {
+        let want = 0x3cc00020u32;
+        let mc = llvm_mc_word("ldur q0, [x1]").expect("llvm-mc KAT Q");
+        assert_eq!(mc, want, "llvm-mc KAT Q mapping broken");
+        let ops = [
+            Operand::Reg("q0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops, true, 0b00).expect("SUT KAT Q");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldur_stur_kat_llvm_mc_ldtr_x0_x1() {
+        let want = 0xf8400820u32;
+        let mc = llvm_mc_word("ldtr x0, [x1]").expect("llvm-mc KAT LDTR");
+        assert_eq!(mc, want, "llvm-mc KAT LDTR mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops, true, 0b10).expect("SUT KAT LDTR");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: -256,
+            },
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_ldur_stur(&ops, false, 0b00).is_err(),
+            "stur w0, [x0, #-256], x2 must Err; llvm-mc rejects a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_imm9_range() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: -257,
+            },
+        ];
+        assert!(
+            encode_ldur_stur(&ops, false, 0b00).is_err(),
+            "stur w0, [x0, #-257] must Err; llvm-mc requires simm9 in [-256, 255]"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_sp_as_rt() {
+        let ops = [
+            Operand::Reg("sp".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: -256,
+            },
+        ];
+        assert!(
+            encode_ldur_stur(&ops, false, 0b00).is_err(),
+            "stur sp, [x0, #-256] must Err; llvm-mc rejects SP as Rt"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_w_base() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "w0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldur_stur(&ops, true, 0b00).is_err(),
+            "ldur x0, [w0] must Err; llvm-mc rejects a W register as base"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_xzr_base() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "xzr".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldur_stur(&ops, true, 0b00).is_err(),
+            "ldur x0, [xzr] must Err; llvm-mc rejects XZR as base (Rn=31 is SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_simd_ldtr() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldur_stur(&ops, true, 0b10).is_err(),
+            "ldtr d0, [x0] must Err; llvm-mc rejects SIMD Rt on LDTR"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_v_reg() {
+        let ops = [
+            Operand::Reg("v0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldur_stur(&ops, true, 0b00).is_err(),
+            "ldur v0, [x0] must Err; llvm-mc rejects V-register Rt without arrangement"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldur_stur_regression_lr_as_x30() {
+        let ops_lr = [
+            Operand::Reg("lr".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        let ops_x30 = [
+            Operand::Reg("x30".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        let lr = sut_word(&ops_lr, true, 0b00).expect("ldur lr is a valid X30 alias");
+        let x30 = sut_word(&ops_x30, true, 0b00).expect("ldur x30");
+        assert_eq!(
+            lr, x30,
+            "ldur lr, [x0] must encode as ldur x30, [x0]; llvm-mc accepts lr as X30"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldur_stur
+        #[test]
+        fn encode_ldur_stur_diff_gpr_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            offset in imm9_in_range(),
+            is_load in any::<bool>(),
+            is_64 in any::<bool>(),
+            unpriv in any::<bool>(),
+        ) {
+            let mn = mnemonic(is_load, unpriv);
+            let rt_n = rt_gpr(rt, is_64);
+            let rn_n = rn_name(rn);
+            let asm = format!("{} {}, {}", mn, rt_n, asm_mem(&rn_n, offset));
+            let ops = valid_gpr_ops(rt, rn, offset, is_64);
+            let sut = sut_word(&ops, is_load, op2_bits(unpriv))
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldur_stur
+        #[test]
+        fn encode_ldur_stur_diff_simd_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            offset in imm9_in_range(),
+            is_load in any::<bool>(),
+            kind in simd_kind(),
+        ) {
+            let mn = mnemonic(is_load, false);
+            let rt_n = rt_simd(rt, kind);
+            let rn_n = rn_name(rn);
+            let asm = format!("{} {}, {}", mn, rt_n, asm_mem(&rn_n, offset));
+            let ops = valid_simd_ops(rt, rn, offset, kind);
+            let sut = sut_word(&ops, is_load, 0b00)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_ldur_stur
+        #[test]
+        fn encode_ldur_stur_roundtrip_arm_fields(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            offset in imm9_in_range(),
+            is_load in any::<bool>(),
+            is_64 in any::<bool>(),
+            unpriv in any::<bool>(),
+            kind in simd_kind(),
+            use_simd in any::<bool>(),
+        ) {
+            let (ops, exp_size, exp_v, exp_opc) = if use_simd && !unpriv {
+                let (sz, opc) = expected_simd_size_opc(kind, is_load);
+                (valid_simd_ops(rt, rn, offset, kind), sz, 1u32, opc)
+            } else {
+                let (sz, opc) = expected_gpr_size_opc(is_64, is_load);
+                (valid_gpr_ops(rt, rn, offset, is_64), sz, 0u32, opc)
+            };
+            let op2 = op2_bits(unpriv && !(use_simd && !unpriv));
+            let word = sut_word(&ops, is_load, op2)
+                .unwrap_or_else(|e| panic!("SUT rejected in-range LDUR/STUR: {}", e));
+            let (got_size, got_v, got_opc, got_imm, got_op2, got_rn, got_rt) = unpack_ldur(word);
+            prop_assert!(fixed_ldur_bits(word), "fixed bits violated word={:#010x}", word);
+            prop_assert_eq!(got_size, exp_size, "size mismatch word={:#010x}", word);
+            prop_assert_eq!(got_v, exp_v, "V mismatch word={:#010x}", word);
+            prop_assert_eq!(got_opc, exp_opc, "opc mismatch word={:#010x}", word);
+            prop_assert_eq!(got_imm, offset, "imm9 mismatch word={:#010x}", word);
+            prop_assert_eq!(got_op2, op2, "op2 mismatch word={:#010x}", word);
+            prop_assert_eq!(got_rn, rn, "Rn mismatch word={:#010x}", word);
+            prop_assert_eq!(got_rt, rt, "Rt mismatch word={:#010x}", word);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_ldur_stur
+        #[test]
+        fn encode_ldur_stur_metamorphic_load_xor_store(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            offset in imm9_in_range(),
+            is_64 in any::<bool>(),
+            unpriv in any::<bool>(),
+            kind in simd_kind(),
+            use_simd in any::<bool>(),
+        ) {
+            let (ops, op2) = if use_simd {
+                (valid_simd_ops(rt, rn, offset, kind), 0b00u32)
+            } else {
+                (valid_gpr_ops(rt, rn, offset, is_64), op2_bits(unpriv))
+            };
+            let load = sut_word(&ops, true, op2)
+                .unwrap_or_else(|e| panic!("SUT rejected load: {}", e));
+            let store = sut_word(&ops, false, op2)
+                .unwrap_or_else(|e| panic!("SUT rejected store: {}", e));
+            prop_assert_eq!(
+                load ^ store,
+                1u32 << 22,
+                "load vs store must differ only by opc bit 22 load={:#010x} store={:#010x}",
+                load,
+                store
+            );
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_ldur_stur
+        #[test]
+        fn encode_ldur_stur_metamorphic_unscaled_xor_unpriv(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            offset in imm9_in_range(),
+            is_load in any::<bool>(),
+            is_64 in any::<bool>(),
+        ) {
+            let ops = valid_gpr_ops(rt, rn, offset, is_64);
+            let unscaled = sut_word(&ops, is_load, 0b00)
+                .unwrap_or_else(|e| panic!("SUT rejected LDUR/STUR: {}", e));
+            let unpriv = sut_word(&ops, is_load, 0b10)
+                .unwrap_or_else(|e| panic!("SUT rejected LDTR/STTR: {}", e));
+            prop_assert_eq!(
+                unscaled ^ unpriv,
+                1u32 << 11,
+                "unscaled vs unpriv must differ only by bit 11 u={:#010x} p={:#010x}",
+                unscaled,
+                unpriv
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldur_stur
+        // Invalid domain: a third operand.
+        #[test]
+        fn encode_ldur_stur_neg_extra_operands(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            offset in imm9_in_range(),
+            is_load in any::<bool>(),
+            is_64 in any::<bool>(),
+            unpriv in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let mut ops = valid_gpr_ops(rt, rn, offset, is_64);
+            ops.push(extra);
+            prop_assert!(
+                encode_ldur_stur(&ops, is_load, op2_bits(unpriv)).is_err(),
+                "extra operand must Err; llvm-mc rejects a 3rd operand"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldur_stur
+        // Invalid domain: simm9 outside [-256, 255].
+        #[test]
+        fn encode_ldur_stur_neg_imm9_range(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            offset in imm9_out_of_range(),
+            is_load in any::<bool>(),
+            is_64 in any::<bool>(),
+            unpriv in any::<bool>(),
+        ) {
+            let ops = valid_gpr_ops(rt, rn, offset, is_64);
+            prop_assert!(
+                encode_ldur_stur(&ops, is_load, op2_bits(unpriv)).is_err(),
+                "offset {} outside [-256, 255] must Err",
+                offset
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldur_stur
+        // Invalid domain: SP/WSP as Rt; W/WSP/XZR/WZR as base; SIMD Rt on LDTR/STTR; V-register Rt.
+        #[test]
+        fn encode_ldur_stur_neg_invalid_rt_rn(
+            is_load in any::<bool>(),
+            kind in 0u32..=7,
+            n in 0u32..=31,
+            offset in imm9_in_range(),
+        ) {
+            let (ops, op2): (Vec<Operand>, u32) = match kind {
+                0 => (
+                    vec![
+                        Operand::Reg("sp".into()),
+                        Operand::Mem {
+                            base: "x0".into(),
+                            offset,
+                        },
+                    ],
+                    0b00,
+                ),
+                1 => (
+                    vec![
+                        Operand::Reg("wsp".into()),
+                        Operand::Mem {
+                            base: "x0".into(),
+                            offset,
+                        },
+                    ],
+                    0b00,
+                ),
+                2 => (
+                    vec![
+                        Operand::Reg(rt_gpr(n, true)),
+                        Operand::Mem {
+                            base: format!("w{}", n % 31),
+                            offset,
+                        },
+                    ],
+                    0b00,
+                ),
+                3 => (
+                    vec![
+                        Operand::Reg(rt_gpr(n, true)),
+                        Operand::Mem {
+                            base: "wsp".into(),
+                            offset,
+                        },
+                    ],
+                    0b00,
+                ),
+                4 => (
+                    vec![
+                        Operand::Reg(rt_gpr(n, true)),
+                        Operand::Mem {
+                            base: "xzr".into(),
+                            offset,
+                        },
+                    ],
+                    0b00,
+                ),
+                5 => (
+                    vec![
+                        Operand::Reg(rt_gpr(n, true)),
+                        Operand::Mem {
+                            base: "wzr".into(),
+                            offset,
+                        },
+                    ],
+                    0b00,
+                ),
+                6 => (
+                    vec![
+                        Operand::Reg(rt_simd(n, ['b', 'h', 's', 'd', 'q'][(n as usize) % 5])),
+                        Operand::Mem {
+                            base: "x0".into(),
+                            offset,
+                        },
+                    ],
+                    0b10,
+                ),
+                _ => (
+                    vec![
+                        Operand::Reg(format!("v{}", n)),
+                        Operand::Mem {
+                            base: "x0".into(),
+                            offset,
+                        },
+                    ],
+                    0b00,
+                ),
+            };
+            prop_assert!(
+                encode_ldur_stur(&ops, is_load, op2).is_err(),
+                "invalid Rt/Rn kind {} must Err; got {:?}",
+                kind,
+                encode_ldur_stur(&ops, is_load, op2)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldur_stur
+        // Invalid domain: fewer than 2 operands, non-Reg Rt, non-Mem addressing, invalid base name.
+        #[test]
+        fn encode_ldur_stur_neg_arity_and_shape(
+            is_load in any::<bool>(),
+            unpriv in any::<bool>(),
+            shape in 0u32..=8,
+            rt in reg_edge(),
+            off in imm9_in_range(),
+        ) {
+            let op2 = op2_bits(unpriv);
+            let rt_n = rt_gpr(rt, true);
+            let ops: Vec<Operand> = match shape {
+                0 => vec![],
+                1 => vec![Operand::Reg(rt_n)],
+                2 => vec![Operand::Reg(rt_n.clone()), Operand::Imm(0)],
+                3 => vec![Operand::Reg(rt_n.clone()), Operand::Symbol("foo".into())],
+                4 => vec![
+                    Operand::Reg(rt_n.clone()),
+                    Operand::MemPreIndex {
+                        base: "x0".into(),
+                        offset: off,
+                    },
+                ],
+                5 => vec![
+                    Operand::Reg(rt_n.clone()),
+                    Operand::MemPostIndex {
+                        base: "x0".into(),
+                        offset: off,
+                    },
+                ],
+                6 => vec![
+                    Operand::Imm(0),
+                    Operand::Mem {
+                        base: "x0".into(),
+                        offset: 0,
+                    },
+                ],
+                7 => vec![
+                    Operand::Reg(rt_n),
+                    Operand::Mem {
+                        base: "foo".into(),
+                        offset: 0,
+                    },
+                ],
+                _ => vec![
+                    Operand::Reg(rt_gpr(rt, true)),
+                    Operand::Mem {
+                        base: "x32".into(),
+                        offset: 0,
+                    },
+                ],
+            };
+            prop_assert!(
+                encode_ldur_stur(&ops, is_load, op2).is_err(),
+                "expected Err for arity/shape {} got {:?}",
+                shape,
+                encode_ldur_stur(&ops, is_load, op2)
+            );
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldur_stur
+        // lr is the architectural alias of X30 (is_64bit_reg / encode_ldr_str_auto / llvm-mc).
+        #[test]
+        fn encode_ldur_stur_diff_lr_alias(
+            rn in reg_edge(),
+            offset in imm9_in_range(),
+            is_load in any::<bool>(),
+            unpriv in any::<bool>(),
+        ) {
+            let mn = mnemonic(is_load, unpriv);
+            let rn_n = rn_name(rn);
+            let asm = format!("{} lr, {}", mn, asm_mem(&rn_n, offset));
+            let ops = [
+                Operand::Reg("lr".into()),
+                Operand::Mem {
+                    base: rn_n,
+                    offset,
+                },
+            ];
+            let sut = sut_word(&ops, is_load, op2_bits(unpriv))
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+    }
+}

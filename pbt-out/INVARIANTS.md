@@ -1,3 +1,38 @@
+# Confirmed invariants (encode_ldur_stur)
+
+- Valid GPR LDUR/STUR/LDTR/STTR with Rt in x0–x30/xzr or w0–w30/wzr, Rn in x0–x30/sp, offset in [-256, 255] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Valid SIMD LDUR/STUR with Rt in b/h/s/d/q 0–31, Rn in x0–x30/sp, offset in [-256, 255] matches llvm-mc (1000 cases).
+- encode_ldur_stur(..., is_load=true) XOR encode_ldur_stur(..., is_load=false) = 1<<22 (ARM ARM opc bit) (1000 cases).
+- encode_ldur_stur(..., op2=00) XOR encode_ldur_stur(..., op2=10) = 1<<11 over GPR (ARM ARM unscaled vs unprivileged) (1000 cases).
+- Success-path word: bits [29:27]=111, bits [25:24]=00, bit 21=0, imm9 at [20:12], op2 at [11:10], Rn at [9:5], Rt at [4:0]; GPR size 11/10 from X/W; SIMD size/opc from B/H/S/D/Q.
+- Fewer than 2 operands, non-Reg first operand, non-Mem second operand (Imm/Symbol/pre/post-index), and invalid base names (foo, x32) always Err.
+- Known-answer: `ldur x0, [x1]` encodes as 0xf8400020; `ldur q0, [x1]` as 0x3cc00020; `ldtr x0, [x1]` as 0xf8400820.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM unscaled LDUR/STUR: `size 111 V 00 opc 0 imm9 00 Rn Rt`. LDTR/STTR: bits [11:10]=10. simm9 in [-256, 255].
+- Rt register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `ldur sp, ...`).
+- Rn is Xn|SP (llvm-mc rejects [wN], [xzr], [wzr], [wsp]).
+- SIMD Rt is valid for LDUR/STUR only (llvm-mc rejects `ldtr d0, ...` and `ldur v0, ...`).
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg / encode_ldr_str_auto).
+- Dispatch: encoder/mod.rs:336-339 ldur/stur/ldtr/sttr.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- imm9 is masked with 0x1FF with no range check (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `stur sp, [x0]` encodes as `stur wzr, [x0]` (see bugs).
+- W-register base is accepted and encoded as the same-number X register (see bugs).
+- XZR as base encodes as SP (register 31) (see bugs).
+- SIMD Rt on LDTR/STTR is encoded (see bugs).
+- V-register Rt falls through to size=11 opc=01 (D form) (see bugs).
+- `lr` is sized as 32-bit because size uses `starts_with('x')` (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / non-Mem / parse_reg_num None / lr alias).
+
+---
+
 # Confirmed invariants (encode_neon_sli)
 
 - Valid vector SLI with T in {8b,16b,4h,8h,2s,4s,2d}, Vd/Vn in v0–v31, shift in [0, esize(T)-1] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
