@@ -1,31 +1,78 @@
-# PBT Campaign Report: encode_sbfm
+# PBT Campaign Report: encode_sbfx
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sbfm
-**Tests:** 12 properties (plus 6 KAT + 5 regression witnesses)
-**Result:** 7 passing, 5 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, ≥1 metamorphic/differential, 1 coverage-driven sweep round)
+**Modules tested:** encode_sbfx
+**Tests:** 13 properties (plus 6 KAT + 5 regression witnesses)
+**Result:** 8 passing, 5 bugs
+**Effort tier:** standard (5-8 properties/target, ≥1000 cases, 1 strengthening round, 1 coverage_gaps sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sbfm | 12 properties (7 passing / 5 failing) + 6 KAT + 5 regression | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_sbfx | 13 properties (8 passing / 5 failing) + 6 KAT + 5 regression | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **encode_sbfm ignores extra operands** — Law: SBFM takes exactly four operands. Shrunk input: `[Reg("w0"), Reg("w0"), Imm(0), Imm(0), Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg/get_imm only read indices 0..3. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_extra_operand.md`. Regression: `test_encode_sbfm_regression_extra_operand`.
+### 1. Extra operand ignored
+- **Law:** SBFX takes exactly four operands; a fifth must be rejected.
+- **Shrunk input:** `[Reg("w0"), Reg("w0"), Imm(0), Imm(1), Reg("x0")]`
+- **Expected:** Err
+- **Actual:** Ok(Word) — indices 0..3 only
+- **Root cause:** encode_sbfx never checks `operands.len()`
+- **Impact:** invalid GNU-style assembly encodes instead of error
+- **Severity:** medium
+- **Fix:** reject `operands.len() != 4`
+- **Bug report:** pbt-out/bug_reports/encode_sbfx_extra_operand.md
 
-2. **encode_sbfm treats SP/WSP as ZR** — Law: register 31 is WZR/XZR, not SP/WSP. Shrunk input: `sbfm wsp, w0, #0, #0`. Expected Err; actual Ok(Word) because parse_reg_num maps sp/wsp to 31. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_sp.md`. Regression: `test_encode_sbfm_regression_sp`.
+### 2. SP/WSP encoded as ZR
+- **Law:** Register 31 is WZR/XZR, not SP/WSP.
+- **Shrunk input:** `sbfx wsp, w0, #0, #1` (which=0, sp64=false, is_64=false, other=0)
+- **Expected:** Err
+- **Actual:** Ok(Word) — parse_reg_num maps sp/wsp to 31
+- **Root cause:** no SP-vs-ZR distinction after parse_reg_num
+- **Impact:** `sbfx sp, ...` silently becomes `sbfx xzr, ...`
+- **Severity:** medium
+- **Fix:** reject sp/wsp in Rd/Rn
+- **Bug report:** pbt-out/bug_reports/encode_sbfx_sp.md
 
-3. **encode_sbfm accepts out-of-range immr/imms** — Law: 0 <= immr,imms < R (32 W / 64 X). Shrunk input: `sbfm w0, w0, #-1, #0`. Expected Err; actual Ok(Word) via `as u32` wrap with no range check (also encodes immr/imms = R). Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_immr_imms.md`. Regression: `test_encode_sbfm_regression_immr_neg`.
+### 3. Out-of-range #lsb/#width panics or encodes
+- **Law:** 0 <= lsb < R and 1 <= width <= R-lsb; invalid immediates must Err, not panic.
+- **Shrunk input:** `sbfx w0, w0, #0, #0` (lsb=0, width=0, is_64=false)
+- **Expected:** Err
+- **Actual:** debug panic `attempt to subtract with overflow` at `lsb + width - 1` (bitfield.rs:30)
+- **Root cause:** no range check; `u32` wrapping arithmetic
+- **Impact:** assembler crash on valid-looking but illegal extract; other out-of-range pairs encode illegal immr/imms
+- **Severity:** high
+- **Fix:** reject width < 1, lsb >= R, width > R-lsb before computing imms
+- **Bug report:** pbt-out/bug_reports/encode_sbfx_lsb_width.md
 
-4. **encode_sbfm accepts mixed W/X registers** — Law: Rd and Rn must have the same width. Shrunk input: `sbfm x0, w0, #0, #0`. Expected Err; actual Ok(Word) using sf from Rd only. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_mixed_width.md`. Regression: `test_encode_sbfm_regression_mixed_width`.
+### 4. Mixed W/X accepted
+- **Law:** SBFX requires same-width GPR pair (Wd,Wn or Xd,Xn).
+- **Shrunk input:** `sbfx x0, w0, #0, #1` (rd=0, rn=0, rd64=true, rn64=false)
+- **Expected:** Err
+- **Actual:** Ok(Word) using Rd's sf and Rn's number
+- **Root cause:** `let (rn, _) = get_reg(operands, 1)` discards Rn width
+- **Impact:** mixed-width assembly encodes a same-width SBFM word
+- **Severity:** medium
+- **Fix:** require Rn width == Rd width
+- **Bug report:** pbt-out/bug_reports/encode_sbfx_mixed_width.md
 
-5. **encode_sbfm accepts FP/SIMD registers** — Law: Rd/Rn are GPRs. Shrunk input: `sbfm d0, x1, #0, #0`. Expected Err; actual Ok(Word) as 32-bit SBFM w0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_fp.md`. Regression: `test_encode_sbfm_regression_fp`.
+### 5. FP/SIMD registers accepted as GPR
+- **Law:** SBFX Rd/Rn must be W/X (or ZR), not S/D/Q/V/H/B.
+- **Shrunk input:** `sbfx d0, x1, #0, #1` (which=0, prefix="d", n=0)
+- **Expected:** Err
+- **Actual:** Ok(Word) — parse_reg_num maps d0 to register 0
+- **Root cause:** encode_sbfx does not require a GPR prefix
+- **Impact:** `sbfx d0, ...` encodes as `sbfx w0/x0, ...`
+- **Severity:** medium
+- **Fix:** reject FP/SIMD prefixes
+- **Bug report:** pbt-out/bug_reports/encode_sbfx_fp.md
+
+All five failures reproduced serially with `PBT_TEST_JOBS=1`. They are SUT bugs, not test-isolation defects.
 
 ## Design Caveats
 
@@ -35,31 +82,33 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_sbfm_pbt) | 12 properties + 6 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_sbfx_pbt) | 13 properties + 6 KAT + 5 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/FUNCTION_INDEX.md — merged function index (encode_sbfm now a candidate)
-- pbt-out/COVERAGE.md — coverage ledger row for encode_sbfm
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/INVARIANTS.md — confirmed encode_sbfm invariants
-- pbt-out/bug_reports/encode_sbfm_extra_operand.md
-- pbt-out/bug_reports/encode_sbfm_sp.md
-- pbt-out/bug_reports/encode_sbfm_immr_imms.md
-- pbt-out/bug_reports/encode_sbfm_mixed_width.md
-- pbt-out/bug_reports/encode_sbfm_fp.md
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_sbfx_extra_operand.md
+- pbt-out/bug_reports/encode_sbfx_sp.md
+- pbt-out/bug_reports/encode_sbfx_lsb_width.md
+- pbt-out/bug_reports/encode_sbfx_mixed_width.md
+- pbt-out/bug_reports/encode_sbfx_fp.md
 
-Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard-tier round was a manual arm audit of encode_sbfm (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / immr-imms). Closed because the tier round was spent and the documented contract surface has a property.
+## Sweep
+
+Round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_sbfx (get_reg Rd/Rn, get_imm lsb/width, sf/N, immr=lsb, imms=lsb+width-1 overflow, extra operands). Added encode_sbfx_diff_alt_spellings, encode_sbfx_neg_nonreg, encode_sbfx_neg_invalid_name (passing) and encode_sbfx_neg_mixed_width, encode_sbfx_neg_fp (failing, filed). Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 21:38 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 91/289 total | PBT candidates: 91 | Tested: 91 (100%) | 0 pass, 91 fail
+> Last updated: 2026-09-14 21:51 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 92/289 total | PBT candidates: 92 | Tested: 92 (100%) | 0 pass, 92 fail
 
 ## Summary
 
@@ -68,10 +117,10 @@ Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 91 |
-| **Tested (of PBT candidates)** | **91 / 91 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 91 / 0 |
-| **Overall (tested / all functions)** | **91 / 289 (31%)** |
+| PBT candidates (from FUNCTION_INDEX) | 92 |
+| **Tested (of PBT candidates)** | **92 / 92 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 92 / 0 |
+| **Overall (tested / all functions)** | **92 / 289 (32%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -79,13 +128,13 @@ Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 91 | 91 | 0 | 100% |
+|  | 92 | 92 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 91 | 91 | 0 | 100% |
+| unknown | 92 | 92 | 0 | 100% |
 
 ## File Coverage
 
@@ -108,6 +157,7 @@ Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard
 
 | Function | Source |
 |----------|--------|
+| encode_sbfx | bitfield.rs |
 | encode_sbfm | bitfield.rs |
 | encode_sbfiz | bitfield.rs |
 | encode_shift | gp_integer.rs |

@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_sbfx)
+
+- Same-width GPR SBFX (x0–x30/xzr/lr and w0–w30/wzr, 0<=lsb<R, 1<=width<=R-lsb) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as ASR (when the extract reaches the MSB); the 32-bit word still matches.
+- encode_sbfx([Rd, Rn, lsb, width]) equals encode_sbfm([Rd, Rn, lsb, lsb+width-1]) (ARM ARM SBFX alias of SBFM) (1000 cases).
+- Success-path word: sf at 31 from Rd width, opc=00 at [30:29], bits [28:23]=100110, N=sf at 22, immr=lsb at [21:16], imms=lsb+width-1 at [15:10], Rn at [9:5], Rd at [4:0].
+- Changing Rd does not change opcode/imm/Rn fields; changing Rn does not change opcode/imm/Rd.
+- Fewer than 4 operands always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1, x99) always Err.
+- Non-register/non-imm (Shift/Mem/Symbol/Label/Cond/RegArrangement) in any of the four slots always Err (Imm allowed only in slots 2-3).
+- Known-answer: `sbfx w0, w1, #0, #1` encodes as 0x13000020; `sbfx w0, w1, #1, #1` as 0x13010420; `sbfx x0, x1, #1, #8` as 0x93412020; `sbfx wzr, wzr, #31, #1` as 0x131f7fff; `sbfx x0, xzr, #63, #1` as 0x937fffe0; `sbfx lr, x1, #8, #16` as 0x93485c3e.
+- Extra operand, SP/WSP, mixed W/X, FP/SIMD prefixes, and out-of-range lsb/width currently encode or panic instead of Err (see bugs).
+
+## Environment (encode_sbfx)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Signed Bitfield Extract SBFX: SBFX <Rd>, <Rn>, #<lsb>, #<width> aliases SBFM <Rd>, <Rn>, #<lsb>, #(<lsb>+<width>-1). Encoding sf 00 100110 N immr imms Rn Rd; N=sf; register 31 is ZR not SP. Constraints 0<=lsb<datasize, 1<=width<=datasize-lsb.
+- Dispatch: encoder/mod.rs:886 "sbfx" => encode_sbfx(operands).
+- Callers: encoder dispatch only.
+- Sibling encode_sbfm is the raw immr/imms form (not a same-job differential). Sibling encode_ubfx/encode_bfxil are different opc.
+- encode_sbfx does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31; lsb/width are `as u32` with no range check; `lsb + width - 1` overflows in debug on width=0.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_sbfx (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / lsb-width).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_sbfx_*.md.
+
 # Confirmed invariants (encode_sbfm)
 
 - Valid SBFM Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as SBFIZ/SBFX/ASR aliases; the 32-bit word still matches.
