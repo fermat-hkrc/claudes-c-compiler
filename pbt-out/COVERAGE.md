@@ -73,3 +73,4 @@
 | encode_smulh | data_processing.rs | data_processing.rs | cargo test --lib | 8 passing / 5 failing properties (plus 4 passing KAT + 5 failing regression witnesses; 4 bugs; sweep wzr failing, nonreg/invalid-name passing) |
 | encode_fcvt_rounding | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 4 failing properties (plus 7 passing KAT + 4 failing regression witnesses; 4 bugs; sweep nonreg/invalid-name passing) |
 | encode_fp_1src | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 5 passing / 3 failing properties (plus 7 passing KAT + 3 failing regression witnesses; 3 bugs; sweep nonreg/invalid-name passing) |
+| encode_int_to_float | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 4 failing properties (plus 8 passing KAT + 4 failing regression witnesses; 4 bugs; sweep nonreg/invalid-name passing) |

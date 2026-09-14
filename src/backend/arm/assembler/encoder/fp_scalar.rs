@@ -1291,3 +1291,550 @@ mod encode_fp_1src_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_int_to_float_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:454-459 scvtf/ucvtf dispatch (vector RegArrangement goes to encode_neon_float_two_misc);
+    //   ARM ARM Conversion between floating-point and integer:
+    //   sf 00 11110 ftype 1 00 opcode 000000 Rn Rd;
+    //   fp_scalar.rs:211-215 purpose comment (sf W/X source, ftype S/D dest, opcode 010 signed / 011 unsigned);
+    //   README.md:223 lists scalar ucvtf/scvtf; codegen/cast_ops.rs:53-66 emits scvtf/ucvtf.
+    // Stronger considered:
+    //   - State machine: rejected — encode_int_to_float is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree SCVTF/UCVTF integer decoder
+    //   - encode_fcvt_rounding as differential sibling:
+    //     rejected — same-job gate fails (float-to-integer, opposite conversion)
+    //   - encode_scvtf / encode_ucvtf: rejected — thin wrappers that call this function
+    //   - encode_neon_float_two_misc: rejected — vector/SIMD-scalar form (scvtf s0,s1 = 0x5e21d820)
+    //   - encode_fcvt_precision: rejected — float-to-float precision conversion
+    // Weaker available: algebraic.metamorphic (sf/ftype/opcode/Rd/Rn),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / SP / wrong type)
+    // Differential: candidate=encode_int_to_float, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler (caller-reachable from encode_instruction),
+    //   mapping=[Reg(Sd|Dd), Reg(Wn|Xn)]+is_signed <-> `scvtf|ucvtf Sd|Dd, Wn|Xn`
+
+    use super::encode_int_to_float;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn fp(is_d: bool, n: u32) -> String {
+        format!("{}{}", if is_d { "d" } else { "s" }, n)
+    }
+
+    fn mnem(is_signed: bool) -> &'static str {
+        if is_signed {
+            "scvtf"
+        } else {
+            "ucvtf"
+        }
+    }
+
+    fn sut_word(ops: &[Operand], is_signed: bool) -> Result<u32, String> {
+        match encode_int_to_float(ops, is_signed)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word_with(asm: &str, extra_args: &[&str]) -> Result<u32, String> {
+        let mut args = vec!["-triple=aarch64", "-show-encoding"];
+        args.extend_from_slice(extra_args);
+        let mut child = Command::new(LLVM_MC)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &[])
+    }
+
+    fn llvm_mc_fp16_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &["-mattr=+fullfp16"])
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Imm(8)),
+            Just(Operand::Imm(32)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            }),
+        ]
+    }
+
+    fn dest_spelling(is_d: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 => fp(is_d, n).to_uppercase(),
+            _ => fp(is_d, n),
+        }
+    }
+
+    fn src_spelling(is_64: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 if n == 31 && is_64 => "x31".into(),
+            0 if n == 31 && !is_64 => "w31".into(),
+            1 if n == 31 && is_64 => "XZR".into(),
+            1 if n == 31 && !is_64 => "WZR".into(),
+            2 if n == 30 && is_64 => "LR".into(),
+            3 if n == 30 && is_64 => "lr".into(),
+            4 => gpr(is_64, n).to_uppercase(),
+            _ => gpr(is_64, n),
+        }
+    }
+
+    fn wrong_type_pair() -> impl Strategy<Value = (String, String)> {
+        let n = 0u32..=31;
+        prop_oneof![
+            // GP dest + GP source
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(d, s, d64, s64)| {
+                (gpr(d64, d), gpr(s64, s))
+            }),
+            // GP dest + FP (S/D) source
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(d, s, d64, src_d)| {
+                (gpr(d64, d), fp(src_d, s))
+            }),
+            // FP dest + FP source (SIMD-scalar SCVTF, not integer form)
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(d, s, dest_d, src_d)| {
+                (fp(dest_d, d), fp(src_d, s))
+            }),
+            // Q/V/B dest + GP source
+            (n.clone(), n.clone(), 0u32..=2, any::<bool>()).prop_map(|(d, s, p, s64)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (format!("{pref}{d}"), gpr(s64, s))
+            }),
+            // S/D dest + Q/V/B source
+            (n.clone(), n.clone(), any::<bool>(), 0u32..=2).prop_map(|(d, s, dest_d, p)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (fp(dest_d, d), format!("{pref}{s}"))
+            }),
+            // S/D dest + H source
+            (n.clone(), n.clone(), any::<bool>()).prop_map(|(d, s, dest_d)| {
+                (fp(dest_d, d), format!("h{s}"))
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_scvtf_s0_w1() {
+        let want = 0x1e220020u32;
+        let mc = llvm_mc_word("scvtf s0, w1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("w1".into())];
+        let sut = sut_word(&ops, true).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_scvtf_d0_x1() {
+        let want = 0x9e620020u32;
+        let mc = llvm_mc_word("scvtf d0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops, true).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_ucvtf_s0_w1() {
+        let want = 0x1e230020u32;
+        let mc = llvm_mc_word("ucvtf s0, w1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("w1".into())];
+        let sut = sut_word(&ops, false).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_ucvtf_d0_x1() {
+        let want = 0x9e630020u32;
+        let mc = llvm_mc_word("ucvtf d0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops, false).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_scvtf_s0_x1() {
+        let want = 0x9e220020u32;
+        let mc = llvm_mc_word("scvtf s0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops, true).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_scvtf_d31_xzr() {
+        let want = 0x9e6203ffu32;
+        let mc = llvm_mc_word("scvtf d31, xzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d31".into()), Operand::Reg("xzr".into())];
+        let sut = sut_word(&ops, true).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_scvtf_d0_lr() {
+        let want = 0x9e6203c0u32;
+        let mc = llvm_mc_word("scvtf d0, lr").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("lr".into())];
+        let sut = sut_word(&ops, true).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_int_to_float_kat_llvm_mc_half_scvtf_h0_w1() {
+        let want = 0x1ee20020u32;
+        let mc = llvm_mc_fp16_word("scvtf h0, w1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+    }
+
+    #[test]
+    fn test_encode_int_to_float_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("s0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Imm(8),
+        ];
+        assert!(
+            encode_int_to_float(&ops, true).is_err(),
+            "integer SCVTF must reject a 3rd #fbits operand (fixed-point is a different encoding)"
+        );
+    }
+
+    #[test]
+    fn test_encode_int_to_float_regression_sp_src() {
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("sp".into())];
+        assert!(
+            encode_int_to_float(&ops, true).is_err(),
+            "SP/WSP is not a valid integer SCVTF source"
+        );
+    }
+
+    #[test]
+    fn test_encode_int_to_float_regression_fp_src() {
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("s1".into())];
+        assert!(
+            encode_int_to_float(&ops, true).is_err(),
+            "FP source is SIMD-scalar SCVTF, not integer conversion"
+        );
+    }
+
+    #[test]
+    fn test_encode_int_to_float_regression_half_ftype() {
+        let ops = [Operand::Reg("h0".into()), Operand::Reg("w1".into())];
+        let sut = sut_word(&ops, true).expect("H dest is a valid fp16 integer SCVTF");
+        assert_eq!(
+            sut, 0x1ee20020u32,
+            "H dest must use ftype=11 (0x1ee20020), not ftype=00 S"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_int_to_float_diff_valid(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_d in any::<bool>(),
+            src64 in any::<bool>(),
+            is_signed in any::<bool>(),
+            dest_kind in 0u32..=1,
+            src_kind in 0u32..=5,
+        ) {
+            let dest = dest_spelling(dest_d, rd, dest_kind);
+            let src = src_spelling(src64, rn, src_kind);
+            let asm = format!("{} {}, {}", mnem(is_signed), dest, src);
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src.clone())];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, is_signed)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "SCVTF/UCVTF mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_int_to_float_arm_fields(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_d in any::<bool>(),
+            src64 in any::<bool>(),
+            is_signed in any::<bool>(),
+        ) {
+            let ops = [
+                Operand::Reg(fp(dest_d, rd)),
+                Operand::Reg(gpr(src64, rn)),
+            ];
+            let w = sut_word(&ops, is_signed).expect("SUT");
+            let sf = if src64 { 1u32 } else { 0 };
+            let ftype = if dest_d { 0b01u32 } else { 0b00 };
+            let opcode = if is_signed { 0b010u32 } else { 0b011 };
+            let want = (sf << 31)
+                | (0b11110 << 24)
+                | (ftype << 22)
+                | (1 << 21)
+                | (opcode << 16)
+                | (rn << 5)
+                | rd;
+            prop_assert_eq!(w, want, "ARM ARM SCVTF/UCVTF integer field layout");
+            prop_assert_eq!((w >> 31) & 1, sf, "sf");
+            prop_assert_eq!((w >> 29) & 0b11, 0, "bits[30:29] must be 00");
+            prop_assert_eq!((w >> 24) & 0b11111, 0b11110, "bits[28:24]");
+            prop_assert_eq!((w >> 22) & 0b11, ftype, "ftype");
+            prop_assert_eq!((w >> 21) & 1, 1, "bit21 must be 1 (integer, not fixed-point)");
+            prop_assert_eq!((w >> 19) & 0b11, 0, "rmode must be 00");
+            prop_assert_eq!((w >> 16) & 0b111, opcode, "opcode");
+            prop_assert_eq!((w >> 10) & 0b111111, 0, "scale/bits[15:10] must be 0");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_int_to_float_metamorphic_fields(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            dest_d in any::<bool>(),
+            src64 in any::<bool>(),
+        ) {
+            let ops = |
+                d: u32,
+                n: u32,
+                dd: bool,
+                s64: bool,
+            | {
+                [
+                    Operand::Reg(fp(dd, d)),
+                    Operand::Reg(gpr(s64, n)),
+                ]
+            };
+            let w = sut_word(&ops(rd, rn, dest_d, src64), true).expect("base SCVTF");
+            let w_rd = sut_word(&ops(rd + 1, rn, dest_d, src64), true).expect("Rd+1");
+            let w_rn = sut_word(&ops(rd, rn + 1, dest_d, src64), true).expect("Rn+1");
+            let w_sf = sut_word(&ops(rd, rn, dest_d, !src64), true).expect("sf flip");
+            let w_ft = sut_word(&ops(rd, rn, !dest_d, src64), true).expect("ftype flip");
+            let w_u = sut_word(&ops(rd, rn, dest_d, src64), false).expect("UCVTF");
+            prop_assert_eq!(w_rd, w + 1, "Rd+1 must increment bits[4:0] only");
+            prop_assert_eq!(w_rn, w + (1 << 5), "Rn+1 must increment bits[9:5] only");
+            prop_assert_eq!(w_sf ^ w, 1u32 << 31, "W vs X source must flip only sf bit 31");
+            prop_assert_eq!(w_ft ^ w, 1u32 << 22, "S vs D dest must flip only ftype bit 22");
+            prop_assert_eq!(w_u ^ w, 1u32 << 16, "SCVTF XOR UCVTF must be opcode LSB bit 16");
+        }
+
+        #[test]
+        fn encode_int_to_float_neg_arity(
+            len in 0usize..=1,
+            n in 0u32..=31,
+        ) {
+            let mut ops = Vec::new();
+            if len >= 1 {
+                ops.push(Operand::Reg(fp(false, n)));
+            }
+            prop_assert!(
+                encode_int_to_float(&ops, true).is_err(),
+                "SCVTF/UCVTF integer form with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_int_to_float_neg_extra_operand(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_d in any::<bool>(),
+            src64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(fp(dest_d, rd)),
+                Operand::Reg(gpr(src64, rn)),
+                extra,
+            ];
+            prop_assert!(
+                encode_int_to_float(&ops, true).is_err(),
+                "integer SCVTF/UCVTF has no 3rd operand; extra must Err (fixed-point is a different encoding)"
+            );
+        }
+
+        #[test]
+        fn encode_int_to_float_neg_sp_src(
+            is_64 in any::<bool>(),
+            rd in 0u32..=31,
+            dest_d in any::<bool>(),
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let ops = [
+                Operand::Reg(fp(dest_d, rd)),
+                Operand::Reg(sp.into()),
+            ];
+            prop_assert!(
+                encode_int_to_float(&ops, true).is_err(),
+                "SP/WSP is not a valid SCVTF/UCVTF integer source (sp={})",
+                sp
+            );
+        }
+
+        #[test]
+        fn encode_int_to_float_neg_wrong_types(
+            (dest, src) in wrong_type_pair(),
+        ) {
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src.clone())];
+            prop_assert!(
+                encode_int_to_float(&ops, true).is_err(),
+                "integer SCVTF/UCVTF requires Sd|Dd, Wn|Xn; dest={} src={} must Err",
+                dest,
+                src
+            );
+        }
+
+        #[test]
+        fn encode_int_to_float_diff_half(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            src64 in any::<bool>(),
+            is_signed in any::<bool>(),
+        ) {
+            let dest = format!("h{rd}");
+            let src = gpr(src64, rn);
+            let asm = format!("{} {}, {}", mnem(is_signed), dest, src);
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src)];
+            let mc = llvm_mc_fp16_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc fp16 rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops, is_signed)
+                .unwrap_or_else(|e| panic!("SUT rejected valid fp16 {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "SCVTF/UCVTF half-precision mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_int_to_float_neg_nonreg(
+            which in 0u32..=1,
+            kind in 0u32..=5,
+        ) {
+            let bad = match kind {
+                0 => Operand::Imm(0),
+                1 => Operand::Symbol("foo".into()),
+                2 => Operand::Label("1f".into()),
+                3 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+            };
+            let mut ops = vec![
+                Operand::Reg("s0".into()),
+                Operand::Reg("w0".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_int_to_float(&ops, true).is_err(),
+                "non-register at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_int_to_float_neg_invalid_name(
+            which in 0u32..=1,
+            name in prop::sample::select(vec![
+                "foo", "x32", "w32", "s32", "d32", "r0", "x", "s", "",
+            ]),
+        ) {
+            let mut ops = vec![
+                Operand::Reg("s0".into()),
+                Operand::Reg("w0".into()),
+            ];
+            ops[which as usize] = Operand::Reg(name.to_string());
+            prop_assert!(
+                encode_int_to_float(&ops, true).is_err(),
+                "invalid name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+    }
+}

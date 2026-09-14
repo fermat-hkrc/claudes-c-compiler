@@ -1,3 +1,22 @@
+# Confirmed invariants (encode_int_to_float)
+
+- Valid integer SCVTF/UCVTF Sd|Dd, Wn|Xn (including wzr/xzr, w31/x31, lr, uppercase, mixed S/X and D/W) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: sf 00 11110 ftype 1 00 opcode 000000 Rn Rd. Equivalently w = (sf<<31)|(0b11110<<24)|(ftype<<22)|(1<<21)|(opcode<<16)|(rn<<5)|rd. sf 0=W source 1=X source; ftype 00=S dest 01=D dest; opcode 010=SCVTF 011=UCVTF; bits[30:29]=00, bits[20:19]=00 (rmode), bits[15:10]=0, bit21=1.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; W vs X source flips only bit 31; S vs D dest flips only bit 22; SCVTF XOR UCVTF = 1<<16 (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/x32/s32/empty/r0) always Err (1000 cases).
+- Known-answer: `scvtf s0, w1` = 0x1e220020; `scvtf d0, x1` = 0x9e620020; `ucvtf s0, w1` = 0x1e230020; `ucvtf d0, x1` = 0x9e630020; `scvtf s0, x1` = 0x9e220020; `scvtf d31, xzr` = 0x9e6203ff; `scvtf d0, lr` = 0x9e6203c0; llvm-mc +fullfp16 `scvtf h0, w1` = 0x1ee20020 (SUT currently 0x1e220020, see bugs).
+- Extra operand, SP/WSP source, GP dest / FP source / QVB, and H dest currently encode incorrectly (see bugs).
+
+## Environment (encode_int_to_float)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (half: -mattr=+fullfp16). gas aarch64-linux-gnu-as agrees on `scvtf s0, w1` = 0x1e220020.
+- ARM ARM Conversion between floating-point and integer: sf 00 11110 ftype 1 rmode opcode 000000 Rn Rd. For integer SCVTF/UCVTF rmode=00, opcode=010/011. sf 0=W source 1=X source; ftype 00=S 01=D 11=H; register 31 is ZR not SP. Fixed-point form uses bit21=0 plus scale.
+- Dispatch: encoder/mod.rs:454-459 ucvtf/scvtf => encode_ucvtf/encode_scvtf => encode_int_to_float. Vector RegArrangement goes to encode_neon_float_two_misc. SIMD-scalar `scvtf s0, s1` = 0x5e21d820 is a different class.
+- Callers: encoder dispatch; codegen/cast_ops.rs:53-66 emits `scvtf`/`ucvtf` d0/s0, x0.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_int_to_float (arity / extra / SP src / GP dest / FP source / QVB / H ftype / nonreg / invalid-name).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_int_to_float_*.md.
+
 # Confirmed invariants (encode_fp_1src)
 
 - Valid scalar FRINTN/P/M/Z/A/X/I Sd,Sn or Dd,Dn (including s31/d31, uppercase, all 7 mnemonics) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

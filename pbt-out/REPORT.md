@@ -1,57 +1,29 @@
-# PBT Campaign Report: encode_fp_1src
+# PBT Campaign Report: encode_int_to_float
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fp_1src
-**Tests:** 8 properties (5 passing, 3 failing) plus 7 passing KAT and 3 failing regression witnesses
-**Result:** 5 passing, 3 bugs
-**Effort tier:** standard (5–8 properties, ≥1000 cases, 1 coverage-driven sweep round)
+**Modules tested:** encode_int_to_float
+**Tests:** 10 properties (6 passing, 4 failing) plus 8 KAT + 4 failing regression witnesses
+**Result:** 6 passing, 4 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 metamorphic/differential required, 1 coverage_gaps sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fp_1src | 8 properties (5 pass / 3 fail) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_int_to_float | 10 properties (6 pass / 4 fail) | 4 | differential (llvm-mc), algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### 1. Extra operands ignored
-- **Law:** Scalar FRINT* takes exactly two registers; a third operand must be rejected.
-- **Shrunk counterexample:** `[Reg("s0"), Reg("s0"), Reg("s0")]` opcode=0b001000 (`frintn s0, s0, s0`)
-- **Expected:** Err
-- **Actual:** Ok(Word) — get_reg only reads indices 0 and 1
-- **Root cause:** No arity-upper-bound check
-- **Impact:** Invalid GNU-style assembly is silently encoded
-- **Severity:** medium
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced
-- **Bug report:** pbt-out/bug_reports/encode_fp_1src_extra_operand.md
-- **Regression test:** `test_encode_fp_1src_regression_extra_operand` (fails as witness)
+1. **Extra operand ignored** — `encode_int_to_float` only checks `operands.len() < 2`, so a 3rd operand (including `#fbits`, the distinct fixed-point form with bit21=0) is dropped. Shrunk: `[Reg("s0"), Reg("w0"), Reg("x0")]`. llvm-mc encodes `scvtf s0, w1, #8` as 0x1e02e020; SUT emits integer 0x1e220020. Serial reconfirm with PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_int_to_float_extra_operand.md`
 
-### 2. Mixed S/D (and GPR/SP/QVB) encoded instead of rejected
-- **Law:** FRINTN syntax is Sd,Sn or Dd,Dn (same precision). Mixed S/D, GPR, SP/WSP, and Q/V/B must Err.
-- **Shrunk counterexample:** `[Reg("s0"), Reg("d0")]` opcode=0b001000 (`frintn s0, d0`)
-- **Expected:** Err
-- **Actual:** Ok(Word(0x1e244000)) — ftype taken only from dest; source type ignored
-- **Root cause:** No matching-type / FP-class check after parse_reg_num
-- **Impact:** `frintn s0, d0` becomes single-precision FRINTN s0, s0
-- **Severity:** high
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced
-- **Bug report:** pbt-out/bug_reports/encode_fp_1src_wrong_types.md
-- **Regression test:** `test_encode_fp_1src_regression_mixed_sd` (fails as witness)
+2. **SP/WSP source encoded as ZR** — llvm-mc rejects `scvtf s0, sp` / `scvtf s0, wsp`. `parse_reg_num` maps both to 31, so the SUT emits `scvtf s0, wzr` / `scvtf d0, xzr`. Shrunk: `[Reg("s0"), Reg("wsp")]`. Serial reconfirm. Report: `pbt-out/bug_reports/encode_int_to_float_sp_src.md`
 
-### 3. Half-precision H registers encoded as ftype=00 (single)
-- **Law:** ARM ARM ftype=11 for half-precision FRINT*. llvm-mc +fullfp16 `frintn h0, h0` = 0x1ee44000.
-- **Shrunk counterexample:** `[Reg("h0"), Reg("h0")]` opcode=0b001000
-- **Expected:** Word(0x1ee44000)
-- **Actual:** Word(0x1e244000) — `rd_name.starts_with('d')` is the only ftype check
-- **Root cause:** H is treated as S
-- **Impact:** Half-precision rounding silently uses the S register view
-- **Severity:** high
-- **Serial reconfirm:** PBT_TEST_JOBS=1 reproduced
-- **Bug report:** pbt-out/bug_reports/encode_fp_1src_half_ftype.md
-- **Regression test:** `test_encode_fp_1src_regression_half_ftype` (fails as witness)
+3. **GP dest / FP source / QVB encoded as integer SCVTF** — Integer form requires Sd|Dd, Wn|Xn. `[Reg("w0"), Reg("w0")]` encodes as `scvtf s0, w0`. `[Reg("s0"), Reg("s1")]` is SIMD-scalar (llvm-mc 0x5e21d820) but the SUT emits integer `scvtf s0, w1` (0x1e220020). Serial reconfirm. Report: `pbt-out/bug_reports/encode_int_to_float_wrong_types.md`
+
+4. **H dest uses ftype=00 (single) not 11** — llvm-mc `-mattr=+fullfp16` encodes `ucvtf h0, w0` as 0x1ee30000; SUT emits 0x1e230000 because `dst_name.starts_with('d')` is the only ftype check. Shrunk: `[Reg("h0"), Reg("w0")]` is_signed=false. Serial reconfirm. Report: `pbt-out/bug_reports/encode_int_to_float_half_ftype.md`
 
 ## Design Caveats
 
@@ -61,31 +33,30 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fp_1src_pbt) | 8 properties + 7 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_int_to_float_pbt) | 10 properties + 8 KAT + 4 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger row for encode_fp_1src
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/FUNCTION_INDEX.md — merged function index (encode_fp_1src now a PBT candidate)
-- pbt-out/INVARIANTS.md — confirmed invariants for encode_fp_1src
-- pbt-out/bug_reports/encode_fp_1src_extra_operand.md
-- pbt-out/bug_reports/encode_fp_1src_wrong_types.md
-- pbt-out/bug_reports/encode_fp_1src_half_ftype.md
+- pbt-out/PLAN.md — campaign checklist (Scan/Plan/Test/Review complete; sweep 1/1)
+- pbt-out/PROPERTIES.md — 10 properties (6 passing, 4 failing)
+- pbt-out/REPORT.md — this file
+- pbt-out/COVERAGE.md — encode_int_to_float row appended
+- pbt-out/COVERAGE_STATUS.md — candidates 72, tested 72
+- pbt-out/FUNCTION_INDEX.md — encode_int_to_float marked yes
+- pbt-out/INVARIANTS.md — encode_int_to_float section prepended
+- pbt-out/bug_reports/encode_int_to_float_extra_operand.md
+- pbt-out/bug_reports/encode_int_to_float_sp_src.md
+- pbt-out/bug_reports/encode_int_to_float_wrong_types.md
+- pbt-out/bug_reports/encode_int_to_float_half_ftype.md
 
-## Sweep close-out
-
-Tier `standard` owes exactly 1 coverage-driven round. `coverage_gaps` had no LLVM profraw in this session. Manual arm audit of encode_fp_1src covered arity, extra operand, mixed S/D, GPR/QVB/SP, half ftype, non-register kinds, invalid names, uppercase spellings, S vs D, and all 7 FRINT opcodes. Closed: tier round spent and documented surface covered.
+Sweep closed because the tier's one coverage_gaps-driven round was spent (tool had no LLVM profraw; manual arm audit of arity / extra / SP / wrong types / half / nonreg / invalid-name) and every documented behavior of encode_int_to_float has a property.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 16:48 (campaign: coverage)
-> Files: 9/9 scanned (100%) | Functions: 71/267 total | PBT candidates: 71 | Tested: 71 (100%) | 0 pass, 71 fail
+> Last updated: 2026-09-14 17:00 (campaign: coverage)
+> Files: 9/9 scanned (100%) | Functions: 72/267 total | PBT candidates: 72 | Tested: 72 (100%) | 0 pass, 72 fail
 
 ## Summary
 
@@ -94,10 +65,10 @@ Tier `standard` owes exactly 1 coverage-driven round. `coverage_gaps` had no LLV
 | Total source files | 9 |
 | Files scanned | 9 / 9 (100%) |
 | Total functions (all files) | 267 |
-| PBT candidates (from FUNCTION_INDEX) | 71 |
-| **Tested (of PBT candidates)** | **71 / 71 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 71 / 0 |
-| **Overall (tested / all functions)** | **71 / 267 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 72 |
+| **Tested (of PBT candidates)** | **72 / 72 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 72 / 0 |
+| **Overall (tested / all functions)** | **72 / 267 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -105,13 +76,13 @@ Tier `standard` owes exactly 1 coverage-driven round. `coverage_gaps` had no LLV
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 71 | 71 | 0 | 100% |
+|  | 72 | 72 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 71 | 71 | 0 | 100% |
+| unknown | 72 | 72 | 0 | 100% |
 
 ## File Coverage
 
@@ -121,7 +92,7 @@ Tier `standard` owes exactly 1 coverage-driven round. `coverage_gaps` had no LLV
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 14 | 2 | 2 | 100% | covered |
+| fp_scalar.rs | 14 | 3 | 3 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
@@ -205,3 +176,4 @@ Tier `standard` owes exactly 1 coverage-driven round. `coverage_gaps` had no LLV
 | encode_smulh | data_processing.rs |
 | encode_fcvt_rounding | fp_scalar.rs |
 | encode_fp_1src | fp_scalar.rs |
+| encode_int_to_float | fp_scalar.rs |
