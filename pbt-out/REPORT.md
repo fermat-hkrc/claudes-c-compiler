@@ -1,10 +1,10 @@
-# PBT Campaign Report: encode_bfm
+# PBT Campaign Report: encode_sbfm
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bfm
+**Modules tested:** encode_sbfm
 **Tests:** 12 properties (plus 6 KAT + 5 regression witnesses)
 **Result:** 7 passing, 5 bugs
 **Effort tier:** standard (5–8 properties/target, ≥1000 cases, ≥1 metamorphic/differential, 1 coverage-driven sweep round)
@@ -13,19 +13,19 @@
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bfm | 12 properties (7 passing / 5 failing) + 6 KAT + 5 regression | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_sbfm | 12 properties (7 passing / 5 failing) + 6 KAT + 5 regression | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_bfm ignores extra operands** — Law: BFM takes exactly four operands. Shrunk input: `[Reg("w0"), Reg("w0"), Imm(0), Imm(0), Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg/get_imm only read indices 0..3. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_extra_operand.md`. Regression: `test_encode_bfm_regression_extra_operand`.
+1. **encode_sbfm ignores extra operands** — Law: SBFM takes exactly four operands. Shrunk input: `[Reg("w0"), Reg("w0"), Imm(0), Imm(0), Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg/get_imm only read indices 0..3. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_extra_operand.md`. Regression: `test_encode_sbfm_regression_extra_operand`.
 
-2. **encode_bfm treats SP/WSP as ZR** — Law: register 31 is WZR/XZR, not SP/WSP. Shrunk input: `bfm wsp, w0, #0, #0`. Expected Err; actual Ok(Word) because parse_reg_num maps sp/wsp to 31. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_sp.md`. Regression: `test_encode_bfm_regression_sp`.
+2. **encode_sbfm treats SP/WSP as ZR** — Law: register 31 is WZR/XZR, not SP/WSP. Shrunk input: `sbfm wsp, w0, #0, #0`. Expected Err; actual Ok(Word) because parse_reg_num maps sp/wsp to 31. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_sp.md`. Regression: `test_encode_sbfm_regression_sp`.
 
-3. **encode_bfm accepts out-of-range immr/imms** — Law: 0 <= immr,imms < R (32 W / 64 X). Shrunk input: `bfm w0, w0, #-1, #0`. Expected Err; actual Ok(Word) via `as u32` wrap with no range check (also encodes immr/imms = R). Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_immr_imms.md`. Regression: `test_encode_bfm_regression_immr_neg`.
+3. **encode_sbfm accepts out-of-range immr/imms** — Law: 0 <= immr,imms < R (32 W / 64 X). Shrunk input: `sbfm w0, w0, #-1, #0`. Expected Err; actual Ok(Word) via `as u32` wrap with no range check (also encodes immr/imms = R). Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_immr_imms.md`. Regression: `test_encode_sbfm_regression_immr_neg`.
 
-4. **encode_bfm accepts mixed W/X registers** — Law: Rd and Rn must have the same width. Shrunk input: `bfm x0, w0, #0, #0`. Expected Err; actual Ok(Word) using sf from Rd only. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_mixed_width.md`. Regression: `test_encode_bfm_regression_mixed_width`.
+4. **encode_sbfm accepts mixed W/X registers** — Law: Rd and Rn must have the same width. Shrunk input: `sbfm x0, w0, #0, #0`. Expected Err; actual Ok(Word) using sf from Rd only. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_mixed_width.md`. Regression: `test_encode_sbfm_regression_mixed_width`.
 
-5. **encode_bfm accepts FP/SIMD registers** — Law: Rd/Rn are GPRs. Shrunk input: `bfm d0, x1, #0, #0`. Expected Err; actual Ok(Word) as 32-bit BFM w0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_fp.md`. Regression: `test_encode_bfm_regression_fp`.
+5. **encode_sbfm accepts FP/SIMD registers** — Law: Rd/Rn are GPRs. Shrunk input: `sbfm d0, x1, #0, #0`. Expected Err; actual Ok(Word) as 32-bit SBFM w0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_sbfm_fp.md`. Regression: `test_encode_sbfm_regression_fp`.
 
 ## Design Caveats
 
@@ -35,31 +35,31 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_bfm_pbt) | 12 properties + 6 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_sbfm_pbt) | 12 properties + 6 KAT + 5 regression witnesses |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/REPORT.md — this report
-- pbt-out/FUNCTION_INDEX.md — merged function index (encode_bfm now a candidate)
-- pbt-out/COVERAGE.md — coverage ledger row for encode_bfm
+- pbt-out/FUNCTION_INDEX.md — merged function index (encode_sbfm now a candidate)
+- pbt-out/COVERAGE.md — coverage ledger row for encode_sbfm
 - pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/INVARIANTS.md — confirmed encode_bfm invariants
-- pbt-out/bug_reports/encode_bfm_extra_operand.md
-- pbt-out/bug_reports/encode_bfm_sp.md
-- pbt-out/bug_reports/encode_bfm_immr_imms.md
-- pbt-out/bug_reports/encode_bfm_mixed_width.md
-- pbt-out/bug_reports/encode_bfm_fp.md
+- pbt-out/INVARIANTS.md — confirmed encode_sbfm invariants
+- pbt-out/bug_reports/encode_sbfm_extra_operand.md
+- pbt-out/bug_reports/encode_sbfm_sp.md
+- pbt-out/bug_reports/encode_sbfm_immr_imms.md
+- pbt-out/bug_reports/encode_sbfm_mixed_width.md
+- pbt-out/bug_reports/encode_sbfm_fp.md
 
-Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard-tier round was a manual arm audit of encode_bfm (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / immr-imms). Closed because the tier round was spent and the documented contract surface has a property.
+Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard-tier round was a manual arm audit of encode_sbfm (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / immr-imms). Closed because the tier round was spent and the documented contract surface has a property.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 21:27 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 90/289 total | PBT candidates: 90 | Tested: 90 (100%) | 0 pass, 90 fail
+> Last updated: 2026-09-14 21:38 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 91/289 total | PBT candidates: 91 | Tested: 91 (100%) | 0 pass, 91 fail
 
 ## Summary
 
@@ -68,10 +68,10 @@ Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 90 |
-| **Tested (of PBT candidates)** | **90 / 90 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 90 / 0 |
-| **Overall (tested / all functions)** | **90 / 289 (31%)** |
+| PBT candidates (from FUNCTION_INDEX) | 91 |
+| **Tested (of PBT candidates)** | **91 / 91 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 91 / 0 |
+| **Overall (tested / all functions)** | **91 / 289 (31%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -79,13 +79,13 @@ Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 90 | 90 | 0 | 100% |
+|  | 91 | 91 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 90 | 90 | 0 | 100% |
+| unknown | 91 | 91 | 0 | 100% |
 
 ## File Coverage
 
@@ -108,6 +108,7 @@ Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard
 
 | Function | Source |
 |----------|--------|
+| encode_sbfm | bitfield.rs |
 | encode_sbfiz | bitfield.rs |
 | encode_shift | gp_integer.rs |
 | encode_add_sub | data_processing.rs |
