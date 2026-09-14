@@ -35,3 +35,4 @@
 | encode_neon_sli | neon.rs | neon.rs | cargo test --lib | 5 passing / 3 failing properties (plus 2 passing KAT + 6 failing regression witnesses; 4 bugs) |
 | encode_ldur_stur | load_store.rs | load_store.rs | cargo test --lib | 6 passing / 4 failing properties (plus 3 passing KAT + 8 failing regression witnesses; 7 bugs) |
 | encode_ldxp_stxp | load_store.rs | load_store.rs | cargo test --lib | 5 passing / 4 failing properties (plus 7 passing KAT + 9 failing regression witnesses; 9 bugs) |
+| encode_neon_float_three_same | neon.rs | neon.rs | cargo test --lib | 7 passing / 4 failing properties (plus 2 passing KAT + 4 failing regression witnesses; 4 bugs) |

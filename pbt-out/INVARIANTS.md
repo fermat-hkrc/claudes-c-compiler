@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_neon_float_three_same)
+
+- Valid vector FP three-same (FADD/FSUB/FMUL/FDIV/FMAX/FMIN/FMAXNM/FMINNM/FMLA/FMLS/FRECPS/FRSQRTS/FCMEQ/FCMGE/FCMGT/FACGE/FACGT/FABD) with T in {2s,4s,2d}, Vd/Vn/Vm in v0–v31, and ARM-correct (U, size_hi, opcode) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode(..., U=0) XOR encode(..., U=1) = 1<<29 (ARM ARM U bit) (1000 cases).
+- encode(..., size_hi=0) XOR encode(..., size_hi=1) = 1<<23 (ARM ARM size[1]) (1000 cases).
+- encode(2s) XOR encode(4s) at equal register numbers = 1<<30 (ARM ARM Q bit) (1000 cases).
+- Success-path word: bit 31=0, Q at 30 from T (2s→0, 4s/2d→1), U at 29, bits [28:24]=01110, size at [23:22]=(size_hi<<1)|sz, bit 21=1, Rm at [20:16], opcode at [15:11], bit 10=1, Rn at [9:5], Rd at [4:0].
+- Arrangement other than 2s/4s/2d, fewer than 3 operands, non-register dest/src/Vm, invalid names (v32, foo, empty, v, v-1, v99), and dest Operand::Reg (no arrangement) always Err.
+- Known-answer: `fadd v0.4s, v1.4s, v2.4s` encodes as 0x4e22d420; `fadd v0.2s, v1.2s, v2.2s` as 0x0e22d420; `fadd v0.2d, v1.2d, v2.2d` as 0x4e62d420; `fsub v0.4s, v1.4s, v2.4s` as 0x4ea2d420; `fmul v0.4s, v1.4s, v2.4s` as 0x6e22dc20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD three-same FP: `0 Q U 01110 size 1 Rm opcode 1 Rn Rd`. size[1]=size_hi, size[0]=sz (0=single, 1=double).
+- Valid T is 2S, 4S, 2D (llvm-mc rejects 8b/16b/4h/8h/1d without +fullfp16).
+- Scalar `fadd s0, s1, s2` / `fadd d0, d1, d2` is a different encoding (scalar FP) — not this vector helper.
+- Exactly three operands (llvm-mc rejects a fourth).
+- Dispatch: encoder/mod.rs:377-496 fadd/fsub/fmul/fdiv/fmax/fmin/fmaxnm/fminnm/fmla/fmls/frecps/frsqrts/fcmeq/fcmge/fcmgt/facge/facgt.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangements are discarded; dest T is used (see bugs). Operand::Reg source (empty arrangement) is accepted (see bugs).
+- parse_reg_num accepts x/w/d/s/q/v/h/b prefixes, so non-V names encode as V registers (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_neon_reg dest/Vn/Vm, match 2s/4s/2d/_, arity).
+
+---
+
 # Confirmed invariants (encode_ldxp_stxp)
 
 - Valid LDXP/LDAXP/STXP/STLXP with Rt/Rt2 in x0–x30/xzr or w0–w30/wzr, Rn in x0–x30/sp, Ws in w0–w30/wzr not aliasing Rt/Rt2/Xn, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

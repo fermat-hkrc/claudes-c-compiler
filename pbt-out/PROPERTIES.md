@@ -1,261 +1,314 @@
-# Properties: encode_ldxp_stxp
+# Properties: encode_neon_float_three_same
 
-## encode_ldxp_stxp_diff_llvm_mc
+## encode_neon_float_three_same_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is Differential vs llvm-mc (independent AArch64 assembler). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree exclusive-pair decoder. encode_ldxr_stxr / encode_ldaxr_stlxr / encode_ldp_stp fail the same-job sibling gate (exclusive-single vs exclusive-pair; non-exclusive pair vs exclusive pair). SUT-boundary: internal-helper of the GNU-style assembler (README gas-compatible). Mapping: load [Reg(Rt), Reg(Rt2), Mem{Rn, 0}] <-> `{ldxp|ldaxp} Rt, Rt2, [Rn]`; store [Reg(Ws), Reg(Rt), Reg(Rt2), Mem{Rn, 0}] <-> `{stxp|stlxp} Ws, Rt, Rt2, [Rn]`. Doc evidence: README.md:5-14, encoder/mod.rs:1-7, encoder/mod.rs:366-369, load_store.rs:596-634, ARM ARM Load/Store Exclusive Pair.
-- Seed: encode_ldar_stlr_pbt::encode_ldar_stlr_diff_llvm_mc
-- Formal: ∀ rt,rt2,rn,ws ∈ {0..31}, is_load ∈ {T,F}, acqrel ∈ {T,F}, is_64 ∈ {T,F}. If ¬is_load, require ws ≠ rt ∧ ws ≠ rt2 ∧ (rn=31 ∨ ws ≠ rn) (ARM/llvm-mc: STXP status must not also be a source; WZR vs SP is allowed). Let Rt/Rt2 = Xn (n=31 → xzr) if is_64 else Wn (n=31 → wzr); Rn = SP if rn=31 else Xrn; Ws = Wws (ws=31 → wzr). encode_ldxp_stxp(ops, is_load, acqrel) = llvm-mc(mnemonic ops)
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: Strongest evidenced oracle is Differential vs llvm-mc (same GNU-style AArch64 text the assembler claims to accept). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree FP three-same decoder. Same-job sibling gate fails for encode_neon_three_same (integer size map), encode_neon_float_cmp_zero (two-misc #0), encode_fp_arith (scalar FP).
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_diff_llvm_mc
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, (U,size_hi,opcode,mnem) ∈ ARM-correct FP three-same table. encode_neon_float_three_same([Vd.T,Vn.T,Vm.T], U, size_hi, opcode) = llvm-mc("-triple=aarch64", "{mnem} Vd.T, Vn.T, Vm.T")
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldxp_stxp
+function: encoder.neon.encode_neon_float_three_same
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rt, rt2, rn, ws, is_load, acqrel, is_64]
-  domain: { rt: 0..31, rt2: 0..31, rn: 0..31, ws: 0..31 }
+  vars: [rd, rn, rm, t, u, size_hi, opcode, mnem]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {2s,4s,2d} }
   relation:
     op: eq
-    lhs: encode_ldxp_stxp(ops, is_load, acqrel)
-    rhs: llvm_mc("{ldxp|ldaxp|stxp|stlxp} ...")
+    lhs: encode_neon_float_three_same([Vd.t, Vn.t, Vm.t], u, size_hi, opcode)
+    rhs: llvm_mc("{mnem} Vd.t, Vn.t, Vm.t")
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rt2: { gen: int, min: 0, max: 31, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ws: { gen: int, min: 0, max: 31, type: u32 }
-  is_load: { gen: bool }
-  acqrel: { gen: bool }
-  is_64: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:5-14; encoder/mod.rs:366-369; load_store.rs:596-634
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+evidence: src/backend/arm/assembler/README.md:5-14; encoder/mod.rs:1-7; neon.rs:1388-1403; encoder/mod.rs:377-496
 ```
 
-## encode_ldxp_stxp_invariant_arm_fields
+## encode_neon_float_three_same_roundtrip_arm_fields
 - Tier: 4
-- Rationale: Algebraic invariant of the ARM ARM exclusive-pair layout claimed at load_store.rs:598-603. Differential is stronger and used above; this unpacks size/L/o1/Rs/o0/Rt2/Rn/Rt so a packing slip still fails even if llvm-mc were unavailable. Stronger round-trip rejected: no decoder.
-- Seed: encode_ldar_stlr_pbt::encode_ldar_stlr_roundtrip_arm_fields
-- Formal: ∀ valid inputs as above. let w = encode_ldxp_stxp(...). w[31]=1 ∧ w[30]=sz ∧ w[29:24]=001000 ∧ w[23]=0 ∧ w[22]=is_load ∧ w[21]=1 ∧ (is_load ⇒ w[20:16]=31 else w[20:16]=ws) ∧ w[15]=acqrel ∧ w[14:10]=rt2 ∧ w[9:5]=rn ∧ w[4:0]=rt
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: Weaker algebraic invariant of the ARM ARM three-same FP layout. Differential is stronger and used above; this pins field placement independently of llvm-mc.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_roundtrip_arm_fields
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, U,size_hi ∈ {0,1}, opcode ∈ {0..31}. let w = encode_neon_float_three_same([Vd.T,Vn.T,Vm.T], U, size_hi, opcode). Then w[31]=0 ∧ w[30]=Q(T) ∧ w[29]=U ∧ w[28:24]=01110 ∧ w[23:22]=(size_hi<<1)|sz(T) ∧ w[21]=1 ∧ w[20:16]=rm ∧ w[15:11]=opcode ∧ w[10]=1 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldxp_stxp
+function: encoder.neon.encode_neon_float_three_same
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rt, rt2, rn, ws, is_load, acqrel, is_64]
-  relation:
-    op: holds
-    expr: arm_exclusive_pair_fields(encode_ldxp_stxp(ops, is_load, acqrel))
+  vars: [rd, rn, rm, t, u, size_hi, opcode]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {2s,4s,2d}, u: {0,1}, size_hi: {0,1}, opcode: 0..31 }
+  body: unpack(w) matches ARM ARM 0 Q U 01110 size 1 Rm opcode 1 Rn Rd
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rt2: { gen: int, min: 0, max: 31, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ws: { gen: int, min: 0, max: 31, type: u32 }
-  is_load: { gen: bool }
-  acqrel: { gen: bool }
-  is_64: { gen: bool }
-evidence: load_store.rs:598-603; ARM ARM Load/Store Exclusive Pair
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  size_hi: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1388-1391 Format 0 Q U 01110 size 1 Rm opcode 1 Rn Rd
 ```
 
-## encode_ldxp_stxp_metamorphic_o0
+## encode_neon_float_three_same_metamorphic_u_bit
 - Tier: 4
-- Rationale: Algebraic metamorphic: ARM ARM o0 bit (acquire/release) is the sole difference between LDXP/STXP and LDAXP/STLXP. Stronger differential used above; this relation is independent of llvm-mc. State machine / round-trip rejected as above.
-- Seed: encode_ldar_stlr_pbt L-bit XOR
-- Formal: ∀ valid ops, is_load. encode_ldxp_stxp(ops, is_load, true) XOR encode_ldxp_stxp(ops, is_load, false) = 1<<15
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: ARM ARM places U at bit 29; flipping U with other inputs fixed must XOR only that bit. Algebraic metamorphic, weaker than differential.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_metamorphic_u_bit
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, size_hi ∈ {0,1}, opcode ∈ {0..31}. encode(..., U=0, ...) XOR encode(..., U=1, ...) = 1<<29
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldxp_stxp
+function: encoder.neon.encode_neon_float_three_same
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rt, rt2, rn, ws, is_load, is_64]
+  vars: [rd, rn, rm, t, size_hi, opcode]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {2s,4s,2d}, size_hi: {0,1}, opcode: 0..31 }
   relation:
     op: eq
-    lhs: encode_ldxp_stxp(ops, is_load, true) XOR encode_ldxp_stxp(ops, is_load, false)
-    rhs: 1 << 15
+    lhs: encode(ops, 0, size_hi, opcode) XOR encode(ops, 1, size_hi, opcode)
+    rhs: 1 << 29
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rt2: { gen: int, min: 0, max: 31, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ws: { gen: int, min: 0, max: 31, type: u32 }
-  is_load: { gen: bool }
-  is_64: { gen: bool }
-evidence: load_store.rs:598-603 o0; encoder/mod.rs:366-369 ldaxp/stlxp vs ldxp/stxp
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  size_hi: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1388-1391 U at bit 29
 ```
 
-## encode_ldxp_stxp_metamorphic_sz
+## encode_neon_float_three_same_metamorphic_size_hi
 - Tier: 4
-- Rationale: Algebraic metamorphic: ARM ARM size bit 30 is the sole difference between W-pair (size=10) and X-pair (size=11) at equal register numbers. Stronger differential used above.
-- Seed: encode_ldar_stlr_pbt size field
-- Formal: ∀ rt,rt2,rn,ws ∈ {0..31}, is_load, acqrel. encode_ldxp_stxp(X-ops, is_load, acqrel) XOR encode_ldxp_stxp(W-ops, is_load, acqrel) = 1<<30
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Rationale: ARM ARM places size[1] at bit 23; flipping size_hi with other inputs fixed must XOR only that bit.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_metamorphic_size_hi
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, U ∈ {0,1}, opcode ∈ {0..31}. encode(..., size_hi=0, ...) XOR encode(..., size_hi=1, ...) = 1<<23
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldxp_stxp
+function: encoder.neon.encode_neon_float_three_same
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rt, rt2, rn, ws, is_load, acqrel]
+  vars: [rd, rn, rm, t, u, opcode]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {2s,4s,2d}, u: {0,1}, opcode: 0..31 }
   relation:
     op: eq
-    lhs: encode_ldxp_stxp(Xops, is_load, acqrel) XOR encode_ldxp_stxp(Wops, is_load, acqrel)
+    lhs: encode(ops, u, 0, opcode) XOR encode(ops, u, 1, opcode)
+    rhs: 1 << 23
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["2s", "4s", "2d"] }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1389-1401 size[1]=size_hi at bit 23
+```
+
+## encode_neon_float_three_same_metamorphic_q
+- Tier: 4
+- Rationale: ARM ARM places Q at bit 30 from T; 2s (Q=0,sz=0) vs 4s (Q=1,sz=0) at equal register numbers and params must XOR only bit 30. Documented bound T ∈ {2s,4s,2d}.
+- Seed: encode_neon_sli_pbt Q-pair metamorphic (8b vs 16b)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, U,size_hi ∈ {0,1}, opcode ∈ {0..31}. encode(2s, ...) XOR encode(4s, ...) = 1<<30
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.neon.encode_neon_float_three_same
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, u, size_hi, opcode]
+  domain: { rd: vreg, rn: vreg, rm: vreg, u: {0,1}, size_hi: {0,1}, opcode: 0..31 }
+  relation:
+    op: eq
+    lhs: encode(2s) XOR encode(4s)
     rhs: 1 << 30
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rt2: { gen: int, min: 0, max: 31, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ws: { gen: int, min: 0, max: 31, type: u32 }
-  is_load: { gen: bool }
-  acqrel: { gen: bool }
-evidence: load_store.rs:616 sz from is_64; ARM ARM size=10/11
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  size_hi: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1396-1398 2s=>Q=0, 4s=>Q=1
 ```
 
-## encode_ldxp_stxp_neg_ws_overlap
-- Tier: 4
-- Rationale: Negative/error contract from llvm-mc ("unpredictable STXP instruction, status is also a source") and ARM CONSTRAINED UNPREDICTABLE when STXP Ws aliases Rt, Rt2, or Xn. WZR vs SP (both encode 31) is allowed and excluded. Stronger oracles rejected: these inputs are outside the valid domain. Differential filters this case; this property pins the rejection.
-- Seed: llvm-mc error on `stxp wzr, wzr, w0, [x0]`
-- Formal: ∀ rt,rt2,rn ∈ {0..31}, acqrel, is_64, kind ∈ {ws=rt, ws=rt2, ws=rn ∧ rn≠31}. encode_ldxp_stxp(store_ops(ws, rt, rt2, rn), false, acqrel) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: rt=0, rt2=0, rn=0, acqrel=false, is_64=false, kind=0 — stxp w0, w0, w0, [x0] (Ws aliases Rt)
-- Bug report: pbt-out/bug_reports/encode_ldxp_stxp_ws_overlap.md
-
-```property
-function: encoder.load_store.encode_ldxp_stxp
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt, rt2, rn, acqrel, is_64, kind]
-  relation:
-    op: throws
-    expr: encode_ldxp_stxp(store_ops_with_ws_aliasing_source, false, acqrel)
-expected_error: String
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rt2: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  acqrel: { gen: bool }
-  is_64: { gen: bool }
-  kind: { gen: int, min: 0, max: 2, type: u32 }
-evidence: llvm-mc "unpredictable STXP instruction, status is also a source"; ARM ARM STXP CONSTRAINED UNPREDICTABLE
-```
-
-## encode_ldxp_stxp_neg_arity_extra
-- Tier: 4
-- Rationale: Negative/error contract from llvm-mc and gas-compatible README: load needs exactly 3 operands, store exactly 4; extra operands are invalid. Documented bound sampled at arity-1 and arity+1. Stronger oracles rejected: extra operands are outside the valid domain.
-- Seed: encode_ldar_stlr_pbt::test_encode_ldar_stlr_regression_extra_operand
-- Formal: ∀ valid prefix ops, extra ∈ Operand\{empty}. encode_ldxp_stxp(ops++[extra], is_load, acqrel) = Err. ∀ too-short prefixes (load len<3, store len<4). encode_ldxp_stxp(prefix, ...) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: rt=0, rt2=0, rn=0, ws=0, is_load=false, acqrel=false, is_64=false, extra=Reg("x2"), short_len=0 — stxp w0, w0, w0, [x0], x2
-- Bug report: pbt-out/bug_reports/encode_ldxp_stxp_extra_operand.md
-
-```property
-function: encoder.load_store.encode_ldxp_stxp
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt, rt2, rn, ws, is_load, acqrel, is_64, extra]
-  relation:
-    op: throws
-    expr: encode_ldxp_stxp(ops ++ [extra], is_load, acqrel)
-expected_error: String
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, items: ["Reg(x2)", "Imm(0)", "Symbol(foo)"] }
-evidence: llvm-mc rejects extra operand; README.md:5-14 gas-compatible
-```
-
-## encode_ldxp_stxp_neg_invalid_rt_base
-- Tier: 4
-- Rationale: Negative/error: llvm-mc rejects SP as Rt/Rt2/Ws (register 31 is ZR, never SP), XZR/WZR/W/WSP as base (Rn is Xn|SP), SIMD/FP as data or status, mixed X/W pair, and X as STXP status. Bound: register 31 as Rt vs as Rn is the documented SP/ZR split. Stronger oracles rejected: these inputs are outside the valid domain.
-- Seed: encode_ldar_stlr_pbt::test_encode_ldar_stlr_regression_sp_as_rt / _w_base
-- Formal: ∀ is_load, acqrel. encode_ldxp_stxp with Rt/Rt2/Ws ∈ {sp,wsp} = Err; with base ∈ {xzr,wzr,wN,wsp,foo,x32} = Err; with SIMD prefix {d,s,q,v,h,b} as Rt = Err; mixed X/W Rt/Rt2 = Err; STXP Ws starting with x = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: n=0, rn=0, is_load=false, acqrel=false, is_64=false, kind=0 — stxp w0, sp, w0, [x0] (Ok(Word(0xc81f003f)))
-- Bug report: pbt-out/bug_reports/encode_ldxp_stxp_sp_as_rt.md
-
-```property
-function: encoder.load_store.encode_ldxp_stxp
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_load, acqrel, bad_kind]
-  relation:
-    op: throws
-    expr: encode_ldxp_stxp(bad_ops, is_load, acqrel)
-expected_error: String
-generators:
-  is_load: { gen: bool }
-  acqrel: { gen: bool }
-  bad_kind: { gen: oneof, items: ["sp_rt", "w_base", "xzr_base", "fp_rt", "mixed_width", "x_ws"] }
-evidence: llvm-mc rejects SP as Rt, W/XZR base, SIMD Rt, mixed width, X as STXP Ws; README.md:5-14
-```
-
-## encode_ldxp_stxp_neg_offset_nonmem
-- Tier: 4
-- Rationale: Negative/error: llvm-mc "index must be absent or #0"; non-Mem addressing (Imm/Symbol/pre/post/reg-offset) is invalid. Documented offset bound 0 sampled at 0 (valid, covered by differential) and at ±1/±8/nonzero (invalid). Stronger oracles rejected: outside valid domain.
-- Seed: encode_ldar_stlr_pbt nonzero offset / non-Mem
-- Formal: ∀ valid register triple, offset ∈ ℤ\{0}. encode_ldxp_stxp(..., Mem{Rn, offset}, ...) = Err. ∀ non-Mem addressing mode at the memory slot. encode_ldxp_stxp(...) = Err. Invalid register names (empty, foo, x32, x99) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: rt=0, rt2=0, rn=0, ws=0, is_load=false, acqrel=false, is_64=false, offset=-1, shape=0 — stxp w0, w0, w0, [x0, #-1]
-- Bug report: pbt-out/bug_reports/encode_ldxp_stxp_nonzero_offset.md
-
-```property
-function: encoder.load_store.encode_ldxp_stxp
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt, rt2, rn, offset, is_load, acqrel, is_64]
-  domain: { offset: int excluding 0 }
-  relation:
-    op: throws
-    expr: encode_ldxp_stxp(ops_with_nonzero_offset, is_load, acqrel)
-expected_error: String
-generators:
-  offset: { gen: int, min: -4096, max: 4096, type: i64 }
-  is_load: { gen: bool }
-  acqrel: { gen: bool }
-evidence: llvm-mc "index must be absent or #0"; load_store.rs:611-612 / 625-626 Mem-only
-```
-
-## encode_ldxp_stxp_neg_too_short_nonmem_badname
-- Tier: 4
-- Rationale: Coverage-sweep negative/error for documented Err arms the extra/offset properties never execute (they fail on the success-path bugs first): too few operands (get_reg None), non-Reg first operand, non-Mem at the memory slot, parse_reg_num None on the base. llvm-mc / get_reg / match `_` evidence.
-- Seed: encode_ldar_stlr_pbt get_reg non-Reg / parse_reg_num None sweep
-- Formal: ∀ too-short prefixes, non-Reg Rt, non-Mem addressing, base ∈ {foo, x32}. encode_ldxp_stxp(...) = Err
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
+## encode_neon_float_three_same_neg_unsupported_arrangement
+- Tier: 5
+- Rationale: Documented T domain is 2s/4s/2d (body match + llvm-mc rejects 8b/16b/4h/8h/1d without +fullfp16). Negative/error contract.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_neg_unsupported_arrangement
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∉ {2s,4s,2d} among {8b,16b,4h,8h,1d,1s,3s,8s,"",b,h}, U,size_hi ∈ {0,1}, opcode ∈ {0..31}. encode([Vd.T,Vn.T,Vm.T], ...) = Err ∧ llvm-mc rejects "{mnem} Vd.T, Vn.T, Vm.T" when T nonempty
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldxp_stxp
+function: encoder.neon.encode_neon_float_three_same
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rt, rt2, rn, ws, is_load, acqrel, is_64, shape]
+  vars: [rd, rn, rm, t, u, size_hi, opcode]
+  domain: { t: {8b,16b,4h,8h,1d,1s,3s,8s,"",b,h} }
   relation:
     op: throws
-    expr: encode_ldxp_stxp(too_short_or_nonmem_or_badname, is_load, acqrel)
+    expr: encode_neon_float_three_same([Vd.t, Vn.t, Vm.t], u, size_hi, opcode)
 expected_error: String
 generators:
-  shape: { gen: int, min: 0, max: 6, type: u32 }
-  is_load: { gen: bool }
-  acqrel: { gen: bool }
-evidence: load_store.rs:608-612 / 622-626 get_reg and Mem match; parse_reg_num None
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "1d", "1s", "3s", "8s", "", "b", "h"] }
+evidence: neon.rs:1396-1398; llvm-mc rejects 8b/16b/4h/8h/1d
+```
+
+## encode_neon_float_three_same_neg_extra_operands
+- Tier: 5
+- Rationale: llvm-mc and gas require exactly three operands for vector FADD-class. Extra operand must Err. Seed from sibling extra-operand property.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_neg_extra_operands
+- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {2s,4s,2d}, insn ∈ ARM table, extra_kind ∈ {RegArrangement, Imm, Reg, Mem}. llvm-mc rejects four-operand asm ⇒ encode([Vd.T,Vn.T,Vm.T, extra]) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, extra=0, t="2s", insn=fadd (U=0,size_hi=0,opcode=26), extra_kind=0 — fadd v0.2s, v0.2s, v0.2s, v0.2s encodes instead of Err
+- Bug report: pbt-out/bug_reports/encode_neon_float_three_same_extra_operand.md
+
+```property
+function: encoder.neon.encode_neon_float_three_same
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, extra, t, insn, extra_kind]
+  domain: { t: {2s,4s,2d} }
+  relation:
+    op: throws
+    expr: encode_neon_float_three_same([Vd.t, Vn.t, Vm.t, extra], u, size_hi, opcode)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  extra_kind: { gen: int, min: 0, max: 3, type: u32 }
+evidence: llvm-mc rejects fadd v0.4s, v1.4s, v2.4s, v3.4s; README.md:5-14 gas-compatible
+```
+
+## encode_neon_float_three_same_neg_arity_and_shape
+- Tier: 5
+- Rationale: llvm-mc rejects too-few operands, non-register slots, invalid names (v32/foo/empty/v/v-1/v99), dest Operand::Reg (no arrangement). get_neon_reg error paths.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_neg_arity_and_shape
+- Formal: ∀ n ∈ {0,1,2}, invalid dest/src/Vm ∈ {Imm,Mem,Symbol,Shift,Cond,Label}, bad name ∈ {v32,foo,"",v,v-1,v99}, dest Operand::Reg. encode(...) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.neon.encode_neon_float_three_same
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, which, bad]
+  domain: { n: 0..2, bad: {v32,foo,"",v,v-1,v99} }
+  relation:
+    op: throws
+    expr: encode_neon_float_three_same(invalid_ops, u, size_hi, opcode)
+expected_error: String
+generators:
+  n: { gen: int, min: 0, max: 2, type: usize }
+evidence: get_neon_reg neon.rs:7-21; parse_reg_num encoder/mod.rs:131-148
+```
+
+## encode_neon_float_three_same_neg_src_reg_no_arrangement
+- Tier: 5
+- Rationale: llvm-mc rejects `fadd v0.2s, v0, v0.2s` (source needs arrangement T). Source Operand::Reg must Err.
+- Seed: encode_neon_sli_pbt::test_encode_neon_sli_regression_src_reg_no_arrangement
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, insn ∈ ARM table, slot ∈ {Vn,Vm}. encode with Operand::Reg at slot = Err ∧ llvm-mc rejects the corresponding asm
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, t="2s", insn=fadd, which=1 — fadd v0.2s, v0, v0.2s encodes instead of Err
+- Bug report: pbt-out/bug_reports/encode_neon_float_three_same_src_reg_no_arrangement.md
+
+```property
+function: encoder.neon.encode_neon_float_three_same
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t, insn, which]
+  domain: { t: {2s,4s,2d}, which: {1,2} }
+  relation:
+    op: throws
+    expr: encode_neon_float_three_same(ops_with_Reg_source, u, size_hi, opcode)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  which: { gen: int, min: 1, max: 2, type: u32 }
+evidence: llvm-mc rejects fadd v0.2s, v0, v0.2s; README.md:5-14 gas-compatible
+```
+
+## encode_neon_float_three_same_neg_non_v_prefix
+- Tier: 5
+- Rationale: llvm-mc rejects non-V register prefixes (x/w/d/s/q/h/b) on vector FP three-same. V register required.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_neg_non_v_prefix
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, prefix ∈ {x,w,d,s,q,h,b}, slot ∈ {0,1,2}, insn ∈ ARM table. llvm-mc rejects ⇒ encode with that prefix = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, t="2s", insn=fadd, prefix="x", slot=0 — fadd x0.2s, v0.2s, v0.2s encodes instead of Err
+- Bug report: pbt-out/bug_reports/encode_neon_float_three_same_non_v_prefix.md
+
+```property
+function: encoder.neon.encode_neon_float_three_same
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t, insn, prefix, slot]
+  domain: { prefix: {x,w,d,s,q,h,b}, slot: 0..2 }
+  relation:
+    op: throws
+    expr: encode_neon_float_three_same(ops_with_non_v_prefix, u, size_hi, opcode)
+expected_error: String
+generators:
+  prefix: { gen: oneof, values: ["x", "w", "d", "s", "q", "h", "b"] }
+  slot: { gen: int, min: 0, max: 2, type: u32 }
+evidence: llvm-mc rejects fadd x0.2s, v0.2s, v0.2s; README.md:5-14 gas-compatible
+```
+
+## encode_neon_float_three_same_neg_arrangement_mismatch
+- Tier: 5
+- Rationale: llvm-mc requires dest T = Vn T = Vm T. Mismatched arrangements must Err.
+- Seed: encode_neon_float_cmp_zero_pbt::encode_neon_float_cmp_zero_neg_arrangement_mismatch
+- Formal: ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {2s,4s,2d} with Td≠Tn ∨ Td≠Tm, insn ∈ ARM table. llvm-mc rejects ⇒ encode([Vd.Td,Vn.Tn,Vm.Tm], ...) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, td="2d", tn="2s", tm="2s", insn=fadd — fadd v0.2d, v0.2s, v0.2s encodes as 2d form instead of Err
+- Bug report: pbt-out/bug_reports/encode_neon_float_three_same_arrangement_mismatch.md
+
+```property
+function: encoder.neon.encode_neon_float_three_same
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, td, tn, tm, insn]
+  domain: { td,tn,tm: {2s,4s,2d} }
+  relation:
+    op: throws
+    expr: encode_neon_float_three_same([Vd.td, Vn.tn, Vm.tm], u, size_hi, opcode)
+expected_error: String
+generators:
+  td: { gen: oneof, values: ["2s", "4s", "2d"] }
+  tn: { gen: oneof, values: ["2s", "4s", "2d"] }
+  tm: { gen: oneof, values: ["2s", "4s", "2d"] }
+evidence: llvm-mc rejects fadd v0.4s, v1.2s, v2.4s; README.md:5-14 gas-compatible
 ```

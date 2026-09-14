@@ -4139,3 +4139,603 @@ mod encode_neon_sli_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_neon_float_three_same_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:377-496 fadd/fsub/fmul/fdiv/fmax/fmin/fmaxnm/fminnm/fmla/fmls/frecps/frsqrts/fcmeq/fcmge/fcmgt/facge/facgt => encode_neon_float_three_same;
+    //   neon.rs:1388 Format 0 Q U 01110 size 1 Rm opcode 1 Rn Rd;
+    //   ARM ARM Advanced SIMD three-same FP (size[1]=size_hi, size[0]=sz)
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_float_three_same is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected as primary — no in-tree FP three-same decoder (field unpack kept as weaker algebraic)
+    //   - Differential vs encode_neon_three_same / encode_neon_float_cmp_zero / encode_fp_arith: rejected — integer three-same / compare-to-zero two-misc / scalar FP (same-job gate)
+    // Weaker available: algebraic.metamorphic (U bit, size_hi bit, Q bit), algebraic.invariant (word layout), negative_error (arity / T / extra / mismatch / non-V)
+    // Differential: candidate=encode_neon_float_three_same, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[RegArrangement(Vd, T), RegArrangement(Vn, T), RegArrangement(Vm, T)] + (U, size_hi, opcode) <-> `{fadd|fsub|fmul|...} Vd.T, Vn.T, Vm.T`
+
+    use super::encode_neon_float_three_same;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn q_sz_of(t: &str) -> (u32, u32) {
+        match t {
+            "2s" => (0, 0),
+            "4s" => (1, 0),
+            "2d" => (1, 1),
+            _ => (0xff, 0xff),
+        }
+    }
+
+    /// ARM-correct (U, size_hi, opcode, mnemonic) for vector FP three-same.
+    fn insn_table() -> impl Strategy<Value = (u32, u32, u32, &'static str)> {
+        prop::sample::select(vec![
+            (0u32, 0u32, 0b11010u32, "fadd"),
+            (0u32, 1u32, 0b11010u32, "fsub"),
+            (1u32, 0u32, 0b11011u32, "fmul"),
+            (1u32, 0u32, 0b11111u32, "fdiv"),
+            (0u32, 0u32, 0b11110u32, "fmax"),
+            (0u32, 1u32, 0b11110u32, "fmin"),
+            (0u32, 0u32, 0b11000u32, "fmaxnm"),
+            (0u32, 1u32, 0b11000u32, "fminnm"),
+            (0u32, 0u32, 0b11001u32, "fmla"),
+            (0u32, 1u32, 0b11001u32, "fmls"),
+            (0u32, 0u32, 0b11111u32, "frecps"),
+            (0u32, 1u32, 0b11111u32, "frsqrts"),
+            (0u32, 0u32, 0b11100u32, "fcmeq"),
+            (1u32, 0u32, 0b11100u32, "fcmge"),
+            (1u32, 1u32, 0b11100u32, "fcmgt"),
+            (1u32, 0u32, 0b11101u32, "facge"),
+            (1u32, 1u32, 0b11101u32, "facgt"),
+            (1u32, 1u32, 0b11010u32, "fabd"),
+        ])
+    }
+
+    fn sut_word(ops: &[Operand], u: u32, size_hi: u32, opcode: u32) -> Result<u32, String> {
+        match encode_neon_float_three_same(ops, u, size_hi, opcode)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn valid_t() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["2s", "4s", "2d"])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection (FADD 4S).
+    #[test]
+    fn encode_neon_float_three_same_kat_llvm_mc_fadd_v0_4s_v1_4s_v2_4s() {
+        let want = 0x4e22d420u32;
+        let mc = llvm_mc_word("fadd v0.4s, v1.4s, v2.4s").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [neon_arr(0, "4s"), neon_arr(1, "4s"), neon_arr(2, "4s")];
+        let sut = sut_word(&ops, 0, 0, 0b11010).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    /// Known-answer: FADD 2S / 2D (Q/sz bounds) and FSUB/FMUL 4S (size_hi / U).
+    #[test]
+    fn encode_neon_float_three_same_kat_llvm_mc_width_and_u_size_hi() {
+        let want_2s = 0x0e22d420u32;
+        let mc_2s = llvm_mc_word("fadd v0.2s, v1.2s, v2.2s").expect("llvm-mc KAT 2s");
+        assert_eq!(mc_2s, want_2s, "llvm-mc KAT mapping broken for 2s");
+        let ops2s = [neon_arr(0, "2s"), neon_arr(1, "2s"), neon_arr(2, "2s")];
+        let sut_2s = sut_word(&ops2s, 0, 0, 0b11010).expect("SUT KAT 2s");
+        assert_eq!(sut_2s, want_2s);
+
+        let want_2d = 0x4e62d420u32;
+        let mc_2d = llvm_mc_word("fadd v0.2d, v1.2d, v2.2d").expect("llvm-mc KAT 2d");
+        assert_eq!(mc_2d, want_2d, "llvm-mc KAT mapping broken for 2d");
+        let ops2d = [neon_arr(0, "2d"), neon_arr(1, "2d"), neon_arr(2, "2d")];
+        let sut_2d = sut_word(&ops2d, 0, 0, 0b11010).expect("SUT KAT 2d");
+        assert_eq!(sut_2d, want_2d);
+
+        let want_sub = 0x4ea2d420u32;
+        let mc_sub = llvm_mc_word("fsub v0.4s, v1.4s, v2.4s").expect("llvm-mc KAT fsub");
+        assert_eq!(mc_sub, want_sub, "llvm-mc KAT mapping broken for fsub");
+        let ops4 = [neon_arr(0, "4s"), neon_arr(1, "4s"), neon_arr(2, "4s")];
+        let sut_sub = sut_word(&ops4, 0, 1, 0b11010).expect("SUT KAT fsub");
+        assert_eq!(sut_sub, want_sub);
+
+        let want_mul = 0x6e22dc20u32;
+        let mc_mul = llvm_mc_word("fmul v0.4s, v1.4s, v2.4s").expect("llvm-mc KAT fmul");
+        assert_eq!(mc_mul, want_mul, "llvm-mc KAT mapping broken for fmul");
+        let sut_mul = sut_word(&ops4, 1, 0, 0b11011).expect("SUT KAT fmul");
+        assert_eq!(sut_mul, want_mul);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_float_three_same_diff_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            t in valid_t(),
+            insn in insn_table(),
+        ) {
+            let (u, size_hi, opcode, mnem) = insn;
+            let asm = format!(
+                "{0} {1}.{2}, {3}.{2}, {4}.{2}",
+                mnem, vreg(rd), t, vreg(rn), vreg(rm)
+            );
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), neon_arr(rm, t)];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops, u, size_hi, opcode)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_roundtrip_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            t in valid_t(),
+            u in 0u32..=1u32,
+            size_hi in 0u32..=1u32,
+            opcode in 0u32..=31u32,
+        ) {
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), neon_arr(rm, t)];
+            let w = sut_word(&ops, u, size_hi, opcode)
+                .unwrap_or_else(|e| panic!("SUT rejected valid field unpack: {}", e));
+            let (q, sz) = q_sz_of(t);
+            let size = (size_hi << 1) | sz;
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 30) & 1, q, "Q bit");
+            prop_assert_eq!((w >> 29) & 1, u, "U bit");
+            prop_assert_eq!((w >> 24) & 0b11111, 0b01110u32, "bits[28:24]=01110");
+            prop_assert_eq!((w >> 22) & 0b11, size, "size = (size_hi<<1)|sz");
+            prop_assert_eq!((w >> 21) & 1, 1u32, "bit 21 must be 1");
+            prop_assert_eq!((w >> 16) & 0b11111, rm, "Rm");
+            prop_assert_eq!((w >> 11) & 0b11111, opcode, "opcode[15:11]");
+            prop_assert_eq!((w >> 10) & 1, 1u32, "bit 10 must be 1");
+            prop_assert_eq!((w >> 5) & 0b11111, rn, "Rn");
+            prop_assert_eq!(w & 0b11111, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_metamorphic_u_bit(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            t in valid_t(),
+            size_hi in 0u32..=1u32,
+            opcode in 0u32..=31u32,
+        ) {
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), neon_arr(rm, t)];
+            let a = sut_word(&ops, 0, size_hi, opcode)
+                .unwrap_or_else(|e| panic!("SUT U=0 rejected: {}", e));
+            let b = sut_word(&ops, 1, size_hi, opcode)
+                .unwrap_or_else(|e| panic!("SUT U=1 rejected: {}", e));
+            prop_assert_eq!(a ^ b, 1u32 << 29, "u must toggle only U (bit 29)");
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_metamorphic_size_hi(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            t in valid_t(),
+            u in 0u32..=1u32,
+            opcode in 0u32..=31u32,
+        ) {
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), neon_arr(rm, t)];
+            let a = sut_word(&ops, u, 0, opcode)
+                .unwrap_or_else(|e| panic!("SUT size_hi=0 rejected: {}", e));
+            let b = sut_word(&ops, u, 1, opcode)
+                .unwrap_or_else(|e| panic!("SUT size_hi=1 rejected: {}", e));
+            prop_assert_eq!(a ^ b, 1u32 << 23, "size_hi must toggle only bit 23");
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_metamorphic_q(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            u in 0u32..=1u32,
+            size_hi in 0u32..=1u32,
+            opcode in 0u32..=31u32,
+        ) {
+            let ops_2s = [neon_arr(rd, "2s"), neon_arr(rn, "2s"), neon_arr(rm, "2s")];
+            let ops_4s = [neon_arr(rd, "4s"), neon_arr(rn, "4s"), neon_arr(rm, "4s")];
+            let a = sut_word(&ops_2s, u, size_hi, opcode)
+                .unwrap_or_else(|e| panic!("SUT 2s rejected: {}", e));
+            let b = sut_word(&ops_4s, u, size_hi, opcode)
+                .unwrap_or_else(|e| panic!("SUT 4s rejected: {}", e));
+            prop_assert_eq!(a ^ b, 1u32 << 30, "2s vs 4s must toggle only Q (bit 30)");
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_neg_unsupported_arrangement(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            u in 0u32..=1u32,
+            size_hi in 0u32..=1u32,
+            opcode in 0u32..=31u32,
+            t in prop::sample::select(vec!["8b", "16b", "4h", "8h", "1d", "1s", "3s", "8s", "", "b", "h"]),
+        ) {
+            let asm = format!(
+                "fadd {0}.{1}, {2}.{1}, {3}.{1}",
+                vreg(rd), t, vreg(rn), vreg(rm)
+            );
+            if !t.is_empty() {
+                prop_assert!(
+                    llvm_mc_word(&asm).is_err(),
+                    "llvm-mc unexpectedly accepted unsupported T {}",
+                    asm
+                );
+            }
+            let ops = [neon_arr(rd, t), neon_arr(rn, t), neon_arr(rm, t)];
+            prop_assert!(
+                encode_neon_float_three_same(&ops, u, size_hi, opcode).is_err(),
+                "T={} is not 2s/4s/2d and must Err (llvm-mc rejects {})",
+                t,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_neg_extra_operands(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            extra in reg_num(),
+            t in valid_t(),
+            insn in insn_table(),
+            extra_kind in 0u32..=3u32,
+        ) {
+            let (u, size_hi, opcode, mnem) = insn;
+            let extra_op = match extra_kind {
+                0 => neon_arr(extra, t),
+                1 => Operand::Imm(1),
+                2 => Operand::Reg(vreg(extra)),
+                _ => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+            };
+            let extra_asm = match extra_kind {
+                0 => format!("{}.{}", vreg(extra), t),
+                1 => "#1".to_string(),
+                2 => vreg(extra),
+                _ => "[x0]".to_string(),
+            };
+            let asm = format!(
+                "{} {}.{}, {}.{}, {}.{}, {}",
+                mnem, vreg(rd), t, vreg(rn), t, vreg(rm), t, extra_asm
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted extra operand {}",
+                asm
+            );
+            let ops = [
+                neon_arr(rd, t),
+                neon_arr(rn, t),
+                neon_arr(rm, t),
+                extra_op,
+            ];
+            prop_assert!(
+                encode_neon_float_three_same(&ops, u, size_hi, opcode).is_err(),
+                "4th operand must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_neg_arity_and_shape(
+            n in 0usize..=2,
+            which in 0u32..=5,
+            u in 0u32..=1u32,
+            rd in reg_num(),
+            t in valid_t(),
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v-1".to_string()),
+                Just("v99".to_string()),
+            ],
+        ) {
+            let dest = neon_arr(rd, t);
+            let srcn = neon_arr(rd, t);
+            let srcm = neon_arr(rd, t);
+            let short: Vec<Operand> = [dest.clone(), srcn.clone(), srcm.clone()]
+                .iter()
+                .take(n)
+                .cloned()
+                .collect();
+            prop_assert!(
+                encode_neon_float_three_same(&short, u, 0, 0b11010).is_err(),
+                "len={} must Err (requires 3 NEON registers)",
+                n
+            );
+
+            let bad_shape = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let mut ops_bad = [dest.clone(), srcn.clone(), srcm.clone()];
+            ops_bad[which as usize % 3] = bad_shape;
+            prop_assert!(
+                encode_neon_float_three_same(&ops_bad, u, 0, 0b11010).is_err(),
+                "non-register operand which={} must Err",
+                which
+            );
+
+            let bad_named = Operand::RegArrangement {
+                reg: bad.clone(),
+                arrangement: t.to_string(),
+            };
+            let mut ops_bad_name = [dest.clone(), srcn.clone(), srcm.clone()];
+            ops_bad_name[which as usize % 3] = bad_named;
+            prop_assert!(
+                encode_neon_float_three_same(&ops_bad_name, u, 0, 0b11010).is_err(),
+                "invalid name {} must Err",
+                bad
+            );
+
+            // dest Operand::Reg (empty arrangement) must Err.
+            let ops_reg_dest = [Operand::Reg(vreg(rd)), srcn.clone(), srcm.clone()];
+            prop_assert!(
+                encode_neon_float_three_same(&ops_reg_dest, u, 0, 0b11010).is_err(),
+                "dest Operand::Reg (no arrangement) must Err"
+            );
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_neg_src_reg_no_arrangement(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            t in valid_t(),
+            insn in insn_table(),
+            which in 1u32..=2u32,
+        ) {
+            let (u, size_hi, opcode, mnem) = insn;
+            let dest = neon_arr(rd, t);
+            let srcn = neon_arr(rn, t);
+            let srcm = neon_arr(rm, t);
+            let mut ops = [dest, srcn, srcm];
+            ops[which as usize] = Operand::Reg(vreg(if which == 1 { rn } else { rm }));
+            let asm = if which == 1 {
+                format!("{0} {1}.{2}, {3}, {4}.{2}", mnem, vreg(rd), t, vreg(rn), vreg(rm))
+            } else {
+                format!("{0} {1}.{2}, {3}.{2}, {4}", mnem, vreg(rd), t, vreg(rn), vreg(rm))
+            };
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted {}",
+                asm
+            );
+            prop_assert!(
+                encode_neon_float_three_same(&ops, u, size_hi, opcode).is_err(),
+                "src Operand::Reg (no arrangement) must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_neg_non_v_prefix(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            t in valid_t(),
+            insn in insn_table(),
+            prefix in prop::sample::select(vec!["x", "w", "d", "s", "q", "h", "b"]),
+            slot in 0u32..=2u32,
+        ) {
+            let (u, size_hi, opcode, mnem) = insn;
+            let dest = neon_arr(rd, t);
+            let srcn = neon_arr(rn, t);
+            let srcm = neon_arr(rm, t);
+            let num = if slot == 0 { rd } else if slot == 1 { rn } else { rm };
+            let bad_name = format!("{}{}", prefix, num);
+            let bad_op = Operand::RegArrangement {
+                reg: bad_name.clone(),
+                arrangement: t.to_string(),
+            };
+            let mut ops = [dest, srcn, srcm];
+            ops[slot as usize] = bad_op;
+            let n0 = if slot == 0 { bad_name.clone() } else { vreg(rd) };
+            let n1 = if slot == 1 { bad_name.clone() } else { vreg(rn) };
+            let n2 = if slot == 2 { bad_name.clone() } else { vreg(rm) };
+            let asm = format!("{0} {1}.{4}, {2}.{4}, {3}.{4}", mnem, n0, n1, n2, t);
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted non-v prefix {}",
+                asm
+            );
+            prop_assert!(
+                encode_neon_float_three_same(&ops, u, size_hi, opcode).is_err(),
+                "non-v prefix {} must Err (llvm-mc rejects {})",
+                bad_name,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_float_three_same_neg_arrangement_mismatch(
+            rd in reg_num(),
+            rn in reg_num(),
+            rm in reg_num(),
+            td in valid_t(),
+            tn in valid_t(),
+            tm in valid_t(),
+            insn in insn_table(),
+        ) {
+            prop_assume!(td != tn || td != tm);
+            let (u, size_hi, opcode, mnem) = insn;
+            let asm = format!(
+                "{0} {1}.{2}, {3}.{4}, {5}.{6}",
+                mnem, vreg(rd), td, vreg(rn), tn, vreg(rm), tm
+            );
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted mismatched T {}",
+                asm
+            );
+            let ops = [neon_arr(rd, td), neon_arr(rn, tn), neon_arr(rm, tm)];
+            prop_assert!(
+                encode_neon_float_three_same(&ops, u, size_hi, opcode).is_err(),
+                "T mismatch dest={} vn={} vm={} must Err (llvm-mc rejects {})",
+                td,
+                tn,
+                tm,
+                asm
+            );
+        }
+    }
+
+    /// Deterministic regression: extra 4th operand (shrunk from neg_extra_operands).
+    #[test]
+    fn test_encode_neon_float_three_same_regression_extra_operand() {
+        let ops = [
+            neon_arr(0, "2s"),
+            neon_arr(0, "2s"),
+            neon_arr(0, "2s"),
+            neon_arr(0, "2s"),
+        ];
+        assert!(
+            encode_neon_float_three_same(&ops, 0, 0, 0b11010).is_err(),
+            "fadd v0.2s, v0.2s, v0.2s, v0.2s must Err (no 4th operand)"
+        );
+    }
+
+    /// Deterministic regression: source Operand::Reg (shrunk from neg_src_reg_no_arrangement).
+    #[test]
+    fn test_encode_neon_float_three_same_regression_src_reg_no_arrangement() {
+        let ops = [
+            neon_arr(0, "2s"),
+            Operand::Reg("v0".into()),
+            neon_arr(0, "2s"),
+        ];
+        assert!(
+            encode_neon_float_three_same(&ops, 0, 0, 0b11010).is_err(),
+            "fadd v0.2s, v0, v0.2s must Err (source needs arrangement T)"
+        );
+    }
+
+    /// Deterministic regression: non-V prefix (shrunk from neg_non_v_prefix).
+    #[test]
+    fn test_encode_neon_float_three_same_regression_non_v_prefix() {
+        let ops = [
+            Operand::RegArrangement {
+                reg: "x0".into(),
+                arrangement: "2s".into(),
+            },
+            neon_arr(0, "2s"),
+            neon_arr(0, "2s"),
+        ];
+        assert!(
+            encode_neon_float_three_same(&ops, 0, 0, 0b11010).is_err(),
+            "fadd x0.2s, v0.2s, v0.2s must Err (V register required)"
+        );
+    }
+
+    /// Deterministic regression: dest T != src T (shrunk from neg_arrangement_mismatch).
+    #[test]
+    fn test_encode_neon_float_three_same_regression_arrangement_mismatch() {
+        let ops = [neon_arr(0, "2d"), neon_arr(0, "2s"), neon_arr(0, "2s")];
+        assert!(
+            encode_neon_float_three_same(&ops, 0, 0, 0b11010).is_err(),
+            "fadd v0.2d, v0.2s, v0.2s must Err (T must match)"
+        );
+    }
+}
