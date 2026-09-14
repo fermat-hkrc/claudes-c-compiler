@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_rev32)
+
+- Valid REV32 Xd,Xn including xzr, x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `rev32 x0, x1` = 0xdac00820. W form is not valid.
+- Direct-call NEON path REV32 Vd.8b/16b/4h/8h, Vn.T matches llvm-mc (1000 cases). Public dispatch routes RegArrangement to encode_neon_two_misc, not encode_rev32.
+- Success-path scalar word is ARM Data-processing (1 source) REV32: 1 1 0 11010110 00000 000010 Rn Rd. Equivalently w = (1<<31)|(1<<30)|(0b011010110<<21)|(0b000010<<10)|(rn<<5)|rd. sf always 1; bits[30]=1; bits[29]=0; bits[28:21]=11010110; bits[20:16]=00000; bits[15:10]=000010.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `rev32 x0, x1` = 0xdac00820; `rev32 xzr, xzr` = 0xdac00bff; `rev32 lr, x1` = 0xdac0083e; `rev32 x0, xzr` = 0xdac00be0; `rev32 v0.8b, v1.8b` = 0x2e200820; `rev32 v0.16b, v1.16b` = 0x6e200820; `rev32 v0.4h, v1.4h` = 0x2e600820; `rev32 v0.8h, v1.8h` = 0x6e600820.
+- Extra operand, SP/WSP, W registers, mixed W/X, FP/SIMD prefixes, and NEON T in {2s,4s,2d,1d} currently encode instead of Err (see bugs).
+
+## Environment (encode_rev32)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on `rev32 x0, x1` = 0xdac00820.
+- ARM ARM Data-processing (1 source) REV32: REV32 <Xd>, <Xn> only. Encoding 1 1 0 11010110 00000 000010 Rn Rd; register 31 is ZR not SP. Vector form is Advanced SIMD two-register miscellaneous REV32, T in {8B,16B,4H,8H}.
+- Dispatch: encoder/mod.rs:579-581 scalar rev32 => encode_rev32; NEON RegArrangement => encode_neon_two_misc(operands, 1, 0b00000).
+- Callers: encoder dispatch only (scalar).
+- Sibling encode_neon_two_misc is the vector form used by public dispatch (not a differential sibling for scalar). Sibling encode_rev/encode_rev16/encode_rbit/encode_clz/encode_cls are different opcodes.
+- encode_rev32 does not check operands.len() (extra ignored); hardcodes sf=1 and discards is_64 from get_reg; parse_reg_num maps sp/wsp to 31; NEON path uses neon_arr_to_q_size which accepts 2s/4s/1d/2d.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_rev32 (arity / extra / SP / W-form / mixed W-X / FP / nonreg / invalid-name / alt-spellings / neon invalid T).
+- Six failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_rev32_*.md.
+
 # Confirmed invariants (encode_rev16)
 
 - Valid REV16 Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `rev16 w0, w1` = 0x5ac00420.

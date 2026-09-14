@@ -3929,3 +3929,536 @@ mod encode_rev16_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_rev32_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md:11 "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:579-581 "rev32" => encode_neon_two_misc (RegArrangement) / encode_rev32 (scalar);
+    //   README.md:240 lists rev32 under Bit manipulation; README.md:225 lists rev32 under NEON two-misc;
+    //   ARM ARM Data-processing (1 source) REV32: 1 1 0 11010110 00000 000010 Rn Rd (Xd,Xn only);
+    //   ARM ARM Advanced SIMD two-register miscellaneous REV32 T in {8B,16B,4H,8H};
+    //   register 31 is ZR not SP; purpose comment bitfield.rs:218 "REV32 is 64-bit only".
+    // Stronger considered:
+    //   - State machine: rejected — encode_rev32 is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree REV32 decoder
+    //   - encode_neon_two_misc as differential sibling: rejected — same-job gate fails
+    //     (vector/RegArrangement, different ARM class; dispatch already splits the two)
+    //   - encode_rev / encode_rev16 / encode_rbit / encode_clz / encode_cls: rejected —
+    //     different opcode 000010-W/000011-X / 000001 / 000000 / 000100 / 000101
+    // Weaker available: algebraic.metamorphic (Rd/Rn field independence),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / W-form / SP)
+    // Differential: candidate=encode_rev32, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(Xd), Reg(Xn)] <-> `rev32 Xd, Xn`;
+    //   NEON path [RegArrangement(Vd.T), RegArrangement(Vn.T)] <-> `rev32 Vd.T, Vn.T`
+
+    use super::encode_rev32;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr64(n: u32) -> String {
+        if n == 31 {
+            "xzr".into()
+        } else {
+            format!("x{n}")
+        }
+    }
+
+    fn gpr32(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{n}")
+        }
+    }
+
+    fn ops2(rd: u32, rn: u32) -> [Operand; 2] {
+        [Operand::Reg(gpr64(rd)), Operand::Reg(gpr64(rn))]
+    }
+
+    fn neon_ops(rd: u32, rn: u32, arr: &str) -> [Operand; 2] {
+        [
+            Operand::RegArrangement {
+                reg: format!("v{rd}"),
+                arrangement: arr.to_string(),
+            },
+            Operand::RegArrangement {
+                reg: format!("v{rn}"),
+                arrangement: arr.to_string(),
+            },
+        ]
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_rev32(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(-1)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "8h".into(),
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_rev32_kat_llvm_mc_x0_x1() {
+        let want = 0xdac00820u32;
+        let mc = llvm_mc_word("rev32 x0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(0, 1)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rev32_kat_llvm_mc_xzr_xzr() {
+        let want = 0xdac00bffu32;
+        let mc = llvm_mc_word("rev32 xzr, xzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(31, 31)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rev32_kat_llvm_mc_lr_x1() {
+        let want = 0xdac0083eu32;
+        let mc = llvm_mc_word("rev32 lr, x1").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [Operand::Reg("lr".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rev32_kat_llvm_mc_x0_xzr() {
+        let want = 0xdac00be0u32;
+        let mc = llvm_mc_word("rev32 x0, xzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let sut = sut_word(&ops2(0, 31)).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rev32_kat_llvm_mc_v0_8b() {
+        let want = 0x2e200820u32;
+        let mc = llvm_mc_word("rev32 v0.8b, v1.8b").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc NEON KAT mapping broken");
+        let sut = sut_word(&neon_ops(0, 1, "8b")).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rev32_kat_llvm_mc_v0_16b() {
+        let want = 0x6e200820u32;
+        let mc = llvm_mc_word("rev32 v0.16b, v1.16b").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc NEON KAT mapping broken");
+        let sut = sut_word(&neon_ops(0, 1, "16b")).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rev32_kat_llvm_mc_v0_4h() {
+        let want = 0x2e600820u32;
+        let mc = llvm_mc_word("rev32 v0.4h, v1.4h").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc NEON KAT mapping broken");
+        let sut = sut_word(&neon_ops(0, 1, "4h")).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_rev32_kat_llvm_mc_v0_8h() {
+        let want = 0x6e600820u32;
+        let mc = llvm_mc_word("rev32 v0.8h, v1.8h").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc NEON KAT mapping broken");
+        let sut = sut_word(&neon_ops(0, 1, "8h")).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_rev32_diff_valid_gpr(rd in 0u32..=31, rn in 0u32..=31) {
+            let dest = gpr64(rd);
+            let src = gpr64(rn);
+            let asm = format!("rev32 {}, {}", dest, src);
+            let ops = ops2(rd, rn);
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "REV32 mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_rev32_arm_fields(rd in 0u32..=31, rn in 0u32..=31) {
+            let w = sut_word(&ops2(rd, rn)).expect("SUT");
+            let want = (1u32 << 31)
+                | (1u32 << 30)
+                | (0b011010110 << 21)
+                | (0b000010 << 10)
+                | (rn << 5)
+                | rd;
+            prop_assert_eq!(w, want, "ARM ARM REV32 field layout");
+            prop_assert_eq!(w >> 31, 1, "sf=1 (64-bit only)");
+            prop_assert_eq!((w >> 30) & 1, 1, "bit30=1");
+            prop_assert_eq!((w >> 29) & 1, 0, "S=0");
+            prop_assert_eq!((w >> 21) & 0xff, 0b11010110, "bits[28:21]");
+            prop_assert_eq!((w >> 16) & 0x1f, 0, "opcode2=00000");
+            prop_assert_eq!((w >> 10) & 0x3f, 0b000010, "opcode=000010 REV32");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_rev32_metamorphic_rd_rn(rd in 0u32..=30, rn in 0u32..=30) {
+            let base = sut_word(&ops2(rd, rn)).expect("base");
+            let w_rd = sut_word(&ops2(rd + 1, rn)).expect("rd+1");
+            let w_rn = sut_word(&ops2(rd, rn + 1)).expect("rn+1");
+            prop_assert_eq!(w_rd & 0x1f, rd + 1, "Rd+1 updates Rd field");
+            prop_assert_eq!(w_rd & !0x1fu32, base & !0x1fu32, "Rd+1 leaves other fields unchanged");
+            prop_assert_eq!((w_rn >> 5) & 0x1f, rn + 1, "Rn+1 updates Rn field");
+            prop_assert_eq!(w_rn & !(0x1fu32 << 5), base & !(0x1fu32 << 5), "Rn+1 leaves other fields unchanged");
+        }
+
+        #[test]
+        fn encode_rev32_diff_neon(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            arr in prop::sample::select(vec!["8b", "16b", "4h", "8h"]),
+        ) {
+            let asm = format!("rev32 v{}.{}, v{}.{}", rd, arr, rn, arr);
+            let ops = neon_ops(rd, rn, arr);
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "REV32 NEON mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_rev32_neg_arity(
+            len in 0usize..=1,
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+        ) {
+            let mut ops = vec![
+                Operand::Reg(gpr64(rd)),
+                Operand::Reg(gpr64(rn)),
+            ];
+            ops.truncate(len);
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "REV32 with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_rev32_neg_extra_operand(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            extra in extra_operand(),
+        ) {
+            let mut ops = ops2(rd, rn).to_vec();
+            ops.push(extra);
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "REV32 has no 3rd operand; extra operand must Err (llvm-mc rejects it)"
+            );
+        }
+
+        #[test]
+        fn encode_rev32_neg_w32(rd in 0u32..=31, rn in 0u32..=31) {
+            let ops = [
+                Operand::Reg(gpr32(rd)),
+                Operand::Reg(gpr32(rn)),
+            ];
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "REV32 is 64-bit only; W registers must Err (llvm-mc rejects rev32 w{}, w{})",
+                rd,
+                rn
+            );
+        }
+
+        #[test]
+        fn encode_rev32_neg_sp(
+            which in 0u32..=1,
+            sp64 in any::<bool>(),
+            other in 0u32..=30,
+        ) {
+            let sp = if sp64 { "sp" } else { "wsp" };
+            let mut ops = ops2(other, other);
+            ops[which as usize] = Operand::Reg(sp.to_string());
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "SP/WSP is not a valid REV32 operand (which={} sp={})",
+                which,
+                sp
+            );
+        }
+
+        #[test]
+        fn encode_rev32_diff_alt_spellings(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_spell in 0u32..=4,
+            src_spell in 0u32..=4,
+        ) {
+            let dest = spell(rd, dest_spell);
+            let src = spell(rn, src_spell);
+            let asm = format!("rev32 {}, {}", dest, src);
+            let ops = [Operand::Reg(dest), Operand::Reg(src)];
+            let mc = llvm_mc_word(&asm).expect("llvm-mc");
+            let sut = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(sut, mc, "REV32 alt-spelling mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_rev32_neg_mixed_width(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+        ) {
+            prop_assume!(rd64 != rn64);
+            let dest = if rd64 { gpr64(rd) } else { gpr32(rd) };
+            let src = if rn64 { gpr64(rn) } else { gpr32(rn) };
+            let ops = [Operand::Reg(dest), Operand::Reg(src)];
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "REV32 mixed W/X (rd64={} rn64={}) must Err (llvm-mc rejects it)",
+                rd64,
+                rn64
+            );
+        }
+
+        #[test]
+        fn encode_rev32_neg_fp(
+            which in 0u32..=1,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in 0u32..=31,
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = ops2(0, 1);
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "FP/SIMD register {} is not a valid REV32 operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_rev32_neg_nonreg(
+            which in 0u32..=1,
+            bad in non_reg_operand(),
+        ) {
+            let mut ops = ops2(0, 1).to_vec();
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "wrong operand kind at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_rev32_neg_invalid_name(
+            which in 0u32..=1,
+            name in invalid_name(),
+        ) {
+            let mut ops = ops2(0, 1);
+            ops[which as usize] = Operand::Reg(name.clone());
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "invalid register name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_rev32_neg_neon_invalid_arr(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            arr in prop::sample::select(vec!["2s", "4s", "2d", "1d"]),
+        ) {
+            let ops = neon_ops(rd, rn, arr);
+            prop_assert!(
+                encode_rev32(&ops).is_err(),
+                "REV32 NEON T={} is outside {{8B,16B,4H,8H}}; must Err (llvm-mc rejects it)",
+                arr
+            );
+        }
+    }
+
+    fn spell(n: u32, kind: u32) -> String {
+        match kind {
+            0 if n == 31 => "x31".into(),
+            1 if n == 31 => "XZR".into(),
+            2 if n == 30 => "LR".into(),
+            3 => gpr64(n).to_uppercase(),
+            _ => gpr64(n),
+        }
+    }
+
+    fn invalid_name() -> impl Strategy<Value = String> {
+        prop::sample::select(vec![
+            "foo".into(),
+            "x32".into(),
+            "w32".into(),
+            "x".into(),
+            "r0".into(),
+            "".into(),
+            "x-1".into(),
+            "x99".into(),
+            "w".into(),
+        ])
+    }
+
+    fn non_reg_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            any::<i64>().prop_map(Operand::Imm),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            }),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Cond("eq".into())),
+        ]
+    }
+
+    #[test]
+    fn test_encode_rev32_regression_extra_operand() {
+        let mut ops = ops2(0, 0).to_vec();
+        ops.push(Operand::Reg("x0".into()));
+        assert!(
+            encode_rev32(&ops).is_err(),
+            "REV32 x0, x0, x0 must Err; extra operand is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rev32_regression_sp() {
+        let ops = [Operand::Reg("wsp".into()), Operand::Reg("x0".into())];
+        assert!(
+            encode_rev32(&ops).is_err(),
+            "REV32 wsp, x0 must Err; register 31 is ZR not SP/WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rev32_regression_w32() {
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("w0".into())];
+        assert!(
+            encode_rev32(&ops).is_err(),
+            "REV32 w0, w0 must Err; REV32 is 64-bit only (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rev32_regression_mixed_width() {
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("w0".into())];
+        assert!(
+            encode_rev32(&ops).is_err(),
+            "REV32 x0, w0 must Err; mixed W/X is invalid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rev32_regression_fp() {
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("x1".into())];
+        assert!(
+            encode_rev32(&ops).is_err(),
+            "REV32 d0, x1 must Err; FP/SIMD registers are not REV32 operands (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_rev32_regression_neon_invalid_arr() {
+        let ops = neon_ops(0, 1, "2s");
+        assert!(
+            encode_rev32(&ops).is_err(),
+            "REV32 v0.2s, v1.2s must Err; T is outside {{8B,16B,4H,8H}} (llvm-mc rejects it)"
+        );
+    }
+}
