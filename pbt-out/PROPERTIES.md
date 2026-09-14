@@ -1,128 +1,124 @@
-# Property ledger: encode_sxth
+# Properties: encode_sxtw
 
-## encode_sxth_diff_valid_gpr
+## encode_sxtw_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest applicable oracle is Differential against llvm-mc (independent GNU-style AArch64 assembler). README asserts the built-in assembler "accepts the same textual assembly that GCC's gas would consume". State machine rejected: encode_sxth is a pure single-call encoder with no lifecycle. Round-trip rejected: no in-tree SXTH/SBFM decoder. encode_sxtb / encode_uxth fail the same-job gate (imms=7 / UBFM opc=10). encode_sbfm is the ARM ARM alias but shares get_reg and lives in the same crate, so it is algebraic.metamorphic not an independent differential.
-- Seed: README.md:217 Extensions table; encoder/mod.rs:294 `"sxth" => encode_sxth`; llvm-mc KAT `sxth w0, w1` = 0x13003c20, `sxth x0, w1` = 0x93403c20
-- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}. encode_sxth([Reg(gpr(is_64,rd)), Reg(W(rn))]) = Word(llvm-mc("sxth {X|W}d, Wn"))
+- Rationale: Strongest evidenced oracle is Differential against llvm-mc (independent AArch64 assembler). README claims the built-in assembler "accepts the same textual assembly that GCC's gas would consume"; encoder docstring claims 32-bit AArch64 words. State machine rejected: no lifecycle. Round-trip rejected: no in-tree SXTW decoder. encode_sxth/sxtb/uxtw fail same-job gate (different imms/opc). encode_sbfm is same-crate shared get_reg, so alias equality is metamorphic not differential.
+- Seed: src/backend/arm/assembler/README.md:217; encoder/mod.rs:293; neighbouring encode_sxth_pbt; llvm-mc KAT `sxtw x0, w1` = 0x93407c20
+- Formal: ∀ rd, rn ∈ {0..31}. encode_sxtw([Reg(x{rd}|xzr|lr), Reg(w{rn}|wzr)]) = llvm-mc("sxtw Xd, Wn") as little-endian u32
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64]
-  domain: { rd: 0..31, rn: 0..31, is_64: bool }
+  vars: [rd, rn]
+  domain: { rd: 0..31, rn: 0..31 }
   relation:
     op: eq
-    lhs: encode_sxth([Reg(gpr(is_64, rd)), Reg(wreg(rn))])
-    rhs: llvm_mc("sxth " + gpr(is_64, rd) + ", " + wreg(rn))
+    lhs: encode_sxtw([Reg(xreg(rd)), Reg(wreg(rn))])
+    rhs: llvm_mc_word("sxtw " + xreg(rd) + ", " + wreg(rn))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:7-14 GNU-style gas-compatible assembler; encoder/mod.rs:1-7; ARM ARM SXTH alias of SBFM #0,#15
+evidence: src/backend/arm/assembler/README.md:8-12; encoder/mod.rs:1-7; encoder/mod.rs:293
 ```
 
-## encode_sxth_alias_sbfm
-- Tier: 4c
-- Rationale: ARM ARM documents SXTH as the assembler alias of SBFM Rd, Rn, #0, #15 (N=sf). Not an independent differential (encode_sbfm shares get_reg / same crate). Stronger differential vs llvm-mc is the sibling property above. Metamorphic required by standard tier in addition to differential.
-- Seed: ARM ARM C6 SXTH; llvm-mc `sbfm w0, w1, #0, #15` canonicalizes to `sxth w0, w1`
-- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}. encode_sxth([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]) = encode_sbfm([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Imm(0), Imm(15)])
+## encode_sxtw_alias_sbfm
+- Tier: 4
+- Rationale: ARM ARM C6 documents SXTW Xd,Wn as the alias of SBFM Xd,Xn,#0,#31. encode_sbfm is the in-tree same-format sibling (not independent — shared get_reg), so this is algebraic.metamorphic, not differential. Cross-checked against llvm-mc which prints sbfm x0,x1,#0,#31 as sxtw x0,w1.
+- Seed: data_processing.rs:856 comment "SXTW Xd, Wn -> SBFM Xd, Xn, #0, #31"; llvm-mc alias
+- Formal: ∀ rd, rn ∈ {0..31}. encode_sxtw([Reg(x{rd}), Reg(w{rn})]) = encode_sbfm([Reg(x{rd}), Reg(x{rn}), Imm(0), Imm(31)]) = llvm-mc("sxtw Xd, Wn")
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64]
-  domain: { rd: 0..31, rn: 0..31, is_64: bool }
+  vars: [rd, rn]
+  domain: { rd: 0..31, rn: 0..31 }
   relation:
     op: eq
-    lhs: encode_sxth([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn))])
-    rhs: encode_sbfm([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn)), Imm(0), Imm(15)])
+    lhs: encode_sxtw([Reg(xreg(rd)), Reg(wreg(rn))])
+    rhs: encode_sbfm([Reg(xreg(rd)), Reg(xreg(rn)), Imm(0), Imm(31)])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: ARM ARM C6 SXTH = SBFM #0,#15; llvm-mc canonicalizes sbfm ..., #0, #15 to sxth
+evidence: data_processing.rs:856; ARM ARM C6 SXTW alias of SBFM #0,#31; llvm-mc sbfm x0,x1,#0,#31 encodes as sxtw
 ```
 
-## encode_sxth_arm_fields
-- Tier: 4d
-- Rationale: ARM ARM SBFM bit layout is an exact structural predicate on the success-path word: sf at 31, opc=00 at [30:29], 100110 at [28:23], N=sf at 22, immr=0 at [21:16], imms=15 at [15:10], Rn at [9:5], Rd at [4:0]. Weaker than differential / alias metamorphic; still pins the field packing independently of llvm-mc availability.
-- Seed: ARM ARM SBFM encoding diagram; llvm-mc KAT 0x13003c20 / 0x93403c20
-- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}. let w = encode_sxth([Reg(gpr(is_64,rd)), Reg(wreg(rn))]). w = (sf<<31) | (0b100110<<23) | (N<<22) | (15<<10) | (rn<<5) | rd with sf=N=is_64
+## encode_sxtw_arm_fields
+- Tier: 4
+- Rationale: ARM ARM SBFM/SXTW field layout is an exact structural invariant of every success-path word. Weaker than differential (which already checks the whole word) but pins each named field so a packing slip is local. Documented bounds Rd/Rn 0..31 and imms=31 / immr=0 sampled exactly.
+- Seed: ARM ARM C6 SXTW; llvm-mc encoding [0x20,0x7c,0x40,0x93] for x0,w1
+- Formal: ∀ rd, rn ∈ {0..31}. let w = encode_sxtw([Reg(x{rd}), Reg(w{rn})]). w = 0x93407C00 | (rn<<5) | rd ∧ w[31]=1 ∧ w[30:29]=00 ∧ w[28:23]=100110 ∧ w[22]=1 ∧ w[21:16]=0 ∧ w[15:10]=31 ∧ w[9:5]=rn ∧ w[4:0]=rd
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64]
-  domain: { rd: 0..31, rn: 0..31, is_64: bool }
+  vars: [rd, rn]
+  domain: { rd: 0..31, rn: 0..31 }
   relation:
     op: eq
-    lhs: encode_sxth([Reg(gpr(is_64, rd)), Reg(wreg(rn))])
-    rhs: ((sf(is_64) << 31) | (0b100110 << 23) | (N(is_64) << 22) | (15 << 10) | (rn << 5) | rd)
+    lhs: encode_sxtw([Reg(xreg(rd)), Reg(wreg(rn))])
+    rhs: 0x93407C00 | (rn << 5) | rd
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: ARM ARM SBFM sf 00 100110 N immr imms Rn Rd with N=sf immr=0 imms=15 for SXTH
+evidence: ARM ARM C6 SXTW = SBFM sf=1 N=1 immr=0 imms=31; llvm-mc sxtw x0,w1 = 0x93407c20
 ```
 
-## encode_sxth_neg_arity
-- Tier: 4e
-- Rationale: llvm-mc rejects SXTH with fewer than 2 operands ("too few operands"). README gas-compatibility makes that the error contract. get_reg on a missing slot returns Err, which this property pins.
-- Seed: llvm-mc `sxth` / `sxth w0` → error: too few operands
-- Formal: ∀ ops with |ops| ∈ {0,1}. encode_sxth(ops) is Err
+## encode_sxtw_neg_arity
+- Tier: 4
+- Rationale: llvm-mc and GNU as reject SXTW with fewer than 2 operands ("too few operands"). get_reg returns Err when the slot is missing. Negative/error contract for the documented 2-operand form.
+- Seed: llvm-mc `sxtw` / `sxtw x0` → too few operands; encode_sxth_pbt arity property
+- Formal: ∀ ops. |ops| < 2 ⇒ encode_sxtw(ops) is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [len]
-  domain: { len: 0..1 }
+  vars: [ops]
+  domain: { ops: operand_lists_of_len_0_or_1 }
   relation:
     op: throws
-    lhs: encode_sxth(ops_of_len(len))
-    rhs: Err
+    expr: encode_sxtw(ops)
 generators:
   len: { gen: int, min: 0, max: 1, type: usize }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects sxth / sxth w0 as too few operands; README.md:7-14 gas-compatible
+evidence: llvm-mc -triple=aarch64 `sxtw` / `sxtw x0` error too few operands
 ```
 
-## encode_sxth_neg_extra_operand
-- Tier: 4e
-- Rationale: ARM ARM SXTH has exactly two register operands. llvm-mc rejects a third operand. README gas-compatibility. Documented bound: arity = 2; extra at bound+1 must Err.
-- Seed: llvm-mc `sxth w0, w1, x2` → invalid operand
-- Formal: ∀ rd,rn ∈ {0..31}, extra ∈ Operand. encode_sxth([Reg(Wd), Reg(Wn), extra]) is Err
+## encode_sxtw_neg_extra_operand
+- Tier: 4
+- Rationale: llvm-mc rejects a third operand (`sxtw x0, w1, x2` → invalid operand). GNU-style SXTW has exactly two register operands. The assembler must Err rather than silently ignore extras.
+- Seed: llvm-mc probe; encode_sxth_pbt extra-operand property
+- Formal: ∀ rd, rn ∈ {0..31}, extra ∈ Operand. encode_sxtw([Reg(x{rd}), Reg(w{rn}), extra]) is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, is_64=false, extra=Reg("x0")  (sxth w0, w0, x0)
-- Bug report: pbt-out/bug_reports/encode_sxth_extra_operand.md
+- Counterexample: rd=0, rn=0, extra=Reg("x0") — sxtw x0, w0, x0
+- Bug report: pbt-out/bug_reports/encode_sxtw_extra_operand.md
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -130,56 +126,55 @@ predicate:
   domain: { rd: 0..31, rn: 0..31, extra: Operand }
   relation:
     op: throws
-    lhs: encode_sxth([Reg(wreg(rd)), Reg(wreg(rn)), extra])
-    rhs: Err
+    expr: encode_sxtw([Reg(xreg(rd)), Reg(wreg(rn)), extra])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, variants: [Reg, Imm, Shift] }
+  extra: { gen: oneof, items: [{gen: const, value: Imm(0)}, {gen: const, value: "Reg(x0)"}] }
 expected_error: String
-evidence: llvm-mc rejects sxth w0, w1, x2; ARM ARM SXTH is two-operand; README.md:7-14
+evidence: llvm-mc -triple=aarch64 `sxtw x0, w1, x2` error invalid operand
 ```
 
-## encode_sxth_neg_wd_xn
-- Tier: 4e
-- Rationale: ARM ARM SXTH assembler syntax is Wd,Wn or Xd,Wn. llvm-mc rejects W dest with X source (`sxth w0, x1`). Dest-X with source-X is accepted (canonicalizes to Wn) and is covered by the differential / alias properties, not this negative contract.
-- Seed: llvm-mc `sxth w0, x1` → invalid operand for instruction
-- Formal: ∀ rd,rn ∈ {0..31}. encode_sxth([Reg(W(rd)), Reg(X(rn))]) is Err
+## encode_sxtw_neg_wd
+- Tier: 4
+- Rationale: ARM ARM SXTW has only the 64-bit dest form SXTW Xd, Wn. llvm-mc rejects `sxtw w0, w1` and `sxtw w0, x1`. 32-bit dest is outside the valid domain.
+- Seed: llvm-mc probe; ARM ARM C6 SXTW <Xd>, <Wn>
+- Formal: ∀ rd, rn ∈ {0..31}, src64 ∈ {false,true}. encode_sxtw([Reg(w{rd}), Reg(w/x{rn})]) is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: rd=0, rn=0  (sxth w0, x0)
-- Bug report: pbt-out/bug_reports/encode_sxth_wd_xn.md
+- Counterexample: rd=0, rn=0, src64=false — sxtw w0, w0
+- Bug report: pbt-out/bug_reports/encode_sxtw_wd.md
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn]
-  domain: { rd: 0..31, rn: 0..31 }
+  vars: [rd, rn, src64]
+  domain: { rd: 0..31, rn: 0..31, src64: bool }
   relation:
     op: throws
-    lhs: encode_sxth([Reg(wreg(rd)), Reg(xreg(rn))])
-    rhs: Err
+    expr: encode_sxtw([Reg(wreg(rd)), Reg(gpr(src64, rn))])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
+  src64: { gen: bool }
 expected_error: String
-evidence: llvm-mc rejects sxth w0, x1; ARM ARM SXTH <Wd>, <Wn> (source of 32-bit form is Wn)
+evidence: ARM ARM C6 SXTW <Xd>, <Wn> only; llvm-mc `sxtw w0, w1` error invalid operand
 ```
 
-## encode_sxth_neg_sp
-- Tier: 4e
-- Rationale: ARM ARM SXTH uses GPR encodings where register 31 is WZR/XZR, never SP/WSP. llvm-mc rejects SP/WSP in either slot. README gas-compatibility.
-- Seed: llvm-mc `sxth sp, w1` / `sxth wsp, w1` / `sxth x0, sp` / `sxth x0, wsp` → invalid operand
-- Formal: ∀ which ∈ {0,1}, is_64_sp ∈ {false,true}, a ∈ {0..30}. ops with SP/WSP at slot which ⇒ encode_sxth(ops) is Err
+## encode_sxtw_neg_sp
+- Tier: 4
+- Rationale: ARM ARM SBFM/SXTW register 31 is XZR/WZR, never SP/WSP. llvm-mc rejects `sxtw sp, w0` and `sxtw x0, sp` / `sxtw x0, wsp`.
+- Seed: llvm-mc probe; parse_reg_num maps sp/wsp to 31
+- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, other a valid SXTW GPR. encode_sxtw with SP/WSP at slot `which` is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: which=0, is_64_sp=false, a=0, dest64=false  (sxth wsp, w0)
-- Bug report: pbt-out/bug_reports/encode_sxth_sp.md
+- Counterexample: which=0, is_64_sp=false, a=0 — sxtw wsp, w0
+- Bug report: pbt-out/bug_reports/encode_sxtw_sp.md
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -187,28 +182,27 @@ predicate:
   domain: { which: 0..1, is_64_sp: bool, a: 0..30 }
   relation:
     op: throws
-    lhs: encode_sxth(ops_with_sp_at(which))
-    rhs: Err
+    expr: encode_sxtw(ops_with_sp_at(which))
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
   is_64_sp: { gen: bool }
   a: { gen: int, min: 0, max: 30, type: u32 }
 expected_error: String
-evidence: llvm-mc rejects SP/WSP as SXTH operands; ARM ARM register 31 is ZR not SP for SBFM/SXTH
+evidence: ARM ARM SBFM Rd/Rn are XZR not SP; llvm-mc `sxtw sp, w0` / `sxtw x0, wsp` error
 ```
 
-## encode_sxth_neg_fp
-- Tier: 4e
-- Rationale: SXTH is a GPR bitfield alias. llvm-mc rejects FP/SIMD names (d/s/q/v/h/b) in either slot. parse_reg_num currently accepts those prefixes — this property asserts the gas-compatible rejection.
-- Seed: llvm-mc `sxth d0, w1` / `sxth w0, d1` → invalid operand
-- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. ops with prefixN at slot which ⇒ encode_sxth(ops) is Err
+## encode_sxtw_neg_fp
+- Tier: 4
+- Rationale: SXTW operands are GPRs. llvm-mc rejects FP/SIMD names (d/s/q/v/h/b). parse_reg_num currently accepts those prefixes, so the encoder must still reject them for this mnemonic.
+- Seed: llvm-mc `sxtw d0, w1` / `sxtw x0, s1` error; encode_sxth_pbt FP property
+- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_sxtw with FP name at slot `which` is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: failing
-- Counterexample: which=0, prefix="d", n=0  (sxth d0, w1)
-- Bug report: pbt-out/bug_reports/encode_sxth_fp.md
+- Counterexample: which=0, prefix="d", n=0 — sxtw d0, w1
+- Bug report: pbt-out/bug_reports/encode_sxtw_fp.md
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -216,98 +210,92 @@ predicate:
   domain: { which: 0..1, prefix: {d,s,q,v,h,b}, n: 0..31 }
   relation:
     op: throws
-    lhs: encode_sxth(ops_with_fp_at(which, prefix, n))
-    rhs: Err
+    expr: encode_sxtw(ops_with_fp_at(which, prefix, n))
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
-  prefix: { gen: oneof, variants: ["d", "s", "q", "v", "h", "b"] }
+  prefix: { gen: oneof, items: ["d", "s", "q", "v", "h", "b"] }
   n: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: llvm-mc rejects sxth d0, w1 and sxth w0, d1; README.md:7-14 gas-compatible GPR SXTH
+evidence: llvm-mc -triple=aarch64 `sxtw d0, w1` / `sxtw x0, s1` error invalid operand
 ```
 
-## encode_sxth_diff_alt_spellings
+## encode_sxtw_diff_alt_spellings
 - Tier: 2
-- Rationale: Coverage-sweep (round 1). First differential generator under-sampled x31/w31, uppercase, LR, and the llvm-mc-accepted Xd,Xn form (canonicalizes to Xd,Wn). Same differential oracle and gas-compatibility evidence as encode_sxth_diff_valid_gpr.
-- Seed: llvm-mc `sxth x31, w31` / `sxth x0, x1` / uppercase; ARM ARM register 31 is ZR
-- Formal: ∀ rd,rn ∈ {0..31}, is_64 ∈ {false,true}, dest/src spellings in {canonical, x31/w31, XZR, LR, uppercase, X-source if is_64}. encode_sxth(ops) = Word(llvm-mc(asm))
+- Rationale: Coverage-sweep of documented GNU-style spellings llvm-mc accepts: x31/w31, XZR, LR, uppercase, and Xd,Xn (canonicalized to Xd,Wn). Same differential oracle as encode_sxtw_diff_valid_gpr.
+- Seed: llvm-mc probe sxtw x31,w31 / sxtw X0,W1 / sxtw x0,x1; encode_sxth_pbt alt-spellings
+- Formal: ∀ rd, rn ∈ {0..31}, dest ∈ {xN, x31, XZR, LR, uppercase}, src ∈ {wN, w31, uppercase, xN}. encode_sxtw([Reg(dest), Reg(src)]) = llvm-mc("sxtw dest, src")
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, is_64, dest_spell, src_spell]
-  domain: { rd: 0..31, rn: 0..31, is_64: bool, dest_spell: 0..4, src_spell: 0..3 }
+  vars: [rd, rn, dest_spell, src_spell]
+  domain: { rd: 0..31, rn: 0..31, dest_spell: 0..4, src_spell: 0..3 }
   relation:
     op: eq
-    lhs: encode_sxth([Reg(dest_spelling), Reg(src_spelling)])
-    rhs: llvm_mc("sxth " + dest_spelling + ", " + src_spelling)
+    lhs: encode_sxtw([Reg(dest), Reg(src)])
+    rhs: llvm_mc_word("sxtw " + dest + ", " + src)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
   dest_spell: { gen: int, min: 0, max: 4, type: u32 }
   src_spell: { gen: int, min: 0, max: 3, type: u32 }
-evidence: llvm-mc accepts x31/w31, uppercase, LR, and sxth Xd, Xn; README.md:7-14 gas-compatible
+evidence: llvm-mc accepts x31/XZR/LR/uppercase/Xd,Xn; README GNU-style assembly
 ```
 
-## encode_sxth_neg_nonreg
-- Tier: 4e
-- Rationale: Coverage-sweep (round 1). get_reg requires Operand::Reg at each slot; Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement must Err. Documented by get_reg contract and llvm-mc (non-register tokens are invalid SXTH operands).
-- Seed: get_reg encoder/mod.rs:956 "expected register"; llvm-mc rejects non-register SXTH operands
-- Formal: ∀ which ∈ {0,1}, bad ∉ Reg. encode_sxth(ops with bad at slot which) is Err
+## encode_sxtw_neg_nonreg
+- Tier: 4
+- Rationale: Coverage-sweep: non-register Operand kinds at a GPR slot must Err (get_reg expects Operand::Reg). llvm-mc rejects immediates/shifts/mem/labels at SXTW register slots.
+- Seed: encode_sxth_pbt nonreg; get_reg "expected register"
+- Formal: ∀ which ∈ {0,1}, bad ∈ Operand \ Reg. encode_sxtw with `bad` at slot `which` is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, bad]
-  domain: { which: 0..1, bad: non-Reg Operand }
+  domain: { which: 0..1, bad: non_reg_operand }
   relation:
     op: throws
-    lhs: encode_sxth(ops_with_nonreg_at(which, bad))
-    rhs: Err
+    expr: encode_sxtw(ops_with_nonreg_at(which, bad))
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
-  bad: { gen: oneof, variants: [Imm, Shift, Mem, Label, Symbol, Cond, RegArrangement] }
 expected_error: String
-evidence: encoder/mod.rs:956 get_reg requires Operand::Reg; llvm-mc rejects non-register SXTH operands
+evidence: get_reg encoder/mod.rs:956 expected register; llvm-mc rejects non-reg SXTW operands
 ```
 
-## encode_sxth_neg_invalid_name
-- Tier: 4e
-- Rationale: Coverage-sweep (round 1). parse_reg_num rejects names outside x0-x31/w0-w31/xzr/wzr/sp/lr. Documented bound: register number <= 31. Bound+1 (x32/w32) and non-alphabet names must Err.
-- Seed: parse_reg_num encoder/mod.rs:131; llvm-mc rejects x32/foo
-- Formal: ∀ which ∈ {0,1}, name ∈ {foo, x32, w32, x, r0, empty, x-1, x99, w}. encode_sxth with Reg(name) at slot which is Err
+## encode_sxtw_neg_invalid_name
+- Tier: 4
+- Rationale: Coverage-sweep: invalid register names (foo, x32, w32, x, r0, empty) must Err. parse_reg_num returns None outside x/w 0..31 and aliases.
+- Seed: encode_sxth_pbt invalid_name; parse_reg_num
+- Formal: ∀ which ∈ {0,1}, name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_sxtw with Reg(name) at slot `which` is Err
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_sxth
+function: encoder.data_processing.encode_sxtw
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, name]
-  domain: { which: 0..1, name: invalid GPR names }
+  domain: { which: 0..1, name: invalid_gpr_name }
   relation:
     op: throws
-    lhs: encode_sxth(ops_with_name_at(which, name))
-    rhs: Err
+    expr: encode_sxtw(ops_with_name_at(which, name))
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
-  name: { gen: oneof, variants: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
 expected_error: String
-evidence: parse_reg_num encoder/mod.rs:131 num<=31; llvm-mc rejects x32/foo as SXTH operands
+evidence: parse_reg_num encoder/mod.rs:131 returns None for these names; llvm-mc rejects them
 ```

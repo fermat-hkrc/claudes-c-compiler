@@ -1,61 +1,61 @@
-# PBT Campaign Report: encode_sxth
+# PBT Campaign Report: encode_sxtw
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sxth
+**Modules tested:** encode_sxtw
 **Tests:** 11 properties (7 passing, 4 failing) plus 4 passing KAT and 4 failing regression witnesses
 **Result:** 7 passing, 4 bugs
-**Effort tier:** standard (1 coverage-driven sweep round; closed because the tier's round is done — coverage_gaps had no profraw, so the round was a manual ARM-contract audit)
+**Effort tier:** standard (1 coverage-driven sweep round; closed because the tier's round is done — coverage_gaps had no profraw, so the round was a manual ARM-contract audit of arity / extra / W dest / SP / FP / non-Reg / invalid name / x31 / uppercase / LR / Xd,Xn)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sxth | 11 properties + 4 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_sxtw | 11 properties + 4 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### encode_sxth_neg_extra_operand
-- **Failing property:** encode_sxth_neg_extra_operand (negative_error)
-- **Shrunk counterexample:** rd=0, rn=0, is_64=false, extra=Reg("x0") — `sxth w0, w0, x0`
+### encode_sxtw_neg_extra_operand
+- **Failing property:** encode_sxtw_neg_extra_operand (negative_error)
+- **Shrunk counterexample:** rd=0, rn=0, extra=Reg("x0") — `sxtw x0, w0, x0`
 - **Expected:** Err
 - **Actual:** Ok(Word) — third operand ignored
-- **Law:** SXTH has exactly two register operands (llvm-mc rejects a third)
+- **Law:** SXTW has exactly two register operands (llvm-mc rejects a third)
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_sxth_extra_operand.md
-- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_extra_operand -- --test-threads=1`
+- **Bug report:** pbt-out/bug_reports/encode_sxtw_extra_operand.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxtw_neg_extra_operand -- --test-threads=1`
 
-### encode_sxth_neg_wd_xn
-- **Failing property:** encode_sxth_neg_wd_xn (negative_error)
-- **Shrunk counterexample:** rd=0, rn=0 — `sxth w0, x0`
+### encode_sxtw_neg_wd
+- **Failing property:** encode_sxtw_neg_wd (negative_error)
+- **Shrunk counterexample:** rd=0, rn=0, src64=false — `sxtw w0, w0`
 - **Expected:** Err
-- **Actual:** Ok(Word) — 32-bit SXTH encoded
-- **Law:** ARM ARM 32-bit form is SXTH Wd, Wn; llvm-mc rejects W dest with X source
+- **Actual:** Ok(Word(0x93407c00)) — 64-bit SXTW encoded (sf hardcoded to 1)
+- **Law:** ARM ARM SXTW dest is Xd only; llvm-mc rejects W dest
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_sxth_wd_xn.md
-- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_wd_xn -- --test-threads=1`
+- **Bug report:** pbt-out/bug_reports/encode_sxtw_wd.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxtw_neg_wd -- --test-threads=1`
 
-### encode_sxth_neg_sp
-- **Failing property:** encode_sxth_neg_sp (negative_error)
-- **Shrunk counterexample:** which=0, is_64_sp=false, a=0, dest64=false — `sxth wsp, w0`
+### encode_sxtw_neg_sp
+- **Failing property:** encode_sxtw_neg_sp (negative_error)
+- **Shrunk counterexample:** which=0, is_64_sp=false, a=0 — `sxtw wsp, w0`
 - **Expected:** Err
-- **Actual:** Ok(Word) — WSP encoded as WZR
-- **Law:** SXTH register 31 is WZR/XZR, never SP/WSP; llvm-mc rejects SP/WSP
+- **Actual:** Ok(Word) — WSP encoded as XZR
+- **Law:** SXTW register 31 is XZR/WZR, never SP/WSP; llvm-mc rejects SP/WSP
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_sxth_sp.md
-- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_sp -- --test-threads=1`
+- **Bug report:** pbt-out/bug_reports/encode_sxtw_sp.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxtw_neg_sp -- --test-threads=1`
 
-### encode_sxth_neg_fp
-- **Failing property:** encode_sxth_neg_fp (negative_error)
-- **Shrunk counterexample:** which=0, prefix="d", n=0 — `sxth d0, w1`
+### encode_sxtw_neg_fp
+- **Failing property:** encode_sxtw_neg_fp (negative_error)
+- **Shrunk counterexample:** which=0, prefix="d", n=0 — `sxtw d0, w1`
 - **Expected:** Err
-- **Actual:** Ok(Word) — FP name encoded as GPR w0
-- **Law:** SXTH is a GPR instruction; llvm-mc rejects FP/SIMD operands
+- **Actual:** Ok(Word) — FP name encoded as GPR x0
+- **Law:** SXTW is a GPR instruction; llvm-mc rejects FP/SIMD operands
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_sxth_fp.md
-- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxth_neg_fp -- --test-threads=1`
+- **Bug report:** pbt-out/bug_reports/encode_sxtw_fp.md
+- **Reproduce:** `PBT_TEST_JOBS=1 cargo test --lib encode_sxtw_neg_fp -- --test-threads=1`
 
 ## Design Caveats
 
@@ -65,7 +65,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_sxth_pbt) | 11 properties + 4 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_sxtw_pbt) | 11 properties + 4 KAT + 4 regression witnesses |
 
 ## Output Directories
 
@@ -73,19 +73,20 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_sxth_extra_operand.md
-- pbt-out/bug_reports/encode_sxth_wd_xn.md
-- pbt-out/bug_reports/encode_sxth_sp.md
-- pbt-out/bug_reports/encode_sxth_fp.md
+- pbt-out/bug_reports/encode_sxtw_extra_operand.md
+- pbt-out/bug_reports/encode_sxtw_wd.md
+- pbt-out/bug_reports/encode_sxtw_sp.md
+- pbt-out/bug_reports/encode_sxtw_fp.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 13:08 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 57/253 total | PBT candidates: 57 | Tested: 57 (100%) | 0 pass, 57 fail
+> Last updated: 2026-09-14 13:22 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 58/253 total | PBT candidates: 58 | Tested: 58 (100%) | 0 pass, 58 fail
 
 ## Summary
 
@@ -94,10 +95,10 @@
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 57 |
-| **Tested (of PBT candidates)** | **57 / 57 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 57 / 0 |
-| **Overall (tested / all functions)** | **57 / 253 (23%)** |
+| PBT candidates (from FUNCTION_INDEX) | 58 |
+| **Tested (of PBT candidates)** | **58 / 58 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 58 / 0 |
+| **Overall (tested / all functions)** | **58 / 253 (23%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -105,13 +106,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 57 | 57 | 0 | 100% |
+|  | 58 | 58 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 57 | 57 | 0 | 100% |
+| unknown | 58 | 58 | 0 | 100% |
 
 ## File Coverage
 
@@ -120,7 +121,7 @@
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 19 | 19 | 100% | covered |
+| data_processing.rs | 36 | 20 | 20 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 11 | 11 | 100% | covered |
@@ -190,3 +191,4 @@
 | encode_neon_sqshrun | neon.rs |
 | encode_smull | data_processing.rs |
 | encode_sxth | data_processing.rs |
+| encode_sxtw | data_processing.rs |

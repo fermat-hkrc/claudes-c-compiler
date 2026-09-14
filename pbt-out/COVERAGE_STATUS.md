@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 12:54 (campaign: English campaign)
-> Files: 8/8 scanned (100%) | Functions: 56/253 total | PBT candidates: 57 | Tested: 57 (100%) | 0 pass, 57 fail
+> Last updated: 2026-09-14 13:09 (campaign: English campaign)
+> Files: 8/8 scanned (100%) | Functions: 57/253 total | PBT candidates: 57 | Tested: 57 (100%) | 0 pass, 57 fail
 
 ## Summary
 

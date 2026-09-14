@@ -1,3 +1,29 @@
+# Confirmed invariants (encode_sxtw)
+
+- Valid SXTW Xd, Wn with Rd/Rn in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Alternate spellings x31/w31, XZR, LR, uppercase, and Xd,Xn (llvm-mc canonicalizes to Xd,Wn) match llvm-mc (1000 cases).
+- encode_sxtw(Xd, Wn) equals encode_sbfm(Xd, Xn, #0, #31), and both match llvm-mc `sxtw` (1000 cases).
+- Success-path word: sf=1 at bit 31, opc=00 at [30:29], 100110 at [28:23], N=1 at 22, immr=0 at [21:16], imms=31 at [15:10], Rn at [9:5], Rd at [4:0]. Equivalently w = 0x93407C00 | (rn<<5) | rd.
+- Fewer than 2 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at GPR slots always Err.
+- Known-answer: `sxtw x0, w1` = 0x93407c20; `sxtw xzr, wzr` = 0x93407fff; `sxtw lr, w0` = 0x93407c1e; `sbfm x0, x1, #0, #31` aliases to the same word as `sxtw x0, w1`.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM SXTW is the alias of SBFM Xd, Xn, #0, #31: sf=1 00 100110 N=1 immr=0 imms=31 Rn Rd. Assembler syntax: SXTW Xd, Wn only (no Wd form). Register 31 is XZR/WZR, never SP/WSP. llvm-mc also accepts SXTW Xd, Xn (canonicalizes source to W).
+- Dispatch: encoder/mod.rs:293 `"sxtw" => encode_sxtw(operands)`.
+- Sibling encode_sbfm is the same format with caller immr/imms (alias at #0,#31). Sibling encode_sxth is imms=15 (different job). Sibling encode_uxtw is UBFM/MOV (different job).
+- Callers: assembler README Extensions table lists sxtw. Codegen emits `sxtw x0, w0` in cast_ops.rs / atomics.rs / f128.rs / alu.rs / peephole.rs.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- Dest/src width from get_reg is discarded; W dest is encoded as 64-bit SXTW (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / extra / W dest / SP / FP / non-Reg / invalid name / x31 / uppercase / lr / Xd,Xn).
+
 # Confirmed invariants (encode_sxth)
 
 - Valid SXTH Wd, Wn and Xd, Wn with Rd/Rn in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
