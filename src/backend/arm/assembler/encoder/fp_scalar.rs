@@ -1838,3 +1838,556 @@ mod encode_int_to_float_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_fcmp_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:439 "fcmp" => encode_fcmp;
+    //   ARM ARM Floating-point compare:
+    //   0 00 11110 ftype 1 Rm 001000 Rn opc;
+    //   opc 00000 = FCMP register, 01000 = FCMP #0.0;
+    //   ftype 00=S 01=D 11=H;
+    //   fp_scalar.rs:164-171 purpose comment (FCMP Dn, #0.0 / Dn, Dm);
+    //   README.md:223 lists scalar fcmp;
+    //   codegen/comparison.rs:15-19 emits fcmp s0, s1 / fcmp d0, d1.
+    // Stronger considered:
+    //   - State machine: rejected — encode_fcmp is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree FCMP decoder
+    //   - encode_fp_arith as differential sibling: rejected — same-job gate fails (3-operand FP arith)
+    //   - encode_neon_float_cmp_zero: rejected — vector/SIMD compare-to-zero
+    //   - fccmp: rejected — different mnemonic (NZCV/cond)
+    // Weaker available: algebraic.metamorphic (ftype/Rn/Rm/opc),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / wrong type)
+    // Differential: candidate=encode_fcmp, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler (caller-reachable from encode_instruction),
+    //   mapping=[Reg(Sn|Dn), Reg(Sm|Dm)] <-> `fcmp Sn|Dn, Sm|Dm`;
+    //            [Reg(Sn|Dn), Imm(0)] <-> `fcmp Sn|Dn, #0.0`
+
+    use super::encode_fcmp;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn fp(is_d: bool, n: u32) -> String {
+        format!("{}{}", if is_d { "d" } else { "s" }, n)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_fcmp(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word_with(asm: &str, extra_args: &[&str]) -> Result<u32, String> {
+        let mut args = vec!["-triple=aarch64", "-show-encoding"];
+        args.extend_from_slice(extra_args);
+        let mut child = Command::new(LLVM_MC)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &[])
+    }
+
+    fn llvm_mc_fp16_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &["-mattr=+fullfp16"])
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("s{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            }),
+        ]
+    }
+
+    fn fp_spelling(is_d: bool, n: u32, kind: u32) -> String {
+        match kind {
+            0 => fp(is_d, n).to_uppercase(),
+            _ => fp(is_d, n),
+        }
+    }
+
+    fn wrong_type_pair() -> impl Strategy<Value = (String, String)> {
+        let n = 0u32..=31;
+        prop_oneof![
+            // mixed S/D
+            (n.clone(), n.clone(), any::<bool>()).prop_map(|(a, b, a_d)| {
+                (fp(a_d, a), fp(!a_d, b))
+            }),
+            // GPR, GPR
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(a, b, a64, b64)| {
+                (gpr(a64, a), gpr(b64, b))
+            }),
+            // FP + GPR
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(a, b, a_d, b64)| {
+                (fp(a_d, a), gpr(b64, b))
+            }),
+            // GPR + FP
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(a, b, a64, b_d)| {
+                (gpr(a64, a), fp(b_d, b))
+            }),
+            // Q/V/B + S/D
+            (n.clone(), n.clone(), 0u32..=2, any::<bool>()).prop_map(|(a, b, p, b_d)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (format!("{pref}{a}"), fp(b_d, b))
+            }),
+            // S/D + Q/V/B
+            (n.clone(), n.clone(), any::<bool>(), 0u32..=2).prop_map(|(a, b, a_d, p)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (fp(a_d, a), format!("{pref}{b}"))
+            }),
+            // SP/WSP as first
+            (n.clone(), any::<bool>(), any::<bool>()).prop_map(|(b, is_64, b_d)| {
+                let sp = if is_64 { "sp" } else { "wsp" };
+                (sp.to_string(), fp(b_d, b))
+            }),
+            // SP/WSP as second
+            (n.clone(), any::<bool>(), any::<bool>()).prop_map(|(a, is_64, a_d)| {
+                let sp = if is_64 { "sp" } else { "wsp" };
+                (fp(a_d, a), sp.to_string())
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_s0_s1() {
+        let want = 0x1e212000u32;
+        let mc = llvm_mc_word("fcmp s0, s1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_d0_d1() {
+        let want = 0x1e612000u32;
+        let mc = llvm_mc_word("fcmp d0, d1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("d1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_s0_zero() {
+        let want = 0x1e202008u32;
+        let mc = llvm_mc_word("fcmp s0, #0.0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Imm(0)];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_d0_zero() {
+        let want = 0x1e602008u32;
+        let mc = llvm_mc_word("fcmp d0, #0.0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Imm(0)];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_s31_s31() {
+        let want = 0x1e3f23e0u32;
+        let mc = llvm_mc_word("fcmp s31, s31").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s31".into()), Operand::Reg("s31".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_d31_d0() {
+        let want = 0x1e6023e0u32;
+        let mc = llvm_mc_word("fcmp d31, d0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d31".into()), Operand::Reg("d0".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_half_h0_h1() {
+        let want = 0x1ee12000u32;
+        let mc = llvm_mc_fp16_word("fcmp h0, h1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+    }
+
+    #[test]
+    fn encode_fcmp_kat_llvm_mc_half_h0_zero() {
+        let want = 0x1ee02008u32;
+        let mc = llvm_mc_fp16_word("fcmp h0, #0.0").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+    }
+
+    #[test]
+    fn test_encode_fcmp_regression_arity_one() {
+        let ops = [Operand::Reg("s0".into())];
+        assert!(
+            encode_fcmp(&ops).is_err(),
+            "FCMP with 1 operand must Err (llvm-mc: too few operands), not encode as #0.0"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcmp_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("s0".into()),
+            Operand::Reg("s0".into()),
+            Operand::Reg("s0".into()),
+        ];
+        assert!(
+            encode_fcmp(&ops).is_err(),
+            "FCMP must reject a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcmp_regression_mixed_sd() {
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("d0".into())];
+        assert!(
+            encode_fcmp(&ops).is_err(),
+            "FCMP must reject mixed S/D operands"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcmp_regression_half_ftype() {
+        let ops = [Operand::Reg("h0".into()), Operand::Reg("h0".into())];
+        let sut = sut_word(&ops).expect("H,H is a valid fp16 FCMP");
+        assert_eq!(
+            sut, 0x1ee02000u32,
+            "H registers must use ftype=11 (0x1ee02000), not ftype=00 S"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_fcmp_diff_valid(
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            is_d in any::<bool>(),
+            rn_kind in 0u32..=1,
+            rm_kind in 0u32..=1,
+        ) {
+            let a = fp_spelling(is_d, rn, rn_kind);
+            let b = fp_spelling(is_d, rm, rm_kind);
+            let asm = format!("fcmp {a}, {b}");
+            let ops = [Operand::Reg(a.clone()), Operand::Reg(b.clone())];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FCMP mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_fcmp_diff_zero(
+            rn in 0u32..=31,
+            is_d in any::<bool>(),
+            rn_kind in 0u32..=1,
+        ) {
+            let a = fp_spelling(is_d, rn, rn_kind);
+            let asm = format!("fcmp {a}, #0.0");
+            let ops = [Operand::Reg(a.clone()), Operand::Imm(0)];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FCMP #0.0 mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_fcmp_arm_fields(
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            is_d in any::<bool>(),
+        ) {
+            let ops = [
+                Operand::Reg(fp(is_d, rn)),
+                Operand::Reg(fp(is_d, rm)),
+            ];
+            let w = sut_word(&ops).expect("SUT register form");
+            let ftype = if is_d { 0b01u32 } else { 0b00 };
+            let want = (0b00011110u32 << 24)
+                | (ftype << 22)
+                | (1 << 21)
+                | (rm << 16)
+                | (0b001000 << 10)
+                | (rn << 5);
+            prop_assert_eq!(w, want, "ARM ARM FCMP register field layout");
+            prop_assert_eq!((w >> 24) & 0xff, 0b00011110, "bits[31:24] M=0 S=0 11110");
+            prop_assert_eq!((w >> 22) & 0b11, ftype, "ftype");
+            prop_assert_eq!((w >> 21) & 1, 1, "bit21 must be 1");
+            prop_assert_eq!((w >> 16) & 0x1f, rm, "Rm");
+            prop_assert_eq!((w >> 10) & 0x3f, 0b001000, "bits[15:10] must be 001000");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, 0, "opc must be 00000 (FCMP register)");
+
+            let zops = [Operand::Reg(fp(is_d, rn)), Operand::Imm(0)];
+            let z = sut_word(&zops).expect("SUT zero form");
+            let zwant = (0b00011110u32 << 24)
+                | (ftype << 22)
+                | (1 << 21)
+                | (0b001000 << 10)
+                | (rn << 5)
+                | 0b01000;
+            prop_assert_eq!(z, zwant, "ARM ARM FCMP #0.0 field layout");
+            prop_assert_eq!((z >> 16) & 0x1f, 0, "Rm must be 00000 for #0.0");
+            prop_assert_eq!(z & 0x1f, 0b01000, "opc must be 01000 (FCMP #0.0)");
+        }
+
+        #[test]
+        fn encode_fcmp_metamorphic_fields(
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            is_d in any::<bool>(),
+        ) {
+            let ops = |n: u32, m: u32, sd: bool| {
+                [
+                    Operand::Reg(fp(sd, n)),
+                    Operand::Reg(fp(sd, m)),
+                ]
+            };
+            let w = sut_word(&ops(rn, rm, is_d)).expect("base FCMP");
+            let w_rn = sut_word(&ops(rn + 1, rm, is_d)).expect("Rn+1");
+            let w_rm = sut_word(&ops(rn, rm + 1, is_d)).expect("Rm+1");
+            let w_ft = sut_word(&ops(rn, rm, !is_d)).expect("ftype flip");
+            let w_rm0 = sut_word(&ops(rn, 0, is_d)).expect("Rm=0");
+            let w_z = sut_word(&[Operand::Reg(fp(is_d, rn)), Operand::Imm(0)]).expect("#0.0");
+            prop_assert_eq!(w_rn, w + (1 << 5), "Rn+1 must increment bits[9:5] only");
+            prop_assert_eq!(w_rm, w + (1 << 16), "Rm+1 must increment bits[20:16] only");
+            prop_assert_eq!(w_ft ^ w, 1u32 << 22, "S vs D must flip only ftype bit 22");
+            prop_assert_eq!(w_z ^ w_rm0, 1u32 << 3, "register XOR #0.0 (Rm=0) must be opc bit 3");
+        }
+
+        #[test]
+        fn encode_fcmp_neg_arity(
+            len in 0usize..=1,
+            n in 0u32..=31,
+            is_d in any::<bool>(),
+        ) {
+            let mut ops = Vec::new();
+            if len >= 1 {
+                ops.push(Operand::Reg(fp(is_d, n)));
+            }
+            prop_assert!(
+                encode_fcmp(&ops).is_err(),
+                "FCMP with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_fcmp_neg_extra_operand(
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            is_d in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(fp(is_d, rn)),
+                Operand::Reg(fp(is_d, rm)),
+                extra,
+            ];
+            prop_assert!(
+                encode_fcmp(&ops).is_err(),
+                "FCMP has no 3rd operand; extra must Err (fccmp is a different mnemonic)"
+            );
+        }
+
+        #[test]
+        fn encode_fcmp_neg_wrong_types(
+            (a, b) in wrong_type_pair(),
+        ) {
+            let ops = [Operand::Reg(a.clone()), Operand::Reg(b.clone())];
+            prop_assert!(
+                encode_fcmp(&ops).is_err(),
+                "FCMP requires matching Sn,Sm or Dn,Dm; a={} b={} must Err",
+                a,
+                b
+            );
+        }
+
+        #[test]
+        fn encode_fcmp_diff_half(
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            zero in any::<bool>(),
+        ) {
+            if zero {
+                let asm = format!("fcmp h{rn}, #0.0");
+                let ops = [Operand::Reg(format!("h{rn}")), Operand::Imm(0)];
+                let mc = llvm_mc_fp16_word(&asm)
+                    .unwrap_or_else(|e| panic!("llvm-mc fp16 rejected valid {asm}: {e}"));
+                let sut = sut_word(&ops)
+                    .unwrap_or_else(|e| panic!("SUT rejected valid fp16 {asm}: {e}"));
+                prop_assert_eq!(sut, mc, "FCMP half-precision #0.0 mismatch for {}", asm);
+            } else {
+                let asm = format!("fcmp h{rn}, h{rm}");
+                let ops = [Operand::Reg(format!("h{rn}")), Operand::Reg(format!("h{rm}"))];
+                let mc = llvm_mc_fp16_word(&asm)
+                    .unwrap_or_else(|e| panic!("llvm-mc fp16 rejected valid {asm}: {e}"));
+                let sut = sut_word(&ops)
+                    .unwrap_or_else(|e| panic!("SUT rejected valid fp16 {asm}: {e}"));
+                prop_assert_eq!(sut, mc, "FCMP half-precision mismatch for {}", asm);
+            }
+        }
+
+        #[test]
+        fn encode_fcmp_neg_nonzero_imm(
+            rn in 0u32..=31,
+            is_d in any::<bool>(),
+            imm in prop_oneof![
+                Just(-1i64),
+                Just(1i64),
+                Just(i64::MIN),
+                Just(i64::MAX),
+                2i64..=32,
+            ],
+        ) {
+            let ops = [Operand::Reg(fp(is_d, rn)), Operand::Imm(imm)];
+            prop_assert!(
+                encode_fcmp(&ops).is_err(),
+                "FCMP immediate form allows only #0.0; Imm({}) must Err",
+                imm
+            );
+        }
+
+        #[test]
+        fn encode_fcmp_neg_nonreg(
+            which in 0u32..=1,
+            kind in 0u32..=5,
+        ) {
+            let bad = match kind {
+                0 => Operand::Imm(1),
+                1 => Operand::Symbol("foo".into()),
+                2 => Operand::Label("1f".into()),
+                3 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+            };
+            let mut ops = vec![
+                Operand::Reg("s0".into()),
+                Operand::Reg("s1".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_fcmp(&ops).is_err(),
+                "non-register at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_fcmp_neg_invalid_name(
+            which in 0u32..=1,
+            name in prop::sample::select(vec![
+                "foo", "s32", "d32", "h32", "x32", "r0", "s", "d", "",
+            ]),
+        ) {
+            let mut ops = vec![
+                Operand::Reg("s0".into()),
+                Operand::Reg("s1".into()),
+            ];
+            ops[which as usize] = Operand::Reg(name.to_string());
+            prop_assert!(
+                encode_fcmp(&ops).is_err(),
+                "invalid name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+    }
+}

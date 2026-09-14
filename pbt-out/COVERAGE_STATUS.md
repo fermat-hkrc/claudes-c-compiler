@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 16:49 (campaign: English campaign)
-> Files: 9/9 scanned (100%) | Functions: 71/267 total | PBT candidates: 71 | Tested: 71 (100%) | 0 pass, 71 fail
+> Last updated: 2026-09-14 17:00 (campaign: English campaign)
+> Files: 9/9 scanned (100%) | Functions: 72/267 total | PBT candidates: 72 | Tested: 72 (100%) | 0 pass, 72 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 9 |
 | Files scanned | 9 / 9 (100%) |
 | Total functions (all files) | 267 |
-| PBT candidates (from FUNCTION_INDEX) | 71 |
-| **Tested (of PBT candidates)** | **71 / 71 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 71 / 0 |
-| **Overall (tested / all functions)** | **71 / 267 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 72 |
+| **Tested (of PBT candidates)** | **72 / 72 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 72 / 0 |
+| **Overall (tested / all functions)** | **72 / 267 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 71 | 71 | 0 | 100% |
+|  | 72 | 72 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 71 | 71 | 0 | 100% |
+| unknown | 72 | 72 | 0 | 100% |
 
 ## File Coverage
 
@@ -37,7 +37,7 @@
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 14 | 2 | 2 | 100% | covered |
+| fp_scalar.rs | 14 | 3 | 3 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
@@ -121,3 +121,4 @@
 | encode_smulh | data_processing.rs |
 | encode_fcvt_rounding | fp_scalar.rs |
 | encode_fp_1src | fp_scalar.rs |
+| encode_int_to_float | fp_scalar.rs |

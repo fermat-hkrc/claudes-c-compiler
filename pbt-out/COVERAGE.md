@@ -74,3 +74,4 @@
 | encode_fcvt_rounding | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 4 failing properties (plus 7 passing KAT + 4 failing regression witnesses; 4 bugs; sweep nonreg/invalid-name passing) |
 | encode_fp_1src | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 5 passing / 3 failing properties (plus 7 passing KAT + 3 failing regression witnesses; 3 bugs; sweep nonreg/invalid-name passing) |
 | encode_int_to_float | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 4 failing properties (plus 8 passing KAT + 4 failing regression witnesses; 4 bugs; sweep nonreg/invalid-name passing) |
+| encode_fcmp | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 7 passing / 4 failing properties (plus 8 passing KAT + 4 failing regression witnesses; 4 bugs; sweep nonzero-imm/nonreg/invalid-name passing) |

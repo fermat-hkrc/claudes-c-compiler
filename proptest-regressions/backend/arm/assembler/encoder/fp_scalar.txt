@@ -8,3 +8,4 @@ cc 3d0de693f5b4ea66c59914d55eb4da0790d534ff8f912c532ba5b0934f24faa5 # shrinks to
 cc 7971f6e535c8f523f73a20e1c4e7f78a5be83d96c8dc18bd9d9e79ef073f1442 # shrinks to (dest, src) = ("s0", "s0")
 cc 559b15bc5503d0488b64a5a96ea8afbf14d3f131b5dda0eb3effd9d07ce3bdb5 # shrinks to rd = 0, rn = 0, dest64 = false, src_d = false, extra = Reg("x0")
 cc 69864988e226031a8544db30075cfba6a6da2988a560625233a6b180c6447000 # shrinks to rd = 0, rn = 0, dest64 = false, idx = 0
+cc 5ac1a64a237575cabde46c88d6f4a66ea856360121818870e884cf82a9ec5415 # shrinks to len = 1, n = 0, is_d = false

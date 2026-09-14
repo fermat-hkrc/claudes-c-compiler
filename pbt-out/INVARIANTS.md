@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_fcmp)
+
+- Valid scalar FCMP Sn,Sm or Dn,Dm (including s31/d31, uppercase) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Valid FCMP Sn|Dn, #0.0 via Operand::Imm(0) matches llvm-mc `fcmp Sn|Dn, #0.0` (1000 cases).
+- Success-path register word: 0 00 11110 ftype 1 Rm 001000 Rn 00000. Equivalently w = (0b00011110<<24)|(ftype<<22)|(1<<21)|(rm<<16)|(0b001000<<10)|(rn<<5). ftype 00=S 01=D; bits[15:10]=001000; bit21=1; opc=00000.
+- Success-path #0.0 word: Rm=00000, opc=01000. Equivalently w = (0b00011110<<24)|(ftype<<22)|(1<<21)|(0b001000<<10)|(rn<<5)|0b01000.
+- Metamorphic: Rn+1 increments bits[9:5] only; Rm+1 increments bits[20:16] only; S vs D flips only bit 22; register (Rm=0) XOR #0.0 = 1<<3 (1000 cases).
+- Non-zero Imm, non-register kinds (Imm(1)/Symbol/Label/Mem/Cond/Shift), and invalid names (foo/s32/d32/empty/r0) always Err (1000 cases).
+- Known-answer: `fcmp s0, s1` = 0x1e212000; `fcmp d0, d1` = 0x1e612000; `fcmp s0, #0.0` = 0x1e202008; `fcmp d0, #0.0` = 0x1e602008; `fcmp s31, s31` = 0x1e3f23e0; `fcmp d31, d0` = 0x1e6023e0; llvm-mc +fullfp16 `fcmp h0, h1` = 0x1ee12000 / `fcmp h0, #0.0` = 0x1ee02008 (SUT currently 0x1e212000 / 0x1e202008, see bugs).
+- One operand, extra operand, mixed S/D (and GPR/SP/QVB), and H registers currently encode incorrectly (see bugs).
+
+## Environment (encode_fcmp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (half: -mattr=+fullfp16). gas aarch64-linux-gnu-as agrees on `fcmp s0, s1` = 0x1e212000.
+- ARM ARM Floating-point compare: 0 00 11110 ftype 1 Rm 001000 Rn opc. ftype 00=S 01=D 11=H; opc 00000=FCMP register, 01000=FCMP #0.0, 10000=FCMPE register, 11000=FCMPE #0.0. Immediate form is only #0.0.
+- Dispatch: encoder/mod.rs:439 "fcmp" => encode_fcmp. fccmp is a different mnemonic. fcmpe is not dispatched.
+- Callers: encoder dispatch; codegen/comparison.rs:15-19 emits `fcmp s0, s1` / `fcmp d0, d1` (never the #0.0 form).
+- Encoder mapping: Operand::Imm(0) <-> `#0.0` (Operand has no float-immediate variant). Parser currently turns textual `#0.0` into Operand::Expr("0.0"), which encode_fcmp rejects via get_reg — a parser/encoder seam, not claimed as this function's contract.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_fcmp (arity / extra / mixed S-D / GPR / QVB / SP / half ftype / nonzero imm / nonreg / invalid-name).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_fcmp_*.md.
+
 # Confirmed invariants (encode_int_to_float)
 
 - Valid integer SCVTF/UCVTF Sd|Dd, Wn|Xn (including wzr/xzr, w31/x31, lr, uppercase, mixed S/X and D/W) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
