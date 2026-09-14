@@ -39,3 +39,4 @@
 | encode_ldxr_stxr | load_store.rs | load_store.rs | cargo test --lib | 3 passing / 4 failing properties (plus 8 passing KAT + 9 failing regression witnesses; 9 bugs) |
 | encode_logical | data_processing.rs | data_processing.rs | cargo test --lib | 10 passing / 1 failing property group (9 bugs; plus 2 KAT + 9 regression witnesses) |
 | encode_madd | data_processing.rs | data_processing.rs | cargo test --lib | 8 passing / 4 failing properties (plus 3 passing KAT + 4 failing regression witnesses; 4 bugs) |
+| encode_movk | data_processing.rs | data_processing.rs | cargo test --lib | 9 passing / 5 failing properties (plus 3 passing KAT + 5 failing regression witnesses; 5 bugs) |

@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_movk)
+
+- Valid GPR + imm16 + optional lsl (hw in {0,1} for W, {0,1,2,3} for X; Rd=31 is xzr/wzr) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_movk(X-ops) XOR encode_movk(W-ops) at equal rd/imm/hw in {0,1} = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path word: sf at 31, bits [30:23]=11100101, hw at [22:21], imm16 at [20:5], Rd at [4:0].
+- Constant `:abs_g0:`/`:abs_g1:`/`:abs_g2:`/`:abs_g3:` (and `_nc`) encode the extracted 16-bit chunk and match llvm-mc of the resolved `movk Rd, #chunk [, lsl #shift]` (1000 cases).
+- `lr` as Rd encodes as X30 and matches llvm-mc (1000 cases).
+- Fewer than 2 operands, invalid names (foo, x32, w32, x, r0, empty), and non-imm16 second operands (unknown modifier, non-constant abs_g symbol, Symbol/Label/Mem/Reg) always Err.
+- Known-answer: `movk x0, #42` encodes as 0xf2800540; `movk w0, #42` as 0x72800540; `movk x0, #42, lsl #16` as 0xf2a00540.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Move wide (immediate) MOVK: `sf 11 100101 hw imm16 Rd`. Register 31 is XZR/WZR, never SP/WSP. imm16 in [0, 65535]. hw in {0,1} when sf=0; {0,1,2,3} when sf=1.
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg).
+- Dispatch: encoder/mod.rs:221 movk.
+- Callers: emit.rs:906-928 movk Rd, #imm16 [, lsl #N]; intrinsics.rs:182-184.
+
+## Quirks
+
+- Extra operands beyond the optional lsl are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- Immediate is masked with `(imm as u32) & 0xFFFF` with no range check (see bugs).
+- Non-lsl shift kinds default to hw=0; lsl amount is integer-divided by 16 with no range check (see bugs).
+- Unresolved abs_g symbols (non-constant) fall through to get_imm and Err; RelocType has no MOVW variants.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg / Modifier abs_g / get_imm / Shift lsl vs other / extra non-Shift / too few).
+
+---
+
 # Confirmed invariants (encode_madd)
 
 - Valid four-GPR same-width MADD with Rd/Rn/Rm/Ra in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
