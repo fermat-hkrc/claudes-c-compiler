@@ -2391,3 +2391,576 @@ mod encode_fcmp_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_fcvt_precision_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:460 "fcvt" => encode_fcvt_precision;
+    //   ARM ARM Floating-point data-processing (1 source) FCVT:
+    //   0 00 11110 ftype 1 0001 opc 10000 Rn Rd;
+    //   ftype 00=S 01=D 11=H source; opc 00=S 01=D 11=H dest;
+    //   ftype==opc is unallocated;
+    //   fp_scalar.rs:236-239 purpose comment (FCVT Dd,Sn / Sd,Dn);
+    //   README.md:223 lists scalar fcvt;
+    //   codegen/cast_ops.rs:74-78 emits fcvt d0, s0 / fcvt s0, d0.
+    // Stronger considered:
+    //   - State machine: rejected — encode_fcvt_precision is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree FCVT precision decoder
+    //   - encode_fcvt_rounding: rejected — same-job gate fails (float-to-integer)
+    //   - encode_int_to_float: rejected — integer-to-float
+    //   - encode_neon_fcvtl / encode_neon_fcvtn: rejected — vector widen/narrow
+    // Weaker available: algebraic.metamorphic (ftype/opc/Rn/Rd),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / same-precision / wrong type)
+    // Differential: candidate=encode_fcvt_precision, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler (caller-reachable from encode_instruction),
+    //   mapping=[Reg(Sd|Dd|Hd), Reg(Sn|Dn|Hn)] dest_ty != src_ty <-> `fcvt Sd|Dd|Hd, Sn|Dn|Hn`
+
+    use super::encode_fcvt_precision;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    /// 0=S, 1=D, 2=H
+    fn prec(ty: u32) -> &'static str {
+        ["s", "d", "h"][ty as usize]
+    }
+
+    fn ftype_of(src_ty: u32) -> u32 {
+        [0b00, 0b01, 0b11][src_ty as usize]
+    }
+
+    fn opc_of(dest_ty: u32) -> u32 {
+        [0b00, 0b01, 0b11][dest_ty as usize]
+    }
+
+    fn fp_name(ty: u32, n: u32) -> String {
+        format!("{}{}", prec(ty), n)
+    }
+
+    fn fp_spelling(ty: u32, n: u32, kind: u32) -> String {
+        let s = fp_name(ty, n);
+        if kind == 0 {
+            s.to_uppercase()
+        } else {
+            s
+        }
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_fcvt_precision(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word_with(asm: &str, extra_args: &[&str]) -> Result<u32, String> {
+        let mut args = vec!["-triple=aarch64", "-show-encoding"];
+        args.extend_from_slice(extra_args);
+        let mut child = Command::new(LLVM_MC)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &[])
+    }
+
+    fn llvm_mc_fp16_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &["-mattr=+fullfp16"])
+    }
+
+    fn llvm_ref(asm: &str, uses_h: bool) -> Result<u32, String> {
+        if uses_h {
+            llvm_mc_fp16_word(asm)
+        } else {
+            llvm_mc_word(asm)
+        }
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("s{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            }),
+        ]
+    }
+
+    fn wrong_type_pair() -> impl Strategy<Value = (String, String)> {
+        let n = 0u32..=31;
+        prop_oneof![
+            // GPR dest + S/D/H src
+            (n.clone(), n.clone(), any::<bool>(), 0u32..=2).prop_map(|(d, s, d64, sty)| {
+                (gpr(d64, d), fp_name(sty, s))
+            }),
+            // S/D/H dest + GPR src
+            (n.clone(), n.clone(), 0u32..=2, any::<bool>()).prop_map(|(d, s, dty, s64)| {
+                (fp_name(dty, d), gpr(s64, s))
+            }),
+            // Q/V/B dest + S/D/H src
+            (n.clone(), n.clone(), 0u32..=2, 0u32..=2).prop_map(|(d, s, p, sty)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (format!("{pref}{d}"), fp_name(sty, s))
+            }),
+            // S/D/H dest + Q/V/B src
+            (n.clone(), n.clone(), 0u32..=2, 0u32..=2).prop_map(|(d, s, dty, p)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (fp_name(dty, d), format!("{pref}{s}"))
+            }),
+            // SP/WSP dest
+            (n.clone(), any::<bool>(), 0u32..=2).prop_map(|(s, is_64, sty)| {
+                let sp = if is_64 { "sp" } else { "wsp" };
+                (sp.to_string(), fp_name(sty, s))
+            }),
+            // SP/WSP src
+            (n.clone(), any::<bool>(), 0u32..=2).prop_map(|(d, is_64, dty)| {
+                let sp = if is_64 { "sp" } else { "wsp" };
+                (fp_name(dty, d), sp.to_string())
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_d0_s1() {
+        let want = 0x1e22c020u32;
+        let mc = llvm_mc_word("fcvt d0, s1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_s0_d1() {
+        let want = 0x1e624020u32;
+        let mc = llvm_mc_word("fcvt s0, d1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("d1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_h0_s1() {
+        let want = 0x1e23c020u32;
+        let mc = llvm_mc_fp16_word("fcvt h0, s1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+        let ops = [Operand::Reg("h0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_s0_h1() {
+        let want = 0x1ee24020u32;
+        let mc = llvm_mc_fp16_word("fcvt s0, h1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("h1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_d0_h1() {
+        let want = 0x1ee2c020u32;
+        let mc = llvm_mc_fp16_word("fcvt d0, h1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("h1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_h0_d1() {
+        let want = 0x1e63c020u32;
+        let mc = llvm_mc_fp16_word("fcvt h0, d1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+        let ops = [Operand::Reg("h0".into()), Operand::Reg("d1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_d31_s31() {
+        let want = 0x1e22c3ffu32;
+        let mc = llvm_mc_word("fcvt d31, s31").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d31".into()), Operand::Reg("s31".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fcvt_precision_kat_llvm_mc_s31_d0() {
+        let want = 0x1e62401fu32;
+        let mc = llvm_mc_word("fcvt s31, d0").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s31".into()), Operand::Reg("d0".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn test_encode_fcvt_precision_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("s1".into()),
+            Operand::Reg("s2".into()),
+        ];
+        assert!(
+            encode_fcvt_precision(&ops).is_err(),
+            "FCVT must reject a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_precision_regression_same_precision_s() {
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("s1".into())];
+        assert!(
+            encode_fcvt_precision(&ops).is_err(),
+            "FCVT must reject same-precision S,S (ARM ARM ftype==opc unallocated)"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_precision_regression_same_precision_d() {
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("d1".into())];
+        assert!(
+            encode_fcvt_precision(&ops).is_err(),
+            "FCVT must reject same-precision D,D (ARM ARM ftype==opc unallocated)"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_precision_regression_same_precision_h() {
+        let ops = [Operand::Reg("h0".into()), Operand::Reg("h1".into())];
+        assert!(
+            encode_fcvt_precision(&ops).is_err(),
+            "FCVT must reject same-precision H,H (ARM ARM ftype==opc unallocated)"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_precision_regression_sp_as_s() {
+        let ops = [Operand::Reg("sp".into()), Operand::Reg("d0".into())];
+        assert!(
+            encode_fcvt_precision(&ops).is_err(),
+            "FCVT must reject SP dest (not an S register)"
+        );
+    }
+
+    #[test]
+    fn test_encode_fcvt_precision_regression_sp_src() {
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("sp".into())];
+        assert!(
+            encode_fcvt_precision(&ops).is_err(),
+            "FCVT must reject SP source (not an S register)"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_fcvt_precision_diff_valid(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_ty in 0u32..=2,
+            src_off in 1u32..=2,
+            dest_spell in 0u32..=1,
+            src_spell in 0u32..=1,
+        ) {
+            let src_ty = (dest_ty + src_off) % 3;
+            let dest = fp_spelling(dest_ty, rd, dest_spell);
+            let src = fp_spelling(src_ty, rn, src_spell);
+            let asm = format!("fcvt {dest}, {src}");
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src.clone())];
+            let uses_h = dest_ty == 2 || src_ty == 2;
+            let mc = llvm_ref(&asm, uses_h)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FCVT mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_fcvt_precision_arm_fields(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_ty in 0u32..=2,
+            src_off in 1u32..=2,
+        ) {
+            let src_ty = (dest_ty + src_off) % 3;
+            let ops = [
+                Operand::Reg(fp_name(dest_ty, rd)),
+                Operand::Reg(fp_name(src_ty, rn)),
+            ];
+            let w = sut_word(&ops).expect("SUT FCVT");
+            let ftype = ftype_of(src_ty);
+            let opc = opc_of(dest_ty);
+            let want = (0b00011110u32 << 24)
+                | (ftype << 22)
+                | (1 << 21)
+                | (0b0001 << 17)
+                | (opc << 15)
+                | (0b10000 << 10)
+                | (rn << 5)
+                | rd;
+            prop_assert_eq!(w, want, "ARM ARM FCVT field layout");
+            prop_assert_eq!((w >> 24) & 0xff, 0b00011110, "bits[31:24] M=0 S=0 11110");
+            prop_assert_eq!((w >> 22) & 0b11, ftype, "ftype");
+            prop_assert_eq!((w >> 21) & 1, 1, "bit21 must be 1");
+            prop_assert_eq!((w >> 17) & 0xf, 0b0001, "bits[20:17] must be 0001");
+            prop_assert_eq!((w >> 15) & 0b11, opc, "opc dest precision");
+            prop_assert_eq!((w >> 10) & 0x1f, 0b10000, "bits[14:10] must be 10000");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_fcvt_precision_metamorphic_fields(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            dest_ty in 0u32..=2,
+            src_off in 1u32..=2,
+        ) {
+            let src_ty = (dest_ty + src_off) % 3;
+            let ops = |dty: u32, sty: u32, d: u32, n: u32| {
+                [
+                    Operand::Reg(fp_name(dty, d)),
+                    Operand::Reg(fp_name(sty, n)),
+                ]
+            };
+            let w = sut_word(&ops(dest_ty, src_ty, rd, rn)).expect("base FCVT");
+            let w_rd = sut_word(&ops(dest_ty, src_ty, rd + 1, rn)).expect("Rd+1");
+            let w_rn = sut_word(&ops(dest_ty, src_ty, rd, rn + 1)).expect("Rn+1");
+            prop_assert_eq!(w_rd, w + 1, "Rd+1 must increment bits[4:0] only");
+            prop_assert_eq!(w_rn, w + (1 << 5), "Rn+1 must increment bits[9:5] only");
+
+            // dest S vs D with H src (both dest_ty != 2, src H) flips only opc bit 15
+            let w_sh = sut_word(&ops(0, 2, rd, rn)).expect("S,H");
+            let w_dh = sut_word(&ops(1, 2, rd, rn)).expect("D,H");
+            prop_assert_eq!(w_dh ^ w_sh, 1u32 << 15, "S dest vs D dest (H src) must flip only opc bit 15");
+
+            // src S vs D with H dest flips only ftype bit 22
+            let w_hs = sut_word(&ops(2, 0, rd, rn)).expect("H,S");
+            let w_hd = sut_word(&ops(2, 1, rd, rn)).expect("H,D");
+            prop_assert_eq!(w_hd ^ w_hs, 1u32 << 22, "S src vs D src (H dest) must flip only ftype bit 22");
+        }
+
+        #[test]
+        fn encode_fcvt_precision_neg_arity(
+            len in 0usize..=1,
+            n in 0u32..=31,
+            ty in 0u32..=2,
+        ) {
+            let mut ops = Vec::new();
+            if len >= 1 {
+                ops.push(Operand::Reg(fp_name(ty, n)));
+            }
+            prop_assert!(
+                encode_fcvt_precision(&ops).is_err(),
+                "FCVT with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_precision_neg_extra_operand(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            dest_ty in 0u32..=2,
+            src_off in 1u32..=2,
+            extra in extra_operand(),
+        ) {
+            let src_ty = (dest_ty + src_off) % 3;
+            let ops = vec![
+                Operand::Reg(fp_name(dest_ty, rd)),
+                Operand::Reg(fp_name(src_ty, rn)),
+                extra,
+            ];
+            prop_assert!(
+                encode_fcvt_precision(&ops).is_err(),
+                "FCVT has no 3rd operand; extra must Err"
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_precision_neg_same_precision(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            ty in 0u32..=2,
+        ) {
+            let ops = [
+                Operand::Reg(fp_name(ty, rd)),
+                Operand::Reg(fp_name(ty, rn)),
+            ];
+            prop_assert!(
+                encode_fcvt_precision(&ops).is_err(),
+                "FCVT same-precision {}{}, {}{} must Err (ARM ARM ftype==opc unallocated)",
+                prec(ty), rd, prec(ty), rn
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_precision_neg_gpr_qvb(
+            n in 0u32..=31,
+            m in 0u32..=31,
+            which in 0u32..=1,
+            kind in 0u32..=4,
+            is_64 in any::<bool>(),
+            fp_ty in 0u32..=2,
+        ) {
+            // GPR (x/w) and Q/V/B — first char is not s/d/h, so these hit the
+            // documented "unsupported dest/source type" arms. SP is excluded
+            // (separate failing witness: first char 's').
+            let bad = match kind {
+                0 => gpr(is_64, n),
+                1 => format!("q{n}"),
+                2 => format!("v{n}"),
+                3 => format!("b{n}"),
+                _ => "wsp".to_string(),
+            };
+            let good = fp_name(fp_ty, m);
+            let ops = if which == 0 {
+                [Operand::Reg(bad.clone()), Operand::Reg(good.clone())]
+            } else {
+                [Operand::Reg(good.clone()), Operand::Reg(bad.clone())]
+            };
+            prop_assert!(
+                encode_fcvt_precision(&ops).is_err(),
+                "FCVT must reject GPR/QVB/WSP {} at slot {} (other={})",
+                bad,
+                which,
+                good
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_precision_neg_wrong_types(
+            (a, b) in wrong_type_pair(),
+        ) {
+            let ops = [Operand::Reg(a.clone()), Operand::Reg(b.clone())];
+            prop_assert!(
+                encode_fcvt_precision(&ops).is_err(),
+                "FCVT requires Sd|Dd|Hd, Sn|Dn|Hn with dest!=src precision; a={} b={} must Err",
+                a,
+                b
+            );
+        }
+
+        #[test]
+        fn encode_fcvt_precision_neg_nonreg_invalid_name(
+            which in 0u32..=1,
+            kind in 0u32..=12,
+        ) {
+            let bad = match kind {
+                0 => Operand::Imm(1),
+                1 => Operand::Symbol("foo".into()),
+                2 => Operand::Label("1f".into()),
+                3 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                5 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                6 => Operand::Reg("foo".into()),
+                7 => Operand::Reg("s32".into()),
+                8 => Operand::Reg("d32".into()),
+                9 => Operand::Reg("h32".into()),
+                10 => Operand::Reg("r0".into()),
+                11 => Operand::Reg("s".into()),
+                _ => Operand::Reg("".into()),
+            };
+            let mut ops = vec![
+                Operand::Reg("d0".into()),
+                Operand::Reg("s1".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_fcvt_precision(&ops).is_err(),
+                "non-register or invalid name at slot {} must Err",
+                which
+            );
+        }
+    }
+}

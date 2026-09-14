@@ -1,4 +1,4 @@
-> Total files: 9 | Total functions: 267 | PBT candidates: 73 | Excluded: 194
+> Total files: 9 | Total functions: 267 | PBT candidates: 74 | Excluded: 193
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -273,4 +273,4 @@
 | encode_ucvtf | fp_scalar.rs | 202 | function | no | out of campaign scope |
 | encode_scvtf | fp_scalar.rs | 206 | function | no | out of campaign scope |
 | encode_int_to_float | fp_scalar.rs | 210 | function | yes | - |
-| encode_fcvt_precision | fp_scalar.rs | 235 | function | no | out of campaign scope |
+| encode_fcvt_precision | fp_scalar.rs | 235 | function | yes | - |

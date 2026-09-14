@@ -1,29 +1,27 @@
-# PBT Campaign Report: encode_fcmp
+# PBT Campaign Report: encode_fcvt_precision
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fcmp
-**Tests:** 11 properties (7 passing, 4 failing) plus 8 KAT + 4 failing regression witnesses
-**Result:** 7 passing, 4 bugs
+**Modules tested:** encode_fcvt_precision
+**Tests:** 9 properties (6 passing, 3 failing) plus 8 KAT + 6 failing regression witnesses
+**Result:** 6 passing, 3 bugs
 **Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 metamorphic/differential required, 1 coverage_gaps sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fcmp | 11 properties (7 pass / 4 fail) | 4 | differential (llvm-mc), algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fcvt_precision | 9 properties (6 pass / 3 fail) | 3 | differential (llvm-mc), algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **One operand encoded as #0.0** — `encode_fcmp` treats `operands.len() < 2` as FCMP #0.0. Shrunk: `[Reg("s0")]` → Word(0x1e202008) (`fcmp s0, #0.0`). llvm-mc rejects `fcmp s0` ("too few operands"). Empty slice correctly Errs via get_reg. Serial reconfirm with PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_fcmp_arity.md`
+1. **Extra operand ignored** — a 3rd operand is dropped. Shrunk: `[Reg("s0"), Reg("d0"), Reg("s0")]` → Word(0x1e624000) (`fcvt s0, d0`). llvm-mc rejects `fcvt d0, s1, s2` ("invalid operand"). Serial reconfirm with PBT_TEST_JOBS=1. Report: `pbt-out/bug_reports/encode_fcvt_precision_extra_operand.md`
 
-2. **Extra operand ignored** — a 3rd operand is dropped. Shrunk: `[Reg("s0"), Reg("s0"), Reg("s0")]` → Word(0x1e202000). llvm-mc rejects `fcmp s0, s0, s0`. FCCMP is a different mnemonic. Serial reconfirm. Report: `pbt-out/bug_reports/encode_fcmp_extra_operand.md`
+2. **Same-precision FCVT encoded (unallocated)** — ARM ARM FCVT with ftype==opc is unallocated. Shrunk: `[Reg("s0"), Reg("s0")]` → Word(0x1e224000). llvm-mc rejects `fcvt s0, s1` / `d,d` / `h,h`. The word would SIGILL on hardware. Serial reconfirm. Report: `pbt-out/bug_reports/encode_fcvt_precision_same_precision.md`
 
-3. **Mixed S/D, GPR, Q/V/B, SP encoded as FCMP** — ftype is taken only from whether operand 0 starts with `d`; no matching-type or FP-class check. Shrunk: `[Reg("s0"), Reg("d0")]` → Word(0x1e202000) (same bits as `fcmp s0, s0`). llvm-mc rejects mixed S/D, GPR, Q/V/B, and SP. Serial reconfirm. Report: `pbt-out/bug_reports/encode_fcmp_wrong_types.md`
-
-4. **H registers use ftype=00 (single) not 11** — llvm-mc `-mattr=+fullfp16` encodes `fcmp h0, h0` as 0x1ee02000; SUT emits 0x1e202000 because `rn_name.starts_with('d')` is the only ftype check. Shrunk: `[Reg("h0"), Reg("h0")]`. Serial reconfirm. Report: `pbt-out/bug_reports/encode_fcmp_half_ftype.md`
+3. **SP treated as an S register** — parse_reg_num maps `"sp"` to 31 and dest/src first char `'s'` selects S precision, so `fcvt sp, d0` encodes as `fcvt s31, d0`. llvm-mc rejects SP in either slot. Property shrink `(sp, s0)`; dest and src regressions. Serial reconfirm. Report: `pbt-out/bug_reports/encode_fcvt_precision_sp_as_s.md`
 
 ## Design Caveats
 
@@ -33,30 +31,29 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fcmp_pbt) | 11 properties + 8 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fcvt_precision_pbt) | 9 properties + 8 KAT + 6 regression witnesses |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist (Scan/Plan/Test/Review complete; sweep 1/1)
-- pbt-out/PROPERTIES.md — 11 properties (7 passing, 4 failing)
+- pbt-out/PROPERTIES.md — 9 properties (6 passing, 3 failing)
 - pbt-out/REPORT.md — this file
-- pbt-out/COVERAGE.md — encode_fcmp row appended
-- pbt-out/COVERAGE_STATUS.md — candidates 73, tested 73
-- pbt-out/FUNCTION_INDEX.md — encode_fcmp marked yes
-- pbt-out/INVARIANTS.md — encode_fcmp section prepended
-- pbt-out/bug_reports/encode_fcmp_arity.md
-- pbt-out/bug_reports/encode_fcmp_extra_operand.md
-- pbt-out/bug_reports/encode_fcmp_wrong_types.md
-- pbt-out/bug_reports/encode_fcmp_half_ftype.md
+- pbt-out/COVERAGE.md — encode_fcvt_precision row appended
+- pbt-out/COVERAGE_STATUS.md — candidates 74, tested 74
+- pbt-out/FUNCTION_INDEX.md — encode_fcvt_precision marked yes
+- pbt-out/INVARIANTS.md — encode_fcvt_precision section prepended
+- pbt-out/bug_reports/encode_fcvt_precision_extra_operand.md
+- pbt-out/bug_reports/encode_fcvt_precision_same_precision.md
+- pbt-out/bug_reports/encode_fcvt_precision_sp_as_s.md
 
-Sweep closed because the tier's one coverage_gaps-driven round was spent (tool had no LLVM profraw; manual arm audit of arity / extra / mixed S-D / GPR / QVB / SP / half / nonzero imm / nonreg / invalid-name) and every documented behavior of encode_fcmp has a property.
+Sweep closed because the tier's one coverage_gaps-driven round was spent (tool had no LLVM profraw; manual arm audit of arity / extra / same-precision S,D,H / GPR / QVB / WSP / SP dest+src / half ftype / nonreg / invalid-name) and every documented behavior of encode_fcvt_precision has a property.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 17:13 (campaign: coverage)
-> Files: 9/9 scanned (100%) | Functions: 73/267 total | PBT candidates: 73 | Tested: 73 (100%) | 0 pass, 73 fail
+> Last updated: 2026-09-14 17:27 (campaign: coverage)
+> Files: 9/9 scanned (100%) | Functions: 74/267 total | PBT candidates: 74 | Tested: 74 (100%) | 0 pass, 74 fail
 
 ## Summary
 
@@ -65,10 +62,10 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 | Total source files | 9 |
 | Files scanned | 9 / 9 (100%) |
 | Total functions (all files) | 267 |
-| PBT candidates (from FUNCTION_INDEX) | 73 |
-| **Tested (of PBT candidates)** | **73 / 73 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 73 / 0 |
-| **Overall (tested / all functions)** | **73 / 267 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 74 |
+| **Tested (of PBT candidates)** | **74 / 74 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 74 / 0 |
+| **Overall (tested / all functions)** | **74 / 267 (28%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -76,13 +73,13 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 73 | 73 | 0 | 100% |
+|  | 74 | 74 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 73 | 73 | 0 | 100% |
+| unknown | 74 | 74 | 0 | 100% |
 
 ## File Coverage
 
@@ -92,7 +89,7 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 14 | 4 | 4 | 100% | covered |
+| fp_scalar.rs | 14 | 5 | 5 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
@@ -178,3 +175,4 @@ Sweep closed because the tier's one coverage_gaps-driven round was spent (tool h
 | encode_fp_1src | fp_scalar.rs |
 | encode_int_to_float | fp_scalar.rs |
 | encode_fcmp | fp_scalar.rs |
+| encode_fcvt_precision | fp_scalar.rs |
