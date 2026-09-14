@@ -6726,3 +6726,726 @@ mod encode_ldrsw_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_ldtr_sized_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:340-343 ldtrh/sttrh/ldtrb/sttrb dispatch;
+    //   ARM ARM LDTRB/LDTRH/STTRB/STTRH: size 111 V=0 00 opc 0 imm9 10 Rn Rt;
+    //   Rt is Wt (31=WZR), never Xt/SP/SIMD; Rn is Xn|SP; simm9 in [-256, 255].
+    // Stronger considered:
+    //   - State machine: rejected — encode_ldtr_sized is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no LDTRB decoder
+    //   - encode_ldur_stur / encode_ldr_str as differential siblings: rejected — different job
+    // Weaker available: algebraic.invariant (ARM field unpack), algebraic.metamorphic (size / opc / Rt / Rn),
+    //   negative_error (arity / extra / Xt dest / SP / W-base / XZR-base / SIMD / range / form)
+    // Differential: candidate=encode_ldtr_sized, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=(Reg(Wt), Mem{Rn, imm9}, is_load, size) <-> `{ldtrb|ldtrh|sttrb|sttrh} Wt, [Rn{, #imm}]`
+
+    use super::encode_ldtr_sized;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const IMM_MIN: i64 = -256;
+    const IMM_MAX: i64 = 255;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn wt(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn xt(n: u32) -> String {
+        if n == 31 {
+            "xzr".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn rn_name(n: u32) -> String {
+        if n == 31 {
+            "sp".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn mnemonic(is_load: bool, size: u32) -> &'static str {
+        match (is_load, size) {
+            (true, 0) => "ldtrb",
+            (true, _) => "ldtrh",
+            (false, 0) => "sttrb",
+            (false, _) => "sttrh",
+        }
+    }
+
+    fn asm_mem(rn: &str, offset: i64) -> String {
+        if offset == 0 {
+            format!("[{}]", rn)
+        } else {
+            format!("[{}, #{}]", rn, offset)
+        }
+    }
+
+    fn valid_ops(rt: u32, rn: u32, offset: i64) -> Vec<Operand> {
+        vec![
+            Operand::Reg(wt(rt)),
+            Operand::Mem {
+                base: rn_name(rn),
+                offset,
+            },
+        ]
+    }
+
+    fn sut_word(ops: &[Operand], is_load: bool, size: u32) -> Result<u32, String> {
+        match encode_ldtr_sized(ops, is_load, size)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    /// Unpack LDTRB/H/STTRB/H fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_ldtr(word: u32) -> (u32, u32, u32, i64, u32, u32, u32) {
+        let size = (word >> 30) & 0b11;
+        let v = (word >> 26) & 1;
+        let opc = (word >> 22) & 0b11;
+        let imm9_raw = (word >> 12) & 0x1ff;
+        let imm9 = if (imm9_raw & 0x100) != 0 {
+            (imm9_raw as i64) | !0x1ffi64
+        } else {
+            imm9_raw as i64
+        };
+        let op2 = (word >> 10) & 0b11;
+        let rn = (word >> 5) & 0x1f;
+        let rt = word & 0x1f;
+        (size, v, opc, imm9, op2, rn, rt)
+    }
+
+    fn fixed_ldtr_bits(word: u32) -> bool {
+        ((word >> 27) & 0b111) == 0b111
+            && ((word >> 24) & 0b11) == 0b00
+            && ((word >> 21) & 1) == 0
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn imm9_in_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN),
+            Just(IMM_MIN + 1),
+            Just(-1i64),
+            Just(0i64),
+            Just(1i64),
+            Just(IMM_MAX - 1),
+            Just(IMM_MAX),
+            IMM_MIN..=IMM_MAX,
+        ]
+    }
+
+    fn imm9_out_of_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(IMM_MIN - 1),
+            Just(IMM_MAX + 1),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            Just(512i64),
+            Just(-512i64),
+            Just(1i64 << 40),
+            (i64::MIN..=IMM_MIN - 1),
+            (IMM_MAX + 1..=i64::MAX),
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x2".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x3".into(),
+                offset: 0
+            }),
+        ]
+    }
+
+    fn fp_kind() -> impl Strategy<Value = char> {
+        prop_oneof![Just('b'), Just('h'), Just('s'), Just('d'), Just('q'), Just('v')]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ldtr_sized_kat_llvm_mc_ldtrb_w0_x1() {
+        let want = 0x38400820u32;
+        let mc = llvm_mc_word("ldtrb w0, [x1]").expect("llvm-mc KAT ldtrb");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = valid_ops(0, 1, 0);
+        let sut = sut_word(&ops, true, 0b00).expect("SUT KAT ldtrb");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldtr_sized_kat_llvm_mc_ldtrh_w0_x1() {
+        let want = 0x78400820u32;
+        let mc = llvm_mc_word("ldtrh w0, [x1]").expect("llvm-mc KAT ldtrh");
+        assert_eq!(mc, want, "llvm-mc KAT ldtrh mapping broken");
+        let ops = valid_ops(0, 1, 0);
+        let sut = sut_word(&ops, true, 0b01).expect("SUT KAT ldtrh");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldtr_sized_kat_llvm_mc_sttrb_w0_x1() {
+        let want = 0x38000820u32;
+        let mc = llvm_mc_word("sttrb w0, [x1]").expect("llvm-mc KAT sttrb");
+        assert_eq!(mc, want, "llvm-mc KAT sttrb mapping broken");
+        let ops = valid_ops(0, 1, 0);
+        let sut = sut_word(&ops, false, 0b00).expect("SUT KAT sttrb");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldtr_sized_kat_llvm_mc_sttrh_w0_x1() {
+        let want = 0x78000820u32;
+        let mc = llvm_mc_word("sttrh w0, [x1]").expect("llvm-mc KAT sttrh");
+        assert_eq!(mc, want, "llvm-mc KAT sttrh mapping broken");
+        let ops = valid_ops(0, 1, 0);
+        let sut = sut_word(&ops, false, 0b01).expect("SUT KAT sttrh");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldtr_sized_kat_llvm_mc_ldtrb_imm_bounds() {
+        let lo = llvm_mc_word("ldtrb w0, [x1, #-256]").expect("llvm-mc KAT #-256");
+        assert_eq!(lo, 0x38500820u32);
+        let hi = llvm_mc_word("ldtrb w0, [sp, #255]").expect("llvm-mc KAT #255");
+        assert_eq!(hi, 0x384ffbe0u32);
+        assert_eq!(sut_word(&valid_ops(0, 1, -256), true, 0).unwrap(), lo);
+        assert_eq!(sut_word(&valid_ops(0, 31, 255), true, 0).unwrap(), hi);
+    }
+
+    #[test]
+    fn test_encode_ldtr_sized_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: -256,
+            },
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_ldtr_sized(&ops, false, 0).is_err(),
+            "sttrb w0, [x0, #-256], x2 must Err; llvm-mc rejects a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldtr_sized_regression_xt_dest() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: -256,
+            },
+        ];
+        assert!(
+            encode_ldtr_sized(&ops, false, 0).is_err(),
+            "sttrb x0, [x0, #-256] must Err; ARM ARM dest is Wt; llvm-mc rejects Xt"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldtr_sized_regression_sp_as_rt() {
+        let ops = [
+            Operand::Reg("sp".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: -256,
+            },
+        ];
+        assert!(
+            encode_ldtr_sized(&ops, false, 0).is_err(),
+            "sttrb sp, [x0, #-256] must Err; llvm-mc rejects SP as Rt"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldtr_sized_regression_fp_dest() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldtr_sized(&ops, true, 0).is_err(),
+            "ldtrb d0, [x0] must Err; llvm-mc rejects SIMD Rt on LDTRB"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldtr_sized_regression_w_base() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "w0".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldtr_sized(&ops, true, 0).is_err(),
+            "ldtrb w0, [w0] must Err; llvm-mc rejects a W register as base"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldtr_sized_regression_xzr_base() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "xzr".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldtr_sized(&ops, true, 0).is_err(),
+            "ldtrb w0, [xzr] must Err; llvm-mc rejects XZR as base (Rn=31 is SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldtr_sized_regression_imm9_range() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "x0".into(),
+                offset: -257,
+            },
+        ];
+        assert!(
+            encode_ldtr_sized(&ops, false, 0).is_err(),
+            "sttrb w0, [x0, #-257] must Err; llvm-mc requires simm9 in [-256, 255]"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_diff_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            simm in imm9_in_range(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+            upper in any::<bool>(),
+        ) {
+            let mut rt_n = wt(rt);
+            let mut rn_n = rn_name(rn);
+            if upper {
+                rt_n = rt_n.to_uppercase();
+                rn_n = rn_n.to_uppercase();
+            }
+            let mn = mnemonic(is_load, size);
+            let asm = format!("{} {}, {}", mn, rt_n, asm_mem(&rn_n, simm));
+            let ops = vec![
+                Operand::Reg(rt_n.clone()),
+                Operand::Mem {
+                    base: rn_n.clone(),
+                    offset: simm,
+                },
+            ];
+            let sut = sut_word(&ops, is_load, size)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_arm_fields(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            simm in imm9_in_range(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+        ) {
+            let ops = valid_ops(rt, rn, simm);
+            let word = sut_word(&ops, is_load, size)
+                .unwrap_or_else(|e| panic!("SUT rejected in-range LDTR*: {}", e));
+            let (got_size, v, opc, got_imm, op2, got_rn, got_rt) = unpack_ldtr(word);
+            prop_assert!(fixed_ldtr_bits(word), "fixed LDTR bits, word={:#010x}", word);
+            prop_assert_eq!(got_size, size, "size field word={:#010x}", word);
+            prop_assert_eq!(v, 0, "V must be 0 word={:#010x}", word);
+            prop_assert_eq!(opc, if is_load { 0b01 } else { 0b00 }, "opc word={:#010x}", word);
+            prop_assert_eq!(got_imm, simm, "imm9 word={:#010x}", word);
+            prop_assert_eq!(op2, 0b10, "bits[11:10] must be 10 word={:#010x}", word);
+            prop_assert_eq!(got_rn, rn, "Rn word={:#010x}", word);
+            prop_assert_eq!(got_rt, rt, "Rt word={:#010x}", word);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_metamorphic_fields(
+            rt in 0u32..=30,
+            rn in 0u32..=30,
+            simm in IMM_MIN..=(IMM_MAX - 1),
+            is_load in any::<bool>(),
+        ) {
+            let e = |rt: u32, rn: u32, simm: i64, load: bool, sz: u32| {
+                sut_word(&valid_ops(rt, rn, simm), load, sz).unwrap()
+            };
+            let w0 = e(rt, rn, simm, is_load, 0);
+            let w_sz = e(rt, rn, simm, is_load, 1);
+            let w_st = e(rt, rn, simm, !is_load, 0);
+            let w_rt = e(rt + 1, rn, simm, is_load, 0);
+            let w_rn = e(rt, rn + 1, simm, is_load, 0);
+            let w_imm = e(rt, rn, simm + 1, is_load, 0);
+            prop_assert_eq!(w_sz ^ w0, 1u32 << 30, "size bit 30");
+            prop_assert_eq!(w0 ^ w_st, 1u32 << 22, "opc bit 22");
+            prop_assert_eq!(w_rt.wrapping_sub(w0), 1u32, "Rt +1");
+            prop_assert_eq!(w_rn.wrapping_sub(w0), 32u32, "Rn +1");
+            let imm0 = (w0 >> 12) & 0x1ff;
+            let imm1 = (w_imm >> 12) & 0x1ff;
+            prop_assert_eq!(imm1, (imm0 + 1) & 0x1ff, "imm9 +1");
+            prop_assert_eq!(w_imm & !0x1ff000, w0 & !0x1ff000, "only imm9 field changes");
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_neg_arity(
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+            kind in 0u32..=3u32,
+            rt in reg_edge(),
+            rn in reg_edge(),
+            simm in imm9_in_range(),
+        ) {
+            let ops: Vec<Operand> = match kind {
+                0 => vec![],
+                1 => vec![Operand::Reg(wt(rt))],
+                2 => vec![Operand::Mem {
+                    base: rn_name(rn),
+                    offset: simm,
+                }],
+                _ => vec![Operand::Imm(0)],
+            };
+            prop_assert!(
+                encode_ldtr_sized(&ops, is_load, size).is_err(),
+                "arity < 2 must Err, kind={}",
+                kind
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_neg_extra_operand(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            simm in imm9_in_range(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(wt(rt)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+                extra,
+            ];
+            prop_assert!(
+                encode_ldtr_sized(&ops, is_load, size).is_err(),
+                "third operand must Err; llvm-mc rejects extra operands on ldtrb/ldtrh"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_neg_xt_dest(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            simm in imm9_in_range(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+            use_lr in any::<bool>(),
+        ) {
+            let dest = if use_lr && rt == 30 {
+                "lr".to_string()
+            } else {
+                xt(rt)
+            };
+            let ops = vec![
+                Operand::Reg(dest),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ];
+            prop_assert!(
+                encode_ldtr_sized(&ops, is_load, size).is_err(),
+                "Xt/lr dest must Err; ARM ARM LDTRB/H dest is Wt; llvm-mc rejects ldtrb x0"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_neg_invalid_regs(
+            kind in 0u32..=4u32,
+            n in 0u32..=31u32,
+            simm in imm9_in_range(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+            fp in fp_kind(),
+        ) {
+            let ops = match kind {
+                0 => vec![
+                    Operand::Reg("sp".into()),
+                    Operand::Mem {
+                        base: rn_name(n),
+                        offset: simm,
+                    },
+                ],
+                1 => vec![
+                    Operand::Reg("wsp".into()),
+                    Operand::Mem {
+                        base: rn_name(n),
+                        offset: simm,
+                    },
+                ],
+                2 => vec![
+                    Operand::Reg(format!("{}{}", fp, n.min(31))),
+                    Operand::Mem {
+                        base: rn_name(n),
+                        offset: simm,
+                    },
+                ],
+                3 => vec![
+                    Operand::Reg(wt(n)),
+                    Operand::Mem {
+                        base: format!("w{}", if n == 31 { 0 } else { n }),
+                        offset: simm,
+                    },
+                ],
+                _ => vec![
+                    Operand::Reg(wt(n)),
+                    Operand::Mem {
+                        base: "xzr".into(),
+                        offset: simm,
+                    },
+                ],
+            };
+            prop_assert!(
+                encode_ldtr_sized(&ops, is_load, size).is_err(),
+                "invalid Rt/Rn must Err; llvm-mc rejects SP/WSP/SIMD Rt, W base, XZR base kind={}",
+                kind
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldtr_sized
+        #[test]
+        fn encode_ldtr_sized_neg_offset_and_form(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+            use_offset in any::<bool>(),
+            bad_offset in imm9_out_of_range(),
+            form in 0u32..=5u32,
+        ) {
+            let base = rn_name(rn);
+            let ops = if use_offset {
+                vec![
+                    Operand::Reg(wt(rt)),
+                    Operand::Mem {
+                        base,
+                        offset: bad_offset,
+                    },
+                ]
+            } else {
+                let addr = match form {
+                    0 => Operand::MemPreIndex {
+                        base,
+                        offset: 0,
+                    },
+                    1 => Operand::MemPostIndex {
+                        base,
+                        offset: 0,
+                    },
+                    2 => Operand::MemRegOffset {
+                        base,
+                        index: "x2".into(),
+                        extend: None,
+                        shift: None,
+                    },
+                    3 => Operand::Imm(0),
+                    4 => Operand::Symbol("foo".into()),
+                    _ => Operand::Label("l".into()),
+                };
+                vec![Operand::Reg(wt(rt)), addr]
+            };
+            prop_assert!(
+                encode_ldtr_sized(&ops, is_load, size).is_err(),
+                "out-of-range simm9 or non-Mem form must Err; llvm-mc range [-256,255], unscaled only"
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldtr_sized
+        // Sweep: documented unscaled-only form (pre/post/regoff/Imm/Symbol/Label) must Err,
+        // independently of the failing imm9-wrap case.
+        #[test]
+        fn encode_ldtr_sized_neg_bad_form(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+            form in 0u32..=5u32,
+        ) {
+            let base = rn_name(rn);
+            let addr = match form {
+                0 => Operand::MemPreIndex {
+                    base,
+                    offset: 0,
+                },
+                1 => Operand::MemPostIndex {
+                    base,
+                    offset: 0,
+                },
+                2 => Operand::MemRegOffset {
+                    base,
+                    index: "x2".into(),
+                    extend: None,
+                    shift: None,
+                },
+                3 => Operand::Imm(0),
+                4 => Operand::Symbol("foo".into()),
+                _ => Operand::Label("l".into()),
+            };
+            let ops = vec![Operand::Reg(wt(rt)), addr];
+            prop_assert!(
+                encode_ldtr_sized(&ops, is_load, size).is_err(),
+                "non-Mem addressing must Err; ARM ARM LDTRB is unscaled [Xn{{, #simm}}] only"
+            );
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldtr_sized
+        // Sweep: w31 is an alias of wzr (llvm-mc / ARM ARM register 31 = WZR).
+        #[test]
+        fn encode_ldtr_sized_diff_w31_alias(
+            rn in reg_edge(),
+            simm in imm9_in_range(),
+            is_load in any::<bool>(),
+            size in 0u32..=1u32,
+        ) {
+            let rn_n = rn_name(rn);
+            let mn = mnemonic(is_load, size);
+            let mem = asm_mem(&rn_n, simm);
+            let asm_w31 = format!("{} w31, {}", mn, mem);
+            let asm_wzr = format!("{} wzr, {}", mn, mem);
+            let ops_w31 = vec![
+                Operand::Reg("w31".into()),
+                Operand::Mem {
+                    base: rn_n.clone(),
+                    offset: simm,
+                },
+            ];
+            let ops_wzr = vec![
+                Operand::Reg("wzr".into()),
+                Operand::Mem {
+                    base: rn_n,
+                    offset: simm,
+                },
+            ];
+            let sut_w31 = sut_word(&ops_w31, is_load, size)
+                .unwrap_or_else(|e| panic!("SUT rejected w31: {}", e));
+            let sut_wzr = sut_word(&ops_wzr, is_load, size)
+                .unwrap_or_else(|e| panic!("SUT rejected wzr: {}", e));
+            let mc = llvm_mc_word(&asm_wzr)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected {}: {}", asm_wzr, e));
+            prop_assert_eq!(sut_w31, sut_wzr, "w31 must encode as wzr ({})", asm_w31);
+            prop_assert_eq!(sut_wzr, mc, "wzr must match llvm-mc {}", asm_wzr);
+        }
+    }
+}

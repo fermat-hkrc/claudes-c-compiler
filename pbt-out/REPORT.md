@@ -1,43 +1,37 @@
-# PBT Campaign Report: encode_ldrsw
+# PBT Campaign Report: encode_ldtr_sized
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ldrsw
-**Tests:** 12 properties (8 passing, 4 failing) plus 5 passing KATs and 11 failing regression witnesses
-**Result:** 8 passing properties, 10 bugs
-**Effort tier:** standard (1 coverage-gaps sweep round; closed because the tier round was spent and the documented surface of encode_ldrsw was covered)
+**Modules tested:** encode_ldtr_sized
+**Tests:** 10 properties (6 passing, 4 failing) plus 5 passing KATs and 7 failing regression witnesses
+**Result:** 6 passing properties, 7 bugs
+**Effort tier:** standard (1 coverage-gaps sweep round; closed because the tier round was spent and the documented surface of encode_ldtr_sized was covered)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ldrsw | 12 properties + 5 KAT + 11 regressions | 10 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_ldtr_sized | 10 properties + 5 KAT + 7 regressions | 7 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **W dest accepted** — `ldrsw w0, [x1]` encodes as Xt Rt=0 (0xb9800000). Law: dest is Xt. Detected by encode_ldrsw_neg_invalid_regs. Counterexample: rt=0, rn=0. Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldrsw_w_dest.md`. Regression: `test_encode_ldrsw_regression_w_dest`.
+1. **Extra operand ignored** — `sttrb w0, [x0, #-256], x2` encodes as the first two operands. Law: exactly two operands. Detected by encode_ldtr_sized_neg_extra_operand. Counterexample: rt=0, rn=0, simm=-256, extra=Reg("x2"). Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldtr_sized_extra_operand.md`. Regression: `test_encode_ldtr_sized_regression_extra_operand`.
 
-2. **SP dest encoded as XZR** — `ldrsw sp, [x1]` uses parse_reg_num("sp")=31. Report: `pbt-out/bug_reports/encode_ldrsw_sp_dest.md`. Regression: `test_encode_ldrsw_regression_sp_dest`.
+2. **Xt dest accepted** — `sttrb x0, [x0, #-256]` encodes as Wt Rt=0 because get_reg discards is_64. Law: dest is Wt. Detected by encode_ldtr_sized_neg_xt_dest. Counterexample: rt=0, rn=0, simm=-256. Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldtr_sized_xt_dest.md`. Regression: `test_encode_ldtr_sized_regression_xt_dest`.
 
-3. **SIMD/FP dest accepted** — `ldrsw d0, [x1]` encodes Rt=0. Report: `pbt-out/bug_reports/encode_ldrsw_fp_dest.md`. Regression: `test_encode_ldrsw_regression_fp_dest`.
+3. **SP/WSP dest encoded as WZR** — `sttrb sp, [x0, #-256]` uses parse_reg_num("sp")=31. Report: `pbt-out/bug_reports/encode_ldtr_sized_sp_as_rt.md`. Regression: `test_encode_ldtr_sized_regression_sp_as_rt`.
 
-4. **W base accepted** — `ldrsw x0, [w1]` encodes as `[x1]`. Report: `pbt-out/bug_reports/encode_ldrsw_w_base.md`. Regression: `test_encode_ldrsw_regression_w_base`.
+4. **SIMD/FP dest accepted** — `ldtrb d0, [x0]` encodes Rt=0. Report: `pbt-out/bug_reports/encode_ldtr_sized_fp_dest.md`. Regression: `test_encode_ldtr_sized_regression_fp_dest`.
 
-5. **XZR/X31 base encoded as SP** — `ldrsw x0, [xzr]` encodes Rn=31. Report: `pbt-out/bug_reports/encode_ldrsw_xzr_base.md`. Regression: `test_encode_ldrsw_regression_xzr_base`.
+5. **W base accepted** — `ldtrb w0, [w0]` encodes as `[x0]`. Report: `pbt-out/bug_reports/encode_ldtr_sized_w_base.md`. Regression: `test_encode_ldtr_sized_regression_w_base`.
 
-6. **W index without extend encoded as LSL** — `ldrsw x0, [x1, w2]` uses option=011. Report: `pbt-out/bug_reports/encode_ldrsw_w_index.md`. Regression: `test_encode_ldrsw_regression_w_index_no_extend`.
+6. **XZR base encoded as SP** — `ldtrb w0, [xzr]` encodes Rn=31. Report: `pbt-out/bug_reports/encode_ldtr_sized_xzr_base.md`. Regression: `test_encode_ldtr_sized_regression_xzr_base`.
 
-7. **Writeback Rt==Rn encoded** — `ldrsw x0, [x0, #4]!` is unpredictable; llvm-mc rejects it. Report: `pbt-out/bug_reports/encode_ldrsw_writeback_overlap.md`. Regression: `test_encode_ldrsw_regression_writeback_rt_eq_rn`.
+7. **Out-of-range offset truncated** — `#-257` encodes imm9=255 (`(-257 as u32) & 0x1FF == 0xFF`). High severity silent wrong address. Detected by encode_ldtr_sized_neg_offset_and_form. Counterexample: rt=0, rn=0, bad_offset=-257. Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldtr_sized_imm9_range.md`. Regression: `test_encode_ldtr_sized_regression_imm9_range`.
 
-8. **Out-of-range offset truncated** — `#-257` encodes imm9=255; `#16384` encodes imm9=0. High severity silent wrong address. Report: `pbt-out/bug_reports/encode_ldrsw_offset_range.md`. Regressions: `test_encode_ldrsw_regression_imm9_range`, `test_encode_ldrsw_regression_pimm_overflow`.
-
-9. **Extra operand ignored** — three operands encode as the first two. Report: `pbt-out/bug_reports/encode_ldrsw_extra_operand.md`. Regression: `test_encode_ldrsw_regression_extra_operand`.
-
-10. **LDRSW (literal) missing** — `ldrsw x0, foo` returns Err; ARM/llvm-mc require RelocType::Ldr19. Report: `pbt-out/bug_reports/encode_ldrsw_literal.md`. Regression: `test_encode_ldrsw_regression_literal`.
-
-All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_ldrsw -- --test-threads=1`.
+All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_ldtr_sized_neg -- --test-threads=1`.
 
 ## Design Caveats
 
@@ -47,7 +41,7 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldrsw_pbt) | 12 properties, 5 KAT, 11 regressions |
+| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldtr_sized_pbt) | 10 properties, 5 KAT, 7 regressions |
 
 ## Output Directories
 
@@ -58,23 +52,20 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_ldrsw_w_dest.md
-- pbt-out/bug_reports/encode_ldrsw_sp_dest.md
-- pbt-out/bug_reports/encode_ldrsw_fp_dest.md
-- pbt-out/bug_reports/encode_ldrsw_w_base.md
-- pbt-out/bug_reports/encode_ldrsw_xzr_base.md
-- pbt-out/bug_reports/encode_ldrsw_w_index.md
-- pbt-out/bug_reports/encode_ldrsw_writeback_overlap.md
-- pbt-out/bug_reports/encode_ldrsw_offset_range.md
-- pbt-out/bug_reports/encode_ldrsw_extra_operand.md
-- pbt-out/bug_reports/encode_ldrsw_literal.md
+- pbt-out/bug_reports/encode_ldtr_sized_extra_operand.md
+- pbt-out/bug_reports/encode_ldtr_sized_xt_dest.md
+- pbt-out/bug_reports/encode_ldtr_sized_sp_as_rt.md
+- pbt-out/bug_reports/encode_ldtr_sized_fp_dest.md
+- pbt-out/bug_reports/encode_ldtr_sized_w_base.md
+- pbt-out/bug_reports/encode_ldtr_sized_xzr_base.md
+- pbt-out/bug_reports/encode_ldtr_sized_imm9_range.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 15:32 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 66/253 total | PBT candidates: 66 | Tested: 66 (100%) | 0 pass, 66 fail
+> Last updated: 2026-09-14 15:45 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 67/253 total | PBT candidates: 67 | Tested: 67 (100%) | 0 pass, 67 fail
 
 ## Summary
 
@@ -83,10 +74,10 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 66 |
-| **Tested (of PBT candidates)** | **66 / 66 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 66 / 0 |
-| **Overall (tested / all functions)** | **66 / 253 (26%)** |
+| PBT candidates (from FUNCTION_INDEX) | 67 |
+| **Tested (of PBT candidates)** | **67 / 67 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 67 / 0 |
+| **Overall (tested / all functions)** | **67 / 253 (26%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -94,13 +85,13 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 66 | 66 | 0 | 100% |
+|  | 67 | 67 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 66 | 66 | 0 | 100% |
+| unknown | 67 | 67 | 0 | 100% |
 
 ## File Coverage
 
@@ -111,7 +102,7 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 24 | 24 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 7 | 7 | 100% | covered |
+| load_store.rs | 20 | 8 | 8 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -188,3 +179,4 @@ All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_l
 | encode_uxtw | data_processing.rs |
 | encode_ldaxr_stlxr | load_store.rs |
 | encode_ldrsw | load_store.rs |
+| encode_ldtr_sized | load_store.rs |

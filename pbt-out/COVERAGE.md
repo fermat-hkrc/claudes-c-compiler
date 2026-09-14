@@ -68,3 +68,4 @@
 | encode_uxtw | data_processing.rs | data_processing.rs | cargo test --lib | 3 passing / 8 failing properties (plus 4 failing KAT + 5 failing regression witnesses; 5 bugs; sweep nonreg/invalid-name passing, alt-spellings failing) |
 | encode_ldaxr_stlxr | load_store.rs | load_store.rs | cargo test --lib | 5 passing / 4 failing properties (plus 8 passing KAT + 9 failing regression witnesses; 9 bugs; sweep alt-spellings/mem-index passing) |
 | encode_ldrsw | load_store.rs | load_store.rs | cargo test --lib | 8 passing / 4 failing properties (plus 5 passing KAT + 11 failing regression witnesses; 10 bugs; sweep alt-spellings/bad-extend passing, literal failing) |
+| encode_ldtr_sized | load_store.rs | load_store.rs | cargo test --lib | 6 passing / 4 failing properties (plus 5 passing KAT + 7 failing regression witnesses; 7 bugs; sweep bad-form/w31-alias passing) |

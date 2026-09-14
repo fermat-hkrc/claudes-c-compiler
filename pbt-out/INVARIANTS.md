@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_ldtr_sized)
+
+- Valid LDTRB/LDTRH/STTRB/STTRH Wt, [Xn|SP{, #simm}] with simm in [-256, 255] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Uppercase Wt/Xn/SP/WZR spellings match llvm-mc (1000 cases).
+- w31 dest encodes as wzr and matches llvm-mc (1000 cases).
+- Success-path word: size 111 V=0 00 opc 0 imm9 10 Rn Rt. size=00 byte / 01 half; opc=01 load / 00 store. Equivalently w = (size<<30) | 0x38000800 | (opc<<22) | ((imm9 as u32 & 0x1FF)<<12) | (rn<<5) | rt.
+- Metamorphic: size bit XOR = 1<<30; load XOR store = 1<<22; Rt+1 adds 1; Rn+1 adds 32; imm9+1 only changes bits[20:12] (1000 cases).
+- Fewer than 2 operands and non-Mem addressing (pre/post/reg-offset/Imm/Symbol/Label) always Err (1000 cases).
+- Known-answer: `ldtrb w0, [x1]` = 0x38400820; `ldtrh w0, [x1]` = 0x78400820; `sttrb w0, [x1]` = 0x38000820; `sttrh w0, [x1]` = 0x78000820; `ldtrb w0, [x1, #-256]` = 0x38500820; `ldtrb w0, [sp, #255]` = 0x384ffbe0.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM LDTRB/LDTRH/STTRB/STTRH: size 111 V=0 00 opc 0 imm9 10 Rn Rt. Syntax Wt, [Xn|SP{, #simm}]; simm9 in [-256,255]. Register 31 is WZR for Rt, SP for Rn. Sibling encode_ldur_stur is LDUR/STUR/LDTR/STTR auto-size (different job).
+- Dispatch: encoder/mod.rs:340-343 ldtrh/sttrh/ldtrb/sttrb => encode_ldtr_sized.
+- Callers: encoder dispatch only (no codegen sites emit these mnemonics).
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- get_reg discards is_64, so Xt dest encodes as Wt (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP as Rt encodes as WZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- W base and XZR base encode as Xn/SP (see bugs).
+- Out-of-range offsets wrap with imm9 = offset & 0x1FF (see bugs).
+- Non-Mem forms correctly return Err.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_ldtr_sized (arity / extra / Xt dest / SP / FP / W-base / XZR-base / offset range / pre/post/regoff / w31 alias / uppercase).
+- Seven failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ldtr_sized_*.md.
+
 # Confirmed invariants (encode_ldrsw)
 
 - Valid unsigned LDRSW Xt, [Xn|SP, #pimm] with pimm = imm12*4 in [0, 16380] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Alternate spellings x31, uppercase Xn/SP/XZR, lr match llvm-mc (1000 cases).
