@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_umaddl)
+
+- Valid UMADDL Xd, Wn, Wm, Xa with Rd/Rn/Rm/Ra in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Alternate spellings x31/w31, XZR/WZR, LR, uppercase Xn/Wn match llvm-mc (1000 cases).
+- encode_umaddl(Xd, Wn, Wm, XZR) equals encode_umull(Xd, Wn, Wm), and both match llvm-mc `umaddl ..., xzr` / `umull` (1000 cases).
+- encode_umaddl XOR encode_smaddl at equal registers = 1<<23 (ARM ARM U bit) (1000 cases).
+- Success-path word: bit 31=1, bits[30:21]=00 11011 101, Rm at [20:16], o0=0 at 15, Ra at [14:10], Rn at [9:5], Rd at [4:0]. Equivalently w = 0x9BA00000 | (rm<<16) | (ra<<10) | (rn<<5) | rd.
+- Fewer than 4 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at GPR slots always Err.
+- Known-answer: `umaddl x0, w1, w2, x3` = 0x9ba20c20; `umaddl xzr, wzr, wzr, xzr` = 0x9bbf7fff; `umaddl lr, w1, w2, x30` = 0x9ba2783e; `umaddl x0, w1, w2, xzr` / `umull x0, w1, w2` aliases to 0x9ba27c20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) UMADDL: sf=1 U=1 11011 101 Rm o0=0 Ra Rn Rd. UMULL Xd, Wn, Wm is the alias of UMADDL Xd, Wn, Wm, XZR. Register 31 is XZR/WZR, never SP/WSP. Dest and accumulator are Xd/Xa; multiply sources are Wn/Wm.
+- Dispatch: encoder/mod.rs:270 `"umaddl" => encode_umaddl(operands)` (scalar only; no NEON arrangement path).
+- Sibling encode_umull is the same format with Ra=XZR (alias). Sibling encode_smaddl is U=0 (different job).
+- Callers: assembler README Data Processing table lists umaddl. No codegen emission of scalar umaddl found.
+
+## Quirks
+
+- Extra operands beyond index 3 are ignored (see bugs).
+- is_64 from get_reg is discarded; W dest, X sources, and W acc are encoded (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / extra / width / SP / FP / non-Reg / invalid name / x31 / uppercase / lr).
+
+---
+
 # Confirmed invariants (encode_sxtw)
 
 - Valid SXTW Xd, Wn with Rd/Rn in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
