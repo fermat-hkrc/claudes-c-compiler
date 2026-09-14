@@ -5581,3 +5581,1148 @@ mod encode_ldaxr_stlxr_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_ldrsw_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:333 "ldrw" | "ldrsw" => encode_ldrsw;
+    //   README.md:221 Loads/Stores table lists ldrsw;
+    //   ARM ARM LDRSW unsigned: size=10 111 V=0 01 opc=10 imm12 Rn Rt (pimm=imm12*4 in [0,16380]);
+    //   LDURSW: size=10 111 V=0 00 opc=10 0 imm9 00 Rn Rt (simm9 in [-256,255]);
+    //   pre bits[11:10]=11, post bits[11:10]=01; register: bit21=1 option S bits[11:10]=10.
+    //   Rt is Xt (31=XZR), never SP/Wt/SIMD; Rn is Xn|SP (not XZR).
+    // Stronger considered:
+    //   - State machine: rejected — encode_ldrsw is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no LDRSW decoder
+    //   - encode_ldr_str / encode_ldrs / encode_ldur_stur as differential siblings: rejected —
+    //     different jobs (LDR/STR, LDRSB/LDRSH, generic unscaled)
+    // Weaker available: algebraic.invariant (ARM field unpack), algebraic.metamorphic (Rt/Rn/imm12),
+    //   negative_error (arity / extra / W-dest / SP / FP / W-base / XZR-base / offset range)
+    // Differential: candidate=encode_ldrsw, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=(Reg(Xt), Mem{Xn|SP, imm}) <-> `ldrsw Xt, [Xn|SP{, #imm}]`
+
+    use super::encode_ldrsw;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const SIMM_MIN: i64 = -256;
+    const SIMM_MAX: i64 = 255;
+    const PIMM_MAX: i64 = 16380; // 4095 * 4
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn xt_name(n: u32) -> String {
+        if n == 31 {
+            "xzr".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn wt_name(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn rn_name(n: u32) -> String {
+        if n == 31 {
+            "sp".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn rm_x(n: u32) -> String {
+        if n == 31 {
+            "xzr".into()
+        } else {
+            format!("x{}", n)
+        }
+    }
+
+    fn rm_w(n: u32) -> String {
+        if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn asm_mem(rn: &str, offset: i64) -> String {
+        if offset == 0 {
+            format!("[{}]", rn)
+        } else {
+            format!("[{}, #{}]", rn, offset)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_ldrsw(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    /// Unpack LDRSW/LDURSW fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_ldrsw(word: u32) -> (u32, u32, u32, u32, u32, u32, u32, u32, u32) {
+        let size = (word >> 30) & 0b11;
+        let bits29_27 = (word >> 27) & 0b111;
+        let v = (word >> 26) & 1;
+        let bits25_24 = (word >> 24) & 0b11;
+        let opc = (word >> 22) & 0b11;
+        let bit21 = (word >> 21) & 1;
+        let bits11_10 = (word >> 10) & 0b11;
+        let rn = (word >> 5) & 0x1f;
+        let rt = word & 0x1f;
+        (size, bits29_27, v, bits25_24, opc, bit21, bits11_10, rn, rt)
+    }
+
+    fn unpack_imm12(word: u32) -> u32 {
+        (word >> 10) & 0xfff
+    }
+
+    fn unpack_imm9(word: u32) -> i64 {
+        let raw = (word >> 12) & 0x1ff;
+        if (raw & 0x100) != 0 {
+            (raw as i64) | !0x1ffi64
+        } else {
+            raw as i64
+        }
+    }
+
+    fn is_unsigned_pimm(offset: i64) -> bool {
+        offset >= 0 && offset % 4 == 0 && (offset / 4) < 4096
+    }
+
+    fn reg_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn imm12_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![
+            Just(0u32),
+            Just(1u32),
+            Just(64u32), // offset 256
+            Just(4094u32),
+            Just(4095u32),
+            0u32..=4095
+        ]
+    }
+
+    fn simm9_in_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(SIMM_MIN),
+            Just(SIMM_MIN + 1),
+            Just(-1i64),
+            Just(0i64),
+            Just(1i64),
+            Just(2i64),
+            Just(3i64),
+            Just(SIMM_MAX - 1),
+            Just(SIMM_MAX),
+            SIMM_MIN..=SIMM_MAX,
+        ]
+    }
+
+    fn simm9_unscaled_only() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(SIMM_MIN),
+            Just(SIMM_MIN + 1),
+            Just(-4i64),
+            Just(-1i64),
+            Just(1i64),
+            Just(2i64),
+            Just(3i64),
+            Just(5i64),
+            Just(SIMM_MAX),
+            (SIMM_MIN..=-1),
+            (0i64..=SIMM_MAX).prop_filter("not multiple of 4", |x| x % 4 != 0),
+        ]
+    }
+
+    fn offset_out_of_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(SIMM_MIN - 1),
+            Just(257i64),
+            Just(258i64),
+            Just(259i64),
+            Just(16381i64),
+            Just(16382i64),
+            Just(16383i64),
+            Just(16384i64),
+            Just(16388i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            Just(1i64 << 40),
+            Just(-(1i64 << 40)),
+            (i64::MIN..=SIMM_MIN - 1),
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x2".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x3".into(),
+                offset: 0,
+            }),
+        ]
+    }
+
+    fn bad_address_kind() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(4)),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::Barrier("sy".into())),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 2,
+            }),
+            Just(Operand::Extend {
+                kind: "sxtw".into(),
+                amount: 0,
+            }),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::MemExpr {
+                base: "x1".into(),
+                expr: "foo".into(),
+                writeback: false,
+            }),
+            Just(Operand::RegList(vec![Operand::Reg("x0".into())])),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ldrsw_kat_llvm_mc_x0_x1() {
+        let want = 0xb9800020u32;
+        let mc = llvm_mc_word("ldrsw x0, [x1]").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldrsw_kat_llvm_mc_x0_x1_imm4() {
+        let want = 0xb9800420u32;
+        let mc = llvm_mc_word("ldrsw x0, [x1, #4]").expect("llvm-mc KAT #4");
+        assert_eq!(mc, want, "llvm-mc KAT #4 mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 4,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT #4");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldrsw_kat_llvm_mc_pimm_max() {
+        let want = 0xb9bffc20u32;
+        let mc = llvm_mc_word("ldrsw x0, [x1, #16380]").expect("llvm-mc KAT pimm max");
+        assert_eq!(mc, want, "llvm-mc KAT pimm max mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: PIMM_MAX,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT pimm max");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldrsw_kat_llvm_mc_ldursw_neg4() {
+        let want = 0xb89fc020u32;
+        let mc = llvm_mc_word("ldrsw x0, [x1, #-4]").expect("llvm-mc KAT #-4");
+        assert_eq!(mc, want, "llvm-mc KAT #-4 mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: -4,
+            },
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT #-4");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldrsw_kat_llvm_mc_pre_post_regoff() {
+        let pre = llvm_mc_word("ldrsw x0, [x1, #4]!").expect("llvm-mc pre");
+        assert_eq!(pre, 0xb8804c20u32);
+        let post = llvm_mc_word("ldrsw x0, [x1], #4").expect("llvm-mc post");
+        assert_eq!(post, 0xb8804420u32);
+        let reg = llvm_mc_word("ldrsw x0, [x1, x2]").expect("llvm-mc reg");
+        assert_eq!(reg, 0xb8a26820u32);
+        let sp = llvm_mc_word("ldrsw x0, [sp, #4]").expect("llvm-mc sp");
+        assert_eq!(sp, 0xb98007e0u32);
+        let xzr = llvm_mc_word("ldrsw xzr, [x1]").expect("llvm-mc xzr");
+        assert_eq!(xzr, 0xb980003fu32);
+        let lr = llvm_mc_word("ldrsw x30, [x2]").expect("llvm-mc x30");
+        assert_eq!(lr, 0xb980005eu32);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_diff_unsigned_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            imm12 in imm12_edge(),
+        ) {
+            let offset = (imm12 as i64) * 4;
+            let rt_n = xt_name(rt);
+            let rn_n = rn_name(rn);
+            let asm = format!("ldrsw {}, {}", rt_n, asm_mem(&rn_n, offset));
+            let ops = [
+                Operand::Reg(rt_n.clone()),
+                Operand::Mem {
+                    base: rn_n,
+                    offset,
+                },
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid LDRSW {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid LDRSW {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_diff_unscaled_pre_post_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            simm in simm9_in_range(),
+            form in 0u32..=2,
+        ) {
+            // ARM / llvm-mc: pre/post writeback with Rt==Rn (and Rn!=SP) is unpredictable.
+            prop_assume!(form == 0 || rt != rn || rn == 31);
+            let rt_n = xt_name(rt);
+            let rn_n = rn_name(rn);
+            let (ops, asm) = match form {
+                0 => {
+                    // Unscaled (or unsigned if simm is a valid pimm) via Mem
+                    let asm = format!("ldrsw {}, {}", rt_n, asm_mem(&rn_n, simm));
+                    let ops = vec![
+                        Operand::Reg(rt_n.clone()),
+                        Operand::Mem {
+                            base: rn_n.clone(),
+                            offset: simm,
+                        },
+                    ];
+                    (ops, asm)
+                }
+                1 => {
+                    let asm = format!("ldrsw {}, [{}, #{}]!", rt_n, rn_n, simm);
+                    let ops = vec![
+                        Operand::Reg(rt_n.clone()),
+                        Operand::MemPreIndex {
+                            base: rn_n.clone(),
+                            offset: simm,
+                        },
+                    ];
+                    (ops, asm)
+                }
+                _ => {
+                    let asm = format!("ldrsw {}, [{}], #{}", rt_n, rn_n, simm);
+                    let ops = vec![
+                        Operand::Reg(rt_n.clone()),
+                        Operand::MemPostIndex {
+                            base: rn_n.clone(),
+                            offset: simm,
+                        },
+                    ];
+                    (ops, asm)
+                }
+            };
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid LDRSW {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid LDRSW {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_diff_regoff_llvm_mc(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            rm in reg_edge(),
+            ext_kind in 0u32..=3,
+            amount_bit in 0u32..=1,
+        ) {
+            let amount: u8 = if amount_bit == 1 { 2 } else { 0 };
+            let (extend, index, option, s_bit) = match ext_kind {
+                0 => ("lsl", rm_x(rm), 0b011u32, if amount == 2 { 1u32 } else { 0 }),
+                1 => ("sxtx", rm_x(rm), 0b111u32, if amount == 2 { 1u32 } else { 0 }),
+                2 => ("uxtw", rm_w(rm), 0b010u32, if amount == 2 { 1u32 } else { 0 }),
+                _ => ("sxtw", rm_w(rm), 0b110u32, if amount == 2 { 1u32 } else { 0 }),
+            };
+            let rt_n = xt_name(rt);
+            let rn_n = rn_name(rn);
+            let asm = if amount == 0 {
+                if extend == "lsl" {
+                    format!("ldrsw {}, [{}, {}]", rt_n, rn_n, index)
+                } else {
+                    format!("ldrsw {}, [{}, {}, {}]", rt_n, rn_n, index, extend)
+                }
+            } else {
+                format!("ldrsw {}, [{}, {}, {} #{}]", rt_n, rn_n, index, extend, amount)
+            };
+            let ops = [
+                Operand::Reg(rt_n.clone()),
+                Operand::MemRegOffset {
+                    base: rn_n,
+                    index: index.clone(),
+                    extend: Some(extend.into()),
+                    shift: Some(amount),
+                },
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid LDRSW {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid LDRSW {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+            let got_opt = (sut >> 13) & 0b111;
+            let got_s = (sut >> 12) & 1;
+            prop_assert_eq!(got_opt, option, "option field for {}", asm);
+            prop_assert_eq!(got_s, s_bit, "S bit for {}", asm);
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_arm_fields(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            imm12 in imm12_edge(),
+            simm in simm9_unscaled_only(),
+            rm in reg_edge(),
+        ) {
+            let offset = (imm12 as i64) * 4;
+            let wu = sut_word(&[
+                Operand::Reg(xt_name(rt)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset,
+                },
+            ])
+            .expect("unsigned LDRSW");
+            let (size, b2927, v, b2524, opc, bit21, b1110, got_rn, got_rt) = unpack_ldrsw(wu);
+            prop_assert_eq!(size, 0b10, "unsigned size word={:#010x}", wu);
+            prop_assert_eq!(b2927, 0b111, "unsigned [29:27] word={:#010x}", wu);
+            prop_assert_eq!(v, 0, "unsigned V word={:#010x}", wu);
+            prop_assert_eq!(b2524, 0b01, "unsigned [25:24] word={:#010x}", wu);
+            prop_assert_eq!(opc, 0b10, "unsigned opc word={:#010x}", wu);
+            prop_assert_eq!(unpack_imm12(wu), imm12, "unsigned imm12 word={:#010x}", wu);
+            prop_assert_eq!(got_rn, rn, "unsigned Rn word={:#010x}", wu);
+            prop_assert_eq!(got_rt, rt, "unsigned Rt word={:#010x}", wu);
+            let _ = (bit21, b1110);
+
+            let wn = sut_word(&[
+                Operand::Reg(xt_name(rt)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ])
+            .expect("unscaled LDRSW");
+            let (size, b2927, v, b2524, opc, bit21, b1110, got_rn, got_rt) = unpack_ldrsw(wn);
+            prop_assert_eq!(size, 0b10, "unscaled size word={:#010x}", wn);
+            prop_assert_eq!(b2927, 0b111, "unscaled [29:27] word={:#010x}", wn);
+            prop_assert_eq!(v, 0, "unscaled V word={:#010x}", wn);
+            prop_assert_eq!(b2524, 0b00, "unscaled [25:24] word={:#010x}", wn);
+            prop_assert_eq!(opc, 0b10, "unscaled opc word={:#010x}", wn);
+            prop_assert_eq!(bit21, 0, "unscaled bit21 word={:#010x}", wn);
+            prop_assert_eq!(b1110, 0b00, "unscaled [11:10] word={:#010x}", wn);
+            prop_assert_eq!(unpack_imm9(wn), simm, "unscaled imm9 word={:#010x}", wn);
+            prop_assert_eq!(got_rn, rn, "unscaled Rn word={:#010x}", wn);
+            prop_assert_eq!(got_rt, rt, "unscaled Rt word={:#010x}", wn);
+
+            let wp = sut_word(&[
+                Operand::Reg(xt_name(rt)),
+                Operand::MemPreIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ])
+            .expect("pre LDRSW");
+            let (_, _, _, b2524, _, bit21, b1110, _, _) = unpack_ldrsw(wp);
+            prop_assert_eq!(b2524, 0b00, "pre [25:24] word={:#010x}", wp);
+            prop_assert_eq!(bit21, 0, "pre bit21 word={:#010x}", wp);
+            prop_assert_eq!(b1110, 0b11, "pre [11:10] word={:#010x}", wp);
+            prop_assert_eq!(unpack_imm9(wp), simm, "pre imm9 word={:#010x}", wp);
+
+            let wo = sut_word(&[
+                Operand::Reg(xt_name(rt)),
+                Operand::MemPostIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ])
+            .expect("post LDRSW");
+            let (_, _, _, _, _, _, b1110, _, _) = unpack_ldrsw(wo);
+            prop_assert_eq!(b1110, 0b01, "post [11:10] word={:#010x}", wo);
+            prop_assert_eq!(unpack_imm9(wo), simm, "post imm9 word={:#010x}", wo);
+
+            let wr = sut_word(&[
+                Operand::Reg(xt_name(rt)),
+                Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("lsl".into()),
+                    shift: Some(2),
+                },
+            ])
+            .expect("regoff LDRSW");
+            let (size, b2927, v, b2524, opc, bit21, b1110, got_rn, got_rt) = unpack_ldrsw(wr);
+            prop_assert_eq!(size, 0b10);
+            prop_assert_eq!(b2927, 0b111);
+            prop_assert_eq!(v, 0);
+            prop_assert_eq!(b2524, 0b00);
+            prop_assert_eq!(opc, 0b10);
+            prop_assert_eq!(bit21, 1, "regoff bit21 word={:#010x}", wr);
+            prop_assert_eq!(b1110, 0b10, "regoff [11:10] word={:#010x}", wr);
+            prop_assert_eq!((wr >> 16) & 0x1f, rm, "regoff Rm word={:#010x}", wr);
+            prop_assert_eq!((wr >> 13) & 0b111, 0b011, "regoff option LSL");
+            prop_assert_eq!((wr >> 12) & 1, 1, "regoff S for lsl #2");
+            prop_assert_eq!(got_rn, rn);
+            prop_assert_eq!(got_rt, rt);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_metamorphic_rt_rn_imm(
+            rt in 0u32..=30,
+            rn in 0u32..=30,
+            imm12 in 0u32..=4094,
+            simm in simm9_in_range(),
+        ) {
+            let enc = |rt: u32, rn: u32, imm12: u32| {
+                sut_word(&[
+                    Operand::Reg(xt_name(rt)),
+                    Operand::Mem {
+                        base: rn_name(rn),
+                        offset: (imm12 as i64) * 4,
+                    },
+                ])
+                .expect("unsigned")
+            };
+            let w = enc(rt, rn, imm12);
+            prop_assert_eq!(enc(rt + 1, rn, imm12).wrapping_sub(w), 1, "Rt+1 adds 1");
+            prop_assert_eq!(enc(rt, rn + 1, imm12).wrapping_sub(w), 32, "Rn+1 adds 32");
+            prop_assert_eq!(
+                enc(rt, rn, imm12 + 1).wrapping_sub(w),
+                1 << 10,
+                "imm12+1 adds 1<<10"
+            );
+
+            let pre = sut_word(&[
+                Operand::Reg(xt_name(rt)),
+                Operand::MemPreIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ])
+            .expect("pre");
+            let post = sut_word(&[
+                Operand::Reg(xt_name(rt)),
+                Operand::MemPostIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ])
+            .expect("post");
+            prop_assert_eq!(pre ^ post, 0b10 << 10, "pre XOR post = 0b10<<10");
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_neg_arity_kinds(
+            rt in reg_edge(),
+            kind in bad_address_kind(),
+            extra in extra_operand(),
+        ) {
+            prop_assert!(
+                encode_ldrsw(&[]).is_err(),
+                "zero operands must Err"
+            );
+            let one = [Operand::Reg(xt_name(rt))];
+            prop_assert!(
+                encode_ldrsw(&one).is_err(),
+                "one operand must Err: {:?}",
+                encode_ldrsw(&one)
+            );
+            let ops = [Operand::Reg(xt_name(rt)), kind.clone()];
+            prop_assert!(
+                encode_ldrsw(&ops).is_err(),
+                "non-memory address operand must Err, got {:?} for {:?}",
+                encode_ldrsw(&ops),
+                kind
+            );
+            let _ = extra;
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_neg_invalid_regs(
+            rt in reg_edge(),
+            rn in 0u32..=30,
+            simd in prop_oneof![Just('d'), Just('s'), Just('q'), Just('h'), Just('b')],
+        ) {
+            let mem_x = Operand::Mem {
+                base: rn_name(rn),
+                offset: 0,
+            };
+            let w_dest = [Operand::Reg(wt_name(rt)), mem_x.clone()];
+            prop_assert!(
+                encode_ldrsw(&w_dest).is_err(),
+                "Wt dest must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrsw(&w_dest)
+            );
+            let sp_dest = [Operand::Reg("sp".into()), mem_x.clone()];
+            prop_assert!(
+                encode_ldrsw(&sp_dest).is_err(),
+                "SP dest must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrsw(&sp_dest)
+            );
+            let fp_dest = [Operand::Reg(format!("{}{}", simd, rt.min(31))), mem_x.clone()];
+            prop_assert!(
+                encode_ldrsw(&fp_dest).is_err(),
+                "SIMD dest must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrsw(&fp_dest)
+            );
+            let w_base = [
+                Operand::Reg(xt_name(rt)),
+                Operand::Mem {
+                    base: wt_name(rn),
+                    offset: 0,
+                },
+            ];
+            prop_assert!(
+                encode_ldrsw(&w_base).is_err(),
+                "W base must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrsw(&w_base)
+            );
+            let xzr_base = [
+                Operand::Reg(xt_name(rt)),
+                Operand::Mem {
+                    base: "xzr".into(),
+                    offset: 0,
+                },
+            ];
+            prop_assert!(
+                encode_ldrsw(&xzr_base).is_err(),
+                "XZR base must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrsw(&xzr_base)
+            );
+            let w_index = [
+                Operand::Reg(xt_name(rt)),
+                Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: wt_name(rt),
+                    extend: None,
+                    shift: None,
+                },
+            ];
+            prop_assert!(
+                encode_ldrsw(&w_index).is_err(),
+                "W index without uxtw/sxtw must Err; got {:?}",
+                encode_ldrsw(&w_index)
+            );
+            // Pre/post writeback with Rt==Rn (Rn!=SP) is unpredictable; assemblers reject it.
+            if rt != 31 {
+                let overlap_pre = [
+                    Operand::Reg(xt_name(rt)),
+                    Operand::MemPreIndex {
+                        base: format!("x{}", rt),
+                        offset: 4,
+                    },
+                ];
+                prop_assert!(
+                    encode_ldrsw(&overlap_pre).is_err(),
+                    "pre-index Rt==Rn must Err (llvm-mc: unpredictable); got {:?}",
+                    encode_ldrsw(&overlap_pre)
+                );
+            }
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_neg_offset_range_extra(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            off in offset_out_of_range(),
+            extra in extra_operand(),
+            prepost in 0u32..=1,
+        ) {
+            prop_assert!(
+                !is_unsigned_pimm(off),
+                "generator produced a valid unsigned pimm {}",
+                off
+            );
+            prop_assert!(
+                off < SIMM_MIN || off > SIMM_MAX,
+                "generator produced in-range simm9 {}",
+                off
+            );
+            let mem = [
+                Operand::Reg(xt_name(rt)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: off,
+                },
+            ];
+            prop_assert!(
+                encode_ldrsw(&mem).is_err(),
+                "out-of-range Mem offset {} must Err (llvm-mc range); got {:?}",
+                off,
+                encode_ldrsw(&mem)
+            );
+            let three = vec![
+                Operand::Reg(xt_name(rt)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: 0,
+                },
+                extra.clone(),
+            ];
+            prop_assert!(
+                encode_ldrsw(&three).is_err(),
+                "extra operand must Err; got {:?}",
+                encode_ldrsw(&three)
+            );
+            let wb = if prepost == 0 {
+                vec![
+                    Operand::Reg(xt_name(rt)),
+                    Operand::MemPreIndex {
+                        base: rn_name(rn),
+                        offset: off,
+                    },
+                ]
+            } else {
+                vec![
+                    Operand::Reg(xt_name(rt)),
+                    Operand::MemPostIndex {
+                        base: rn_name(rn),
+                        offset: off,
+                    },
+                ]
+            };
+            prop_assert!(
+                encode_ldrsw(&wb).is_err(),
+                "out-of-range pre/post offset {} must Err; got {:?}",
+                off,
+                encode_ldrsw(&wb)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_neg_extra(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(xt_name(rt)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: 0,
+                },
+                extra.clone(),
+            ];
+            prop_assert!(
+                encode_ldrsw(&ops).is_err(),
+                "extra operand {:?} must Err (llvm-mc rejects a 3rd operand); got {:?}",
+                extra,
+                encode_ldrsw(&ops)
+            );
+        }
+
+        // Oracle: differential (coverage-gaps sweep: alt spellings x31 / uppercase / lr)
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_diff_alt_spellings(
+            rt in reg_edge(),
+            rn in reg_edge(),
+            spelling in 0u32..=2,
+        ) {
+            let (rt_s, rn_s, asm_rt, asm_rn) = match spelling {
+                0 => {
+                    let rt_s = if rt == 31 { "x31".to_string() } else { format!("x{}", rt) };
+                    let rn_s = if rn == 31 { "sp".to_string() } else { format!("x{}", rn) };
+                    (rt_s.clone(), rn_s.clone(), rt_s, rn_s)
+                }
+                1 => {
+                    let rt_s = if rt == 31 { "XZR".to_string() } else { format!("X{}", rt) };
+                    let rn_s = if rn == 31 { "SP".to_string() } else { format!("X{}", rn) };
+                    (rt_s.clone(), rn_s.clone(), rt_s, rn_s)
+                }
+                _ => {
+                    let rt_s = if rt == 30 {
+                        "lr".to_string()
+                    } else if rt == 31 {
+                        "xzr".to_string()
+                    } else {
+                        format!("x{}", rt)
+                    };
+                    let rn_s = if rn == 31 { "sp".to_string() } else { format!("x{}", rn) };
+                    (rt_s.clone(), rn_s.clone(), rt_s, rn_s)
+                }
+            };
+            let ops = [
+                Operand::Reg(rt_s),
+                Operand::Mem {
+                    base: rn_s,
+                    offset: 0,
+                },
+            ];
+            let asm = format!("ldrsw {}, [{}]", asm_rt, asm_rn);
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: negative_error (coverage-gaps sweep: unsupported extend/shift and bad base)
+        // Target: encoder.load_store.encode_ldrsw
+        #[test]
+        fn encode_ldrsw_neg_bad_extend_base(
+            rt in reg_edge(),
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            kind in 0u32..=3,
+        ) {
+            let mem = match kind {
+                0 => Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("lsl".into()),
+                    shift: Some(1),
+                },
+                1 => Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("lsl".into()),
+                    shift: Some(3),
+                },
+                2 => Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("uxtx".into()),
+                    shift: Some(0),
+                },
+                _ => Operand::Mem {
+                    base: "foo".into(),
+                    offset: 0,
+                },
+            };
+            let ops = [Operand::Reg(xt_name(rt)), mem];
+            prop_assert!(
+                encode_ldrsw(&ops).is_err(),
+                "unsupported extend/shift or invalid base must Err; got {:?}",
+                encode_ldrsw(&ops)
+            );
+        }
+
+        // Oracle: algebraic.invariant (coverage-gaps sweep: LDRSW literal)
+        // Target: encoder.load_store.encode_ldrsw
+        // Evidence: ARM ARM LDRSW (literal) 10 011 000 imm19 Rt; llvm-mc accepts `ldrsw Xt, label`;
+        //   encode_ldr_str handles Operand::Symbol for ldr via RelocType::Ldr19.
+        #[test]
+        fn encode_ldrsw_literal_reloc(
+            rt in reg_edge(),
+        ) {
+            use super::super::RelocType;
+            let ops = [
+                Operand::Reg(xt_name(rt)),
+                Operand::Symbol("foo".into()),
+            ];
+            match encode_ldrsw(&ops) {
+                Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                    prop_assert_eq!(word & 0x1f, rt, "literal Rt");
+                    prop_assert_eq!((word >> 24) & 0xff, 0x98, "LDRSW literal opc 10 011 000");
+                    prop_assert!(
+                        matches!(reloc.reloc_type, RelocType::Ldr19),
+                        "reloc_type must be Ldr19, got {:?}",
+                        reloc.reloc_type
+                    );
+                    prop_assert_eq!(reloc.symbol, "foo");
+                }
+                other => {
+                    prop_assert!(
+                        false,
+                        "ldrsw Xt, label must be WordWithReloc Ldr19 (ARM LDRSW literal / llvm-mc); got {:?}",
+                        other
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_w_dest() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw w0, [x1] must Err; llvm-mc: invalid operand (dest is Xt)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_sp_dest() {
+        let ops = [
+            Operand::Reg("sp".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw sp, [x1] must Err; llvm-mc: invalid operand (dest is Xt, 31=XZR)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_fp_dest() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw d0, [x1] must Err; llvm-mc: invalid operand (dest is Xt)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_w_base() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "w1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw x0, [w1] must Err; llvm-mc: invalid operand (base is Xn|SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_xzr_base() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "xzr".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw x0, [xzr] must Err; llvm-mc: invalid operand (base is Xn|SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_w_index_no_extend() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::MemRegOffset {
+                base: "x1".into(),
+                index: "w2".into(),
+                extend: None,
+                shift: None,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw x0, [x1, w2] must Err; llvm-mc requires uxtw/sxtw on Wm"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_writeback_rt_eq_rn() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::MemPreIndex {
+                base: "x0".into(),
+                offset: 4,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw x0, [x0, #4]! must Err; llvm-mc: unpredictable writeback base is also a source"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_imm9_range() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: -257,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw x0, [x1, #-257] must Err; llvm-mc requires simm9 in [-256, 255] when not a valid pimm"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_pimm_overflow() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 16384,
+            },
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw x0, [x1, #16384] must Err; unsigned imm12 max is 4095 (offset 16380)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_literal() {
+        use super::super::RelocType;
+        let ops = [Operand::Reg("x0".into()), Operand::Symbol("foo".into())];
+        match encode_ldrsw(&ops) {
+            Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                assert_eq!(word & 0x1f, 0);
+                assert_eq!((word >> 24) & 0xff, 0x98);
+                assert!(
+                    matches!(reloc.reloc_type, RelocType::Ldr19),
+                    "reloc_type {:?}",
+                    reloc.reloc_type
+                );
+                assert_eq!(reloc.symbol, "foo");
+            }
+            other => panic!(
+                "ldrsw x0, foo must be WordWithReloc Ldr19 (ARM LDRSW literal); got {:?}",
+                other
+            ),
+        }
+    }
+
+    #[test]
+    fn test_encode_ldrsw_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_ldrsw(&ops).is_err(),
+            "ldrsw x0, [x1], x2 must Err; llvm-mc rejects a 3rd operand"
+        );
+    }
+}

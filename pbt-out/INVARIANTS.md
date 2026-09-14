@@ -1,3 +1,36 @@
+# Confirmed invariants (encode_ldrsw)
+
+- Valid unsigned LDRSW Xt, [Xn|SP, #pimm] with pimm = imm12*4 in [0, 16380] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Alternate spellings x31, uppercase Xn/SP/XZR, lr match llvm-mc (1000 cases).
+- Valid unscaled (simm9 in [-256,255]), pre-index, and post-index forms match llvm-mc when writeback does not use Rt==Rn (unless Rn is SP) (1000 cases).
+- Valid register-offset LDRSW with lsl/sxtx on Xm and uxtw/sxtw on Wm, amount in {0,2}, matches llvm-mc (1000 cases).
+- Success-path unsigned word: size=10 111 V=0 01 opc=10 imm12 Rn Rt. Equivalently w = 0xB9800000 | (imm12<<10) | (rn<<5) | rt.
+- Unscaled: bits[25:24]=00, bit21=0, bits[11:10]=00, imm9 at [20:12]. Pre bits[11:10]=11; post=01. Register: bit21=1, bits[11:10]=10.
+- Metamorphic: Rt+1 adds 1, Rn+1 adds 32, imm12+1 adds 1<<10; pre XOR post = 0b10<<10 (1000 cases).
+- Fewer than 2 operands, Imm/Cond/Barrier/Shift/Extend/RegList/MemExpr/Label at the address slot, lsl #1/#3, uxtx, and base "foo" always Err (1000 cases).
+- Known-answer: `ldrsw x0, [x1]` = 0xB9800020; `ldrsw x0, [x1, #4]` = 0xB9800420; `ldrsw x0, [x1, #16380]` = 0xB9BFFC20; `ldrsw x0, [x1, #-4]` = 0xB89FC020; `ldrsw x0, [x1, #4]!` = 0xB8804C20; `ldrsw x0, [x1], #4` = 0xB8804420; `ldrsw x0, [x1, x2]` = 0xB8A26820; `ldrsw x0, [sp, #4]` = 0xB98007E0; `ldrsw xzr, [x1]` = 0xB980003F; `ldrsw x30, [x2]` = 0xB980005E.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM LDRSW unsigned: size=10 111 0 01 10 imm12 Rn Rt, pimm in [0,16380] multiple of 4. LDURSW / pre / post: simm9 in [-256,255]. Register: option in {UXTW,LSL,SXTW,SXTX}, S amount 0 or 2. Literal: 10 011 000 imm19 Rt. Dest Xt (31=XZR), base Xn|SP.
+- Dispatch: encoder/mod.rs:333 "ldrw" | "ldrsw" => encode_ldrsw.
+- Callers: prologue.rs IrType::I32 => ldrsw; peephole.rs ldrsw forwarding; emit.rs; variadic.rs.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- get_reg discards is_64, so Wt dest encodes (see bugs).
+- parse_reg_num maps sp to 31, so SP as Rt encodes as XZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- W base and XZR base encode as Xn/SP (see bugs).
+- Bare W index defaults to LSL rather than requiring uxtw/sxtw (see bugs).
+- Out-of-range offsets fall through to unscaled with imm9 = offset & 0x1FF (see bugs).
+- Pre/post Rt==Rn is encoded (llvm-mc: unpredictable) (see bugs).
+- Operand::Symbol (LDRSW literal) is not handled (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_ldrsw (unsigned / unscaled / pre / post / regoff / alt-spellings / bad extend / invalid base / literal / extra / W-dest / SP / FP / W-base / XZR-base / W-index / writeback overlap / offset range).
+- Ten failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ldrsw_*.md.
+
 # Confirmed invariants (encode_ldaxr_stlxr)
 
 - Valid LDAXR/STLXR/LDAXRB/STLXRB/LDAXRH/STLXRH with Rt/Rn/Ws in 0..31 (xzr/wzr at 31 for data/status, sp at 31 for base, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Alternate spellings x31, uppercase Xn/SP/XZR, lr match llvm-mc (1000 cases).

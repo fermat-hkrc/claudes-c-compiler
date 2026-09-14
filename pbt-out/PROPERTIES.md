@@ -1,260 +1,335 @@
-# Properties: encode_ldaxr_stlxr
+# Properties: encode_ldrsw
 
-## encode_ldaxr_stlxr_diff_llvm_mc
+## encode_ldrsw_diff_unsigned_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree exclusive-acquire decoder). Same-job siblings encode_ldxr_stxr / encode_ldxp_stxp / encode_ldar_stlr rejected (o0=0 exclusive / exclusive-pair / ordered non-exclusive; different jobs). Doc evidence: assembler README.md:11 "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:354-359 dispatch of ldaxr/stlxr/ldaxrb/stlxrb/ldaxrh/stlxrh; ARM ARM Load/Store Exclusive o0=1; README.md:221 Loads/Stores table.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_diff_llvm_mc
-- Formal: ∀ rt, rn, ws ∈ {0..31}, is_load ∈ {0,1}, variant ∈ {0,1,2}, is_64 ∈ {0,1}. Let data_64 = (variant=0 ∧ is_64). If ¬is_load ⇒ ¬stlxr_ws_aliases_source(ws, rt, rn). Then encode_ldaxr_stlxr(ops, is_load, forced(variant)) = llvm-mc("{ldaxr|ldaxrb|ldaxrh|stlxr|stlxrb|stlxrh} ...") as LE u32, where X31/W31 data is xzr/wzr, Rn=31 is sp, Ws=31 is wzr, byte/half take Wt, and ops is [Reg(Rt), Mem{Rn,0}] on load else [Reg(Ws), Reg(Rt), Mem{Rn,0}].
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree LDRSW decoder). Same-job siblings encode_ldr_str / encode_ldrs / encode_ldur_stur rejected (LDR/STR unsigned, LDRSB/LDRSH, generic unscaled; different jobs). Doc evidence: assembler README.md:11 "accepts the same textual assembly that GCC's gas would consume"; encoder/mod.rs:333 dispatch of ldrsw; ARM ARM LDRSW (immediate) unsigned offset; README.md:221 Loads/Stores table.
+- Seed: load_store.rs encode_ldur_stur_pbt encode_ldur_stur_diff_llvm_mc
+- Formal: ∀ rt, rn ∈ {0..31}, imm12 ∈ {0..4095}. Let offset = imm12 * 4. Then encode_ldrsw([Reg(Xt), Mem{Xn|SP, offset}]) = llvm-mc("ldrsw Xt, [Xn|SP{, #offset}]") as LE u32, where X31 dest is xzr, Rn=31 is sp.
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldaxr_stlxr
+function: encoder.load_store.encode_ldrsw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rt, rn, ws, is_load, variant, is_64]
-  domain: { rt: "0..=31", rn: "0..=31", ws: "0..=31", variant: "0..=2" }
+  vars: [rt, rn, imm12]
+  domain: { rt: "0..=31", rn: "0..=31", imm12: "0..=4095" }
   relation:
     op: eq
-    lhs: encode_ldaxr_stlxr(ops, is_load, forced(variant))
-    rhs: llvm_mc_word(asm)
+    lhs: encode_ldrsw(ops_unsigned(rt, rn, imm12 * 4))
+    rhs: llvm_mc_word(asm_unsigned)
 generators:
   rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ws: { gen: int, min: 0, max: 31, type: u32 }
-  is_load: { gen: bool }
-  variant: { gen: int, min: 0, max: 2, type: u32 }
-  is_64: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:11; encoder/mod.rs:354-359; ARM ARM Load/Store Exclusive o0=1
+  imm12: { gen: int, min: 0, max: 4095, type: u32 }
+evidence: src/backend/arm/assembler/README.md:11; encoder/mod.rs:333; ARM ARM LDRSW unsigned offset size=10 111 0 01 10 imm12 Rn Rt
 ```
 
-## encode_ldaxr_stlxr_arm_fields
-- Tier: 4
-- Rationale: ARM ARM Load/Store Exclusive encoding size 001000 0 L 0 Rs o0 Rt2 Rn Rt with o0=1, Rt2=11111, o1=0, bits[28:23]=001000, bit23=0. Weaker than differential; kept as an exact structural invariant that pins each field independently of llvm-mc parsing. Documented bounds size in {00,01,10,11}, L in {0,1}, Rs=11111 on load else Ws, Rn/Rt in 0..31 sampled at 0/1/30/31.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_arm_fields
-- Formal: ∀ rt, rn, ws ∈ {0..31}, is_load ∈ {0,1}, variant ∈ {0,1,2}, is_64 ∈ {0,1}. Let w = encode_ldaxr_stlxr(ops, is_load, forced(variant)). Then w[31:30]=expected_size(variant, data_64) ∧ w[28:23]=001000 ∧ w[23]=0 ∧ w[22]=is_load ∧ w[21]=0 ∧ w[20:16]=(is_load ? 31 : ws) ∧ w[15]=1 ∧ w[14:10]=31 ∧ w[9:5]=rn ∧ w[4:0]=rt.
+## encode_ldrsw_diff_unscaled_pre_post_llvm_mc
+- Tier: 2
+- Rationale: llvm-mc is the independent assembler reference for unscaled (offset in [-256,255]), pre-index, and post-index forms. Stronger oracles rejected as in encode_ldrsw_diff_unsigned_llvm_mc. Documented simm9 bounds -256 and 255 sampled exactly. Writeback domain excludes Rt==Rn unless Rn is SP (llvm-mc: unpredictable).
+- Seed: load_store.rs encode_ldur_stur_pbt encode_ldur_stur_diff_llvm_mc
+- Formal: ∀ rt, rn ∈ {0..31}, simm ∈ [-256,255], form ∈ {unscaled, pre, post}. If form ∈ {pre, post} ⇒ (rt ≠ rn ∨ rn = 31). Then encode_ldrsw([Reg(Xt), Mem*|MemPre|MemPost {Xn|SP, simm}]) = llvm-mc of the matching LDRSW/LDURSW syntax as LE u32.
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldaxr_stlxr
+function: encoder.load_store.encode_ldrsw
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rt, rn, simm, form]
+  domain: { rt: "0..=31", rn: "0..=31", simm: "-256..=255", form: "unscaled|pre|post" }
+  relation:
+    op: eq
+    lhs: encode_ldrsw(ops_form(rt, rn, simm, form))
+    rhs: llvm_mc_word(asm_form)
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  simm: { gen: int, min: -256, max: 255, type: i64 }
+  form: { gen: int, min: 0, max: 2, type: u32 }
+evidence: src/backend/arm/assembler/README.md:11; ARM ARM LDRSW pre/post (bits[11:10]=11/01) and LDURSW (bits[11:10]=00) simm9 in [-256,255]
+```
+
+## encode_ldrsw_diff_regoff_llvm_mc
+- Tier: 2
+- Rationale: llvm-mc is the independent assembler reference for LDRSW (register). ARM ARM: Xm with lsl/sxtx amount in {0,2}; Wm with uxtw/sxtw amount in {0,2}. Stronger oracles rejected as in encode_ldrsw_diff_unsigned_llvm_mc.
+- Seed: load_store.rs encode_ldur_stur_pbt
+- Formal: ∀ rt, rn, rm ∈ {0..31}, extend ∈ {lsl,sxtx,uxtw,sxtw}, amount ∈ {0,2}. If extend ∈ {lsl,sxtx} then index is Xm else Wm. Then encode_ldrsw([Reg(Xt), MemRegOffset{Xn|SP, index, extend, amount}]) = llvm-mc("ldrsw Xt, [Xn|SP, Rm, extend #amount]") as LE u32. Rm=31 is xzr/wzr.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_ldrsw
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rt, rn, rm, extend, amount]
+  domain: { rt: "0..=31", rn: "0..=31", rm: "0..=31", extend: "lsl|sxtx|uxtw|sxtw", amount: "{0,2}" }
+  relation:
+    op: eq
+    lhs: encode_ldrsw(ops_regoff(rt, rn, rm, extend, amount))
+    rhs: llvm_mc_word(asm_regoff)
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extend: { gen: int, min: 0, max: 3, type: u32 }
+  amount: { gen: int, min: 0, max: 1, type: u32 }
+evidence: src/backend/arm/assembler/README.md:11; ARM ARM LDRSW (register) size=10 111 0 00 10 1 Rm option S 10 Rn Rt
+```
+
+## encode_ldrsw_arm_fields
+- Tier: 4
+- Rationale: ARM ARM LDRSW encoding pins each field independently of llvm-mc parsing. Unsigned: size=10, bits[29:27]=111, V=0, bits[25:24]=01, opc=10, imm12=offset/4. Unscaled: bits[25:24]=00, bit21=0, bits[11:10]=00, imm9=simm. Pre bits[11:10]=11; post bits[11:10]=01. Register: bit21=1, bits[11:10]=10. Documented bounds size=10, imm12 in {0,1,4094,4095}, simm9 in {-256,-255,0,255}, Rt/Rn in {0,1,30,31} sampled exactly. Stronger differential already claimed by the three llvm-mc properties.
+- Seed: load_store.rs encode_ldur_stur_pbt unpack_ldur
+- Formal: ∀ rt, rn ∈ {0..31}, imm12 ∈ {0..4095}, simm ∈ [-256,255] with simm < 0 ∨ simm mod 4 ≠ 0. Let wu = encode_ldrsw(Mem unsigned). Then wu[31:30]=10 ∧ wu[29:27]=111 ∧ wu[26]=0 ∧ wu[25:24]=01 ∧ wu[23:22]=10 ∧ wu[21:10]=imm12 ∧ wu[9:5]=rn ∧ wu[4:0]=rt. Analogous field equalities hold for unscaled/pre/post/register forms.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_ldrsw
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rt, rn, ws, is_load, variant, is_64]
-  domain: { rt: "0..=31", rn: "0..=31", ws: "0..=31", variant: "0..=2" }
+  vars: [rt, rn, imm12, simm]
+  domain: { rt: "0..=31", rn: "0..=31", imm12: "0..=4095", simm: "-256..=255" }
   relation:
     op: holds
-    expr: unpack_matches_arm(encode_ldaxr_stlxr(ops, is_load, forced(variant)))
+    expr: unpack_matches_arm(encode_ldrsw(ops))
 generators:
   rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ws: { gen: int, min: 0, max: 31, type: u32 }
-  is_load: { gen: bool }
-  variant: { gen: int, min: 0, max: 2, type: u32 }
-  is_64: { gen: bool }
-evidence: ARM ARM Load/Store Exclusive size 001000 0 L 0 Rs o0=1 Rt2=11111 Rn Rt
+  imm12: { gen: int, min: 0, max: 4095, type: u32 }
+  simm: { gen: int, min: -256, max: 255, type: i64 }
+evidence: ARM ARM LDRSW unsigned size=10 111 0 01 10 imm12 Rn Rt; LDURSW / pre / post / register option S
 ```
 
-## encode_ldaxr_stlxr_metamorphic_l_size_o0
+## encode_ldrsw_metamorphic_rt_rn_imm
 - Tier: 4
-- Rationale: ARM ARM documents L as the load/store bit, size[31:30] as the access width, and o0 as the acquire/release bit distinguishing LDAXR/STLXR from LDXR/STXR. Metamorphic relations: ldaxr XOR stlxr(wzr) = 1<<22; X XOR W = 1<<30; byte XOR half = 1<<30; encode_ldaxr_stlxr XOR encode_ldxr_stxr at equal operands = 1<<15. Stronger differential already claimed by encode_ldaxr_stlxr_diff_llvm_mc. Sibling encode_ldxr_stxr is a different job so XOR-o0 is metamorphic, not differential.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_metamorphic_l_size
-- Formal: ∀ rt ∈ {0..30}, rn, ws ∈ {0..31}. encode_ldaxr([Xt], [Xn]) XOR encode_stlxr(wzr, Xt, [Xn]) = 1<<22 ∧ encode_ldaxr(Xt) XOR encode_ldaxr(Wt) = 1<<30 ∧ (if ¬stlxr_ws_aliases_source(ws,rt,rn) then encode_stlxrb XOR encode_stlxrh = 1<<30) ∧ encode_ldaxr_stlxr(ops, is_load, forced) XOR encode_ldxr_stxr(ops, is_load, forced) = 1<<15.
+- Rationale: ARM ARM places Rt at [4:0], Rn at [9:5], unsigned imm12 at [21:10]; incrementing Rt by 1 adds 1, Rn by 1 adds 32, imm12 by 1 adds 1024. Pre XOR post at equal operands = 0b10 << 10. Stronger differential already claimed. Not a same-job sibling differential.
+- Seed: load_store.rs encode_ldaxr_stlxr_pbt encode_ldaxr_stlxr_metamorphic_l_size_o0
+- Formal: ∀ rt ∈ {0..30}, rn ∈ {0..30}, imm12 ∈ {0..4094}. encode(rt+1,rn,imm12) − encode(rt,rn,imm12) = 1 ∧ encode(rt,rn+1,imm12) − encode(rt,rn,imm12) = 32 ∧ encode(rt,rn,imm12+1) − encode(rt,rn,imm12) = 1<<10. ∀ simm ∈ [-256,255]. encode(pre,simm) XOR encode(post,simm) = 0b10<<10.
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldaxr_stlxr
+function: encoder.load_store.encode_ldrsw
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rt, rn, ws]
-  domain: { rt: "0..=30", rn: "0..=31", ws: "0..=31" }
+  vars: [rt, rn, imm12, simm]
+  domain: { rt: "0..=30", rn: "0..=30", imm12: "0..=4094", simm: "-256..=255" }
   relation:
-    op: eq
-    lhs: encode_ldaxr_stlxr(ops, is_load, forced) XOR encode_ldxr_stxr(ops, is_load, forced)
-    rhs: "1u32 << 15"
+    op: holds
+    expr: "encode(rt+1)-encode(rt)=1 AND encode(rn+1)-encode(rn)=32 AND encode(imm12+1)-encode(imm12)=1<<10 AND encode(pre) XOR encode(post)=0b10<<10"
 generators:
   rt: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ws: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Load/Store Exclusive L=bit22, size=bits[31:30], o0=bit15 (1 for acquire/release)
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  imm12: { gen: int, min: 0, max: 4094, type: u32 }
+  simm: { gen: int, min: -256, max: 255, type: i64 }
+evidence: ARM ARM LDRSW Rt[4:0] Rn[9:5] imm12[21:10]; pre bits[11:10]=11 vs post=01
 ```
 
-## encode_ldaxr_stlxr_neg_extra_operand
+## encode_ldrsw_neg_arity_kinds
 - Tier: 4e
-- Rationale: gas/llvm-mc reject a trailing operand on LDAXR/STLXR (llvm-mc: "invalid operand for instruction"). README.md:11 claims gas compatibility. Negative/error contract: extra operand ⇒ Err. Stronger oracles do not cover this invalid domain.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_neg_extra_operand
-- Formal: ∀ valid ops of encode_ldaxr_stlxr, extra ∈ Operand. encode_ldaxr_stlxr(ops ++ [extra], is_load, forced) = Err.
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: rt=0, rn=0, ws=0, is_load=false, variant=0, is_64=false, extra=Reg("x2") — stlxr w0, w0, [x0], x2 → Ok(Word(0x8800FC00))
-- Bug report: pbt-out/bug_reports/encode_ldaxr_stlxr_extra_operand.md
-
-```property
-function: encoder.load_store.encode_ldaxr_stlxr
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt, rn, ws, is_load, variant, is_64, extra]
-  domain: { extra: "Reg|Imm|Symbol|Mem" }
-  relation:
-    op: throws
-    expr: encode_ldaxr_stlxr(ops ++ [extra], is_load, forced(variant))
-expected_error: String
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, items: ["Reg(x2)", "Imm(0)", "Imm(1)", "Symbol(foo)", "Mem{x3,0}"] }
-evidence: llvm-mc rejects trailing operand; README.md:11 gas compatibility; encoder/mod.rs:354-359
-```
-
-## encode_ldaxr_stlxr_neg_invalid_regs
-- Tier: 4e
-- Rationale: ARM ARM / llvm-mc: Rt is Wt/Xt (31=ZR never SP); Rn is Xn|SP never Wn/XZR/WZR; SIMD/FP not allowed as Rt; STLXR status is Ws never Xs; LDAXRB/LDAXRH take Wt not Xt. README.md:11 gas compatibility. Negative/error: each of those names ⇒ Err.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_neg_invalid_regs
-- Formal: ∀ n, other ∈ {0..31}, kind ∈ {SP-as-Rt, W-base, XZR-base, FP-as-Rt, X-as-Ws, X-data-on-byte}. encode_ldaxr_stlxr(ops(kind), ...) = Err.
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: kind=0, n=0 — ldaxr sp, [x0] → Ok(Word(0xC85FFC1F)). Additional witnesses (same property kinds 1–5, confirmed by regression tests): [w1] W-base, [xzr] XZR-base, d0 FP-as-Rt, stlxr x0 X-as-Ws, ldaxrb x0 X-data-on-byte.
-- Bug report: pbt-out/bug_reports/encode_ldaxr_stlxr_sp_as_rt.md (also encode_ldaxr_stlxr_w_base.md, encode_ldaxr_stlxr_xzr_as_base.md, encode_ldaxr_stlxr_fp_as_rt.md, encode_ldaxr_stlxr_x_as_ws.md, encode_ldaxr_stlxr_x_data_byte.md)
-
-```property
-function: encoder.load_store.encode_ldaxr_stlxr
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [kind, n, other]
-  domain: { kind: "0..=5", n: "0..=31" }
-  relation:
-    op: throws
-    expr: encode_ldaxr_stlxr(invalid_reg_ops(kind, n, other), is_load, forced)
-expected_error: String
-generators:
-  kind: { gen: int, min: 0, max: 5, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  other: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc "invalid operand"; ARM ARM LDAXR Rt=Wt/Xt Rn=Xn|SP; STLXR Ws; LDAXRB Wt
-```
-
-## encode_ldaxr_stlxr_neg_arity_shape
-- Tier: 4e
-- Rationale: Exclusive load/store addressing is [Xn|SP]{,#0} only. llvm-mc: "index must be absent or #0"; too few operands, Imm/Symbol/pre/post-index, invalid base names, and nonzero offset are rejected. README.md:11 gas compatibility. Documented bound offset=0 sampled at 0 (valid, other properties) and ±1 / ±8 / 256 / i64 min/max (invalid here).
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_neg_arity_shape
-- Formal: ∀ shape ∈ {empty, dest-only, Imm, Symbol, MemPreIndex, MemPostIndex, base=foo, base=x32, offset≠0}. encode_ldaxr_stlxr(ops(shape), is_load, None) = Err.
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: is_load=false, shape=8, rt=0, offset=-1 — stlxr w1, x0, [x2, #-1] → Ok(Word(0xC801FC40))
-- Bug report: pbt-out/bug_reports/encode_ldaxr_stlxr_nonzero_offset.md
-
-```property
-function: encoder.load_store.encode_ldaxr_stlxr
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_load, shape, rt, offset]
-  domain: { shape: "0..=8", offset: "nonzero i64" }
-  relation:
-    op: throws
-    expr: encode_ldaxr_stlxr(ops(shape), is_load, None)
-expected_error: String
-generators:
-  is_load: { gen: bool }
-  shape: { gen: int, min: 0, max: 8, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  offset: { gen: int, min: -4096, max: 4096, type: i64 }
-evidence: llvm-mc "index must be absent or #0"; ARM ARM LDAXR/STLXR addressing [Xn|SP]{,#0}
-```
-
-## encode_ldaxr_stlxr_neg_ws_overlap
-- Tier: 4e
-- Rationale: llvm-mc rejects STLXR when the status register is also a source ("unpredictable STXR instruction, status is also a source"): Ws==Rt, or Ws==Rn with Rn≠SP (WZR vs SP both encode 31 is allowed). ARM ARM CONSTRAINED UNPREDICTABLE. README.md:11 gas compatibility. Negative/error: overlap ⇒ Err.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_neg_ws_overlap
-- Formal: ∀ rt, rn ∈ {0..31}, variant ∈ {0,1,2}. If ws aliases rt or (rn≠31 ∧ ws=rn), then encode_ldaxr_stlxr(store_ops(ws,rt,rn), false, forced(variant)) = Err.
-- Test file: src/backend/arm/assembler/encoder/load_store.rs
-- Status: failing
-- Counterexample: rt=0, rn=0, variant=0, is_64=false, overlap_rt=false — stlxr w0, w0, [x0] → Ok(Word(0x8800FC00))
-- Bug report: pbt-out/bug_reports/encode_ldaxr_stlxr_ws_overlap.md
-
-```property
-function: encoder.load_store.encode_ldaxr_stlxr
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt, rn, variant, overlap_rt]
-  domain: { rt: "0..=31", rn: "0..=31", variant: "0..=2" }
-  relation:
-    op: throws
-    expr: encode_ldaxr_stlxr(store_ops(ws, rt, rn), false, forced(variant))
-expected_error: String
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  variant: { gen: int, min: 0, max: 2, type: u32 }
-  overlap_rt: { gen: bool }
-evidence: llvm-mc "unpredictable STXR instruction, status is also a source"; ARM ARM CONSTRAINED UNPREDICTABLE
-```
-
-## encode_ldaxr_stlxr_diff_alt_spellings
-- Tier: 2
-- Rationale: Coverage-gaps sweep (no LLVM profraw). Documented gas/llvm-mc aliases: x31=XZR, uppercase Xn/SP/XZR, lr=X30, W-form ldaxr. Differential vs llvm-mc. Seeded from encode_ldxr_stxr_pbt alt-spelling KATs (lr) plus ARM register-name aliases.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_kat_llvm_mc_ldxr_lr
-- Formal: ∀ rt, rn ∈ {0..31}, spelling ∈ {x31, uppercase, lr, W-form}. encode_ldaxr_stlxr([Reg(alias(rt)), Mem{alias(rn),0}], true, None) = llvm-mc("ldaxr alias(rt), [alias(rn)]").
+- Rationale: ARM ARM / llvm-mc require exactly two operands (Xt and a memory or literal operand). Fewer than 2 operands already Err in the body; Imm, Cond, Barrier, Shift, Extend, RegList, MemExpr, Label at the address slot are not LDRSW addressing modes and llvm-mc rejects them. Documented error contract: return Err. Stronger differential does not apply to the invalid domain.
+- Seed: load_store.rs encode_ldur_stur_pbt extra_operand / arity
+- Formal: ∀ ops. |ops| < 2 ∨ (ops[0] is Reg(Xt) ∧ ops[1] ∈ {Imm, Cond, Barrier, Shift, Extend, RegList, MemExpr, Label}) ⇒ encode_ldrsw(ops) is Err.
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldaxr_stlxr
+function: encoder.load_store.encode_ldrsw
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  domain: { ops: "arity<2 or address-slot not a load/store addressing mode" }
+  relation:
+    op: holds
+    expr: encode_ldrsw(ops).is_err()
+generators:
+  ops: { gen: list, elem: { gen: string }, maxLen: 1 }
+expected_error: String
+evidence: ARM ARM LDRSW addressing modes; llvm-mc rejects Imm/Cond/Barrier as the address operand; encode_ldrsw:313 "ldrsw requires 2 operands"
+```
+
+## encode_ldrsw_neg_invalid_regs
+- Tier: 4e
+- Rationale: ARM ARM LDRSW dest is Xt (31=XZR), never Wt/SP/SIMD; base is Xn|SP, never W/XZR. llvm-mc rejects `ldrsw w0, [x1]`, `ldrsw sp, [x1]`, `ldrsw d0, [x1]`, `ldrsw x0, [w1]`, `ldrsw x0, [xzr]`, `ldrsw x0, [x1, w2]`, and writeback `ldrsw x0, [x0, #4]!`. Documented error: Err. Stronger differential does not apply to the invalid domain.
+- Seed: load_store.rs encode_ldur_stur_pbt / encode_ldaxr_stlxr_pbt SP/W-base/FP negative contracts
+- Formal: ∀ rt, rn ∈ {0..31}. encode_ldrsw([Reg(Wt), Mem{Xn,0}]) is Err ∧ encode_ldrsw([Reg("sp"), Mem{Xn,0}]) is Err ∧ encode_ldrsw([Reg(Dt|St|Qt), Mem{Xn,0}]) is Err ∧ encode_ldrsw([Reg(Xt), Mem{Wn,0}]) is Err ∧ encode_ldrsw([Reg(Xt), Mem{"xzr",0}]) is Err ∧ encode_ldrsw([Reg(Xt), MemRegOffset{Xn, Wm, None, None}]) is Err ∧ (rt ≠ 31 ⇒ encode_ldrsw([Reg(Xt), MemPreIndex{Xt, 4}]) is Err).
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: rt=0, rn=0, simd='d' — encode_ldrsw([Reg("w0"), Mem{x0,0}]) = Ok(Word(0xb9800000))
+- Bug report: pbt-out/bug_reports/encode_ldrsw_w_dest.md
+
+```property
+function: encoder.load_store.encode_ldrsw
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rt, rn]
+  domain: { rt: "0..=31", rn: "0..=31" }
+  relation:
+    op: holds
+    expr: encode_ldrsw(invalid_reg_ops).is_err()
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: ARM ARM LDRSW Xt, [Xn|SP]; llvm-mc rejects Wt/SP/SIMD dest, W-base, XZR-base
+```
+
+## encode_ldrsw_neg_offset_range_extra
+- Tier: 4e
+- Rationale: ARM ARM / llvm-mc: unsigned pimm in [0,16380] multiple of 4; otherwise simm9 in [-256,255]; pre/post simm9 in [-256,255]. Out-of-range offsets (-257, 257, 16384, pre/post 256) must be Err, not a truncated encoding. Documented bounds sampled at bound±1 (255/256/257, -256/-257, 16380/16384). Stronger differential does not apply to the invalid domain.
+- Seed: load_store.rs encode_ldur_stur_pbt imm9_out_of_range
+- Formal: ∀ rt, rn ∈ {0..31}, off ∉ unsigned-pimm ∧ off ∉ [-256,255]. encode_ldrsw([Reg(Xt), Mem{Xn, off}]) is Err ∧ encode_ldrsw(MemPre/MemPost with off) is Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: rt=0, rn=0, off=-257 — encode_ldrsw([Reg("x0"), Mem{x0,-257}]) = Ok(Word(0xb88ff000)) (imm9 wrapped to 255)
+- Bug report: pbt-out/bug_reports/encode_ldrsw_offset_range.md
+
+```property
+function: encoder.load_store.encode_ldrsw
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rt, rn, off]
+  domain: { rt: "0..=31", rn: "0..=31", off: "out of unsigned-pimm and simm9" }
+  relation:
+    op: holds
+    expr: encode_ldrsw(ops).is_err()
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  off: { gen: int, min: -1000, max: 20000, type: i64 }
+expected_error: String
+evidence: ARM ARM LDRSW pimm in [0,16380] multiple of 4 else simm9 in [-256,255]; llvm-mc "index must be an integer in range [-256, 255]"
+```
+
+## encode_ldrsw_neg_extra
+- Tier: 4e
+- Rationale: ARM ARM / llvm-mc LDRSW takes exactly two operands. A third operand is rejected. encode_ldrsw only checks len < 2, so extras are ignored. Documented error: Err.
+- Seed: load_store.rs encode_ldur_stur_pbt extra_operand
+- Formal: ∀ rt, rn ∈ {0..31}, extra ∈ Operand. encode_ldrsw([Reg(Xt), Mem{Xn,0}, extra]) is Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: rt=0, rn=0, extra=Reg("x2") — encode_ldrsw three operands = Ok(Word(0xb9800000))
+- Bug report: pbt-out/bug_reports/encode_ldrsw_extra_operand.md
+
+```property
+function: encoder.load_store.encode_ldrsw
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rt, rn, extra]
+  domain: { rt: "0..=31", rn: "0..=31", extra: Operand }
+  relation:
+    op: holds
+    expr: encode_ldrsw([Reg(Xt), Mem{Xn,0}, extra]).is_err()
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: string }
+expected_error: String
+evidence: ARM ARM LDRSW two-operand syntax; llvm-mc extra operand invalid
+```
+
+## encode_ldrsw_diff_alt_spellings
+- Tier: 2
+- Rationale: Coverage-gaps sweep. llvm-mc accepts x31 as XZR, uppercase Xn/SP/XZR, and lr as X30. Same differential contract as encode_ldrsw_diff_unsigned_llvm_mc.
+- Seed: load_store.rs encode_ldaxr_stlxr_pbt encode_ldaxr_stlxr_diff_alt_spellings
+- Formal: ∀ rt, rn ∈ {0..31}, spelling ∈ {x31, uppercase, lr}. encode_ldrsw([Reg(spelling(rt)), Mem{spelling_base(rn), 0}]) = llvm-mc("ldrsw spelling(rt), [spelling_base(rn)]").
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_ldrsw
 oracle: differential
 predicate:
   quantifier: forall
   vars: [rt, rn, spelling]
-  domain: { rt: "0..=31", rn: "0..=31", spelling: "0..=3" }
+  domain: { rt: "0..=31", rn: "0..=31", spelling: "x31|uppercase|lr" }
   relation:
     op: eq
-    lhs: encode_ldaxr_stlxr([Reg(alias(rt, spelling)), Mem{alias(rn, spelling), 0}], true, None)
-    rhs: llvm_mc_word("ldaxr {alias(rt)}, [{alias(rn)}]")
+    lhs: encode_ldrsw(ops_alt(rt, rn, spelling))
+    rhs: llvm_mc_word(asm_alt)
 generators:
   rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  spelling: { gen: int, min: 0, max: 3, type: u32 }
-evidence: llvm-mc accepts x31/XZR/X0/lr/SP; README.md:11 gas compatibility; parse_reg_num lowercases and maps lr=30 x31=31
+  spelling: { gen: int, min: 0, max: 2, type: u32 }
+evidence: src/backend/arm/assembler/README.md:11; llvm-mc accepts x31/XZR/LR/uppercase
 ```
 
-## encode_ldaxr_stlxr_neg_mem_index
+## encode_ldrsw_neg_bad_extend_base
 - Tier: 4e
-- Rationale: Coverage-gaps sweep. ARM ARM / llvm-mc: exclusive addressing is [Xn|SP]{,#0} only; [Xn, Xm] and symbolic MemExpr must be rejected ("index must be absent or #0"). arity_shape covered Imm/pre/post/nonzero-imm but not MemRegOffset or MemExpr.
-- Seed: load_store.rs encode_ldxr_stxr_pbt encode_ldxr_stxr_neg_arity_shape
-- Formal: ∀ rt, rn ∈ {0..31}, idx ∈ {0..30}, kind ∈ {MemRegOffset, MemExpr, MemRegOffset+lsl}. encode_ldaxr_stlxr([Reg(Xt), mem(kind)], true, None) = Err.
+- Rationale: Coverage-gaps sweep of the unsupported-extend Err arm and invalid base names. ARM ARM register-offset amount is only 0 or 2; uxtx is not valid on Xm for LDRSW; "foo" is not Xn|SP.
+- Seed: load_store.rs encode_ldrsw unsupported extend/shift Err
+- Formal: ∀ rt ∈ {0..31}, rn, rm ∈ {0..30}. encode_ldrsw(MemRegOffset lsl #1 or #3 or uxtx) is Err ∧ encode_ldrsw(Mem{base:"foo"}) is Err.
 - Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldaxr_stlxr
+function: encoder.load_store.encode_ldrsw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rt, rn, idx, kind]
-  domain: { rt: "0..=31", rn: "0..=31", idx: "0..=30", kind: "0..=2" }
+  vars: [rt, rn, rm, kind]
+  domain: { rt: "0..=31", rn: "0..=30", rm: "0..=30", kind: "lsl1|lsl3|uxtx|foo" }
   relation:
-    op: throws
-    expr: encode_ldaxr_stlxr([Reg(Xt), mem(kind)], true, None)
-expected_error: String
+    op: holds
+    expr: encode_ldrsw(ops).is_err()
 generators:
   rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 30, type: u32 }
-  kind: { gen: int, min: 0, max: 2, type: u32 }
-evidence: llvm-mc "index must be absent or #0"; ARM ARM LDAXR addressing [Xn|SP]{,#0}
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  kind: { gen: int, min: 0, max: 3, type: u32 }
+expected_error: String
+evidence: ARM ARM LDRSW (register) amount in {0,2}; llvm-mc rejects lsl #1/#3 and uxtx; parse_reg_num None => invalid base reg
+```
+
+## encode_ldrsw_literal_reloc
+- Tier: 4
+- Rationale: Coverage-gaps sweep. ARM ARM LDRSW (literal) 10 011 000 imm19 Rt; llvm-mc accepts `ldrsw Xt, label` with fixup_aarch64_ldr_pcrel_imm19; sibling encode_ldr_str maps Operand::Symbol to RelocType::Ldr19 for ldr. Not a same-job differential (ldr vs ldrsw opc). Stronger llvm-mc word compare rejected (encoding bytes contain fixup placeholders).
+- Seed: encode_ldr_str Symbol arm in load_store.rs
+- Formal: ∀ rt ∈ {0..31}. encode_ldrsw([Reg(Xt), Symbol("foo")]) = WordWithReloc { word[4:0]=rt ∧ word[31:24]=0x98 ∧ reloc_type=Ldr19 ∧ symbol="foo" }.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: rt=0 — Err("unsupported ldrsw operands: [Reg(\"x0\"), Symbol(\"foo\")]")
+- Bug report: pbt-out/bug_reports/encode_ldrsw_literal.md
+
+```property
+function: encoder.load_store.encode_ldrsw
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [rt]
+  domain: { rt: "0..=31" }
+  relation:
+    op: holds
+    expr: encode_ldrsw([Reg(Xt), Symbol(foo)]) is WordWithReloc Ldr19 with opc 0x98
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM LDRSW (literal); llvm-mc ldrsw x0, label; encode_ldr_str Symbol => RelocType::Ldr19
 ```

@@ -1,129 +1,43 @@
-# PBT Campaign Report: encode_ldaxr_stlxr
+# PBT Campaign Report: encode_ldrsw
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ldaxr_stlxr
-**Tests:** 9 properties + 8 KAT + 9 regression witnesses
-**Result:** 5 passing properties, 4 failing properties (9 SUT bugs); 8 KAT pass; 9 regression witnesses fail
-**Effort tier:** standard (1 coverage-driven sweep round; ≥1000 generator cases; ≥1 metamorphic/differential required)
+**Modules tested:** encode_ldrsw
+**Tests:** 12 properties (8 passing, 4 failing) plus 5 passing KATs and 11 failing regression witnesses
+**Result:** 8 passing properties, 10 bugs
+**Effort tier:** standard (1 coverage-gaps sweep round; closed because the tier round was spent and the documented surface of encode_ldrsw was covered)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ldaxr_stlxr | 5 passing / 4 failing properties + 8 KAT pass + 9 regression fail | 9 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_ldrsw | 12 properties + 5 KAT + 11 regressions | 10 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_ldaxr_stlxr silently ignores a surplus operand**
-   - Law: LDAXR is 2-operand (`Rt, [Xn|SP]`); STLXR is 3-operand (`Ws, Rt, [Xn|SP]`). Extra operand must Err (llvm-mc `invalid operand`).
-   - Minimal input: rt=0, rn=0, ws=0, is_load=false, extra=Reg("x2") — `stlxr w0, w0, [x0], x2`
-   - Expected: `Err`
-   - Actual: `Ok(Word(0x8800FC00))` encoding of `stlxr w0, w0, [x0]`
-   - Root cause: no `operands.len()` check; `get_reg` / `operands.get` only read the required indices
-   - Impact: typos/extra operands assemble silently
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_extra_operand.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_extra_operand` (fails as witness)
+1. **W dest accepted** — `ldrsw w0, [x1]` encodes as Xt Rt=0 (0xb9800000). Law: dest is Xt. Detected by encode_ldrsw_neg_invalid_regs. Counterexample: rt=0, rn=0. Serial reconfirmed. Report: `pbt-out/bug_reports/encode_ldrsw_w_dest.md`. Regression: `test_encode_ldrsw_regression_w_dest`.
 
-2. **encode_ldaxr_stlxr encodes SP as ZR in Rt**
-   - Law: Exclusive Rt is Wt/Xt with register 31 meaning ZR, never SP. llvm-mc rejects `ldaxr sp, [x0]`.
-   - Minimal input: kind=0, n=0 — `ldaxr sp, [x0]`
-   - Expected: `Err`
-   - Actual: `Ok(Word(0xC85FFC1F))` = `ldaxr xzr, [x0]`
-   - Root cause: `parse_reg_num` maps `sp`/`wsp` to 31 with no SP-vs-ZR check
-   - Impact: stack-pointer dest silently rewritten to the zero register
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_sp_as_rt.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_sp_as_rt` (fails as witness)
+2. **SP dest encoded as XZR** — `ldrsw sp, [x1]` uses parse_reg_num("sp")=31. Report: `pbt-out/bug_reports/encode_ldrsw_sp_dest.md`. Regression: `test_encode_ldrsw_regression_sp_dest`.
 
-3. **encode_ldaxr_stlxr accepts a W register as exclusive base**
-   - Law: Exclusive addressing is `[Xn|SP]`. llvm-mc rejects `ldaxr x0, [w1]`.
-   - Minimal input: `ldaxr x0, [w1]`
-   - Expected: `Err`
-   - Actual: `Ok(Word)` encoding Rn=1 as if the base were x1
-   - Root cause: `parse_reg_num` accepts `w` prefix
-   - Impact: 32-bit base mnemonic encoded instead of rejected
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_w_base.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_w_base` (fails as witness)
+3. **SIMD/FP dest accepted** — `ldrsw d0, [x1]` encodes Rt=0. Report: `pbt-out/bug_reports/encode_ldrsw_fp_dest.md`. Regression: `test_encode_ldrsw_regression_fp_dest`.
 
-4. **encode_ldaxr_stlxr encodes XZR as SP in the exclusive base**
-   - Law: Address register 31 is SP, never XZR. llvm-mc rejects `ldaxr x0, [xzr]`.
-   - Minimal input: `ldaxr x0, [xzr]`
-   - Expected: `Err`
-   - Actual: `Ok(Word)` encoding Rn=31 (SP)
-   - Root cause: `parse_reg_num` maps both `xzr` and `sp` to 31
-   - Impact: zero-register base silently rewritten to SP
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_xzr_as_base.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_xzr_as_base` (fails as witness)
+4. **W base accepted** — `ldrsw x0, [w1]` encodes as `[x1]`. Report: `pbt-out/bug_reports/encode_ldrsw_w_base.md`. Regression: `test_encode_ldrsw_regression_w_base`.
 
-5. **encode_ldaxr_stlxr encodes SIMD/FP names as GPR Rt**
-   - Law: LDAXR/STLXR data registers are GPRs. llvm-mc rejects `ldaxr d0, [x1]`.
-   - Minimal input: `ldaxr d0, [x1]`
-   - Expected: `Err`
-   - Actual: `Ok(Word)` treating `d0` as GPR 0
-   - Root cause: `parse_reg_num` accepts `d`/`s`/`q`/`v`/`h`/`b` prefixes
-   - Impact: FP dest silently treated as same-numbered GPR
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_fp_as_rt.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_fp_as_rt` (fails as witness)
+5. **XZR/X31 base encoded as SP** — `ldrsw x0, [xzr]` encodes Rn=31. Report: `pbt-out/bug_reports/encode_ldrsw_xzr_base.md`. Regression: `test_encode_ldrsw_regression_xzr_base`.
 
-6. **encode_ldaxr_stlxr accepts an X register as STLXR status**
-   - Law: STLXR status is Ws. llvm-mc rejects `stlxr x0, x1, [x2]`.
-   - Minimal input: `stlxr x0, x1, [x2]`
-   - Expected: `Err`
-   - Actual: `Ok(Word)` encoding Ws=0 as if the status were w0
-   - Root cause: `let (ws, _) = get_reg(...)` discards width
-   - Impact: 64-bit status mnemonic encoded instead of rejected
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_x_as_ws.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_x_as_ws` (fails as witness)
+6. **W index without extend encoded as LSL** — `ldrsw x0, [x1, w2]` uses option=011. Report: `pbt-out/bug_reports/encode_ldrsw_w_index.md`. Regression: `test_encode_ldrsw_regression_w_index_no_extend`.
 
-7. **encode_ldaxr_stlxr accepts Xt on LDAXRB/LDAXRH**
-   - Law: Byte/half exclusive forms take Wt. llvm-mc rejects `ldaxrb x0, [x1]`.
-   - Minimal input: `ldaxrb x0, [x1]`
-   - Expected: `Err`
-   - Actual: `Ok(Word)` encoding size=00 with Rt=0
-   - Root cause: `forced_size` overrides data-register width from `get_reg`
-   - Impact: 64-bit dest on byte exclusive encoded as 32-bit
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_x_data_byte.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_x_data_byte` (fails as witness)
+7. **Writeback Rt==Rn encoded** — `ldrsw x0, [x0, #4]!` is unpredictable; llvm-mc rejects it. Report: `pbt-out/bug_reports/encode_ldrsw_writeback_overlap.md`. Regression: `test_encode_ldrsw_regression_writeback_rt_eq_rn`.
 
-8. **encode_ldaxr_stlxr ignores a nonzero exclusive offset**
-   - Law: Exclusive addressing is `[Xn|SP]` or `[Xn|SP, #0]`. llvm-mc: `index must be absent or #0`.
-   - Minimal input: is_load=false, shape=8, rt=0, offset=-1 — `stlxr w1, x0, [x2, #-1]`
-   - Expected: `Err`
-   - Actual: `Ok(Word(0xC801FC40))` encoding of the same instruction with offset 0
-   - Root cause: `Operand::Mem { base, .. }` ignores `offset`
-   - Impact: nonzero offset silently dropped
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_nonzero_offset.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_nonzero_offset` (fails as witness)
+8. **Out-of-range offset truncated** — `#-257` encodes imm9=255; `#16384` encodes imm9=0. High severity silent wrong address. Report: `pbt-out/bug_reports/encode_ldrsw_offset_range.md`. Regressions: `test_encode_ldrsw_regression_imm9_range`, `test_encode_ldrsw_regression_pimm_overflow`.
 
-9. **encode_ldaxr_stlxr encodes STLXR when Ws aliases a source**
-   - Law: ARM CONSTRAINED UNPREDICTABLE / llvm-mc: "unpredictable STXR instruction, status is also a source" when Ws aliases Rt or Xn (WZR vs SP allowed).
-   - Minimal input: rt=0, rn=0, variant=0, is_64=false, overlap_rt=false — `stlxr w0, w0, [x0]`
-   - Expected: `Err`
-   - Actual: `Ok(Word(0x8800FC00))`
-   - Root cause: no overlap check between Ws and Rt/Rn
-   - Impact: UNPREDICTABLE exclusive store emitted instead of rejected
-   - Severity: medium
-   - Serial reconfirmation: `PBT_TEST_JOBS=1` / `--test-threads=1`
-   - Bug report: `pbt-out/bug_reports/encode_ldaxr_stlxr_ws_overlap.md`
-   - Regression: `test_encode_ldaxr_stlxr_regression_ws_overlap` (fails as witness)
+9. **Extra operand ignored** — three operands encode as the first two. Report: `pbt-out/bug_reports/encode_ldrsw_extra_operand.md`. Regression: `test_encode_ldrsw_regression_extra_operand`.
+
+10. **LDRSW (literal) missing** — `ldrsw x0, foo` returns Err; ARM/llvm-mc require RelocType::Ldr19. Report: `pbt-out/bug_reports/encode_ldrsw_literal.md`. Regression: `test_encode_ldrsw_regression_literal`.
+
+All failures reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib encode_ldrsw -- --test-threads=1`.
 
 ## Design Caveats
 
@@ -133,33 +47,34 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldaxr_stlxr_pbt) | 9 properties (5 passing / 4 failing) + 8 KAT + 9 failing regression witnesses |
+| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldrsw_pbt) | 12 properties, 5 KAT, 11 regressions |
 
 ## Output Directories
 
-- `pbt-out/PLAN.md` — campaign checklist
-- `pbt-out/PROPERTIES.md` — property ledger
-- `pbt-out/REPORT.md` — this report
-- `pbt-out/COVERAGE.md` — per-function coverage row
-- `pbt-out/COVERAGE_STATUS.md` — campaign coverage stats
-- `pbt-out/FUNCTION_INDEX.md` — merged function index (encode_ldaxr_stlxr now a candidate)
-- `pbt-out/INVARIANTS.md` — confirmed invariants for encode_ldaxr_stlxr
-- `pbt-out/bug_reports/encode_ldaxr_stlxr_*.md` — 9 bug reports
-
-## Contract-surface sweep
-
-Round 1 of 1 (standard tier). `coverage_gaps` reported no LLVM profraw; closed by a manual arm audit of `encode_ldaxr_stlxr` (load/store paths, Mem vs non-Mem, invalid base, forced_size 00/01/None, is_64, get_reg errors). Added `encode_ldaxr_stlxr_diff_alt_spellings` (x31 / uppercase / lr / W-form vs llvm-mc, 1000 cases, passing) and `encode_ldaxr_stlxr_neg_mem_index` (MemRegOffset / MemExpr ⇒ Err, 1000 cases, passing). Closed because the tier's one round is done and every documented behavior of this symbol has a property.
-
-## Skipped targets
-
-(none) — campaign restricted to encode_ldaxr_stlxr; `cargo check --lib` was the user build contract and was not re-run as a compile exploration. Tests ran via `cargo test --lib encode_ldaxr_stlxr_pbt` (official harness, target swapped).
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_ldrsw_w_dest.md
+- pbt-out/bug_reports/encode_ldrsw_sp_dest.md
+- pbt-out/bug_reports/encode_ldrsw_fp_dest.md
+- pbt-out/bug_reports/encode_ldrsw_w_base.md
+- pbt-out/bug_reports/encode_ldrsw_xzr_base.md
+- pbt-out/bug_reports/encode_ldrsw_w_index.md
+- pbt-out/bug_reports/encode_ldrsw_writeback_overlap.md
+- pbt-out/bug_reports/encode_ldrsw_offset_range.md
+- pbt-out/bug_reports/encode_ldrsw_extra_operand.md
+- pbt-out/bug_reports/encode_ldrsw_literal.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 15:07 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 65/253 total | PBT candidates: 65 | Tested: 65 (100%) | 0 pass, 65 fail
+> Last updated: 2026-09-14 15:32 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 66/253 total | PBT candidates: 66 | Tested: 66 (100%) | 0 pass, 66 fail
 
 ## Summary
 
@@ -168,10 +83,10 @@ Round 1 of 1 (standard tier). `coverage_gaps` reported no LLVM profraw; closed b
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 65 |
-| **Tested (of PBT candidates)** | **65 / 65 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 65 / 0 |
-| **Overall (tested / all functions)** | **65 / 253 (26%)** |
+| PBT candidates (from FUNCTION_INDEX) | 66 |
+| **Tested (of PBT candidates)** | **66 / 66 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 66 / 0 |
+| **Overall (tested / all functions)** | **66 / 253 (26%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -179,13 +94,13 @@ Round 1 of 1 (standard tier). `coverage_gaps` reported no LLVM profraw; closed b
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 65 | 65 | 0 | 100% |
+|  | 66 | 66 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 65 | 65 | 0 | 100% |
+| unknown | 66 | 66 | 0 | 100% |
 
 ## File Coverage
 
@@ -196,7 +111,7 @@ Round 1 of 1 (standard tier). `coverage_gaps` reported no LLVM profraw; closed b
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 24 | 24 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 6 | 6 | 100% | covered |
+| load_store.rs | 20 | 7 | 7 | 100% | covered |
 | neon.rs | 68 | 13 | 13 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -272,3 +187,4 @@ Round 1 of 1 (standard tier). `coverage_gaps` reported no LLVM profraw; closed b
 | encode_umull | data_processing.rs |
 | encode_uxtw | data_processing.rs |
 | encode_ldaxr_stlxr | load_store.rs |
+| encode_ldrsw | load_store.rs |
