@@ -50,3 +50,4 @@
 | encode_neg | pseudo.rs | pseudo.rs | cargo test --lib | 8 passing / 1 failing properties (plus 1 passing KAT + 1 failing regression witness; 1 bug) |
 | encode_negs | data_processing.rs | data_processing.rs | cargo test --lib | 7 passing / 7 failing properties (plus 3 passing KAT + 7 failing regression witnesses; 6 bugs) |
 | encode_neon_shift_imm | neon.rs | neon.rs | cargo test --lib | 4 passing / 5 failing properties (plus 1 passing KAT + 5 failing regression witnesses; 5 bugs) |
+| encode_neon_tbl | neon.rs | neon.rs | cargo test --lib | 4 passing / 5 failing properties (plus 1 passing KAT + 10 failing regression witnesses; 10 bugs) |

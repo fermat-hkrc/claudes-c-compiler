@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_neon_tbl)
+
+- Valid vector TBL with Ta in {8b,16b}, Vd/Vm in v0–v31, 1–4 consecutive wrapping table registers all .16B matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Ta=8b XOR Ta=16b at equal Rd/Rn/Rm/len = 1<<30 (1000 cases).
+- Changing only nregs in {1,2,3,4} differs only in len bits [14:13]; len = nregs-1 (1000 cases).
+- Success-path word: bit 31=0, Q at 30, bits [29:24]=001110, bits [23:21]=000, Rm at [20:16], bit 15=0, len at [14:13], op=0 at 12, bits [11:10]=00, Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands, missing RegList, and invalid dest names always Err.
+- Known-answer: `tbl v0.8b, {v1.16b}, v2.8b` encodes as 0x0e020020; `tbl v0.16b, {v1.16b}, v2.16b` as 0x4e020020; 2-reg 0x0e032020; 3-reg 0x4e044020; 4-reg 0x0e056020; wrap `{v31.16b, v0.16b}` as 0x0e0223e0.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD table lookup TBL: `0 Q 00 1110 00 0 Rm 0 len op 00 Rn Rd` with op=0. Ta in {8B,16B}. Table is 1–4 consecutive .16B registers wrapping at 31. Vm.Ta matches Vd.Ta. Q=1 iff Ta=16B.
+- Dispatch: encoder/mod.rs:729 `"tbl" => encode_neon_tbl`. Sibling encode_neon_tbx is TBX (op=1), different job.
+- Callers: assembler README NEON permute table lists tbl/tbx.
+- Parser `parser.rs:2030-2072` builds Operand::RegList; rejects empty lists; range syntax expands wrapping consecutives. Encoder still panics if given an empty list directly.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Ta other than 16b encodes Q=0, including 4h/8h/2s/4s/2d/1d (see bugs).
+- Empty RegList panics on regs[0] (see bugs).
+- nregs>4 wraps via `(num_regs-1)&0x3` (see bugs).
+- Only first list register number and len are encoded; later names/arrangements and sequentiality are ignored (see bugs).
+- get_neon_reg accepts Operand::Reg, so GPR dest/Vm and bare V in the list encode (see bugs).
+- Vm arrangement is discarded (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / Ta / table list / get_neon_reg Reg dest+Vm / extra / mismatched T).
+
+---
+
 # Confirmed invariants (encode_neon_shift_imm)
 
 - Valid vector USHR with T in {8b,16b,4h,8h,2s,4s,2d}, Vd/Vn in v0–v31, shift in [1, esize] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
