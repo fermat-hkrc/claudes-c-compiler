@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_eon)
+
+- Same-width GPR EON (x0–x30/xzr/lr and w0–w30/wzr, optional lsl/lsr/asr/ror with amount in [0,31] W / [0,63] X) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_eon(ops) XOR encode_logical(ops, 0b10) = 1<<21 (ARM ARM EON N=1 vs EOR N=0) (1000 cases).
+- Success-path word: sf at 31 from Rd width, opc=10 at [30:29], bits [28:24]=01010, shift at [23:22], N=1 at 21, Rm at [20:16], imm6 at [15:10], Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x99) always Err.
+- Known-answer: `eon x0, x1, x2` encodes as 0xca220020; `eon w0, w1, w2` as 0x4a220020.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- EON register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `eon sp, ...`).
+- EON takes Wt/Xt only (llvm-mc rejects `eon d0, ...`).
+- llvm-mc rejects mixed x/w, a 4th non-shift operand, shift amount 32 (W) / 64 (X), and unknown shift kinds.
+- llvm-mc accepts `eon Rd, Rn, #imm` as the assembler alias of `eor Rd, Rn, #~imm` (Rd may not be ZR).
+- llvm-mc omits `lsl #0` in disassembly of unshifted EON.
+
+## Quirks
+
+- Extra operands beyond a non-Shift index 3 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `eon wsp, ...` encodes as `eon wzr, ...` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- sf is taken only from operand 0; Rn/Rm widths are never checked, so mixed x/w encodes (see bugs).
+- Shift amount is masked with 0x3F with no width check (see bugs).
+- Unknown shift kinds default to LSL via `_ => 0b00` (see bugs).
+- No immediate path: get_reg on operand 2 rejects `eon Rd, Rn, #imm` (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (unknown shift `_ => 0b00` / parse_reg_num None).
+
+---
+
 # Confirmed invariants (encode_div)
 
 - Same-width GPR UDIV/SDIV (x0–x30/xzr and w0–w30/wzr, including register 31 as XZR/WZR) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
