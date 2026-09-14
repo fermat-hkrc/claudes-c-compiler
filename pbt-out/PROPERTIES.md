@@ -1,388 +1,312 @@
-# Property ledger: encode_rev32
+# Property ledger: encode_rev
 
-## encode_rev32_diff_valid_gpr
+## encode_rev_diff_valid_gpr
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree REV32 decoder). Sibling encode_neon_two_misc rejected for scalar (vector class; dispatch splits). Sibling encode_rev/encode_rev16/encode_rbit/encode_clz/encode_cls rejected (different opcode). Doc evidence: README.md:11 GNU-style assembly; README.md:240 lists rev32; encoder/mod.rs:579-581 dispatch; ARM ARM Data-processing (1 source) REV32 Xd,Xn only.
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree REV decoder). Sibling encode_rev16/encode_rev32/encode_rbit/encode_clz/encode_cls rejected (different opcode). Doc evidence: README.md:11 GNU-style assembly; README.md:240 lists rev; encoder/mod.rs:910 dispatch; ARM ARM Data-processing (1 source) REV Wd,Wn / Xd,Xn with opc=000010 (W) / 000011 (X).
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_diff_valid_gpr
-- Formal: ∀ rd,rn ∈ {0..31}. encode_rev32([Reg(x{rd}|xzr), Reg(x{rn}|xzr)]) = llvm-mc("rev32 Xd, Xn") as LE word
+- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}. encode_rev([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]) = llvm-mc("rev Rd, Rn") as LE word
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn]
-  domain: { rd: u32 0..=31, rn: u32 0..=31 }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31 }
   relation:
     op: eq
-    lhs: encode_rev32([Reg(gpr64(rd)), Reg(gpr64(rn))])
-    rhs: llvm_mc_word("rev32 " + gpr64(rd) + ", " + gpr64(rn))
+    lhs: encode_rev([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn))])
+    rhs: llvm_mc_word("rev " + gpr(is_64, rd) + ", " + gpr(is_64, rn))
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:11 GNU-style gas contract; ARM ARM REV32 Xd,Xn; llvm-mc -triple=aarch64 -show-encoding
+evidence: README.md:11 GNU-style gas contract; ARM ARM REV Wd/Xd; llvm-mc -triple=aarch64 -show-encoding
 ```
 
-## encode_rev32_arm_fields
+## encode_rev_arm_fields
 - Tier: 4
-- Rationale: Algebraic invariant from ARM ARM encoding diagram. Stronger rejected as above. Weaker than differential but pins each field independently (sf=1, opcode=000010).
+- Rationale: Algebraic invariant from ARM ARM encoding diagram. Stronger rejected as above. Weaker than differential but pins each field independently, including the sf-dependent opcode (000010 W / 000011 X) that distinguishes REV from REV16/REV32.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_arm_fields
-- Formal: ∀ rd,rn ∈ {0..31}. let w = encode_rev32([Reg(x{rd}), Reg(x{rn})]). w = (1<<31)|(1<<30)|(0b011010110<<21)|(0b000010<<10)|(rn<<5)|rd ∧ w[31]=1 ∧ w[30]=1 ∧ w[29]=0 ∧ w[28:21]=11010110 ∧ w[20:16]=00000 ∧ w[15:10]=000010 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}. let w = encode_rev([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))]), sf = ⟦is_64⟧, opc = is_64 ? 000011 : 000010. w[31]=sf ∧ w[30]=1 ∧ w[29]=0 ∧ w[28:21]=11010110 ∧ w[20:16]=00000 ∧ w[15:10]=opc ∧ w[9:5]=rn ∧ w[4:0]=rd
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn]
-  domain: { rd: u32 0..=31, rn: u32 0..=31 }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31 }
   relation:
     op: eq
-    lhs: encode_rev32([Reg(gpr64(rd)), Reg(gpr64(rn))])
-    rhs: 0xDAC00800 | (rn << 5) | rd
+    lhs: encode_rev([Reg(gpr(is_64, rd)), Reg(gpr(is_64, rn))])
+    rhs: (sf << 31) | (1 << 30) | (0b011010110 << 21) | (opc << 10) | (rn << 5) | rd
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Data-processing (1 source) REV32 encoding 1 1 0 11010110 00000 000010 Rn Rd
+evidence: ARM ARM Data-processing (1 source) REV encoding sf 1 0 11010110 00000 opc Rn Rd; opc=000010 (32-bit) / 000011 (64-bit)
 ```
 
-## encode_rev32_metamorphic_rd_rn
+## encode_rev_metamorphic_rd_rn_sf
 - Tier: 4
-- Rationale: Algebraic metamorphic: incrementing Rd/Rn must touch only that 5-bit field. Stronger rejected as above. No W-vs-X sf metamorphic — ARM forbids the 32-bit form.
+- Rationale: Algebraic metamorphic: incrementing Rd/Rn must touch only that 5-bit field. W vs X must flip sf and the opcode LSB (bit 10), not only sf — unlike REV16/CLZ/RBIT whose opcode is width-invariant. Stronger rejected as above.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_metamorphic_rd_rn_sf
-- Formal: ∀ rd,rn ∈ {0..30}. let b = encode_rev32(x{rd}, x{rn}). encode_rev32(x{rd+1}, x{rn}) & 0x1f = rd+1 ∧ that word agrees with b outside bits[4:0]; encode_rev32(x{rd}, x{rn+1}) bits[9:5] = rn+1 ∧ agrees with b outside bits[9:5]
+- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..30}. let b = encode_rev(gpr(is_64,rd), gpr(is_64,rn)). encode_rev(rd+1,rn) & 0x1f = rd+1 ∧ agrees with b outside bits[4:0]; encode_rev(rd,rn+1) bits[9:5] = rn+1 ∧ agrees with b outside bits[9:5]; encode_rev(!is_64, rd, rn) xor b = (1<<31)|(1<<10)
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn]
-  domain: { rd: u32 0..=30, rn: u32 0..=30 }
+  vars: [is_64, rd, rn]
+  domain: { is_64: bool, rd: u32 0..=30, rn: u32 0..=30 }
   relation:
     op: holds
-    expr: field_independence(encode_rev32, rd, rn)
+    expr: field_independence(encode_rev, is_64, rd, rn) && (encode_rev(!is_64,rd,rn) xor encode_rev(is_64,rd,rn) == (1<<31)|(1<<10))
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-evidence: ARM ARM REV32 field layout Rd bits[4:0] Rn bits[9:5]
+evidence: ARM ARM REV field layout Rd bits[4:0] Rn bits[9:5] sf bit31 opc bits[15:10] (000010 W / 000011 X)
 ```
 
-## encode_rev32_diff_neon
-- Tier: 2
-- Rationale: encode_rev32 contains a documented NEON path (purpose comment bitfield.rs:206). Differential vs llvm-mc for T in {8B,16B,4H,8H} (ARM ARM Advanced SIMD two-register miscellaneous REV32). encode_neon_two_misc is the public dispatch sibling, not an independent reference (same-job gate: shared helpers; llvm-mc is independent).
-- Seed: bitfield.rs encode_rbit_pbt NEON differential
-- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h}. encode_rev32([RegArrangement(v{rd}.T), RegArrangement(v{rn}.T)]) = llvm-mc("rev32 v{rd}.T, v{rn}.T")
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_rev32
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, arr]
-  domain: { rd: u32 0..=31, rn: u32 0..=31, arr: {8b,16b,4h,8h} }
-  relation:
-    op: eq
-    lhs: encode_rev32([RegArrangement(v{rd}, arr), RegArrangement(v{rn}, arr)])
-    rhs: llvm_mc_word("rev32 v{rd}." + arr + ", v{rn}." + arr)
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  arr: { gen: oneof, items: ["8b", "16b", "4h", "8h"] }
-evidence: ARM ARM Advanced SIMD two-register miscellaneous REV32 T in {8B,16B,4H,8H}; README.md:225 lists rev32 under NEON two-misc
-```
-
-## encode_rev32_neg_arity
+## encode_rev_neg_arity
 - Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects fewer than 2 operands. get_reg fails when the slot is missing.
+- Rationale: Negative/error contract. llvm-mc rejects too few operands ("too few operands for instruction"). get_reg on a missing slot returns Err. Stronger rejected as above.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_arity
-- Formal: ∀ len ∈ {0,1}, rd,rn ∈ {0..31}. encode_rev32(ops[:len]) is Err
+- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}, len ∈ {0,1}. encode_rev(prefix([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn))], len)) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [len, rd, rn]
-  domain: { len: usize 0..=1, rd: u32 0..=31, rn: u32 0..=31 }
+  vars: [len, is_64, rd, rn]
+  domain: { len: usize 0..=1, is_64: bool, rd: u32 0..=31, rn: u32 0..=31 }
   relation:
-    op: throws
-    expr: encode_rev32(truncate([Reg(x{rd}), Reg(x{rn})], len))
-expected_error: String
+    op: holds
+    expr: encode_rev(ops[0..len]).is_err()
 generators:
   len: { gen: int, min: 0, max: 1, type: usize }
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc rejects too few operands for rev32; ARM ARM REV32 requires Xd, Xn
+expected_error: String
+evidence: llvm-mc "too few operands for instruction" on `rev w0`; get_reg missing slot -> Err
 ```
 
-## encode_rev32_neg_extra_operand
+## encode_rev_neg_extra_operand
 - Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects a 3rd operand. README.md:11 gas-compatible assembly.
+- Rationale: Negative/error contract. llvm-mc rejects a 3rd operand ("invalid operand for instruction"). GNU-style assembler contract (README.md:11). encode_rev does not check operands.len(), so extra operands are currently ignored — expected to fail.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_extra_operand
-- Formal: ∀ rd,rn ∈ {0..31}, extra ∈ Operand. encode_rev32([Reg(x{rd}), Reg(x{rn}), extra]) is Err
+- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}, extra ∈ Operand. encode_rev([Reg(Rd), Reg(Rn), extra]) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, extra=Reg("x0") — encode_rev32 returns Ok(Word) instead of Err (serial reconfirm PBT_TEST_JOBS=1)
-- Bug report: pbt-out/bug_reports/encode_rev32_extra_operand.md
+- Counterexample: [Reg("w0"), Reg("w0"), Reg("x0")]
+- Bug report: pbt-out/bug_reports/encode_rev_extra_operand.md
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, extra]
-  domain: { rd: u32 0..=31, rn: u32 0..=31, extra: Operand }
+  vars: [is_64, rd, rn, extra]
+  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31, extra: Operand }
   relation:
-    op: throws
-    expr: encode_rev32([Reg(x{rd}), Reg(x{rn}), extra])
-expected_error: String
+    op: holds
+    expr: encode_rev([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), extra]).is_err()
 generators:
+  is_64: { gen: bool }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, items: [Reg, Imm, Shift, RegArrangement] }
-evidence: llvm-mc "invalid operand" for rev32 x0, x1, x2; README.md:11 gas contract
-```
-
-## encode_rev32_neg_w32
-- Tier: 4
-- Rationale: Negative/error contract. ARM ARM REV32 is 64-bit only (no W form). llvm-mc rejects `rev32 w0, w1`. Purpose comment bitfield.rs:218 "REV32 is 64-bit only". Bound 31 sampled exactly (wzr).
-- Seed: (none) — encode_rev16 allows W; this is the distinguishing REV32 contract
-- Formal: ∀ rd,rn ∈ {0..31}. encode_rev32([Reg(w{rd}|wzr), Reg(w{rn}|wzr)]) is Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: failing
-- Counterexample: rd=0, rn=0 — encode_rev32([w0, w0]) returns Ok(0xdac00800) instead of Err (serial reconfirm PBT_TEST_JOBS=1)
-- Bug report: pbt-out/bug_reports/encode_rev32_w32.md
-
-```property
-function: encode_rev32
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn]
-  domain: { rd: u32 0..=31, rn: u32 0..=31 }
-  relation:
-    op: throws
-    expr: encode_rev32([Reg(gpr32(rd)), Reg(gpr32(rn))])
+  extra: { gen: oneof, variants: [Reg, Imm, Shift, RegArrangement] }
 expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM REV32 <Xd>, <Xn> only; llvm-mc rejects rev32 w0, w1; bitfield.rs:218 purpose comment "REV32 is 64-bit only"
+evidence: llvm-mc rejects `rev w0, w1, w2` and `rev w0, w1, #0`; README.md:11 GNU-style gas contract
 ```
 
-## encode_rev32_neg_sp
+## encode_rev_neg_sp
 - Tier: 4
-- Rationale: Negative/error contract. ARM ARM register 31 is ZR not SP. llvm-mc rejects SP/WSP.
+- Rationale: Negative/error contract. ARM ARM Data-processing (1 source) uses ZR at register 31, not SP. llvm-mc rejects SP/WSP as REV operands. parse_reg_num maps sp/wsp to 31, so the SUT currently encodes them as ZR — expected to fail.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_sp
-- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, other ∈ {0..30}. encode_rev32(ops with slot which = SP) is Err
+- Formal: ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, is_64 ∈ Bool, other ∈ {0..30}. encode_rev(ops with slot `which` = Reg(sp)) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: which=0, sp=wsp, other=0 — encode_rev32([wsp, x0]) returns Ok instead of Err (serial reconfirm PBT_TEST_JOBS=1)
-- Bug report: pbt-out/bug_reports/encode_rev32_sp.md
+- Counterexample: [Reg("wsp"), Reg("w0")]
+- Bug report: pbt-out/bug_reports/encode_rev_sp.md
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, sp64, other]
-  domain: { which: u32 0..=1, sp64: bool, other: u32 0..=30 }
+  vars: [which, sp64, is_64, other]
+  domain: { which: u32 0..=1, sp64: bool, is_64: bool, other: u32 0..=30 }
   relation:
-    op: throws
-    expr: encode_rev32(ops_with_sp(which, sp64, other))
-expected_error: String
+    op: holds
+    expr: encode_rev(ops_with_sp).is_err()
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
   sp64: { gen: bool }
+  is_64: { gen: bool }
   other: { gen: int, min: 0, max: 30, type: u32 }
-evidence: ARM ARM register 31 is ZR not SP; llvm-mc rejects rev32 sp, x0
+expected_error: String
+evidence: ARM ARM REV register 31 is ZR not SP; llvm-mc rejects `rev sp, x0` and `rev wsp, w0`
 ```
 
-## encode_rev32_diff_alt_spellings
-- Tier: 2
-- Rationale: Sweep — documented GNU aliases x31/XZR/LR/uppercase must agree with llvm-mc. Differential. Bound 31 (xzr/x31) sampled exactly.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_diff_alt_spellings
-- Formal: ∀ rd,rn ∈ {0..31}, dest_spell,src_spell ∈ {0..4}. encode_rev32([Reg(spell(rd)), Reg(spell(rn))]) = llvm-mc("rev32 " + spell(rd) + ", " + spell(rn))
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_rev32
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, dest_spell, src_spell]
-  domain: { rd: u32 0..=31, rn: u32 0..=31, dest_spell: u32 0..=4, src_spell: u32 0..=4 }
-  relation:
-    op: eq
-    lhs: encode_rev32([Reg(spell(rd, dest_spell)), Reg(spell(rn, src_spell))])
-    rhs: llvm_mc_word("rev32 " + spell(rd, dest_spell) + ", " + spell(rn, src_spell))
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
-  src_spell: { gen: int, min: 0, max: 4, type: u32 }
-evidence: README.md:11 GNU-style assembly; parse_reg_num maps lr/x31/xzr; llvm-mc accepts those aliases
-```
-
-## encode_rev32_neg_mixed_width
+## encode_rev_neg_mixed_width
 - Tier: 4
-- Rationale: Sweep — llvm-mc rejects mixed W/X. ARM ARM REV32 requires both operands Xd,Xn.
+- Rationale: Negative/error contract. llvm-mc rejects mixed W/X (`rev w0, x1` / `rev x0, w1`). encode_rev takes sf from Rd and ignores Rn width — expected to fail.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_mixed_width
-- Formal: ∀ rd,rn ∈ {0..31}, rd64 ≠ rn64. encode_rev32([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn))]) is Err
+- Formal: ∀ rd,rn ∈ {0..31}, rd64,rn64 ∈ Bool. rd64 ≠ rn64 ⇒ encode_rev([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn))]) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rd64=true, rn64=false — encode_rev32([x0, w0]) returns Ok (serial reconfirm PBT_TEST_JOBS=1)
-- Bug report: pbt-out/bug_reports/encode_rev32_mixed_width.md
+- Counterexample: [Reg("x0"), Reg("w0")]
+- Bug report: pbt-out/bug_reports/encode_rev_mixed_width.md
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rn, rd64, rn64]
   domain: { rd: u32 0..=31, rn: u32 0..=31, rd64: bool, rn64: bool }
   relation:
-    op: throws
-    expr: encode_rev32([Reg(gpr(rd64, rd)), Reg(gpr(rn64, rn))]) when rd64 != rn64
-expected_error: String
+    op: holds
+    expr: (rd64 != rn64) => encode_rev([Reg(gpr(rd64,rd)), Reg(gpr(rn64,rn))]).is_err()
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rd64: { gen: bool }
   rn64: { gen: bool }
-evidence: llvm-mc rejects rev32 x0, w1; ARM ARM REV32 Xd,Xn only
+expected_error: String
+evidence: llvm-mc rejects `rev w0, x1` and `rev x0, w1`; ARM ARM REV requires matching W/W or X/X
 ```
 
-## encode_rev32_neg_fp
+## encode_rev_neg_fp
 - Tier: 4
-- Rationale: Sweep — FP/SIMD prefixes are not GPR operands for scalar REV32. llvm-mc rejects d/s/q/v/h/b.
+- Rationale: Negative/error contract. llvm-mc rejects FP/SIMD prefixes as REV operands. parse_reg_num accepts d/s/q/v/h/b, so the SUT currently encodes them as GPR numbers — expected to fail.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_fp
-- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_rev32(ops with slot which = prefix{n}) is Err
+- Formal: ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_rev(ops with slot `which` = Reg(prefix{n})) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: failing
-- Counterexample: which=0, prefix="d", n=0 — encode_rev32([d0, x1]) returns Ok(0xdac00820) (serial reconfirm PBT_TEST_JOBS=1)
-- Bug report: pbt-out/bug_reports/encode_rev32_fp.md
+- Counterexample: [Reg("d0"), Reg("x1")]
+- Bug report: pbt-out/bug_reports/encode_rev_fp.md
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, prefix, n]
   domain: { which: u32 0..=1, prefix: {d,s,q,v,h,b}, n: u32 0..=31 }
   relation:
-    op: throws
-    expr: encode_rev32(ops_with_fp(which, prefix, n))
-expected_error: String
+    op: holds
+    expr: encode_rev(ops_with_fp).is_err()
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
-  prefix: { gen: oneof, items: ["d", "s", "q", "v", "h", "b"] }
+  prefix: { gen: oneof, variants: ["d", "s", "q", "v", "h", "b"] }
   n: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc rejects rev32 d0, d1; ARM ARM REV32 takes GPRs
+expected_error: String
+evidence: llvm-mc rejects `rev d0, d1`; ARM ARM REV operands are W/X GPRs; README.md:11
 ```
 
-## encode_rev32_neg_nonreg
-- Tier: 4
-- Rationale: Sweep — wrong operand kind must Err. get_reg rejects non-Reg.
-- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_nonreg
-- Formal: ∀ which ∈ {0,1}, bad ∈ {Imm, Shift, Mem, Label, Symbol, Cond}. encode_rev32(ops with slot which = bad) is Err
+## encode_rev_diff_alt_spellings
+- Tier: 2
+- Rationale: Differential vs llvm-mc for GNU-style alternate spellings (x31/w31, XZR/WZR, LR, uppercase). README.md:11 GNU-style gas contract. Sweep: documented spelling surface not covered by the wzr/xzr-only valid-GPR generator.
+- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_diff_alt_spellings
+- Formal: ∀ is_64 ∈ Bool, rd,rn ∈ {0..31}, dest_spell,src_spell ∈ {0..4}. encode_rev([Reg(spell(is_64,rd,dest_spell)), Reg(spell(is_64,rn,src_spell))]) = llvm-mc("rev " + spell + ", " + spell)
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev32
+function: encode_rev
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [is_64, rd, rn, dest_spell, src_spell]
+  domain: { is_64: bool, rd: u32 0..=31, rn: u32 0..=31, dest_spell: u32 0..=4, src_spell: u32 0..=4 }
+  relation:
+    op: eq
+    lhs: encode_rev([Reg(spell(is_64, rd, dest_spell)), Reg(spell(is_64, rn, src_spell))])
+    rhs: llvm_mc_word("rev " + spell(is_64, rd, dest_spell) + ", " + spell(is_64, rn, src_spell))
+generators:
+  is_64: { gen: bool }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
+  src_spell: { gen: int, min: 0, max: 4, type: u32 }
+evidence: README.md:11 GNU-style gas contract; llvm-mc accepts x31/w31, XZR/WZR, LR, uppercase
+```
+
+## encode_rev_neg_nonreg
+- Tier: 4
+- Rationale: Negative/error contract. get_reg requires Operand::Reg; llvm-mc rejects non-register operand kinds. Sweep: Imm/Shift/Mem/Label/Symbol/Cond not in first-batch generators.
+- Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_nonreg
+- Formal: ∀ which ∈ {0,1}, bad ∈ {Imm, Shift, Mem, Label, Symbol, Cond}. encode_rev(ops with slot which = bad) = Err
+- Test file: src/backend/arm/assembler/encoder/bitfield.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_rev
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, bad]
-  domain: { which: u32 0..=1, bad: non-Reg Operand }
+  domain: { which: u32 0..=1, bad: non_reg Operand }
   relation:
-    op: throws
-    expr: encode_rev32(ops_with_kind(which, bad))
-expected_error: String
+    op: holds
+    expr: encode_rev(ops_with_nonreg).is_err()
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
-  bad: { gen: oneof, items: [Imm, Shift, Mem, Label, Symbol, Cond] }
-evidence: get_reg requires Operand::Reg; llvm-mc rejects non-register operands
+  bad: { gen: oneof, variants: [Imm, Shift, Mem, Label, Symbol, Cond] }
+expected_error: String
+evidence: get_reg expected register; llvm-mc rejects non-register REV operands
 ```
 
-## encode_rev32_neg_invalid_name
+## encode_rev_neg_invalid_name
 - Tier: 4
-- Rationale: Sweep — invalid register names must Err. Bound x32 (just past 31) sampled.
+- Rationale: Negative/error contract. parse_reg_num returns None for foo/x32/empty/r0. llvm-mc rejects invalid register names. Sweep: invalid-name domain not in first batch.
 - Seed: bitfield.rs encode_rev16_pbt::encode_rev16_neg_invalid_name
-- Formal: ∀ which ∈ {0,1}, name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_rev32(ops with slot which = name) is Err
+- Formal: ∀ which ∈ {0,1}, name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_rev(ops with slot which = Reg(name)) = Err
 - Test file: src/backend/arm/assembler/encoder/bitfield.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_rev32
+function: encode_rev
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, name]
-  domain: { which: u32 0..=1, name: invalid register names }
+  domain: { which: u32 0..=1, name: invalid register spelling }
   relation:
-    op: throws
-    expr: encode_rev32(ops_with_name(which, name))
-expected_error: String
+    op: holds
+    expr: encode_rev(ops_with_bad_name).is_err()
 generators:
   which: { gen: int, min: 0, max: 1, type: u32 }
-  name: { gen: oneof, items: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
-evidence: parse_reg_num returns None for these; llvm-mc rejects them
-```
-
-## encode_rev32_neg_neon_invalid_arr
-- Tier: 4
-- Rationale: Sweep — ARM ARM REV32 vector T is only {8B,16B,4H,8H}. llvm-mc rejects 2s/4s/2d/1d. neon_arr_to_q_size accepts those sizes.
-- Seed: (none)
-- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {2s,4s,2d,1d}. encode_rev32([RegArrangement(v{rd}.T), RegArrangement(v{rn}.T)]) is Err
-- Test file: src/backend/arm/assembler/encoder/bitfield.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, arr="2s" — encode_rev32 returns Ok instead of Err (serial reconfirm PBT_TEST_JOBS=1)
-- Bug report: pbt-out/bug_reports/encode_rev32_neon_invalid_arr.md
-
-```property
-function: encode_rev32
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, arr]
-  domain: { rd: u32 0..=31, rn: u32 0..=31, arr: {2s,4s,2d,1d} }
-  relation:
-    op: throws
-    expr: encode_rev32([RegArrangement(v{rd}, arr), RegArrangement(v{rn}, arr)])
+  name: { gen: oneof, variants: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
 expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  arr: { gen: oneof, items: ["2s", "4s", "2d", "1d"] }
-evidence: ARM ARM Advanced SIMD REV32 T in {8B,16B,4H,8H}; llvm-mc rejects rev32 v0.4s, v1.4s
+evidence: parse_reg_num None for those names; llvm-mc rejects invalid register names
 ```
