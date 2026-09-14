@@ -1,3 +1,31 @@
+# Confirmed invariants (encode_div)
+
+- Same-width GPR UDIV/SDIV (x0–x30/xzr and w0–w30/wzr, including register 31 as XZR/WZR) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_div(ops, true) XOR encode_div(ops, false) = 1<<10 (ARM ARM UDIV o1=0 vs SDIV o1=1) (1000 cases).
+- Success-path word: sf at 31 from Rd width, bit 30=0, S=0 at 29, bits [28:21]=0b11010110, Rm at [20:16], bits [15:11]=00001, o1 at 10, Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands always Err.
+- Non-register operands (Imm/Mem/Symbol/Shift/Cond) in any of the three slots always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1, x99) always Err.
+- Known-answer: `udiv x0, x1, x2` encodes as 0x9ac20820; `sdiv w0, w1, w2` as 0x1ac20c20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- UDIV/SDIV register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `udiv sp, ...`).
+- UDIV/SDIV take Wt/Xt only (llvm-mc rejects `udiv d0, ...`).
+- llvm-mc rejects mixed x/w and a fourth operand.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `sdiv wsp, ...` encodes as `sdiv wzr, ...` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- sf is taken only from operand 0; Rn/Rm widths are never checked, so mixed x/w encodes (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg None / parse_reg_num None / FP prefixes).
+
+---
+
 # Confirmed invariants (encode_csneg)
 
 - Same-width GPR CSNEG (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond16 including al/nv and hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
