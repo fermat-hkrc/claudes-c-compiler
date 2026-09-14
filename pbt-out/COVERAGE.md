@@ -100,3 +100,4 @@
 | encode_fabs | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
 | encode_fmadd_fmsub | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 7 passing KAT + 5 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
 | encode_fneg | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
+| encode_fsqrt | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing) |

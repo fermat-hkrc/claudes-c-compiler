@@ -1,10 +1,10 @@
-# PBT Campaign Report: encode_fneg
+# PBT Campaign Report: encode_fsqrt
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fneg
+**Modules tested:** encode_fsqrt
 **Tests:** 9 properties (plus 6 KAT + 3 regression witnesses)
 **Result:** 6 passing, 3 bugs
 **Tier:** standard
@@ -13,15 +13,15 @@
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fneg | 9 properties (6 passing, 3 failing) + 6 KAT + 3 regressions | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fsqrt | 9 properties (6 passing, 3 failing) + 6 KAT + 3 regressions | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_fneg_neg_extra_operand** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, is_d=false, extra=Reg("s0")` → `fneg s0, s0, s0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_fneg_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
+1. **encode_fsqrt_neg_extra_operand** (Negative/Error Contract). Shrunk counterexample: `rd=0, rn=0, is_d=false, extra=Reg("s0")` → `fsqrt s0, s0, s0`. Expected Err; actual Ok(Word). Report: pbt-out/bug_reports/encode_fsqrt_extra_operand.md. Serial: PBT_TEST_JOBS=1 failed.
 
-2. **encode_fneg_neg_wrong_types** (Negative/Error Contract). Shrunk counterexample: `dest="s0", src="d0"` → `fneg s0, d0`. Expected Err; actual Ok(Word) using dest ftype only. Report: pbt-out/bug_reports/encode_fneg_wrong_types.md. Serial: PBT_TEST_JOBS=1 failed.
+2. **encode_fsqrt_neg_wrong_types** (Negative/Error Contract). Shrunk counterexample: `dest="s0", src="d0"` → `fsqrt s0, d0`. Expected Err; actual Ok(Word) using dest ftype only. Report: pbt-out/bug_reports/encode_fsqrt_wrong_types.md. Serial: PBT_TEST_JOBS=1 failed.
 
-3. **encode_fneg_diff_half** (Differential vs llvm-mc +fullfp16). Shrunk counterexample: `rd=0, rn=0` → `fneg h0, h0`. Expected Word(0x1ee14000) ftype=11; actual Word(0x1e214000) ftype=00. Report: pbt-out/bug_reports/encode_fneg_half_ftype.md. Serial: PBT_TEST_JOBS=1 failed.
+3. **encode_fsqrt_diff_half** (Differential vs llvm-mc +fullfp16). Shrunk counterexample: `rd=0, rn=0` → `fsqrt h0, h0`. Expected Word(0x1ee1c000) ftype=11; actual Word(0x1e21c000) ftype=00. Report: pbt-out/bug_reports/encode_fsqrt_half_ftype.md. Serial: PBT_TEST_JOBS=1 failed.
 
 ## Design Caveats
 
@@ -31,7 +31,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fneg_pbt) | 9 properties + 6 KAT + 3 regressions |
+| src/backend/arm/assembler/encoder/fp_scalar.rs (mod encode_fsqrt_pbt) | 9 properties + 6 KAT + 3 regressions |
 
 ## Output Directories
 
@@ -39,11 +39,11 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/FUNCTION_INDEX.md (merged; encode_fneg now a candidate)
-- pbt-out/INVARIANTS.md (encode_fneg section)
-- pbt-out/bug_reports/encode_fneg_extra_operand.md
-- pbt-out/bug_reports/encode_fneg_wrong_types.md
-- pbt-out/bug_reports/encode_fneg_half_ftype.md
+- pbt-out/FUNCTION_INDEX.md (merged; encode_fsqrt now a candidate)
+- pbt-out/INVARIANTS.md (encode_fsqrt section)
+- pbt-out/bug_reports/encode_fsqrt_extra_operand.md
+- pbt-out/bug_reports/encode_fsqrt_wrong_types.md
+- pbt-out/bug_reports/encode_fsqrt_half_ftype.md
 
 Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (passing). Closed: tier round spent and documented surface covered.
 
@@ -51,8 +51,8 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 23:13 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 98/289 total | PBT candidates: 98 | Tested: 98 (100%) | 0 pass, 98 fail
+> Last updated: 2026-09-14 23:23 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 99/289 total | PBT candidates: 99 | Tested: 99 (100%) | 0 pass, 99 fail
 
 ## Summary
 
@@ -61,10 +61,10 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 98 |
-| **Tested (of PBT candidates)** | **98 / 98 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 98 / 0 |
-| **Overall (tested / all functions)** | **98 / 289 (34%)** |
+| PBT candidates (from FUNCTION_INDEX) | 99 |
+| **Tested (of PBT candidates)** | **99 / 99 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 99 / 0 |
+| **Overall (tested / all functions)** | **99 / 289 (34%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -72,13 +72,13 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 98 | 98 | 0 | 100% |
+|  | 99 | 99 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 98 | 98 | 0 | 100% |
+| unknown | 99 | 99 | 0 | 100% |
 
 ## File Coverage
 
@@ -88,7 +88,7 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 13 | 9 | 10 | 111% | covered |
+| fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 10 | 10 | 100% | covered |
 | neon.rs | 68 | 15 | 15 | 100% | covered |
@@ -199,3 +199,4 @@ Sweep: coverage_gaps had no LLVM profraw; manual arm audit added invalid-name (p
 | encode_fabs | fp_scalar.rs |
 | encode_fmadd_fmsub | fp_scalar.rs |
 | encode_fneg | fp_scalar.rs |
+| encode_fsqrt | fp_scalar.rs |
