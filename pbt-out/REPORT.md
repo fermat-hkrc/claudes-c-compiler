@@ -1,28 +1,27 @@
-# PBT Campaign Report: encode_negs
+# PBT Campaign Report: encode_neon_shift_imm
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_negs (src/backend/arm/assembler/encoder/data_processing.rs)
-**Tests:** 10 properties (7 passing, 3 failing groups covering 7 failing tests) plus 3 passing KAT and 7 failing regression witnesses
-**Result:** 7 passing properties, 6 bugs
+**Modules tested:** encode_neon_shift_imm (src/backend/arm/assembler/encoder/neon.rs)
+**Tests:** 9 properties (4 passing, 5 failing) plus 1 passing KAT and 5 failing regression witnesses
+**Result:** 4 passing properties, 5 bugs
 **Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-gaps round; first batch did not all pass so no extra strengthening round beyond the sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_negs | 10 properties + 3 KAT + 7 regression | 6 | differential (llvm-mc), algebraic.metamorphic (sf XOR, SUBS alias), algebraic.invariant (ARM fields), negative_error |
+| encode_neon_shift_imm | 9 properties + 1 KAT + 5 regression | 5 | differential (llvm-mc), algebraic.metamorphic (Q XOR), algebraic.invariant (ARM fields), negative_error |
 
 ## Bugs Found
 
-1. **encode_negs_neg_extra_operand** (also encode_negs_neg_trailing_after_shift). Law: NEGS is Rd, Rm{, shift} only. Shrunk counterexample: rd=0, rm=0, is_64=false, extra=Reg("x0") — `encode_negs([Reg("w0"), Reg("w0"), Reg("x0")])` returns Ok(Word) not Err. Second shrunk witness: extra after Shift{lsl,1}. Serial reconfirm: PBT_TEST_JOBS=1, `--test-threads=1` reproduced. Path: `pbt-out/bug_reports/encode_negs_extra_operand.md`
-2. **encode_negs_neg_mixed_width.** Law: Rd and Rm same width. Shrunk counterexample: rd=0, rm=0, rd64=false, rm64=true — `encode_negs([Reg("w0"), Reg("x0")])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_mixed_width.md`
-3. **encode_negs_neg_sp.** Law: register 31 is XZR/WZR, never SP/WSP. Shrunk counterexample: which=0, is_64=false, other=0 — `encode_negs([Reg("wsp"), Reg("w0")])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_sp.md`
-4. **encode_negs_neg_fp.** Law: NEGS operands are integer GPRs. Shrunk counterexample: which=0, prefix="d", n=0 — `encode_negs([Reg("d0"), Reg("x1")])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_fp_reg.md`
-5. **encode_negs_neg_shift_range.** Law: imm6 0..31 (sf=0) / 0..63 (sf=1). Shrunk counterexample: rd=0, rm=0, is_64=false, kind="lsl", amt_w=32 — `encode_negs([Reg("w0"), Reg("w0"), Shift{lsl,32}])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_shift_range.md`
-6. **encode_negs_neg_bad_shift_kind.** Law: shift ∈ {LSL,LSR,ASR}. Shrunk counterexample: rd=0, rm=0, is_64=false, kind="ror", amt=0 — `encode_negs([Reg("w0"), Reg("w0"), Shift{ror,0}])` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_negs_bad_shift_kind.md`
+1. **encode_neon_shift_imm_neg_shift_oob.** Law: USHR shift ∈ [1, esize]. Shrunk counterexample: rd=0, rn=0, t=8b, shift=-1 — debug panic `attempt to subtract with overflow` at neon.rs:390. Related: shift=0 and shift=9 return Ok(Word) via wrap/mask (immh often 0000). Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_neon_shift_imm_shift_oob.md`
+2. **encode_neon_shift_imm_neg_extra_operand.** Law: USHR is Vd.T, Vn.T, #shift only. Shrunk counterexample: rd=0, rn=0, extra=0, t=8b, shift=1 — `ushr v0.8b, v0.8b, #1, v0.8b` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_neon_shift_imm_extra_operand.md`
+3. **encode_neon_shift_imm_neg_mismatched_t.** Law: dest T equals source T. Shrunk counterexample: rd=0, rn=0, td=8b, ts=16b, shift=1 — `ushr v0.8b, v0.16b, #1` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_neon_shift_imm_mismatched_t.md`
+4. **encode_neon_shift_imm_neg_shift_i64_trunc.** Law: i64 Imm outside [1, esize] must Err; must not fold modulo 2^32. Shrunk counterexample: Imm(4294967297) encodes as #1. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_neon_shift_imm_shift_i64_trunc.md`
+5. **encode_neon_shift_imm_neg_reg_source.** Law: source is Vn.T, not a bare GPR/FP/V. Shrunk counterexample: `ushr v0.8b, x0, #1` returns Ok(Word) not Err. Serial reconfirm: PBT_TEST_JOBS=1 reproduced. Path: `pbt-out/bug_reports/encode_neon_shift_imm_reg_source.md`
 
 ## Design Caveats
 
@@ -32,7 +31,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_negs_pbt) | 3 KAT + 15 proptest properties + 7 regression witnesses |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_shift_imm_pbt) | 1 KAT + 9 proptest properties + 5 regression witnesses |
 
 ## Output Directories
 
@@ -40,26 +39,24 @@
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_negs_extra_operand.md
-- pbt-out/bug_reports/encode_negs_mixed_width.md
-- pbt-out/bug_reports/encode_negs_sp.md
-- pbt-out/bug_reports/encode_negs_fp_reg.md
-- pbt-out/bug_reports/encode_negs_shift_range.md
-- pbt-out/bug_reports/encode_negs_bad_shift_kind.md
+- pbt-out/bug_reports/encode_neon_shift_imm_shift_oob.md
+- pbt-out/bug_reports/encode_neon_shift_imm_extra_operand.md
+- pbt-out/bug_reports/encode_neon_shift_imm_mismatched_t.md
+- pbt-out/bug_reports/encode_neon_shift_imm_shift_i64_trunc.md
+- pbt-out/bug_reports/encode_neon_shift_imm_reg_source.md
 
 ## Contract-surface sweep
 
-Round 1 of 1 (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_negs: get_reg(0)/get_reg(1) error paths (invalid name, non-Reg) were untested; added encode_negs_neg_invalid_name and encode_negs_neg_non_reg (both passing, 1000 cases). Remaining branches (Shift present vs absent, lsl/lsr/asr/default, sf) were already reached. Closed because the tier's one round is done.
+Round 1 of 1 (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_neon_shift_imm: `shift as u32` (i64 truncation) and get_neon_reg Operand::Reg source were untested; added encode_neon_shift_imm_neg_shift_i64_trunc and encode_neon_shift_imm_neg_reg_source (both failing; bugs 4 and 5). Remaining branches (arity, 1d, GPR dest, invalid names, Q/U/immh fields, valid T×shift) were already reached. Closed because the tier's one round is done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 10:29 (campaign: coverage)
-> Files: 7/7 scanned (100%) | Functions: 47/229 total | PBT candidates: 47 | Tested: 47 (100%) | 0 pass, 47 fail
+> Last updated: 2026-09-14 10:47 (campaign: coverage)
+> Files: 7/7 scanned (100%) | Functions: 48/229 total | PBT candidates: 48 | Tested: 48 (100%) | 0 pass, 48 fail
 
 ## Summary
 
@@ -68,10 +65,10 @@ Round 1 of 1 (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit o
 | Total source files | 7 |
 | Files scanned | 7 / 7 (100%) |
 | Total functions (all files) | 229 |
-| PBT candidates (from FUNCTION_INDEX) | 47 |
-| **Tested (of PBT candidates)** | **47 / 47 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 47 / 0 |
-| **Overall (tested / all functions)** | **47 / 229 (21%)** |
+| PBT candidates (from FUNCTION_INDEX) | 48 |
+| **Tested (of PBT candidates)** | **48 / 48 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 48 / 0 |
+| **Overall (tested / all functions)** | **48 / 229 (21%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -79,13 +76,13 @@ Round 1 of 1 (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit o
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 47 | 47 | 0 | 100% |
+|  | 48 | 48 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 47 | 47 | 0 | 100% |
+| unknown | 48 | 48 | 0 | 100% |
 
 ## File Coverage
 
@@ -96,7 +93,7 @@ Round 1 of 1 (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit o
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 15 | 15 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
-| neon.rs | 68 | 7 | 7 | 100% | covered |
+| neon.rs | 68 | 8 | 8 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -153,3 +150,4 @@ Round 1 of 1 (standard). `coverage_gaps` had no LLVM profraw. Manual arm audit o
 | encode_neon_shift_right | neon.rs |
 | encode_neg | pseudo.rs |
 | encode_negs | data_processing.rs |
+| encode_neon_shift_imm | neon.rs |

@@ -1,3 +1,31 @@
+# Confirmed invariants (encode_neon_shift_imm)
+
+- Valid vector USHR with T in {8b,16b,4h,8h,2s,4s,2d}, Vd/Vn in v0–v31, shift in [1, esize] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Same-esize Q=0 vs Q=1 arrangements XOR = 1<<30 (1000 cases).
+- Success-path word: bit 31=0, Q at 30, U=1 at 29, bits [28:23]=011110, immh:immb at [22:16]=2*esize-shift, opcode at [15:10]=000001, Rn at [9:5], Rd at [4:0].
+- T=1d (Reserved Q=0 && esize==64), fewer than 3 operands, GPR/FP dest, and invalid dest names always Err.
+- Known-answer: `ushr v0.8b, v1.8b, #1` encodes as 0x2f0f0420; `ushr v0.16b, v1.16b, #8` as 0x6f080420; `ushr v0.4h, v1.4h, #1` as 0x2f1f0420; `ushr v0.8h, v1.8h, #16` as 0x6f100420; `ushr v0.2s, v1.2s, #1` as 0x2f3f0420; `ushr v0.4s, v1.4s, #32` as 0x6f200420; `ushr v0.2d, v1.2d, #1` as 0x6f7f0420; `#64` as 0x6f400420.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD shift by immediate USHR: `0 Q 1 011110 immh immb 00000 1 Rn Rd`. T in {8B,16B,4H,8H,2S,4S,2D}. Q=0 && esize==64 is Reserved. shift = (2*esize)-UInt(immh:immb) in [1, esize].
+- Dispatch: encoder/mod.rs:658-659 uses encode_neon_ushr / encode_neon_sshr. This symbol is a dead `pub(crate)` helper (`#![allow(dead_code)]`). Documented job remains USHR (neon.rs:372).
+- Callers: none. Assembler README NEON shifts table lists ushr/sshr.
+
+## Quirks
+
+- `_is_unsigned` is unused (Rust `_` prefix); U is hardcoded to 1. Docstring says USHR.
+- Source arrangement is discarded (see bugs).
+- Extra operands beyond index 2 are ignored (see bugs).
+- Negative Imm panics in debug; shift 0 / esize+1 wrap/mask (see bugs).
+- Shift is `get_imm` then `as u32`, so Imm(1+2^32) encodes as #1 (see bugs).
+- get_neon_reg accepts Operand::Reg, so a bare GPR/FP/V source encodes as Rn (see bugs). Dest as Operand::Reg still Errs via empty arrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / T / get_imm as u32 / get_neon_reg Reg dest+source / extra / mismatched T).
+
+---
+
 # Confirmed invariants (encode_negs)
 
 - Valid two-GPR same-width NEGS with Rd/Rm in x0–x30/xzr or w0–w30/wzr and optional LSL/LSR/ASR in range matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

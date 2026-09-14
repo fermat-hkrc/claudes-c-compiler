@@ -1,293 +1,263 @@
-# Properties: encode_negs
+# Properties: encode_neon_shift_imm
 
-## encode_negs_diff_llvm_mc
+## encode_neon_shift_imm_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree NEGS/SUBS decoder. encode_neg rejected (same-job gate: SUB / S=0). encode_add_sub shares get_reg/sf_bit so is not an independent differential. SUT-boundary: internal-helper of the GNU-style AArch64 assembler; mapping operands <-> `negs Rd, Rm{, shift}`.
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler of the same GNU-style USHR text). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree USHR decoder. encode_neon_ushr rejected (independence gate: near-copy of this body). encode_neon_sshr rejected (same-job gate: SSHR / U=0). SUT-boundary: internal-helper of the GNU-style AArch64 assembler; mapping operands <-> `ushr Vd.T, Vn.T, #shift`.
 - Seed: (none)
-- Formal: ∀ rd, rm ∈ {0..31}, w ∈ {W,X}, sh ∈ {LSL,LSR,ASR} ∪ {ε}, amt ∈ [0, max_imm6(w)]. encode_negs([Reg(rd_w), Reg(rm_w), Shift?]) = Word(v) ∧ llvm-mc(-triple=aarch64, "negs Rd, Rm{, sh #amt}") = v
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_shift_imm([Vd.T, Vn.T, Imm(shift)], true) = Word(v) ∧ llvm-mc(-triple=aarch64, "ushr Vd.T, Vn.T, #shift") = v
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_negs
+function: encode_neon_shift_imm
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rm, is_64, kind, use_shift, amt]
-  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: lsl_lsr_asr, amt: 0..63 }
+  vars: [rd, rn, t, shift]
+  domain: { rd: 0..31, rn: 0..31, t: neon_t, shift: 1..esize(t) }
   relation:
     op: eq
-    lhs: encode_negs(ops)
-    rhs: llvm_mc_word("negs Rd, Rm{, kind #amt}")
+    lhs: encode_neon_shift_imm(ops, true)
+    rhs: llvm_mc_word("ushr Vd.T, Vn.T, #shift")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
-  use_shift: { gen: bool }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: src/backend/arm/assembler/README.md:14 same textual assembly as gas; encoder/mod.rs:279 "negs" => encode_negs; ARM ARM NEGS alias of SUBS shifted-register
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: src/backend/arm/assembler/README.md:14 same textual assembly as gas; README.md:228 ushr under NEON shifts; neon.rs:372 Encode NEON USHR; ARM ARM Advanced SIMD shift by immediate USHR
 ```
 
-## encode_negs_diff_subs_alias
-- Tier: 2
-- Rationale: Documented alias NEGS Rd, Rm = SUBS Rd, ZR, Rm (data_processing.rs:728 purpose comment; llvm-mc canonicalizes subs Rd, ZR, Rm to negs). Independent differential vs llvm-mc SUBS, not in-tree encode_add_sub. Same stronger-oracle rejections as encode_negs_diff_llvm_mc. This is the required metamorphic/differential alias identity.
-- Seed: (none)
-- Formal: ∀ rd, rm ∈ {0..31}, w ∈ {W,X}, sh ∈ {LSL,LSR,ASR} ∪ {ε}, amt ∈ [0, max_imm6(w)]. encode_negs([Reg(rd_w), Reg(rm_w), Shift?]) = llvm-mc("negs …") = llvm-mc("subs Rd, ZR, Rm{, sh #amt}")
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_negs
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rm, is_64, kind, use_shift, amt]
-  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: lsl_lsr_asr, amt: in_range }
-  relation:
-    op: eq
-    lhs: encode_negs(ops)
-    rhs: llvm_mc_word("subs Rd, ZR, Rm{, kind #amt}")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
-  use_shift: { gen: bool }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: data_processing.rs:728 NEGS -> SUBS Rd, XZR, Rm; llvm-mc canonicalizes the pair; ARM ARM C6 NEGS alias
-```
-
-## encode_negs_metamorphic_sf_xor
+## encode_neon_shift_imm_metamorphic_q
 - Tier: 4c
-- Rationale: ARM ARM sf is bit 31 of Add/subtract (shifted register). Same register numbers and in-range shift on X vs W must differ only in sf. Stronger differential already used on the valid domain; this is an independent field metamorphic.
+- Rationale: ARM ARM Q is bit 30 of Advanced SIMD shift by immediate; same-esize Q=0 vs Q=1 arrangements (8b/16b, 4h/8h, 2s/4s) must differ only in Q. Stronger differential already used on the valid domain; this is an independent field metamorphic (required metamorphic/differential companion).
 - Seed: (none)
-- Formal: ∀ rd, rm ∈ {0..31}, sh ∈ {LSL,LSR,ASR}, amt ∈ [0,31]. encode_negs(X-ops) XOR encode_negs(W-ops) = 1<<31
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd, rn ∈ {0..31}, (Tlo, Thi) ∈ {(8b,16b),(4h,8h),(2s,4s)}, shift ∈ [1, esize(Tlo)]. encode(Tlo) XOR encode(Thi) = 1<<30
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_negs
+function: encode_neon_shift_imm
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rm, kind, amt]
-  domain: { rd: 0..31, rm: 0..31, kind: lsl_lsr_asr, amt: 0..31 }
+  vars: [rd, rn, t_lo, t_hi, shift]
+  domain: { pair: q_pairs, shift: 1..esize(t_lo) }
   relation:
     op: eq
-    lhs: encode_negs(x_ops) XOR encode_negs(w_ops)
-    rhs: 1 << 31
+    lhs: encode_neon_shift_imm(ops_lo, true) XOR encode_neon_shift_imm(ops_hi, true)
+    rhs: 1 << 30
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
-  amt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Add/subtract (shifted register) sf at bit 31; DESIGN_DOC.md:338 fixed 32-bit encoding
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t_lo: { gen: oneof, items: ["8b", "4h", "2s"] }
+  shift: { gen: int, min: 1, max: 32, type: i64 }
+evidence: ARM ARM Advanced SIMD shift by immediate Q at bit 30; neon.rs:381 neon_arr_to_q_size; neon.rs:400 q << 30
 ```
 
-## encode_negs_invariant_arm_fields
+## encode_neon_shift_imm_invariant_arm_fields
 - Tier: 4d
-- Rationale: ARM ARM field layout of NEGS (shifted register): sf op=1 S=1 01011 shift 0 Rm imm6 Rn=31 Rd. Weaker than differential (does not check agreement with an independent assembler) but pins each field.
+- Rationale: ARM ARM field layout of USHR is an exact structural predicate on every success-path word. Stronger differential already covers value equality vs llvm-mc; this pins each field independently.
 - Seed: (none)
-- Formal: ∀ valid NEGS ops. let w = encode_negs(ops). (w>>31)&1=sf ∧ (w>>30)&1=1 ∧ (w>>29)&1=1 ∧ (w>>24)&0x1f=0b01011 ∧ (w>>22)&3=st ∧ (w>>21)&1=0 ∧ (w>>16)&0x1f=rm ∧ (w>>10)&0x3f=amt ∧ (w>>5)&0x1f=31 ∧ w&0x1f=rd
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. word bit31=0 ∧ Q=q(T) ∧ U=1 ∧ bits[28:23]=011110 ∧ immh:immb=2*esize-shift ∧ bits[15:10]=000001 ∧ Rn=rn ∧ Rd=rd
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_negs
+function: encode_neon_shift_imm
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rm, is_64, kind, amt]
-  domain: { rd: 0..31, rm: 0..31, is_64: bool, kind: lsl_lsr_asr, amt: in_range }
+  vars: [rd, rn, t, shift]
+  domain: { t: neon_t, shift: 1..esize(t) }
   relation:
     op: holds
-    expr: fields(encode_negs(ops)) match ARM ARM NEGS layout with Rn=31
+    expr: arm_ushr_fields(word)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: ARM ARM Add/subtract (shifted register) NEGS; data_processing.rs:728 Rn=XZR
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: ARM ARM Advanced SIMD shift by immediate USHR 0 Q 1 011110 immh immb 00000 1 Rn Rd; neon.rs:383-400
 ```
 
-## encode_negs_neg_too_few
+## encode_neon_shift_imm_neg_shift_oob
 - Tier: 4e
-- Rationale: llvm-mc rejects `negs x0` ("too few operands"); ARM ARM NEGS requires Rd and Rm. get_reg(1) is the SUT error path. Negative/error contract from the public assembler (gas/llvm-mc) contract in README.md:14.
+- Rationale: ARM ARM and llvm-mc require shift in [1, esize]; llvm-mc rejects 0 / esize+1 / negative. Documented error contract is Err (GNU assembler rejects). Bounds 0, 1, esize, esize+1 are pinned by the generator.
 - Seed: (none)
-- Formal: ∀ ops with |ops| < 2. encode_negs(ops) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∉ [1, esize(T)]. llvm-mc("ushr … #shift") errors ∧ encode_neon_shift_imm([Vd.T, Vn.T, Imm(shift)], true) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, t="8b", shift=-1 (debug panic: attempt to subtract with overflow at neon.rs:390). Related: shift=0 and shift=9 encode Ok(Word) via wrap/mask.
+- Bug report: pbt-out/bug_reports/encode_neon_shift_imm_shift_oob.md
+
+```property
+function: encode_neon_shift_imm
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, t, shift]
+  domain: { t: neon_t, shift: not_in_1_esize }
+  relation:
+    op: throws
+    expr: encode_neon_shift_imm(ops, true)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  shift: { gen: int, min: -16, max: 256, type: i64 }
+evidence: ARM ARM shift in [1, esize]; llvm-mc "immediate must be an integer in range [1, esize]"; README.md:14 gas-compatible
+```
+
+## encode_neon_shift_imm_neg_extra_operand
+- Tier: 4e
+- Rationale: USHR is a three-operand instruction. llvm-mc rejects a fourth operand. Documented GNU-style assembler contract requires Err, not silent ignore (`len < 3` only).
+- Seed: (none)
+- Formal: ∀ rd, rn, extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. llvm-mc four-operand ushr errors ∧ encode_neon_shift_imm([Vd.T, Vn.T, Imm(shift), Vextra.T], true) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, extra=0, t="8b", shift=1 (`ushr v0.8b, v0.8b, #1, v0.8b`)
+- Bug report: pbt-out/bug_reports/encode_neon_shift_imm_extra_operand.md
+
+```property
+function: encode_neon_shift_imm
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, extra, t, shift]
+  domain: { t: neon_t, shift: 1..esize(t) }
+  relation:
+    op: throws
+    expr: encode_neon_shift_imm([Vd.T, Vn.T, Imm(shift), Vextra.T], true)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: llvm-mc rejects extra operand; README.md:14 gas-compatible; ARM ARM USHR three operands
+```
+
+## encode_neon_shift_imm_neg_mismatched_t
+- Tier: 4e
+- Rationale: ARM ARM USHR requires Vd and Vn the same arrangement T. llvm-mc rejects mismatched T. Source arrangement must not be discarded.
+- Seed: (none)
+- Formal: ∀ rd, rn ∈ {0..31}, Td ≠ Ts ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(Td)]. llvm-mc("ushr Vd.Td, Vn.Ts, #shift") errors ∧ encode_neon_shift_imm([Vd.Td, Vn.Ts, Imm(shift)], true) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, td="8b", ts="16b", shift=1 (`ushr v0.8b, v0.16b, #1`)
+- Bug report: pbt-out/bug_reports/encode_neon_shift_imm_mismatched_t.md
+
+```property
+function: encode_neon_shift_imm
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, td, ts, shift]
+  domain: { td != ts, shift: 1..esize(td) }
+  relation:
+    op: throws
+    expr: encode_neon_shift_imm([Vd.Td, Vn.Ts, Imm(shift)], true)
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  td: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  ts: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: ARM ARM USHR Vd.T, Vn.T same T; llvm-mc "invalid operand" on mismatched T; README.md:14
+```
+
+## encode_neon_shift_imm_neg_arity_kinds
+- Tier: 4e
+- Rationale: Documented three-operand Vd.T, Vn.T, #imm form. llvm-mc rejects fewer than 3 operands, T=1d (Reserved Q=0 && esize==64), GPR/FP dest, invalid register names, and non-RegArrangement kinds at dest. Exact failure is Err.
+- Seed: (none)
+- Formal: ∀ ops with len<3 ∨ T=1d ∨ dest not Vd.T ∨ dest name invalid. encode_neon_shift_imm(ops, true) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_negs
+function: encode_neon_shift_imm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, is_64, r0]
-  domain: { n: 0..1, is_64: bool, r0: 0..31 }
+  vars: [n, rd, rn, dest_kind]
+  domain: { n: 0..2, T: 1d or dest not Vd.T }
   relation:
     op: throws
-    expr: encode_negs(ops[..n])
+    expr: encode_neon_shift_imm(ops, true)
 expected_error: String
 generators:
-  n: { gen: int, min: 0, max: 1, type: usize }
-  is_64: { gen: bool }
-  r0: { gen: int, min: 0, max: 31, type: u32 }
-evidence: llvm-mc "too few operands for instruction"; ARM ARM NEGS two-register form; README.md:14 gas-compatible
+  n: { gen: int, min: 0, max: 2, type: usize }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+evidence: llvm-mc too few operands / invalid operand / 1d reserved; ARM ARM Q=0 && esize==64 Reserved; neon.rs:374 ushr requires 3 operands
 ```
 
-## encode_negs_neg_extra_operand
+## encode_neon_shift_imm_neg_shift_i64_trunc
 - Tier: 4e
-- Rationale: llvm-mc rejects a third operand that is not lsl/lsr/asr (including extra GPR, extend, trailing after shift). GNU-style NEGS is Rd, Rm{, shift} only.
+- Rationale: Coverage sweep. get_imm returns i64; the body uses `shift as u32` (neon.rs:389-394). llvm-mc / ARM ARM require the full i64 immediate in [1, esize], not the truncated low 32 bits. Documented error contract is Err.
 - Seed: (none)
-- Formal: ∀ rd, rm ∈ GPR, extra ∉ Shift(lsl|lsr|asr, in-range). encode_negs([Rd, Rm, extra, …]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, s ∈ [1, esize(T)], k ≠ 0. encode_neon_shift_imm([Vd.T, Vn.T, Imm(s + k·2^32)], true) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: failing
-- Counterexample: rd=0, rm=0, is_64=false, extra=Reg("x0")
-- Bug report: pbt-out/bug_reports/encode_negs_extra_operand.md
+- Counterexample: rd=0, rn=0, t="8b", shift=1, k=1 (Imm(4294967297) encodes as #1)
+- Bug report: pbt-out/bug_reports/encode_neon_shift_imm_shift_i64_trunc.md
 
 ```property
-function: encode_negs
+function: encode_neon_shift_imm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rm, is_64, extra]
-  domain: { rd: 0..30, rm: 0..30, extra: non_shift_or_trailing }
+  vars: [rd, rn, t, shift, k]
+  domain: { t: neon_t, shift: 1..esize(t), k: nonzero }
   relation:
     op: throws
-    expr: encode_negs([Rd, Rm, extra])
+    expr: encode_neon_shift_imm([Vd.T, Vn.T, Imm(shift + k * 2^32)], true)
 expected_error: String
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  extra: { gen: oneof, items: ["Reg", "Imm", "Mem", "Symbol", "Cond", "Label"] }
-evidence: llvm-mc "expected 'lsl', 'lsr' or 'asr'"; ARM ARM NEGS optional shift only; README.md:14
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+  k: { gen: int, min: -4, max: 4, type: i64 }
+evidence: ARM ARM shift in [1, esize]; llvm-mc range check on the textual immediate; README.md:14 gas-compatible
 ```
 
-## encode_negs_neg_mixed_width
+## encode_neon_shift_imm_neg_reg_source
 - Tier: 4e
-- Rationale: llvm-mc rejects `negs x0, w1` and `negs w0, x1`. ARM ARM requires Rd and Rm the same width.
+- Rationale: Coverage sweep. llvm-mc rejects a bare GPR/FP/V source (`ushr v0.8b, x0, #1`). USHR source must be Vn.T. get_neon_reg accepts Operand::Reg and discards the empty arrangement.
 - Seed: (none)
-- Formal: ∀ rd, rm ∈ {0..30}, rd64 ≠ rm64. encode_negs([Reg(rd_w), Reg(rm_w')]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ rd, n ∈ {0..31}, prefix ∈ {x,w,d,s,q,h,b,v}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_shift_imm([Vd.T, Reg(prefix n), Imm(shift)], true) = Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: failing
-- Counterexample: rd=0, rm=0, rd64=false, rm64=true
-- Bug report: pbt-out/bug_reports/encode_negs_mixed_width.md
+- Counterexample: rd=0, prefix="x", n=0, t="8b", shift=1 (`ushr v0.8b, x0, #1`)
+- Bug report: pbt-out/bug_reports/encode_neon_shift_imm_reg_source.md
 
 ```property
-function: encode_negs
+function: encode_neon_shift_imm
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rm, rd64, rm64]
-  domain: { rd: 0..30, rm: 0..30, rd64: bool, rm64: bool }
+  vars: [rd, prefix, n, t, shift]
+  domain: { prefix: xwdsqhbv, n: 0..31, t: neon_t, shift: 1..esize(t) }
   relation:
     op: throws
-    expr: encode_negs([Reg(rd), Reg(rm)])
+    expr: encode_neon_shift_imm([Vd.T, Reg(prefix n), Imm(shift)], true)
 expected_error: String
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rm64: { gen: bool }
-evidence: llvm-mc "invalid operand for instruction" on mixed X/W; ARM ARM Rd/Rm same width
-```
-
-## encode_negs_neg_sp_fp_shift
-- Tier: 4e
-- Rationale: Combined documented invalid domain: (1) register 31 is XZR/WZR never SP/WSP; (2) FP/SIMD prefixes are not NEGS operands; (3) imm6 range 0..31 (sf=0) / 0..63 (sf=1), and ROR/unknown shift kinds are not in {LSL,LSR,ASR}. Bounds sampled at 32, 31, 63, 64.
-- Seed: (none)
-- Formal: ∀ ops in {SP in either slot} ∪ {FP prefix in either slot} ∪ {shift amt out of range} ∪ {shift kind ∉ {lsl,lsr,asr}}. encode_negs(ops) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: SP=[Reg("wsp"), Reg("w0")]; FP=[Reg("d0"), Reg("x1")]; range=[Reg("w0"), Reg("w0"), Shift{lsl,32}]; kind=[Reg("w0"), Reg("w0"), Shift{ror,0}]
-- Bug report: pbt-out/bug_reports/encode_negs_sp.md; pbt-out/bug_reports/encode_negs_fp_reg.md; pbt-out/bug_reports/encode_negs_shift_range.md; pbt-out/bug_reports/encode_negs_bad_shift_kind.md
-
-```property
-function: encode_negs
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, prefix, amt_w, amt_x, kind]
-  domain: { which: 0..1, prefix: fp_prefix, amt_w: out_of_range_w, amt_x: out_of_range_x, kind: invalid_shift }
-  relation:
-    op: throws
-    expr: encode_negs(ops)
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
-  prefix: { gen: oneof, items: ["d", "s", "q", "v", "h", "b"] }
-  amt_w: { gen: oneof, items: [32, 33, 63, 64] }
-  amt_x: { gen: oneof, items: [64, 65, 128] }
-  kind: { gen: oneof, items: ["ror", "foo", "lslv", "rrx", "empty", "uxtw"] }
-evidence: llvm-mc rejects SP/FP/ROR/out-of-range; ARM ARM register 31 is ZR, shift in LSL/LSR/ASR, imm6 range by sf
-```
-
-## encode_negs_diff_lr
-- Tier: 2
-- Rationale: `lr` is a documented 64-bit alias of X30 (parse_reg_num and llvm-mc). Folded into the valid-domain differential.
-- Seed: (none)
-- Formal: ∀ which ∈ {Rd,Rm}, other ∈ {0..30}, sh ∈ {LSL,LSR,ASR}, amt ∈ [0,63]. encode_negs(ops with lr in that slot) = llvm-mc("negs … lr …")
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_negs
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [which, other, kind, amt]
-  domain: { which: 0..1, other: 0..30, kind: lsl_lsr_asr, amt: 0..63 }
-  relation:
-    op: eq
-    lhs: encode_negs(ops_with_lr)
-    rhs: llvm_mc_word("negs ... lr ...")
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
-  other: { gen: int, min: 0, max: 30, type: u32 }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: encoder/mod.rs:136 "lr" => 30; llvm-mc encodes lr as x30
-```
-
-## encode_negs_neg_invalid_reg
-- Tier: 4e
-- Rationale: Contract-surface sweep (coverage_gaps had no profraw; manual arm audit of get_reg). parse_reg_num returns None for foo/x32/w32/x/r0/empty; get_reg Errs on non-Reg kinds. llvm-mc rejects these. Documented error path of get_reg (encoder/mod.rs:956-965) not reached by too_few (None vs Some invalid).
-- Seed: (none)
-- Formal: ∀ which ∈ {0,1}, name ∉ valid GPR names ∪ extra ∉ Reg. encode_negs(ops with that slot replaced) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_negs
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, name, extra]
-  domain: { which: 0..1, name: invalid_gpr, extra: non_reg }
-  relation:
-    op: throws
-    expr: encode_negs(ops_with_slot_replaced)
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 1, type: u32 }
-  name: { gen: oneof, items: ["foo", "x32", "w32", "x", "r0", "empty"] }
-evidence: encoder/mod.rs:956-965 get_reg expected register; parse_reg_num None for invalid names; llvm-mc rejects them
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: llvm-mc invalid operand on bare source; ARM ARM USHR Vn.T; README.md:14 gas-compatible
 ```
