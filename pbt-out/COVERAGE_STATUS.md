@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 14:04 (campaign: English campaign)
-> Files: 8/8 scanned (100%) | Functions: 61/253 total | PBT candidates: 61 | Tested: 61 (100%) | 0 pass, 61 fail
+> Last updated: 2026-09-14 14:24 (campaign: English campaign)
+> Files: 8/8 scanned (100%) | Functions: 62/253 total | PBT candidates: 62 | Tested: 62 (100%) | 0 pass, 62 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 61 |
-| **Tested (of PBT candidates)** | **61 / 61 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 61 / 0 |
-| **Overall (tested / all functions)** | **61 / 253 (24%)** |
+| PBT candidates (from FUNCTION_INDEX) | 62 |
+| **Tested (of PBT candidates)** | **62 / 62 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 62 / 0 |
+| **Overall (tested / all functions)** | **62 / 253 (25%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 61 | 61 | 0 | 100% |
+|  | 62 | 62 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 61 | 61 | 0 | 100% |
+| unknown | 62 | 62 | 0 | 100% |
 
 ## File Coverage
 
@@ -39,7 +39,7 @@
 | data_processing.rs | 36 | 22 | 22 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
-| neon.rs | 68 | 12 | 12 | 100% | covered |
+| neon.rs | 68 | 13 | 13 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -110,3 +110,4 @@
 | encode_neon_shift_left_imm | neon.rs |
 | encode_umaddl | data_processing.rs |
 | encode_umulh | data_processing.rs |
+| encode_neon_rbit | neon.rs |

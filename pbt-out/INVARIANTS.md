@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_umull)
+
+- Valid UMULL Xd, Wn, Wm with Rd/Rn/Rm in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Alternate spellings x31/w31, XZR, LR, uppercase match llvm-mc (1000 cases).
+- encode_umull XOR encode_smull at equal registers = 1<<23 (ARM ARM U bit) (1000 cases).
+- encode_umull(Xd,Wn,Wm) = encode_umaddl(Xd,Wn,Wm,XZR) = llvm-mc of both mnemonics (1000 cases).
+- Success-path word: bit 31=1, bits[30:21]=00 11011 101, Rm at [20:16], o0=0 at 15, Ra=11111 at [14:10], Rn at [9:5], Rd at [4:0]. Equivalently w = 0x9BA07C00 | (rm<<16) | (rn<<5) | rd.
+- Fewer than 3 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at GPR slots always Err.
+- Known-answer: `umull x0, w1, w2` = 0x9ba27c20; `umull xzr, wzr, wzr` = 0x9bbf7fff; `umull lr, w1, w2` = 0x9ba27c3e; `umaddl x0, w1, w2, xzr` aliases to 0x9ba27c20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) UMULL: alias of UMADDL with Ra=XZR. sf=1 op54=00 11011 U=1 01 Rm o0=0 Ra=11111 Rn Rd. Syntax UMULL Xd, Wn, Wm. Register 31 is XZR/WZR, never SP. Sibling encode_smull is U=0 (different job).
+- Dispatch: encoder/mod.rs:258-267 `"umull"` + first operand RegArrangement => NEON path, else scalar encode_umull.
+- Callers: assembler README Data Processing table lists umull.
+
+## Quirks
+
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_umull (arity / extra / width / SP / FP / nonreg / invalid name / alt-spellings / U bit / alias / ARM fields).
+- Four failing negative-contract properties are SUT bugs, not quirks: extra operand, wrong width, SP-as-ZR, FP-as-GPR. See pbt-out/bug_reports/encode_umull_*.md.
+
 # Confirmed invariants (encode_neon_rbit)
 
 - Valid RBIT Vd.T, Vn.T with T in {8b,16b} and Vd/Vn in v0..v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
