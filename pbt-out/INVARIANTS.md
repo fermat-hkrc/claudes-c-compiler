@@ -1757,3 +1757,33 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / Ta / *v as u32 / get_neon_reg Reg dest+source / extra / mismatched Tb).
 
+---
+
+# Confirmed invariants (encode_neon_shift_left_imm)
+
+- Valid vector SQSHL/UQSHL immediate with T in {8b,16b,4h,8h,2s,4s,2d}, Vd/Vn in v0–v31, shift in [0, esize-1] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode(..., u=0) XOR encode(..., u=1) = 1<<29 (ARM ARM U bit SQSHL vs UQSHL) (1000 cases).
+- Same-esize Q=0 vs Q=1 arrangements XOR = 1<<30 (1000 cases).
+- shift+1 (still in range) adds 1 to immh:immb at bits [22:16] (1000 cases).
+- Success-path word: bit 31=0, Q at 30, U at 29, bits [28:23]=011110, immh:immb at [22:16]=esize+shift, opcode at [15:11]=01110, bit 10=1, Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands, unsupported T (1d, 8s, empty), invalid names (v32, foo, empty, v, v-1), non-register kinds, and non-Imm shift always Err.
+- Known-answer: `sqshl v0.8b, v1.8b, #0` encodes as 0x0f087420; `#7` as 0x0f0f7420; `uqshl v0.8b, v1.8b, #0` as 0x2f087420; `sqshl v0.16b, v1.16b, #3` as 0x4f0b7420; `sqshl v0.4h, v1.4h, #15` as 0x0f1f7420; `sqshl v0.2d, v1.2d, #0` as 0x4f407420; `#63` as 0x4f7f7420; `uqshl v31.4s, v30.4s, #31` as 0x6f3f77df.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD shift left (immediate) SQSHL/UQSHL: `0 Q U 011110 immh immb 01110 1 Rn Rd`. T in {8B,16B,4H,8H,2S,4S,2D}. Q=0 && esize==64 is Reserved (no 1D). shift = UInt(immh:immb) - esize in [0, esize-1]. U=0 SQSHL / U=1 UQSHL. opcode=01110.
+- Dispatch: encoder/mod.rs:544-551 sqshl Imm => u=0; uqshl Imm => u=1. Register-form sqshl/uqshl go to encode_neon_three_same (different job).
+- Sibling encode_neon_shl is SHL (opcode 01010, U=0). Sibling encode_neon_sli is SLI (opcode 01010, U=1). Same-job gate fails.
+- Callers: assembler README NEON shifts table lists sqshl/uqshl. Scalar SQSHL Bd/Hd/Sd/Dd uses a different encoding (out of scope).
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- Negative Imm debug-panics (`esize + (shift as u32)` overflow); shift == esize wraps into the next lane size; i64 Imm truncates via `as u32` (see bugs).
+- parse_reg_num accepts x/w/d/s/q/h/b prefixes, so non-V names encode as V registers (see bugs).
+- get_neon_reg accepts Operand::Reg, so a bare V/GPR source encodes as Rn (see bugs). Dest as Operand::Reg still Errs via empty arrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / T / extra / shift range / mismatched T / non-V prefix / Operand::Reg dest+source).
+
