@@ -1,323 +1,360 @@
-# Properties: encode_logical
+# Properties: encode_madd
 
-## encode_logical_diff_reg
+## encode_madd_diff_gpr
 - Tier: 2
-- Rationale: Strongest applicable oracle is differential vs llvm-mc (gas-compatible AArch64 assembler). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree AND/ORR/EOR/ANDS decoder. encode_bic/orn/eon/bics fail the same-job sibling gate (N=1 vs N=0). Doc evidence: README.md:5-14 gas-compatible text; encoder/mod.rs:231-234 dispatch; ARM ARM Logical (shifted register) `sf opc 01010 shift 0 Rm imm6 Rn Rd`.
-- Seed: encode_eon_pbt::encode_eon_diff_reg_llvm_mc (data_processing.rs)
-- Formal: ∀ rd,rn,rm ∈ [0,31], sf ∈ {0,1}, opc ∈ {00,01,10,11}, shift ∈ {lsl,lsr,asr,ror}, amt ∈ [0, 31+32·sf]. encode_logical([Rd,Rn,Rm{,shift #amt}], opc) = llvm-mc("{and|orr|eor|ands} Rd, Rn, Rm{, shift #amt}") as little-endian u32, where register 31 is XZR/WZR.
+- Rationale: Strongest applicable oracle is differential vs llvm-mc (gas-compatible AArch64 assembler). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree MADD decoder. encode_msub fails the same-job sibling gate (o0=1 vs o0=0). Doc evidence: README.md:5-14 gas-compatible text; encoder/mod.rs:245 madd dispatch; ARM ARM Data-processing (3 source) MADD `sf 00 11011 000 Rm 0 Ra Rn Rd`.
+- Seed: encode_div_pbt::encode_div_diff_gpr_same_width (data_processing.rs)
+- Formal: ∀ rd,rn,rm,ra ∈ [0,31], sf ∈ {0,1}. encode_madd([Rd, Rn, Rm, Ra]) = llvm-mc("madd Rd, Rn, Rm, Ra") as little-endian u32, where register 31 is XZR/WZR and all four registers share width sf.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_logical
+function: encode_madd
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, opc, kind, amt]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool, opc: {0,1,2,3}, kind: {lsl,lsr,asr,ror}, amt: 0..(31+32*is_64) }
+  vars: [rd, rn, rm, ra, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, ra: 0..31, is_64: bool }
   relation:
     op: eq
-    lhs: encode_logical([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm)), Shift{kind,amt}], opc)
-    rhs: llvm_mc(mnemonic(opc)+" "+gpr(is_64,rd)+", "+gpr(is_64,rn)+", "+gpr(is_64,rm)+", "+kind+" #"+amt)
+    lhs: encode_madd([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm)), Reg(gpr(is_64,ra))])
+    rhs: llvm_mc("madd "+gpr(is_64,rd)+", "+gpr(is_64,rn)+", "+gpr(is_64,rm)+", "+gpr(is_64,ra))
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ra: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+evidence: src/backend/arm/assembler/README.md:5-14; encoder/mod.rs:245; ARM ARM Data-processing (3 source) MADD
+```
+
+## encode_madd_diff_ra_zr_is_mul
+- Tier: 2
+- Rationale: Documented alias `MUL Rd, Rn, Rm is MADD Rd, Rn, Rm, XZR` (data_processing.rs:589). llvm-mc prints madd-with-ZR as mul and encodes identically. Differential vs llvm-mc MUL (and madd ... zr) on encode_madd with Ra=31. encode_mul is not called (single-symbol campaign). Stronger state machine / round-trip rejected as for encode_madd_diff_gpr.
+- Seed: data_processing.rs:589 encode_mul comment
+- Formal: ∀ rd,rn,rm ∈ [0,31], sf ∈ {0,1}. encode_madd([Rd, Rn, Rm, ZR]) = llvm-mc("mul Rd, Rn, Rm") = llvm-mc("madd Rd, Rn, Rm, ZR"), ZR = XZR if sf else WZR.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_madd
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool }
+  relation:
+    op: eq
+    lhs: encode_madd([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm)), Reg(zr(is_64))])
+    rhs: llvm_mc("mul "+gpr(is_64,rd)+", "+gpr(is_64,rn)+", "+gpr(is_64,rm))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-  kind: { gen: oneof, choices: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: src/backend/arm/assembler/README.md:5-14; encoder/mod.rs:231-234; ARM ARM Logical (shifted register)
+evidence: data_processing.rs:589; llvm-mc madd x0,x1,x2,xzr aliases mul x0,x1,x2 = 0x9b027c20
 ```
 
-## encode_logical_diff_imm
-- Tier: 2
-- Rationale: Same differential oracle over the bitmask-immediate form. Immediate values are constructed from ARM ARM (size, ones, immr) independently of encode_bitmask_imm. Rd=31 is SP for AND/ORR/EOR and XZR for ANDS. Rn=31 is XZR (llvm-mc rejects SP as Rn).
-- Seed: encode_eon_pbt::encode_eon_diff_imm_llvm_mc (data_processing.rs)
-- Formal: ∀ rd ∈ [0,31], rn ∈ [0,31], sf ∈ {0,1}, opc ∈ {00,01,10,11}, valid bitmask imm constructed from (size, ones, immr). encode_logical([Rd,Rn,Imm(imm)], opc) = llvm-mc("{and|orr|eor|ands} Rd, Rn, #imm").
+## encode_madd_metamorphic_sf_bit
+- Tier: 4
+- Rationale: ARM ARM places sf at bit 31; 64-bit and 32-bit MADD of equal register numbers differ only by that bit. Differential already covers absolute encoding; this metamorphic check isolates the sf contract. Stronger oracles (state machine, round-trip) rejected as above.
+- Seed: encode_div_pbt metamorphic shape
+- Formal: ∀ rd,rn,rm,ra ∈ [0,31]. encode_madd(X-ops) XOR encode_madd(W-ops) = 1<<31 at equal register numbers.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_logical
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, is_64, opc, size, ones, immr]
-  domain: { rd: 0..31, rn: 0..31, is_64: bool, opc: {0,1,2,3}, size: {2,4,8,16,32,64}, ones: 1..(size-1), immr: 0..(size-1) }
-  relation:
-    op: eq
-    lhs: encode_logical([Reg(rd_name), Reg(rn_name), Imm(bitmask_from_fields(size,ones,immr,is_64))], opc)
-    rhs: llvm_mc(mnemonic(opc)+" "+rd_name+", "+rn_name+", #imm")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-  size: { gen: oneof, choices: [2, 4, 8, 16, 32, 64] }
-  ones: { gen: int, min: 1, max: 63, type: u32 }
-  immr: { gen: int, min: 0, max: 63, type: u32 }
-evidence: src/backend/arm/assembler/README.md:5-14; ARM ARM Logical (immediate); llvm-mc and sp, x0, #1 accepted / and x0, sp, #1 rejected
-```
-
-## encode_logical_diff_neon
-- Tier: 2
-- Rationale: Differential vs llvm-mc for the NEON three-same path (RegArrangement dest). ANDS is not a NEON instruction and is excluded from the valid domain. T in {8b,16b} only (llvm-mc rejects 4s/8h/etc.).
-- Seed: encode_eon_pbt NEON is N/A; neon encode_neon_float_three_same_pbt differential shape
-- Formal: ∀ vd,vn,vm ∈ [0,31], T ∈ {8b,16b}, opc ∈ {00,01,10}. encode_logical([Vd.T, Vn.T, Vm.T], opc) = llvm-mc("{and|orr|eor} Vd.T, Vn.T, Vm.T").
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_logical
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [vd, vn, vm, arr, opc]
-  domain: { vd: 0..31, vn: 0..31, vm: 0..31, arr: {8b,16b}, opc: {0,1,2} }
-  relation:
-    op: eq
-    lhs: encode_logical([RegArrangement{vN,arr} x3], opc)
-    rhs: llvm_mc(mnemonic(opc)+" v"+vd+"."+arr+", v"+vn+"."+arr+", v"+vm+"."+arr)
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  vn: { gen: int, min: 0, max: 31, type: u32 }
-  vm: { gen: int, min: 0, max: 31, type: u32 }
-  arr: { gen: oneof, choices: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
-evidence: src/backend/arm/assembler/README.md NEON three-same and/orr/eor; neon.rs:297-319; ARM ARM Advanced SIMD logical; llvm-mc rejects and v0.4s and ands v0.16b
-```
-
-## encode_logical_metamorphic_opc
-- Tier: 4c
-- Rationale: ARM ARM places opc at bits [30:29] of both logical forms. At equal other fields, encode(opc_a) XOR encode(opc_b) = (opc_a XOR opc_b) << 29. Stronger differential is also used (diff_reg/diff_imm); this metamorphic check does not depend on llvm-mc and pins the opc field independently. State machine / round-trip rejected as above.
-- Seed: encode_eon_pbt::encode_eon_metamorphic_n_bit_vs_eor
-- Formal: ∀ valid GPR shifted-register operands, opc1 ≠ opc2 ∈ {0,1,2,3}. encode_logical(ops, opc1) XOR encode_logical(ops, opc2) = (opc1 XOR opc2) << 29.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_logical
+function: encode_madd
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, opc1, opc2]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool, opc1: 0..3, opc2: 0..3 }
+  vars: [rd, rn, rm, ra]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, ra: 0..31 }
   relation:
     op: eq
-    lhs: encode_logical(ops, opc1) XOR encode_logical(ops, opc2)
-    rhs: (opc1 XOR opc2) << 29
+    lhs: encode_madd([Reg(x(rd)),Reg(x(rn)),Reg(x(rm)),Reg(x(ra))]) XOR encode_madd([Reg(w(rd)),Reg(w(rn)),Reg(w(rm)),Reg(w(ra))])
+    rhs: 1<<31
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  opc1: { gen: int, min: 0, max: 3, type: u32 }
-  opc2: { gen: int, min: 0, max: 3, type: u32 }
-evidence: ARM ARM Logical (shifted register) opc at bits [30:29]; encoder/mod.rs:231-234
+  ra: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM Data-processing (3 source) sf at bit 31; llvm-mc madd x0,x1,x2,x3 = 0x9b020c20 vs madd w0,w1,w2,w3 = 0x1b020c20
 ```
 
-## encode_logical_invariant_arm_fields
-- Tier: 4d
-- Rationale: Success-path word must match ARM ARM field layout. Weaker than differential (does not pin exact encoding against llvm-mc) but independently cites the ARM ARM bit positions. Shifted-register: bits[28:24]=01010, N=0 at bit 21. Immediate: bits[28:23]=100100.
-- Seed: encode_eon_pbt::encode_eon_invariant_arm_fields
-- Formal: ∀ valid shifted-register inputs. word[31]=sf, word[30:29]=opc, word[28:24]=01010, word[23:22]=shift, word[21]=0, word[20:16]=Rm, word[15:10]=imm6, word[9:5]=Rn, word[4:0]=Rd.
+## encode_madd_invariant_arm_fields
+- Tier: 4
+- Rationale: ARM ARM Data-processing (3 source) MADD field layout is an exact structural predicate on every success-path word. Weaker than differential (does not pin absolute opcode against an independent assembler) but catches field packing bugs. o0 (bit 15) must be 0 (MSUB is 1).
+- Seed: encode_div_pbt::encode_div_invariant_arm_fields
+- Formal: ∀ rd,rn,rm,ra ∈ [0,31], sf ∈ {0,1}. let w = encode_madd([Rd,Rn,Rm,Ra]). w[4:0]=rd ∧ w[9:5]=rn ∧ w[14:10]=ra ∧ w[15]=0 ∧ w[20:16]=rm ∧ w[30:21]=0011011000 ∧ w[31]=sf.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_logical
+function: encode_madd
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, opc, shift, amt]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool, opc: 0..3, shift: 0..3, amt: 0..(31+32*is_64) }
-  body: let w = encode_logical(ops, opc) in (w>>31)==sf AND ((w>>29)&3)==opc AND ((w>>24)&0x1F)==0b01010 AND ((w>>21)&1)==0 AND ((w>>16)&0x1F)==rm AND ((w>>10)&0x3F)==amt AND ((w>>5)&0x1F)==rn AND (w&0x1F)==rd
+  vars: [rd, rn, rm, ra, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, ra: 0..31, is_64: bool }
+  relation:
+    op: holds
+    expr: fields(encode_madd([Rd,Rn,Rm,Ra])) match ARM MADD layout
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
+  ra: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-  shift: { gen: int, min: 0, max: 3, type: u32 }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: ARM ARM Logical (shifted register) C4 encoding
+evidence: ARM ARM Data-processing (3 source) MADD sf 00 11011 000 Rm 0 Ra Rn Rd; data_processing.rs:603-604
 ```
 
-## encode_logical_neg_arity
-- Tier: 4e
-- Rationale: Documented by llvm-mc ("too few operands for instruction") and the function comment "logical op requires 3 operands". Fewer than 3 operands must Err. Extra operands (4th not a Shift) are rejected by llvm-mc.
-- Seed: encode_eon_pbt extra-operand / arity negatives
-- Formal: ∀ ops with len < 3, opc ∈ {0,1,2,3}. encode_logical(ops, opc) is Err. ∀ valid 3-operand GPR/NEON plus a trailing non-Shift extra operand. encode_logical must Err (llvm-mc rejects a 4th operand that is not a shift).
+## encode_madd_diff_lr
+- Tier: 2
+- Rationale: parse_reg_num and is_64bit_reg treat `lr` as X30. llvm-mc accepts `madd lr, x0, x1, x2` as X30. Coverage-sweep property for the documented alias not reached by the x0–x30/xzr generator. Differential vs llvm-mc.
+- Seed: llvm-mc madd lr, x0, x1, x2 encoding; encoder/mod.rs:135-136 "lr" => 30
+- Formal: ∀ which ∈ {0,1,2,3}, a,b,c ∈ [0,30]. encode_madd with `lr` at position which (other slots X registers) = llvm-mc of the same text.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_logical
-oracle: negative_error
+function: encode_madd
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [ops, opc]
-  domain: { ops: operand lists of length 0..2, or length 4 with 4th not Shift, opc: 0..3 }
-  relation:
-    op: throws
-    lhs: encode_logical(ops, opc)
-    rhs: String
-expected_error: String
-generators:
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-evidence: llvm-mc "too few operands for instruction"; data_processing.rs:456-458; llvm-mc rejects and x0, x1, x2, x3
-```
-
-## encode_logical_neg_invalid_imm
-- Tier: 4e
-- Rationale: ARM ARM logical immediate forbids 0 and all-ones (N/immr/imms cannot encode them). llvm-mc: "expected compatible register or logical immediate". SUT must Err for 0, all-ones (width-specific), and non-bitmask values such as 0x1234.
-- Seed: encode_eon_pbt invalid-imm negatives
-- Formal: ∀ rd,rn GPR, sf, opc, imm ∈ {0, all-ones(width), 0x1234, 0x1001 when not a valid bitmask}. encode_logical([Rd,Rn,Imm(imm)], opc) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_logical
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, is_64, opc, imm]
-  domain: { rd: 0..30, rn: 0..30, is_64: bool, opc: 0..3, imm: {0, ~0, 0x1234, 0x1001} filtered to invalid bitmasks }
-  relation:
-    op: throws
-    lhs: encode_logical([Reg(rd), Reg(rn), Imm(imm)], opc)
-    rhs: String
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-  imm: { gen: int, min: -1, max: 0x1234, type: i64 }
-evidence: ARM ARM Logical (immediate) 0 and all-ones reserved; llvm-mc and x0, x1, #0 / #-1 / #0x1234 rejected; encode_bitmask_imm returns None for 0 and all-ones
-```
-
-## encode_logical_neg_rejected_operands
-- Tier: 4e
-- Rationale: llvm-mc / ARM ARM reject: SP in shifted-register form; mixed X/W; FP/SIMD names as GPR; shift amount out of range (32-bit >31, 64-bit >63); unknown shift kind; NEON T not in {8b,16b}; mismatched NEON arrangements; ANDS on NEON. Documented error contract is rejection (llvm-mc error).
-- Seed: encode_eon_pbt SP / mixed-width / FP / shift-range / unknown-kind negatives
-- Formal: ∀ each invalid category listed. encode_logical(ops, opc) is Err.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: extra `[w0,w0,w0,w0]` opc=0; SP `wsp,w0,w0` opc=0; mixed `w0,w0,x0` opc=0; FP `d0,x0,x0` opc=0; shift `w0,w0,w0,lsl #32`; unknown `lslx`; NEON T=`4s`; NEON mismatch `16b/8b/16b`; ANDS NEON `v0.8b` opc=11
-- Bug report: pbt-out/bug_reports/encode_logical_extra_operand.md, pbt-out/bug_reports/encode_logical_sp_shifted.md, pbt-out/bug_reports/encode_logical_mixed_width.md, pbt-out/bug_reports/encode_logical_fp_as_gpr.md, pbt-out/bug_reports/encode_logical_shift_oob.md, pbt-out/bug_reports/encode_logical_unknown_shift.md, pbt-out/bug_reports/encode_logical_neon_bad_arr.md, pbt-out/bug_reports/encode_logical_neon_mismatch.md, pbt-out/bug_reports/encode_logical_ands_neon.md
-
-```property
-function: encode_logical
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [category, ops, opc]
-  domain: { category: {sp_shifted, mixed_width, fp_as_gpr, shift_oob, unknown_shift, neon_bad_arr, neon_mismatch, ands_neon} }
-  relation:
-    op: throws
-    lhs: encode_logical(ops, opc)
-    rhs: String
-expected_error: String
-generators:
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-evidence: llvm-mc rejects and sp, x0, x1; and x0, w1, x2; and x0, x1, d2; and w0, w1, w2, lsl #32; and x0, x1, x2, rorx #1; and v0.4s; and v0.16b, v1.8b, v2.16b; ands v0.16b
-```
-
-## encode_logical_metamorphic_sf
-- Tier: 4c
-- Rationale: Coverage-sweep. ARM ARM sf is bit 31 of both logical forms. At equal register numbers, encode(X) XOR encode(W) = 1<<31. Documented by ARM ARM Logical (shifted register) sf field.
-- Seed: encode_eon_pbt / encode_logical_invariant_arm_fields sf check
-- Formal: ∀ rd,rn,rm ∈ [0,30], opc ∈ {0,1,2,3}. encode_logical(X-ops, opc) XOR encode_logical(W-ops, opc) = 1<<31.
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_logical
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, opc]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30, opc: 0..3 }
+  vars: [which, a, b, c]
+  domain: { which: 0..3, a: 0..30, b: 0..30, c: 0..30 }
   relation:
     op: eq
-    lhs: encode_logical(X-ops, opc) XOR encode_logical(W-ops, opc)
-    rhs: 1 << 31
+    lhs: encode_madd(ops with lr at which)
+    rhs: llvm_mc(asm with lr at which)
+generators:
+  which: { gen: int, min: 0, max: 3, type: u32 }
+  a: { gen: int, min: 0, max: 30, type: u32 }
+  b: { gen: int, min: 0, max: 30, type: u32 }
+  c: { gen: int, min: 0, max: 30, type: u32 }
+evidence: encoder/mod.rs:135-136 lr => 30; llvm-mc madd lr, x0, x1, x2 = madd x30, x0, x1, x2
+```
+
+## encode_madd_neg_too_few
+- Tier: 4e
+- Rationale: llvm-mc rejects `madd x0, x1, x2` (too few operands). ARM MADD is a 4-operand instruction. get_reg at missing index must Err. Negative/error contract from gas-compatible assembler, not inferred from SUT body.
+- Seed: encode_div_pbt::encode_div_neg_too_few_operands
+- Formal: ∀ ops with |ops| < 4. encode_madd(ops) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_madd
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, is_64, r0, r1, r2]
+  domain: { n: 0..3, is_64: bool, r0: 0..31, r1: 0..31, r2: 0..31 }
+  relation:
+    op: throws
+    expr: encode_madd(ops[..n])
+    error: String
+generators:
+  n: { gen: int, min: 0, max: 3, type: usize }
+  is_64: { gen: bool }
+  r0: { gen: int, min: 0, max: 31, type: u32 }
+  r1: { gen: int, min: 0, max: 31, type: u32 }
+  r2: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc "too few operands for instruction" on madd x0, x1, x2; ARM ARM MADD four registers
+```
+
+## encode_madd_neg_extra_operand
+- Tier: 4e
+- Rationale: llvm-mc rejects a 5th operand (`madd x0, x1, x2, x3, x4` and `..., lsl #0`). Gas-compatible assembler must reject extra operands. README.md:5-14.
+- Seed: encode_div_pbt::encode_div_neg_extra_operand
+- Formal: ∀ rd,rn,rm,ra ∈ [0,31], sf ∈ {0,1}, extra ∈ Operand. encode_madd([Rd,Rn,Rm,Ra, extra]) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, ra=0, is_64=false, extra=Reg("x0")  (madd w0, w0, w0, w0, x0 encodes instead of Err)
+- Bug report: pbt-out/bug_reports/encode_madd_extra_operand.md
+
+```property
+function: encode_madd
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, ra, is_64, extra]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30, ra: 0..30, is_64: bool, extra: Operand }
+  relation:
+    op: throws
+    expr: encode_madd([Rd,Rn,Rm,Ra,extra])
+    error: String
 generators:
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
   rm: { gen: int, min: 0, max: 30, type: u32 }
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-evidence: ARM ARM Logical (shifted register) sf at bit 31
+  ra: { gen: int, min: 0, max: 30, type: u32 }
+  is_64: { gen: bool }
+  extra: { gen: oneof, choices: ["Reg", "Imm", "Shift"] }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on madd x0, x1, x2, x3, x4; README.md:5-14
 ```
 
-## encode_logical_neg_unsupported_third
+## encode_madd_neg_mixed_width
 - Tier: 4e
-- Rationale: Coverage-sweep of the final Err("unsupported logical operands") arm. Operand 2 that is neither Imm nor Reg (Symbol/Mem/Label/Cond) must Err. Documented by the function's last return and llvm-mc rejecting non-register/non-imm thirds.
-- Seed: encode_logical body data_processing.rs:509
-- Formal: ∀ opc ∈ {0,1,2,3}, third ∈ {Symbol, Mem, Label, Cond}. encode_logical([Reg(x0), Reg(x1), third], opc) is Err.
+- Rationale: llvm-mc rejects mixed X/W (`madd w0, x1, x2, x3` etc.). ARM MADD requires a single sf for all four registers. Gas-compatible assembler must Err.
+- Seed: encode_div_pbt::encode_div_neg_mixed_width
+- Formal: ∀ rd,rn,rm,ra ∈ [0,30], widths ∈ {0,1}^4 not all equal. encode_madd([Rd@w0, Rn@w1, Rm@w2, Ra@w3]) = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, ra=0, rd64=false, rn64=false, rm64=false, ra64=true  (madd w0, w0, w0, x0 encodes; sf taken only from Rd)
+- Bug report: pbt-out/bug_reports/encode_madd_mixed_width.md
+
+```property
+function: encode_madd
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, ra, rd64, rn64, rm64, ra64]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30, ra: 0..30, widths: not-all-equal bools }
+  relation:
+    op: throws
+    expr: encode_madd(mixed-width regs)
+    error: String
+generators:
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  ra: { gen: int, min: 0, max: 30, type: u32 }
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+  rm64: { gen: bool }
+  ra64: { gen: bool }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on madd w0, x1, x2, x3; ARM ARM single sf
+```
+
+## encode_madd_neg_sp
+- Tier: 4e
+- Rationale: ARM ARM register 31 in MADD is XZR/WZR, never SP/WSP. llvm-mc rejects SP/WSP in every slot. parse_reg_num maps sp/wsp to 31, which would silently encode ZR if accepted — that is the contract under test, not an oracle guessed from the body.
+- Seed: encode_div_pbt::encode_div_neg_sp
+- Formal: ∀ which ∈ {0,1,2,3}, sf ∈ {0,1}, other regs in [0,30] same width. encode_madd with SP/WSP at position which = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, is_64=false, a=0, b=0, c=0  (madd wsp, w0, w0, w0 encodes as madd wzr, w0, w0, w0)
+- Bug report: pbt-out/bug_reports/encode_madd_sp.md
+
+```property
+function: encode_madd
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, is_64, a, b, c]
+  domain: { which: 0..3, is_64: bool, a: 0..30, b: 0..30, c: 0..30 }
+  relation:
+    op: throws
+    expr: encode_madd(ops with SP/WSP at which)
+    error: String
+generators:
+  which: { gen: int, min: 0, max: 3, type: u32 }
+  is_64: { gen: bool }
+  a: { gen: int, min: 0, max: 30, type: u32 }
+  b: { gen: int, min: 0, max: 30, type: u32 }
+  c: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: llvm-mc "invalid operand" on madd sp, x0, x1, x2 and madd x0, sp, x1, x2; ARM ARM Rd/Rn/Rm/Ra=31 is ZR not SP
+```
+
+## encode_madd_neg_fp
+- Tier: 4e
+- Rationale: llvm-mc rejects FP/SIMD names (`madd d0, d1, d2, d3` and mixed `madd x0, x1, x2, d3`). Integer MADD is GPR-only. is_fp_reg exists in the encoder but encode_madd does not use it. Gas-compatible assembler must Err. Strengthening round covering remaining documented rejection.
+- Seed: encode_div_pbt::encode_div_neg_fp
+- Formal: ∀ which ∈ {0,1,2,3}, prefix ∈ {d,s,q,v,h,b}, n ∈ [0,31]. encode_madd with prefix+n at position which = Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: which=0, prefix="d", n=0  (madd d0, x1, x2, x3 encodes as madd w0, x1, x2, x3; parse_reg_num accepts d/s/q/v/h/b)
+- Bug report: pbt-out/bug_reports/encode_madd_fp_reg.md
+
+```property
+function: encode_madd
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, prefix, n]
+  domain: { which: 0..3, prefix: {d,s,q,v,h,b}, n: 0..31 }
+  relation:
+    op: throws
+    expr: encode_madd(ops with FP name at which)
+    error: String
+generators:
+  which: { gen: int, min: 0, max: 3, type: u32 }
+  prefix: { gen: oneof, choices: ["d", "s", "q", "v", "h", "b"] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc "invalid operand" on madd d0, d1, d2, d3; README.md:5-14
+```
+
+## encode_madd_neg_invalid_reg
+- Tier: 4e
+- Rationale: llvm-mc rejects out-of-range and non-register names (x32, foo, empty). parse_reg_num returns None for these; get_reg must Err. Strengthening round.
+- Seed: encode_div_pbt::encode_div_neg_invalid_reg_name
+- Formal: ∀ which ∈ {0,1,2,3}, name ∈ {x32,w32,x99,w99,"",foo,r0,x,x-1}. encode_madd with name at which = Err.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_logical
+function: encode_madd
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [opc, third]
-  domain: { opc: 0..3, third: {Symbol, Mem, Label, Cond} }
+  vars: [which, bad]
+  domain: { which: 0..3, bad: {x32,w32,x99,w99,"",foo,r0,x,x-1} }
   relation:
     op: throws
-    lhs: encode_logical([Reg(x0), Reg(x1), third], opc)
-    rhs: String
-expected_error: String
+    expr: encode_madd(ops with bad name at which)
+    error: String
 generators:
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-evidence: data_processing.rs:509 Err("unsupported logical operands"); llvm-mc rejects non-register/non-imm third
+  which: { gen: int, min: 0, max: 3, type: u32 }
+  bad: { gen: oneof, choices: ["x32", "w32", "x99", "w99", "", "foo", "r0", "x", "x-1"] }
+expected_error: String
+evidence: llvm-mc "invalid operand" on madd x32, x0, x1, x2; parse_reg_num None for these names
 ```
 
-## encode_logical_neg_invalid_reg
+## encode_madd_neg_non_register
 - Tier: 4e
-- Rationale: Coverage-sweep of get_reg / parse_reg_num None. Invalid names (foo, x32, w32, x, r0, empty) must Err.
-- Seed: encode_eon_pbt invalid-name negatives
-- Formal: ∀ opc, pos ∈ {0,1,2}, name ∈ {foo, x32, w32, x, r0, ""}. encode_logical with that name at pos is Err.
+- Rationale: llvm-mc and ARM MADD require four registers. Imm/Symbol/Mem/Shift/Cond/Label at any of the four slots is invalid. get_reg returns Err for non-Reg. Strengthening round.
+- Seed: encode_div_pbt::encode_div_neg_non_register
+- Formal: ∀ which ∈ {0,1,2,3}, bad ∈ {Imm, Symbol, Mem, Shift, Cond, Label}. encode_madd with bad at which = Err.
 - Test file: src/backend/arm/assembler/encoder/data_processing.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_logical
+function: encode_madd
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [opc, pos, name]
-  domain: { opc: 0..3, pos: 0..2, name: {foo, x32, w32, x, r0, empty} }
+  vars: [which, bad]
+  domain: { which: 0..3, bad: non-Reg Operand }
   relation:
     op: throws
-    lhs: encode_logical(ops with name at pos, opc)
-    rhs: String
-expected_error: String
+    expr: encode_madd(ops with non-Reg at which)
+    error: String
 generators:
-  opc: { gen: int, min: 0, max: 3, type: u32 }
-evidence: parse_reg_num returns None for non x/w/d/s/q/v/h/b prefixes and numbers >31; get_reg then Err
+  which: { gen: int, min: 0, max: 3, type: u32 }
+  bad: { gen: oneof, choices: ["Imm", "Symbol", "Mem", "Shift", "Cond", "Label"] }
+expected_error: String
+evidence: ARM ARM MADD four GPR operands; get_reg expected-register error; llvm-mc rejects non-register tokens
 ```

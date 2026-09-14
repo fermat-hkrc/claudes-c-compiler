@@ -1,34 +1,29 @@
-# PBT Campaign Report: encode_logical
+# PBT Campaign Report: encode_madd
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_logical
-**Tests:** 11 properties (2 KAT + 9 regression witnesses)
-**Result:** 10 passing, 9 bugs
-**Effort tier:** standard
-**Contract-surface sweep:** 1 round (coverage_gaps had no LLVM profraw; manual arm audit of arity / NEON / Imm / Reg / unsupported-third / invalid-reg / sf). Added encode_logical_metamorphic_sf, encode_logical_neg_unsupported_third, encode_logical_neg_invalid_reg. Closed because the tier's 1 round is done.
+**Modules tested:** encode_madd
+**Tests:** 12 properties (plus 3 KAT + 4 regression witnesses)
+**Result:** 8 passing, 4 bugs
+**Effort tier:** standard (1 contract-surface sweep round; coverage_gaps had no profraw — closed after manual arm audit added the lr alias property)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_logical | 11 properties + 2 KAT + 9 regression | 9 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_madd | 12 properties (8 passing, 4 failing) + 3 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-All nine were surfaced by failing, shrunk proptest properties in `encode_logical_neg_rejected_operands` (serial reconfirm with PBT_TEST_JOBS=1). Expected: Err. Actual: Ok(Word).
+1. **encode_madd ignores a fifth operand.** Failing property: `encode_madd_neg_extra_operand`. Shrunk counterexample: `rd=0, rn=0, rm=0, ra=0, is_64=false, extra=Reg("x0")` (`madd w0, w0, w0, w0, x0`). Expected: Err. Actual: Ok(Word) same as four-operand MADD. Serial reconfirm `PBT_TEST_JOBS=1`. Severity: medium. Report: `pbt-out/bug_reports/encode_madd_extra_operand.md`. Regression: `test_encode_madd_regression_extra_operand`.
 
-1. **encode_logical_neg_extra_operand** — shrunk counterexample: `rd=0, rn=0, rm=0, extra=0, is_64=false, opc=0` (`and w0, w0, w0, w0`). Report: pbt-out/bug_reports/encode_logical_extra_operand.md. Regression: test_encode_logical_regression_extra_operand.
-2. **encode_logical_neg_sp_shifted** — shrunk counterexample: `other=0, is_64=false, opc=0, pos=0` (`and wsp, w0, w0`). Report: pbt-out/bug_reports/encode_logical_sp_shifted.md. Regression: test_encode_logical_regression_sp_shifted.
-3. **encode_logical_neg_mixed_width** — shrunk counterexample: `rd=0, rn=0, rm=0, opc=0, rd64=false, rn64=false, rm64=true` (`and w0, w0, x0`). Report: pbt-out/bug_reports/encode_logical_mixed_width.md. Regression: test_encode_logical_regression_mixed_width.
-4. **encode_logical_neg_fp_as_gpr** — shrunk counterexample: `n=0, opc=0, prefix="d", pos=0` (`and d0, x0, x0`). Report: pbt-out/bug_reports/encode_logical_fp_as_gpr.md. Regression: test_encode_logical_regression_fp_as_gpr.
-5. **encode_logical_neg_shift_oob** — shrunk counterexample: `rd=0, rn=0, rm=0, is_64=false, opc=0, kind="lsl", amt=32` (`and w0, w0, w0, lsl #32`). Report: pbt-out/bug_reports/encode_logical_shift_oob.md. Regression: test_encode_logical_regression_shift_oob.
-6. **encode_logical_neg_unknown_shift** — shrunk counterexample: `rd=0, rn=0, rm=0, is_64=false, opc=0, kind="lslx"`. Report: pbt-out/bug_reports/encode_logical_unknown_shift.md. Regression: test_encode_logical_regression_unknown_shift.
-7. **encode_logical_neg_neon_bad_arr** — shrunk counterexample: `vd=0, vn=0, vm=0, arr="4s", opc=0` (`and v0.4s, v0.4s, v0.4s`). Report: pbt-out/bug_reports/encode_logical_neon_bad_arr.md. Regression: test_encode_logical_regression_neon_bad_arr.
-8. **encode_logical_neg_neon_mismatch** — shrunk counterexample: `vd=0, vn=0, vm=0, opc=0` (`and v0.16b, v0.8b, v0.16b`). Report: pbt-out/bug_reports/encode_logical_neon_mismatch.md. Regression: test_encode_logical_regression_neon_mismatch.
-9. **encode_logical_neg_ands_neon** — shrunk counterexample: `vd=0, vn=0, vm=0, arr="8b"` (`ands v0.8b, v0.8b, v0.8b`). Report: pbt-out/bug_reports/encode_logical_ands_neon.md. Regression: test_encode_logical_regression_ands_neon.
+2. **encode_madd accepts mixed X/W widths.** Failing property: `encode_madd_neg_mixed_width`. Shrunk counterexample: `rd=0, rn=0, rm=0, ra=0, rd64=false, rn64=false, rm64=false, ra64=true` (`madd w0, w0, w0, x0`). Expected: Err. Actual: Ok(Word); sf taken only from Rd. Serial reconfirm `PBT_TEST_JOBS=1`. Severity: medium. Report: `pbt-out/bug_reports/encode_madd_mixed_width.md`. Regression: `test_encode_madd_regression_mixed_width`.
+
+3. **encode_madd treats SP/WSP as ZR.** Failing property: `encode_madd_neg_sp`. Shrunk counterexample: `which=0, is_64=false, a=0, b=0, c=0` (`madd wsp, w0, w0, w0`). Expected: Err. Actual: Ok(Word) same as `madd wzr, w0, w0, w0`. Serial reconfirm `PBT_TEST_JOBS=1`. Severity: high. Report: `pbt-out/bug_reports/encode_madd_sp.md`. Regression: `test_encode_madd_regression_sp`.
+
+4. **encode_madd accepts FP/SIMD names as GPRs.** Failing property: `encode_madd_neg_fp`. Shrunk counterexample: `which=0, prefix="d", n=0` (`madd d0, x1, x2, x3`). Expected: Err. Actual: Ok(Word) same as `madd w0, x1, x2, x3`. Serial reconfirm `PBT_TEST_JOBS=1`. Severity: medium. Report: `pbt-out/bug_reports/encode_madd_fp_reg.md`. Regression: `test_encode_madd_regression_fp_reg`.
 
 ## Design Caveats
 
@@ -38,33 +33,28 @@ All nine were surfaced by failing, shrunk proptest properties in `encode_logical
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_logical_pbt) | 2 KAT + 11 properties + 9 regression witnesses |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_madd_pbt) | 12 properties + 3 KAT + 4 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_logical_extra_operand.md
-- pbt-out/bug_reports/encode_logical_sp_shifted.md
-- pbt-out/bug_reports/encode_logical_mixed_width.md
-- pbt-out/bug_reports/encode_logical_fp_as_gpr.md
-- pbt-out/bug_reports/encode_logical_shift_oob.md
-- pbt-out/bug_reports/encode_logical_unknown_shift.md
-- pbt-out/bug_reports/encode_logical_neon_bad_arr.md
-- pbt-out/bug_reports/encode_logical_neon_mismatch.md
-- pbt-out/bug_reports/encode_logical_ands_neon.md
+- `pbt-out/PLAN.md` — campaign checklist
+- `pbt-out/PROPERTIES.md` — property ledger
+- `pbt-out/REPORT.md` — this report
+- `pbt-out/COVERAGE.md` — per-function coverage ledger
+- `pbt-out/COVERAGE_STATUS.md` — coverage statistics
+- `pbt-out/FUNCTION_INDEX.md` — merged function index (encode_madd marked yes)
+- `pbt-out/INVARIANTS.md` — confirmed invariants including encode_madd
+- `pbt-out/bug_reports/encode_madd_extra_operand.md`
+- `pbt-out/bug_reports/encode_madd_mixed_width.md`
+- `pbt-out/bug_reports/encode_madd_sp.md`
+- `pbt-out/bug_reports/encode_madd_fp_reg.md`
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 07:44 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 36/184 total | PBT candidates: 36 | Tested: 36 (100%) | 0 pass, 36 fail
+> Last updated: 2026-09-14 08:02 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 37/184 total | PBT candidates: 37 | Tested: 37 (100%) | 0 pass, 37 fail
 
 ## Summary
 
@@ -73,10 +63,10 @@ All nine were surfaced by failing, shrunk proptest properties in `encode_logical
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 36 |
-| **Tested (of PBT candidates)** | **36 / 36 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 36 / 0 |
-| **Overall (tested / all functions)** | **36 / 184 (20%)** |
+| PBT candidates (from FUNCTION_INDEX) | 37 |
+| **Tested (of PBT candidates)** | **37 / 37 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 37 / 0 |
+| **Overall (tested / all functions)** | **37 / 184 (20%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -84,13 +74,13 @@ All nine were surfaced by failing, shrunk proptest properties in `encode_logical
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 36 | 36 | 0 | 100% |
+|  | 37 | 37 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 36 | 36 | 0 | 100% |
+| unknown | 37 | 37 | 0 | 100% |
 
 ## File Coverage
 
@@ -99,7 +89,7 @@ All nine were surfaced by failing, shrunk proptest properties in `encode_logical
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 17 | 17 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 7 | 7 | 100% | covered |
+| data_processing.rs | 36 | 8 | 8 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 5 | 5 | 100% | covered |
 
@@ -146,3 +136,4 @@ All nine were surfaced by failing, shrunk proptest properties in `encode_logical
 | encode_neon_float_three_same | neon.rs |
 | encode_ldxr_stxr | load_store.rs |
 | encode_logical | data_processing.rs |
+| encode_madd | data_processing.rs |

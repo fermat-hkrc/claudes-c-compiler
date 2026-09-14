@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_madd)
+
+- Valid four-GPR same-width MADD with Rd/Rn/Rm/Ra in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_madd(Rd, Rn, Rm, ZR) equals llvm-mc `mul Rd, Rn, Rm` and llvm-mc `madd Rd, Rn, Rm, ZR` (1000 cases). Documented alias at data_processing.rs:589.
+- encode_madd(X-ops) XOR encode_madd(W-ops) at equal register numbers = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path word: sf at 31, bits [30:21]=0011011000, Rm at [20:16], o0=0 at 15, Ra at [14:10], Rn at [9:5], Rd at [4:0].
+- `lr` in any of the four slots encodes as X30 and matches llvm-mc (1000 cases).
+- Fewer than 4 operands, non-register operands (Imm/Symbol/Mem/Shift/Cond/Label), and invalid names (foo, x32, w32, x, r0, empty) always Err.
+- Known-answer: `madd x0, x1, x2, x3` encodes as 0x9b020c20; `madd w0, w1, w2, w3` as 0x1b020c20; `madd x0, x1, x2, xzr` / `mul x0, x1, x2` as 0x9b027c20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) MADD: `sf 00 11011 000 Rm 0 Ra Rn Rd`. Register 31 is XZR/WZR, never SP/WSP. All four registers same width. Exactly four operands. o0 (bit 15) is 0 (MSUB is 1).
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg).
+- Dispatch: encoder/mod.rs:245 madd.
+- Callers: i128_ops.rs:79-80 emit `madd x1, x3, x4, x1` / `madd x1, x2, x5, x1`.
+
+## Quirks
+
+- Extra operands beyond index 3 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- Mixed X/W is accepted; sf is taken only from Rd (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg 0..3 / sf / parse_reg_num lr / invalid / non-Reg).
+
+---
+
 # Confirmed invariants (encode_logical)
 
 - Valid AND/ORR/EOR/ANDS shifted-register with Rd/Rn/Rm in x0–x30/xzr or w0–w30/wzr, shift in {lsl,lsr,asr,ror} with amount in [0,31] (W) or [0,63] (X), matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

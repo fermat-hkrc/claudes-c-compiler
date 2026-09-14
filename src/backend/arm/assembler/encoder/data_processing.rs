@@ -5758,3 +5758,558 @@ mod encode_logical_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_madd_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:245 madd dispatch; ARM ARM Data-processing (3 source) MADD
+    //   sf 00 11011 000 Rm 0 Ra Rn Rd; data_processing.rs:589 MUL is MADD with Ra=XZR
+    // Stronger considered:
+    //   - State machine: rejected — encode_madd is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree MADD decoder
+    //   - encode_msub as differential sibling: rejected — same-job gate fails (o0=1 vs o0=0)
+    // Weaker available: algebraic.metamorphic (sf bit), algebraic.invariant (ARM fields),
+    //   negative_error (arity / extra operand / mixed width / SP / FP / invalid name)
+    // Differential: candidate=encode_madd, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=operands <-> asm text `madd Rd, Rn, Rm, Ra`
+
+    use super::encode_madd;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_madd(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("x{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+        ]
+    }
+
+    fn non_register() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            any::<i64>().prop_map(Operand::Imm),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x0".into(),
+                offset: 8,
+            }),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::Label("L0".into())),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_madd_kat_llvm_mc_x0_x1_x2_x3() {
+        let want = 0x9b020c20u32;
+        let mc = llvm_mc_word("madd x0, x1, x2, x3").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Reg("x3".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_madd_kat_llvm_mc_w0_w1_w2_w3() {
+        let want = 0x1b020c20u32;
+        let mc = llvm_mc_word("madd w0, w1, w2, w3").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w1".into()),
+            Operand::Reg("w2".into()),
+            Operand::Reg("w3".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_madd_kat_llvm_mc_ra_zr_is_mul() {
+        let want = 0x9b027c20u32;
+        let mc_mul = llvm_mc_word("mul x0, x1, x2").expect("llvm-mc MUL KAT");
+        let mc_madd = llvm_mc_word("madd x0, x1, x2, xzr").expect("llvm-mc MADD ZR KAT");
+        assert_eq!(mc_mul, want, "llvm-mc MUL KAT mapping broken");
+        assert_eq!(mc_madd, want, "llvm-mc MADD ZR KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Reg("xzr".into()),
+        ];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_madd_diff_gpr(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            ra in 0u32..=31,
+            is_64 in any::<bool>(),
+        ) {
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let rm_n = gpr(is_64, rm);
+            let ra_n = gpr(is_64, ra);
+            let asm = format!("madd {}, {}, {}, {}", rd_n, rn_n, rm_n, ra_n);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Reg(rm_n),
+                Operand::Reg(ra_n),
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid MADD {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MADD {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_madd_diff_ra_zr_is_mul(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            is_64 in any::<bool>(),
+        ) {
+            let rd_n = gpr(is_64, rd);
+            let rn_n = gpr(is_64, rn);
+            let rm_n = gpr(is_64, rm);
+            let zr = gpr(is_64, 31);
+            let mul_asm = format!("mul {}, {}, {}", rd_n, rn_n, rm_n);
+            let madd_asm = format!("madd {}, {}, {}, {}", rd_n, rn_n, rm_n, zr);
+            let ops = [
+                Operand::Reg(rd_n),
+                Operand::Reg(rn_n),
+                Operand::Reg(rm_n),
+                Operand::Reg(zr),
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid MADD {}: {}", madd_asm, e));
+            let mc_mul = llvm_mc_word(&mul_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MUL {}: {}", mul_asm, e));
+            let mc_madd = llvm_mc_word(&madd_asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MADD {}: {}", madd_asm, e));
+            prop_assert_eq!(mc_mul, mc_madd, "llvm-mc MUL vs MADD ZR mismatch");
+            prop_assert_eq!(sut, mc_mul, "SUT vs llvm-mc MUL mismatch for {}", mul_asm);
+        }
+
+        #[test]
+        fn encode_madd_metamorphic_sf_bit(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            ra in 0u32..=31,
+        ) {
+            let x_ops = [
+                Operand::Reg(gpr(true, rd)),
+                Operand::Reg(gpr(true, rn)),
+                Operand::Reg(gpr(true, rm)),
+                Operand::Reg(gpr(true, ra)),
+            ];
+            let w_ops = [
+                Operand::Reg(gpr(false, rd)),
+                Operand::Reg(gpr(false, rn)),
+                Operand::Reg(gpr(false, rm)),
+                Operand::Reg(gpr(false, ra)),
+            ];
+            let xw = sut_word(&x_ops)
+                .unwrap_or_else(|e| panic!("64-bit MADD rejected: {}", e));
+            let ww = sut_word(&w_ops)
+                .unwrap_or_else(|e| panic!("32-bit MADD rejected: {}", e));
+            prop_assert_eq!(
+                xw ^ ww,
+                1u32 << 31,
+                "X vs W MADD must differ only by sf bit 31 (x={:#010x} w={:#010x})",
+                xw,
+                ww
+            );
+        }
+
+        #[test]
+        fn encode_madd_invariant_arm_fields(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            rm in 0u32..=31,
+            ra in 0u32..=31,
+            is_64 in any::<bool>(),
+        ) {
+            let ops = [
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Reg(gpr(is_64, ra)),
+            ];
+            let w = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("MADD rejected: {}", e));
+            let sf = if is_64 { 1u32 } else { 0 };
+            prop_assert_eq!(w & 0x1F, rd, "Rd field");
+            prop_assert_eq!((w >> 5) & 0x1F, rn, "Rn field");
+            prop_assert_eq!((w >> 10) & 0x1F, ra, "Ra field");
+            prop_assert_eq!((w >> 15) & 1, 0, "o0 bit 15 must be 0 (MADD not MSUB)");
+            prop_assert_eq!((w >> 16) & 0x1F, rm, "Rm field");
+            prop_assert_eq!((w >> 21) & 0x3FF, 0b0011011000u32, "bits 30:21 must be 0011011000");
+            prop_assert_eq!((w >> 31) & 1, sf, "sf bit");
+        }
+
+        #[test]
+        fn encode_madd_diff_lr(
+            which in 0u32..=3,
+            a in 0u32..=30,
+            b in 0u32..=30,
+            c in 0u32..=30,
+        ) {
+            let mut names = [
+                gpr(true, a),
+                gpr(true, b),
+                gpr(true, c),
+                "lr".to_string(),
+            ];
+            names.swap(3, which as usize);
+            let asm = format!(
+                "madd {}, {}, {}, {}",
+                names[0], names[1], names[2], names[3]
+            );
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+                Operand::Reg(names[3].clone()),
+            ];
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid MADD {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid MADD {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {} (lr alias x30)", asm);
+        }
+
+        #[test]
+        fn encode_madd_neg_too_few(
+            n in 0usize..=3,
+            is_64 in any::<bool>(),
+            r0 in 0u32..=31,
+            r1 in 0u32..=31,
+            r2 in 0u32..=31,
+        ) {
+            let all = [
+                Operand::Reg(gpr(is_64, r0)),
+                Operand::Reg(gpr(is_64, r1)),
+                Operand::Reg(gpr(is_64, r2)),
+            ];
+            let ops = &all[..n.min(3)];
+            prop_assert!(
+                encode_madd(ops).is_err(),
+                "fewer than 4 operands must Err, n={}",
+                n
+            );
+        }
+
+        #[test]
+        fn encode_madd_neg_extra_operand(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            ra in 0u32..=30,
+            is_64 in any::<bool>(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(gpr(is_64, rd)),
+                Operand::Reg(gpr(is_64, rn)),
+                Operand::Reg(gpr(is_64, rm)),
+                Operand::Reg(gpr(is_64, ra)),
+                extra,
+            ];
+            prop_assert!(
+                encode_madd(&ops).is_err(),
+                "MADD has no 5th operand; extra operand must Err"
+            );
+        }
+
+        #[test]
+        fn encode_madd_neg_mixed_width(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            ra in 0u32..=30,
+            rd64 in any::<bool>(),
+            rn64 in any::<bool>(),
+            rm64 in any::<bool>(),
+            ra64 in any::<bool>(),
+        ) {
+            prop_assume!(!(rd64 == rn64 && rn64 == rm64 && rm64 == ra64));
+            let ops = [
+                Operand::Reg(gpr(rd64, rd)),
+                Operand::Reg(gpr(rn64, rn)),
+                Operand::Reg(gpr(rm64, rm)),
+                Operand::Reg(gpr(ra64, ra)),
+            ];
+            prop_assert!(
+                encode_madd(&ops).is_err(),
+                "mixed-width MADD registers must Err (rd64={} rn64={} rm64={} ra64={})",
+                rd64,
+                rn64,
+                rm64,
+                ra64
+            );
+        }
+
+        #[test]
+        fn encode_madd_neg_sp(
+            which in 0u32..=3,
+            is_64 in any::<bool>(),
+            a in 0u32..=30,
+            b in 0u32..=30,
+            c in 0u32..=30,
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let mut names = [
+                gpr(is_64, a),
+                gpr(is_64, b),
+                gpr(is_64, c),
+                sp.to_string(),
+            ];
+            names.swap(3, which as usize);
+            let ops = [
+                Operand::Reg(names[0].clone()),
+                Operand::Reg(names[1].clone()),
+                Operand::Reg(names[2].clone()),
+                Operand::Reg(names[3].clone()),
+            ];
+            prop_assert!(
+                encode_madd(&ops).is_err(),
+                "SP/WSP is not a valid MADD operand (which={} names={:?})",
+                which,
+                names
+            );
+        }
+
+        #[test]
+        fn encode_madd_neg_fp(
+            which in 0u32..=3,
+            prefix in prop::sample::select(vec!["d", "s", "q", "v", "h", "b"]),
+            n in prop_oneof![Just(0u32), Just(31u32), 0u32..=31],
+        ) {
+            let fp = format!("{}{}", prefix, n);
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+                Operand::Reg("x3".into()),
+            ];
+            ops[which as usize] = Operand::Reg(fp.clone());
+            prop_assert!(
+                encode_madd(&ops).is_err(),
+                "FP/SIMD register {} is not a valid MADD operand (which={})",
+                fp,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_madd_neg_invalid_reg(
+            which in 0u32..=3,
+            bad in prop_oneof![
+                Just("x32".to_string()),
+                Just("w32".to_string()),
+                Just("x99".to_string()),
+                Just("w99".to_string()),
+                Just("".to_string()),
+                Just("foo".to_string()),
+                Just("r0".to_string()),
+                Just("x".to_string()),
+                Just("x-1".to_string()),
+            ],
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+                Operand::Reg("x3".into()),
+            ];
+            ops[which as usize] = Operand::Reg(bad.clone());
+            prop_assert!(
+                encode_madd(&ops).is_err(),
+                "invalid register name {:?} at {} must Err",
+                bad,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_madd_neg_non_register(
+            which in 0u32..=3,
+            bad in non_register(),
+        ) {
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Reg("x1".into()),
+                Operand::Reg("x2".into()),
+                Operand::Reg("x3".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_madd(&ops).is_err(),
+                "non-register operand at position {} must Err",
+                which
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_madd_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_madd(&ops).is_err(),
+            "MADD w0, w0, w0, w0, x0 must Err; a 5th operand is not valid (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_madd_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+        ];
+        assert!(
+            encode_madd(&ops).is_err(),
+            "mixed-width MADD w0, w0, w0, x0 must Err (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_madd_regression_sp() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()),
+        ];
+        assert!(
+            encode_madd(&ops).is_err(),
+            "MADD wsp, w0, w0, w0 must Err; register 31 is WZR not WSP (llvm-mc rejects it)"
+        );
+    }
+
+    #[test]
+    fn test_encode_madd_regression_fp_reg() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Reg("x2".into()),
+            Operand::Reg("x3".into()),
+        ];
+        assert!(
+            encode_madd(&ops).is_err(),
+            "MADD d0, x1, x2, x3 must Err; FP/SIMD registers are not MADD operands (llvm-mc rejects it)"
+        );
+    }
+}
