@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_neon_across_long)
+
+- Valid SADDLV/UADDLV with dest V matching T (H for 8B/16B, S for 4H/8H, D for 4S) and Vn in v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_neon_across_long(ops, 0, 0b00011) XOR encode_neon_across_long(ops, 1, 0b00011) = 1<<29 (ARM ARM U bit) (1000 cases).
+- Success-path word: bit 31=0, Q at 30 from T, U at 29, bits [28:24]=01110, size at [23:22] from T, bits [21:17]=11000, bits [16:12]=00011, bits [11:10]=10, Rn at [9:5], Rd at [4:0].
+- Fewer than 2 operands, non-register dest/src (Imm/Mem/Symbol/Shift/Cond/Label), and invalid names (v32, h32, foo, empty, v, v-1) always Err — including dest RegArrangement with an invalid name.
+- Known-answer: `saddlv h0, v1.8b` encodes as 0x0e303820; `uaddlv h0, v0.8b` as 0x2e303800; `saddlv d0, v1.4s` as 0x4eb03820.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- SADDLV/UADDLV dest V is H/S/D matching T (llvm-mc rejects b/q/x/w/v dest and vector-arrangement dest).
+- Valid T is 8B, 16B, 4H, 8H, 4S (llvm-mc rejects 2S/1D/2D and unknown qualifiers).
+- Exactly two operands (llvm-mc rejects a third operand).
+- Codegen emits `uaddlv h0, v0.8b` (alu.rs:65).
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- neon_arr_to_q_size accepts 2s/1d/2d, so reserved T is encoded (see bugs).
+- Dest prefix is ignored; only parse_reg_num is used, so b/s/d/q/x/w/v dest encode as the matching-number H/S/D form (see bugs).
+- Operand::RegArrangement dest is accepted and its arrangement discarded (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (dest `_` non-Reg / parse_reg_num None on dest RegArrangement).
+
+---
+
 # Confirmed invariants (encode_ldar_stlr)
 
 - Valid LDAR/STLR/LDARB/STLRB/LDARH/STLRH with Wt/Xt Rt (31=XZR/WZR) and Xn|SP base, offset 0, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

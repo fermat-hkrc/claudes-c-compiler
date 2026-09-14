@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 83374aca83b298a4e50139b8127e1e34190e0ce3bfb48489d3127dacc5da28f9 # shrinks to rd = 0, rn = 0, rm = 0, ta = "8h", tb = "8b", is_high = true, u_bit = 0, opcode = 4
+cc 3f2c5cfe7d58f8324f40a6dcf15e8782e156706302fb055f3606484eacdc0b7b # shrinks to rd = 0, rn = 0, u = 0, t = "2s"

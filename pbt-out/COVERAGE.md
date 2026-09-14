@@ -30,3 +30,4 @@
 | encode_div | data_processing.rs | data_processing.rs | cargo test --lib | 6 passing / 4 failing properties (plus 2 passing KAT + 4 failing regression witnesses) |
 | encode_eon | data_processing.rs | data_processing.rs | cargo test --lib | 5 passing / 6 failing properties (plus 2 passing KAT + 7 failing regression witnesses) |
 | encode_ldar_stlr | load_store.rs | load_store.rs | cargo test --lib | 5 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses) |
+| encode_neon_across_long | neon.rs | neon.rs | cargo test --lib | 5 passing / 3 failing properties (plus 3 passing KAT + 3 failing regression witnesses) |

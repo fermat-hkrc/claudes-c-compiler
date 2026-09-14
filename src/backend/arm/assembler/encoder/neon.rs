@@ -2440,3 +2440,508 @@ mod encode_neon_three_diff_narrow_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_neon_across_long_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:679-680 saddlv/uaddlv => encode_neon_across_long(operands, U, 0b00011);
+    //   neon.rs:1722 Format 0 Q U 01110 size 11000 00011 10 Rn Rd; ARM ARM SADDLV/UADDLV
+    // Stronger considered:
+    //   - State machine: rejected — encode_neon_across_long is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected as primary — no in-tree SADDLV decoder (field unpack kept as weaker algebraic)
+    //   - Differential vs encode_neon_across / encode_neon_addv: rejected — same-width reduce, different opcode/dest width (same-job gate)
+    // Weaker available: algebraic.metamorphic (U bit), algebraic.invariant (word layout), negative_error (arity / T / dest V / extra)
+    // Differential: candidate=encode_neon_across_long, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(Vd), RegArrangement(Vn, T)] + (u, opcode=0b00011) <-> `{saddlv|uaddlv} Vd, Vn.T`
+
+    use super::encode_neon_across_long;
+    use super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const OPCODE: u32 = 0b00011;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn vreg(n: u32) -> String {
+        format!("v{}", n)
+    }
+
+    fn neon_arr(reg: u32, arr: &str) -> Operand {
+        Operand::RegArrangement {
+            reg: vreg(reg),
+            arrangement: arr.to_string(),
+        }
+    }
+
+    fn mandated_v(t: &str) -> &'static str {
+        match t {
+            "8b" | "16b" => "h",
+            "4h" | "8h" => "s",
+            "4s" => "d",
+            _ => "h",
+        }
+    }
+
+    fn q_size_of(t: &str) -> (u32, u32) {
+        match t {
+            "8b" => (0, 0b00),
+            "16b" => (1, 0b00),
+            "4h" => (0, 0b01),
+            "8h" => (1, 0b01),
+            "4s" => (1, 0b10),
+            _ => (0xff, 0xff),
+        }
+    }
+
+    fn dest_reg(v: &str, n: u32) -> Operand {
+        Operand::Reg(format!("{}{}", v, n))
+    }
+
+    fn mnemonic(u: u32) -> &'static str {
+        if u == 0 {
+            "saddlv"
+        } else {
+            "uaddlv"
+        }
+    }
+
+    fn sut_word(ops: &[Operand], u: u32) -> Result<u32, String> {
+        match encode_neon_across_long(ops, u, OPCODE)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child
+            .wait_with_output()
+            .map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn reg_num() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn valid_t() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(vec!["8b", "16b", "4h", "8h", "4s"])
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_neon_across_long_kat_llvm_mc_saddlv_h0_v1_8b() {
+        let want = 0x0e303820u32;
+        let mc = llvm_mc_word("saddlv h0, v1.8b").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [dest_reg("h", 0), neon_arr(1, "8b")];
+        let sut = sut_word(&ops, 0).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    /// Known-answer: codegen popcount emits `uaddlv h0, v0.8b`.
+    #[test]
+    fn encode_neon_across_long_kat_llvm_mc_uaddlv_h0_v0_8b() {
+        let want = 0x2e303800u32;
+        let mc = llvm_mc_word("uaddlv h0, v0.8b").expect("llvm-mc KAT uaddlv");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for uaddlv");
+        let ops = [dest_reg("h", 0), neon_arr(0, "8b")];
+        let sut = sut_word(&ops, 1).expect("SUT KAT uaddlv");
+        assert_eq!(sut, want);
+    }
+
+    /// Known-answer: 4S form uses dest D, Q=1, size=10.
+    #[test]
+    fn encode_neon_across_long_kat_llvm_mc_saddlv_d0_v1_4s() {
+        let want = 0x4eb03820u32;
+        let mc = llvm_mc_word("saddlv d0, v1.4s").expect("llvm-mc KAT 4s");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken for 4s");
+        let ops = [dest_reg("d", 0), neon_arr(1, "4s")];
+        let sut = sut_word(&ops, 0).expect("SUT KAT 4s");
+        assert_eq!(sut, want);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_neon_across_long_diff_llvm_mc(
+            rd in reg_num(),
+            rn in reg_num(),
+            u in 0u32..=1u32,
+            t in valid_t(),
+        ) {
+            let v = mandated_v(t);
+            let mnem = mnemonic(u);
+            let asm = format!("{} {}{}, {}.{} ", mnem, v, rd, vreg(rn), t)
+                .trim_end()
+                .to_string();
+            let ops = [dest_reg(v, rd), neon_arr(rn, t)];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            let sut = sut_word(&ops, u)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_neon_across_long_roundtrip_arm_fields(
+            rd in reg_num(),
+            rn in reg_num(),
+            u in 0u32..=1u32,
+            t in valid_t(),
+        ) {
+            let v = mandated_v(t);
+            let ops = [dest_reg(v, rd), neon_arr(rn, t)];
+            let w = sut_word(&ops, u)
+                .unwrap_or_else(|e| panic!("SUT rejected valid field unpack: {}", e));
+            let (q, size) = q_size_of(t);
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 30) & 1, q, "Q bit");
+            prop_assert_eq!((w >> 29) & 1, u, "U bit");
+            prop_assert_eq!((w >> 24) & 0b11111, 0b01110u32, "bits[28:24]=01110");
+            prop_assert_eq!((w >> 22) & 0b11, size, "size from T");
+            prop_assert_eq!((w >> 17) & 0b11111, 0b11000u32, "bits[21:17]=11000");
+            prop_assert_eq!((w >> 12) & 0b11111, OPCODE, "opcode[16:12]=00011");
+            prop_assert_eq!((w >> 10) & 0b11, 0b10u32, "bits[11:10]=10");
+            prop_assert_eq!((w >> 5) & 0b11111, rn, "Rn");
+            prop_assert_eq!(w & 0b11111, rd, "Rd");
+        }
+
+        #[test]
+        fn encode_neon_across_long_metamorphic_u_bit(
+            rd in reg_num(),
+            rn in reg_num(),
+            t in valid_t(),
+        ) {
+            let v = mandated_v(t);
+            let ops = [dest_reg(v, rd), neon_arr(rn, t)];
+            let s = sut_word(&ops, 0)
+                .unwrap_or_else(|e| panic!("SUT U=0 rejected: {}", e));
+            let uns = sut_word(&ops, 1)
+                .unwrap_or_else(|e| panic!("SUT U=1 rejected: {}", e));
+            prop_assert_eq!(s ^ uns, 1u32 << 29, "u must toggle only U (bit 29)");
+        }
+
+        #[test]
+        fn encode_neon_across_long_invariant_fixed_bits(
+            rd in reg_num(),
+            rn in reg_num(),
+            u in 0u32..=1u32,
+            t in valid_t(),
+        ) {
+            let v = mandated_v(t);
+            let ops = [dest_reg(v, rd), neon_arr(rn, t)];
+            let w = sut_word(&ops, u)
+                .unwrap_or_else(|e| panic!("SUT rejected valid invariant: {}", e));
+            prop_assert_eq!((w >> 31) & 1, 0u32, "bit 31 must be 0");
+            prop_assert_eq!((w >> 24) & 0b11111, 0b01110u32, "bits[28:24]=01110");
+            prop_assert_eq!((w >> 17) & 0b11111, 0b11000u32, "bits[21:17]=11000");
+            prop_assert_eq!((w >> 12) & 0b11111, OPCODE, "opcode[16:12]=00011");
+            prop_assert_eq!((w >> 10) & 0b11, 0b10u32, "bits[11:10]=10");
+        }
+
+        #[test]
+        fn encode_neon_across_long_neg_arity_and_shape(
+            n in 0usize..=1,
+            which in 0u32..=5,
+            u in 0u32..=1u32,
+            rd in reg_num(),
+            bad in prop_oneof![
+                Just("v32".to_string()),
+                Just("h32".to_string()),
+                Just("foo".to_string()),
+                Just("".to_string()),
+                Just("v".to_string()),
+                Just("v-1".to_string()),
+            ],
+        ) {
+            let dest = dest_reg("h", rd);
+            let src = neon_arr(rd, "8b");
+            // Too few operands.
+            let short: Vec<Operand> = [dest.clone(), src.clone()].iter().take(n).cloned().collect();
+            prop_assert!(
+                encode_neon_across_long(&short, u, OPCODE).is_err(),
+                "len={} must Err (requires 2 operands)",
+                n
+            );
+            // Non-register second operand.
+            let bad_src = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let ops_bad_src = [dest.clone(), bad_src];
+            prop_assert!(
+                encode_neon_across_long(&ops_bad_src, u, OPCODE).is_err(),
+                "non-register source which={} must Err",
+                which
+            );
+            // Invalid dest / src names.
+            let ops_bad_dest = [
+                Operand::Reg(bad.clone()),
+                neon_arr(rd, "8b"),
+            ];
+            prop_assert!(
+                encode_neon_across_long(&ops_bad_dest, u, OPCODE).is_err(),
+                "invalid dest name {} must Err",
+                bad
+            );
+            let ops_bad_rn = [
+                dest_reg("h", rd),
+                Operand::RegArrangement {
+                    reg: bad.clone(),
+                    arrangement: "8b".into(),
+                },
+            ];
+            prop_assert!(
+                encode_neon_across_long(&ops_bad_rn, u, OPCODE).is_err(),
+                "invalid src name {} must Err",
+                bad
+            );
+            // Coverage sweep: dest `_` arm (non-Reg / non-RegArrangement).
+            let bad_dest_shape = match which {
+                0 => Operand::Imm(0),
+                1 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                2 => Operand::Symbol("foo".into()),
+                3 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                4 => Operand::Cond("eq".into()),
+                _ => Operand::Label(".L0".into()),
+            };
+            let ops_bad_dest_shape = [bad_dest_shape, neon_arr(rd, "8b")];
+            prop_assert!(
+                encode_neon_across_long(&ops_bad_dest_shape, u, OPCODE).is_err(),
+                "non-register dest which={} must Err",
+                which
+            );
+            // Coverage sweep: parse_reg_num None on dest RegArrangement.
+            let ops_bad_arr_dest = [
+                Operand::RegArrangement {
+                    reg: bad.clone(),
+                    arrangement: "8b".into(),
+                },
+                neon_arr(rd, "8b"),
+            ];
+            prop_assert!(
+                encode_neon_across_long(&ops_bad_arr_dest, u, OPCODE).is_err(),
+                "invalid dest RegArrangement name {} must Err",
+                bad
+            );
+        }
+
+        #[test]
+        fn encode_neon_across_long_neg_extra_operands(
+            rd in reg_num(),
+            rn in reg_num(),
+            extra in reg_num(),
+            u in 0u32..=1u32,
+            t in valid_t(),
+            extra_kind in 0u32..=3u32,
+        ) {
+            let v = mandated_v(t);
+            let mnem = mnemonic(u);
+            let extra_op = match extra_kind {
+                0 => dest_reg(v, extra),
+                1 => neon_arr(extra, t),
+                2 => Operand::Imm(0),
+                _ => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+            };
+            let extra_asm = match extra_kind {
+                0 => format!("{}{} ", v, extra),
+                1 => format!("{}.{} ", vreg(extra), t),
+                2 => "#0".to_string(),
+                _ => "[x0]".to_string(),
+            };
+            let asm = format!(
+                "{} {}{}, {}.{}, {} ",
+                mnem, v, rd, vreg(rn), t, extra_asm.trim_end()
+            )
+            .trim_end()
+            .to_string();
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted 3-operand {}",
+                asm
+            );
+            let ops = [dest_reg(v, rd), neon_arr(rn, t), extra_op];
+            prop_assert!(
+                encode_neon_across_long(&ops, u, OPCODE).is_err(),
+                "3 operands must Err (llvm-mc rejects {})",
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_across_long_neg_invalid_arrangement(
+            rd in reg_num(),
+            rn in reg_num(),
+            u in 0u32..=1u32,
+            t in prop::sample::select(vec!["2s", "1d", "2d", "8s", "16h", "4d", "", "b", "h"]),
+        ) {
+            let asm = format!("{} h{}, {}.{} ", mnemonic(u), rd, vreg(rn), t)
+                .trim_end()
+                .to_string();
+            if !t.is_empty() {
+                prop_assert!(
+                    llvm_mc_word(&asm).is_err(),
+                    "llvm-mc unexpectedly accepted reserved/invalid T {}",
+                    asm
+                );
+            }
+            let ops = [dest_reg("h", rd), neon_arr(rn, t)];
+            prop_assert!(
+                encode_neon_across_long(&ops, u, OPCODE).is_err(),
+                "T={} is not 8b/16b/4h/8h/4s and must Err (llvm-mc rejects {})",
+                t,
+                asm
+            );
+        }
+
+        #[test]
+        fn encode_neon_across_long_neg_dest_type(
+            rd in reg_num(),
+            rn in reg_num(),
+            u in 0u32..=1u32,
+            t in valid_t(),
+            prefix in prop::sample::select(vec!["b", "h", "s", "d", "q", "x", "w", "v"]),
+            as_arr in any::<bool>(),
+        ) {
+            let mandated = mandated_v(t);
+            let dest_op;
+            let dest_asm;
+            if as_arr {
+                dest_op = neon_arr(rd, t);
+                dest_asm = format!("{}.{}", vreg(rd), t);
+            } else {
+                prop_assume!(prefix != mandated);
+                dest_op = Operand::Reg(format!("{}{}", prefix, rd));
+                dest_asm = format!("{}{}", prefix, rd);
+            }
+            let mnem = mnemonic(u);
+            let asm = format!("{} {}, {}.{} ", mnem, dest_asm, vreg(rn), t)
+                .trim_end()
+                .to_string();
+            prop_assert!(
+                llvm_mc_word(&asm).is_err(),
+                "llvm-mc unexpectedly accepted dest {}",
+                asm
+            );
+            let ops = [dest_op, neon_arr(rn, t)];
+            prop_assert!(
+                encode_neon_across_long(&ops, u, OPCODE).is_err(),
+                "dest {} is not mandated V={} for T={} and must Err (llvm-mc rejects {})",
+                dest_asm,
+                mandated,
+                t,
+                asm
+            );
+        }
+    }
+
+    /// Deterministic regression: exactly 2 operands (shrunk from neg_extra_operands).
+    #[test]
+    fn test_encode_neon_across_long_regression_extra_operand() {
+        let ops = [
+            dest_reg("h", 0),
+            neon_arr(0, "8b"),
+            dest_reg("h", 0),
+        ];
+        assert!(
+            encode_neon_across_long(&ops, 0, OPCODE).is_err(),
+            "saddlv h0, v0.8b, h0 must Err (exactly 2 operands)"
+        );
+    }
+
+    /// Deterministic regression: reserved T=2S (shrunk from neg_invalid_arrangement).
+    #[test]
+    fn test_encode_neon_across_long_regression_reserved_2s() {
+        let ops = [dest_reg("h", 0), neon_arr(0, "2s")];
+        assert!(
+            encode_neon_across_long(&ops, 0, OPCODE).is_err(),
+            "saddlv h0, v0.2s must Err (T=2S is reserved)"
+        );
+    }
+
+    /// Deterministic regression: dest V must match T (shrunk from neg_dest_type).
+    #[test]
+    fn test_encode_neon_across_long_regression_dest_type() {
+        let ops = [dest_reg("b", 0), neon_arr(0, "8b")];
+        assert!(
+            encode_neon_across_long(&ops, 0, OPCODE).is_err(),
+            "saddlv b0, v0.8b must Err (dest V must be H for T=8B)"
+        );
+    }
+}

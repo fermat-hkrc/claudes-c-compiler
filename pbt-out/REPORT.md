@@ -1,30 +1,47 @@
-# PBT Campaign Report: encode_ldar_stlr
+# PBT Campaign Report: encode_neon_across_long
 
 ## Summary
 
 **Date:** 2026-09-14
-**Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ldar_stlr
-**Tests:** 8 properties (plus 6 KAT + 3 regression witnesses)
-**Result:** 5 passing, 3 failing properties (3 SUT bugs)
-**Effort tier:** standard
-**Contract-surface sweep:** 1 round (coverage_gaps had no profraw; manual arm audit of get_reg non-Reg first operand and parse_reg_num None on invalid base names). Closed because the tier's 1 round is done. Sweep extended `encode_ldar_stlr_neg_arity_and_shape` (shapes 7–8) and that property still passes.
+**Repository:** claudes-c-compiler
+**Modules tested:** encode_neon_across_long
+**Tests:** 8 properties (plus 3 KAT + 3 regression witnesses)
+**Result:** 5 passing, 3 bugs
+**Effort tier:** standard (1 coverage-driven contract-surface sweep; generator runs=1000)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ldar_stlr | 8 properties (5 pass, 3 fail) | 3 | differential, algebraic.round_trip, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_across_long | 8 properties (5 pass, 3 fail) + 3 KAT pass + 3 regression fail | 3 | differential, algebraic.round_trip, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **Extra operand ignored** — property `encode_ldar_stlr_neg_extra_operands`. Shrunk counterexample: `stlr w0, [x0], x2` (rt=0, rn=0, is_load=false, variant=0, is_64=false, extra=Reg("x2")). Expected Err; actual Ok(Word) encoding of `stlr w0, [x0]`. Path: `pbt-out/bug_reports/encode_ldar_stlr_extra_operand.md`. Severity: medium.
+### 1. Extra operands ignored
+- **Law:** SADDLV/UADDLV take exactly two operands.
+- **Shrunk counterexample:** `saddlv h0, v0.8b, h0` (rd=0, rn=0, extra=0, u=0, t=8b, extra_kind=0).
+- **Expected:** Err. **Actual:** Ok(Word) — `len < 2` does not reject len>2.
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_neon_across_long_extra_operand.md
+- **Regression test:** `test_encode_neon_across_long_regression_extra_operand` (fails, as intended)
 
-2. **SP/WSP encoded as ZR for Rt** — property `encode_ldar_stlr_neg_invalid_rt`. Shrunk counterexample: `stlr sp, [x0]` (is_load=false, kind=0, n=0). Expected Err; actual Ok(Word) with Rt=31 (XZR). llvm-mc rejects SP as Rt. Path: `pbt-out/bug_reports/encode_ldar_stlr_sp_as_rt.md`. Severity: medium.
+### 2. Reserved source arrangement T=2S (also 1D/2D) encoded
+- **Law:** ARM ARM T is only 8B/16B/4H/8H/4S; size=11 and 2S are reserved.
+- **Shrunk counterexample:** `saddlv h0, v0.2s` (rd=0, rn=0, u=0, t="2s").
+- **Expected:** Err. **Actual:** Ok(Word) with Q=0, size=10. Root cause: `neon_arr_to_q_size` maps 2s/1d/2d.
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_neon_across_long_reserved_arrangement.md
+- **Regression test:** `test_encode_neon_across_long_regression_reserved_2s` (fails, as intended)
 
-3. **W register accepted as memory base** — property `encode_ldar_stlr_neg_invalid_base_offset`. Shrunk counterexample: `stlr w0, [w0]` (rt=0, is_load=false, variant=0, is_64=false, kind=0, wn=0). Expected Err; actual Ok(Word) encoding of `stlr w0, [x0]`. llvm-mc rejects a W base. Path: `pbt-out/bug_reports/encode_ldar_stlr_w_base.md`. Severity: medium.
+### 3. Destination register type ignored
+- **Law:** Dest `<V><d>` is H for 8B/16B, S for 4H/8H, D for 4S — never B/Q/GPR/vector arrangement.
+- **Shrunk counterexample:** `saddlv b0, v0.8b` (rd=0, rn=0, u=0, t=8b, prefix=b, as_arr=false). Encodes as `saddlv h0, v0.8b`.
+- **Expected:** Err. **Actual:** Ok(Word) with Rd=0. Dest prefix and RegArrangement dest arrangement are ignored.
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_neon_across_long_dest_type.md
+- **Regression test:** `test_encode_neon_across_long_regression_dest_type` (fails, as intended)
 
-All three reproduced serially with `PBT_TEST_JOBS=1`.
+Serial reconfirmation: all three failures reproduced with `PBT_TEST_JOBS=1 cargo test --lib encode_neon_across_long_neg -- --test-threads=1`.
 
 ## Design Caveats
 
@@ -34,27 +51,29 @@ All three reproduced serially with `PBT_TEST_JOBS=1`.
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldar_stlr_pbt) | 8 properties + 6 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_across_long_pbt) | 8 properties + 3 KAT + 3 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — per-function coverage row
-- pbt-out/COVERAGE_STATUS.md — campaign coverage stats
-- pbt-out/FUNCTION_INDEX.md — merged function index (encode_ldar_stlr marked yes)
-- pbt-out/INVARIANTS.md — confirmed encode_ldar_stlr invariants
-- pbt-out/bug_reports/encode_ldar_stlr_extra_operand.md
-- pbt-out/bug_reports/encode_ldar_stlr_sp_as_rt.md
-- pbt-out/bug_reports/encode_ldar_stlr_w_base.md
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_neon_across_long_extra_operand.md
+- pbt-out/bug_reports/encode_neon_across_long_reserved_arrangement.md
+- pbt-out/bug_reports/encode_neon_across_long_dest_type.md
+
+Contract-surface sweep closed after 1 round (standard tier): `coverage_gaps` had no LLVM profraw; manual arm audit of dest `_` (non-Reg) and parse_reg_num None on dest RegArrangement — generators extended; those paths Err as specified. Sweep closed because the tier's one round is done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 05:14 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 28/184 total | PBT candidates: 28 | Tested: 28 (100%) | 0 pass, 28 fail
+> Last updated: 2026-09-14 05:26 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 29/184 total | PBT candidates: 29 | Tested: 29 (100%) | 0 pass, 29 fail
 
 ## Summary
 
@@ -63,10 +82,10 @@ All three reproduced serially with `PBT_TEST_JOBS=1`.
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 28 |
-| **Tested (of PBT candidates)** | **28 / 28 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 28 / 0 |
-| **Overall (tested / all functions)** | **28 / 184 (15%)** |
+| PBT candidates (from FUNCTION_INDEX) | 29 |
+| **Tested (of PBT candidates)** | **29 / 29 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 29 / 0 |
+| **Overall (tested / all functions)** | **29 / 184 (16%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -74,13 +93,13 @@ All three reproduced serially with `PBT_TEST_JOBS=1`.
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 28 | 28 | 0 | 100% |
+|  | 29 | 29 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 28 | 28 | 0 | 100% |
+| unknown | 29 | 29 | 0 | 100% |
 
 ## File Coverage
 
@@ -91,7 +110,7 @@ All three reproduced serially with `PBT_TEST_JOBS=1`.
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 6 | 6 | 100% | covered |
 | load_store.rs | 20 | 2 | 2 | 100% | covered |
-| neon.rs | 68 | 1 | 1 | 100% | covered |
+| neon.rs | 68 | 2 | 2 | 100% | covered |
 
 ## Recommended Focus
 
@@ -128,3 +147,4 @@ All three reproduced serially with `PBT_TEST_JOBS=1`.
 | encode_div | data_processing.rs |
 | encode_eon | data_processing.rs |
 | encode_ldar_stlr | load_store.rs |
+| encode_neon_across_long | neon.rs |
