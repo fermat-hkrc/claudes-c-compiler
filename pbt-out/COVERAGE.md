@@ -17,3 +17,4 @@
 | encode_cbz | compare_branch.rs | compare_branch.rs | cargo test --lib | 7 passing / 3 failing properties (plus 1 passing KAT + 3 failing KAT + 4 failing regression witnesses) |
 | encode_ccmp_ccmn | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 4 failing properties (plus 3 passing KAT + 6 failing regression witnesses) |
 | encode_cinc | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 3 failing properties (plus 3 passing KAT + 6 failing regression witnesses) |
+| encode_cinv | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 3 failing properties (plus 3 passing KAT + 6 failing regression witnesses) |
