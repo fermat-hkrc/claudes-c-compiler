@@ -2964,3 +2964,654 @@ mod encode_fcvt_precision_pbt {
         }
     }
 }
+
+#[cfg(test)]
+mod encode_fmov_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs "Encodes AArch64 instructions into 32-bit machine code words";
+    //   encoder/mod.rs:376 "fmov" => encode_fmov;
+    //   ARM ARM FMOV (register): 0 00 11110 ftype 1 000000 10000 Rn Rd (ftype 00=S, 01=D, 11=H);
+    //   ARM ARM FMOV (general): sf 00 11110 ftype 1 rmode opcode 000000 Rn Rd
+    //     opcode 111 GP->FP / 110 FP->GP; matching widths Sd/Wn, Dd/Xn, Hd/Wn;
+    //   README.md:223 lists fmov; codegen float_ops.rs:27-36 emits the six scalar register forms.
+    // Stronger considered:
+    //   - State machine: rejected — encode_fmov is a pure function with no lifecycle
+    //   - Algebraic round-trip: rejected — no in-tree FMOV decoder
+    //   - encode_fp_arith / encode_fneg / encode_fp_1src as differential sibling:
+    //     rejected — same-job gate fails (different mnemonics / ARM classes)
+    // Weaker available: algebraic.metamorphic (Rd/Rn, S vs D ftype, GP->FP vs FP->GP opcode),
+    //   algebraic.invariant (ARM fields), negative_error (arity / extra / mixed / SP / QVB)
+    // Differential: candidate=encode_fmov, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler (caller-reachable from encode_instruction),
+    //   mapping=[Reg(Rd), Reg(Rn)] <-> `fmov Rd, Rn`
+
+    use super::encode_fmov;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        if n == 31 {
+            if is_64 {
+                "xzr".into()
+            } else {
+                "wzr".into()
+            }
+        } else {
+            format!("{}{}", if is_64 { "x" } else { "w" }, n)
+        }
+    }
+
+    fn fp(is_d: bool, n: u32) -> String {
+        format!("{}{}", if is_d { "d" } else { "s" }, n)
+    }
+
+    fn sut_word(ops: &[Operand]) -> Result<u32, String> {
+        match encode_fmov(ops)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word_with(asm: &str, extra_args: &[&str]) -> Result<u32, String> {
+        let mut args = vec!["-triple=aarch64", "-show-encoding"];
+        args.extend_from_slice(extra_args);
+        let mut child = Command::new(LLVM_MC)
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &[])
+    }
+
+    fn llvm_mc_fp16_word(asm: &str) -> Result<u32, String> {
+        llvm_mc_word_with(asm, &["-mattr=+fullfp16"])
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            (0u32..=31).prop_map(|n| Operand::Reg(format!("s{n}"))),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Imm(32)),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            }),
+            Just(Operand::RegArrangement {
+                reg: "v0".into(),
+                arrangement: "4s".into(),
+            }),
+        ]
+    }
+
+    /// Six documented scalar register forms: SS, DD, SW, DX, WS, XD.
+    fn valid_pair(form: u32, rd: u32, rn: u32, dest_kind: u32, src_kind: u32) -> (String, String) {
+        let spell_fp = |is_d: bool, n: u32, kind: u32| -> String {
+            let s = fp(is_d, n);
+            if kind == 0 {
+                s.to_uppercase()
+            } else {
+                s
+            }
+        };
+        let spell_gp = |is_64: bool, n: u32, kind: u32| -> String {
+            match kind {
+                0 if n == 31 && is_64 => "x31".into(),
+                0 if n == 31 && !is_64 => "w31".into(),
+                1 if n == 31 && is_64 => "XZR".into(),
+                1 if n == 31 && !is_64 => "WZR".into(),
+                2 if n == 30 && is_64 => "LR".into(),
+                3 => gpr(is_64, n).to_uppercase(),
+                _ => gpr(is_64, n),
+            }
+        };
+        match form {
+            0 => (spell_fp(false, rd, dest_kind), spell_fp(false, rn, src_kind)),
+            1 => (spell_fp(true, rd, dest_kind), spell_fp(true, rn, src_kind)),
+            2 => (spell_fp(false, rd, dest_kind), spell_gp(false, rn, src_kind)),
+            3 => (spell_fp(true, rd, dest_kind), spell_gp(true, rn, src_kind)),
+            4 => (spell_gp(false, rd, dest_kind), spell_fp(false, rn, src_kind)),
+            _ => (spell_gp(true, rd, dest_kind), spell_fp(true, rn, src_kind)),
+        }
+    }
+
+    fn incompatible_pair() -> impl Strategy<Value = (String, String)> {
+        let n = 0u32..=31;
+        prop_oneof![
+            // mixed S/D
+            (n.clone(), n.clone(), any::<bool>()).prop_map(|(d, s, dest_d)| {
+                (fp(dest_d, d), fp(!dest_d, s))
+            }),
+            // size-mismatched GP/FP: D/W, S/X, X/S, W/D
+            (n.clone(), n.clone()).prop_map(|(d, s)| (fp(true, d), gpr(false, s))),
+            (n.clone(), n.clone()).prop_map(|(d, s)| (fp(false, d), gpr(true, s))),
+            (n.clone(), n.clone()).prop_map(|(d, s)| (gpr(true, d), fp(false, s))),
+            (n.clone(), n.clone()).prop_map(|(d, s)| (gpr(false, d), fp(true, s))),
+            // two GP registers
+            (n.clone(), n.clone(), any::<bool>(), any::<bool>()).prop_map(|(d, s, d64, s64)| {
+                (gpr(d64, d), gpr(s64, s))
+            }),
+            // Q/V/B dest + S/D src
+            (n.clone(), n.clone(), 0u32..=2, any::<bool>()).prop_map(|(d, s, p, src_d)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (format!("{pref}{d}"), fp(src_d, s))
+            }),
+            // S/D dest + Q/V/B src
+            (n.clone(), n.clone(), any::<bool>(), 0u32..=2).prop_map(|(d, s, dest_d, p)| {
+                let pref = ["q", "v", "b"][p as usize];
+                (fp(dest_d, d), format!("{pref}{s}"))
+            }),
+        ]
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_fmov_kat_llvm_mc_s0_s1() {
+        let want = 0x1e204020u32;
+        let mc = llvm_mc_word("fmov s0, s1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_d0_d1() {
+        let want = 0x1e604020u32;
+        let mc = llvm_mc_word("fmov d0, d1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("d1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_s0_w1() {
+        let want = 0x1e270020u32;
+        let mc = llvm_mc_word("fmov s0, w1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("w1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_d0_x1() {
+        let want = 0x9e670020u32;
+        let mc = llvm_mc_word("fmov d0, x1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("x1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_w0_s1() {
+        let want = 0x1e260020u32;
+        let mc = llvm_mc_word("fmov w0, s1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("w0".into()), Operand::Reg("s1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_x0_d1() {
+        let want = 0x9e660020u32;
+        let mc = llvm_mc_word("fmov x0, d1").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("x0".into()), Operand::Reg("d1".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_s0_wzr() {
+        let want = 0x1e2703e0u32;
+        let mc = llvm_mc_word("fmov s0, wzr").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("wzr".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_d0_lr() {
+        let want = 0x9e6703c0u32;
+        let mc = llvm_mc_word("fmov d0, lr").expect("llvm-mc LR KAT");
+        assert_eq!(mc, want, "llvm-mc LR KAT mapping broken");
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("lr".into())];
+        let sut = sut_word(&ops).expect("SUT KAT");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_fmov_kat_llvm_mc_half_h0_h1() {
+        let want = 0x1ee04020u32;
+        let mc = llvm_mc_fp16_word("fmov h0, h1").expect("llvm-mc fp16 KAT");
+        assert_eq!(mc, want, "llvm-mc fp16 KAT mapping broken");
+    }
+
+    #[test]
+    fn test_encode_fmov_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("s0".into()),
+            Operand::Reg("s1".into()),
+            Operand::Reg("s0".into()),
+        ];
+        assert!(
+            encode_fmov(&ops).is_err(),
+            "FMOV must reject a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_fmov_regression_mixed_sd() {
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("d1".into())];
+        assert!(
+            encode_fmov(&ops).is_err(),
+            "FMOV must reject mixed S/D operands"
+        );
+    }
+
+    #[test]
+    fn test_encode_fmov_regression_size_mismatch_d_w() {
+        let ops = [Operand::Reg("d0".into()), Operand::Reg("w1".into())];
+        assert!(
+            encode_fmov(&ops).is_err(),
+            "FMOV Dd, Wn is not a valid FMOV (general) form"
+        );
+    }
+
+    #[test]
+    fn test_encode_fmov_regression_sp_src() {
+        let ops = [Operand::Reg("s0".into()), Operand::Reg("sp".into())];
+        assert!(
+            encode_fmov(&ops).is_err(),
+            "SP is not a valid FMOV source"
+        );
+        let ops = [Operand::Reg("wsp".into()), Operand::Reg("s0".into())];
+        assert!(
+            encode_fmov(&ops).is_err(),
+            "WSP is not a valid FMOV dest"
+        );
+    }
+
+    #[test]
+    fn test_encode_fmov_regression_qvb() {
+        let ops = [Operand::Reg("q0".into()), Operand::Reg("s0".into())];
+        assert!(
+            encode_fmov(&ops).is_err(),
+            "FMOV Qd, Sn is not a valid scalar FMOV form"
+        );
+    }
+
+    #[test]
+    fn test_encode_fmov_regression_vd1() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::RegLane {
+                reg: "v0".into(),
+                elem_size: "d".into(),
+                index: 1,
+            },
+        ];
+        let sut = sut_word(&ops).expect("FMOV Xd, Vn.D[1] is a valid FMOV (general) form");
+        assert_eq!(
+            sut, 0x9eae0000u32,
+            "fmov x0, v0.d[1] must encode as 0x9eae0000"
+        );
+    }
+
+    #[test]
+    fn test_encode_fmov_regression_half_ftype() {
+        let ops = [Operand::Reg("h0".into()), Operand::Reg("h1".into())];
+        let sut = sut_word(&ops).expect("H,H is a valid fp16 FMOV");
+        assert_eq!(
+            sut, 0x1ee04020u32,
+            "H registers must use ftype=11 (0x1ee04020), not ftype=00 S"
+        );
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        #[test]
+        fn encode_fmov_diff_valid(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            form in 0u32..=5,
+            dest_kind in 0u32..=4,
+            src_kind in 0u32..=3,
+        ) {
+            let (dest, src) = valid_pair(form, rd, rn, dest_kind, src_kind);
+            let asm = format!("fmov {dest}, {src}");
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src.clone())];
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FMOV mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_fmov_arm_fields(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            is_d in any::<bool>(),
+            form in 0u32..=2,
+        ) {
+            let (ops, want) = match form {
+                0 => {
+                    // FP-to-FP
+                    let ops = [Operand::Reg(fp(is_d, rd)), Operand::Reg(fp(is_d, rn))];
+                    let ftype = if is_d { 0b01u32 } else { 0b00 };
+                    let want = (0b00011110u32 << 24)
+                        | (ftype << 22)
+                        | (0b100000 << 16)
+                        | (0b10000 << 10)
+                        | (rn << 5)
+                        | rd;
+                    (ops, want)
+                }
+                1 => {
+                    // GP-to-FP: Sd,Wn or Dd,Xn
+                    let ops = [Operand::Reg(fp(is_d, rd)), Operand::Reg(gpr(is_d, rn))];
+                    let sf = if is_d { 1u32 } else { 0 };
+                    let ftype = if is_d { 0b01u32 } else { 0b00 };
+                    let want = (sf << 31)
+                        | (0b11110 << 24)
+                        | (ftype << 22)
+                        | (1 << 21)
+                        | (0b111 << 16)
+                        | (rn << 5)
+                        | rd;
+                    (ops, want)
+                }
+                _ => {
+                    // FP-to-GP: Wd,Sn or Xd,Dn
+                    let ops = [Operand::Reg(gpr(is_d, rd)), Operand::Reg(fp(is_d, rn))];
+                    let sf = if is_d { 1u32 } else { 0 };
+                    let ftype = if is_d { 0b01u32 } else { 0b00 };
+                    let want = (sf << 31)
+                        | (0b11110 << 24)
+                        | (ftype << 22)
+                        | (1 << 21)
+                        | (0b110 << 16)
+                        | (rn << 5)
+                        | rd;
+                    (ops, want)
+                }
+            };
+            let w = sut_word(&ops).expect("SUT");
+            prop_assert_eq!(w, want, "ARM ARM FMOV field layout");
+            prop_assert_eq!(w & 0x1f, rd, "Rd");
+            prop_assert_eq!((w >> 5) & 0x1f, rn, "Rn");
+        }
+
+        #[test]
+        fn encode_fmov_metamorphic_fields(
+            rd in 0u32..=30,
+            rn in 0u32..=30,
+        ) {
+            let ops = |d: u32, n: u32| {
+                [
+                    Operand::Reg(fp(false, d)),
+                    Operand::Reg(fp(false, n)),
+                ]
+            };
+            let w = sut_word(&ops(rd, rn)).expect("base FMOV S,S");
+            let w_rd = sut_word(&ops(rd + 1, rn)).expect("Rd+1");
+            let w_rn = sut_word(&ops(rd, rn + 1)).expect("Rn+1");
+            let w_d = sut_word(&[
+                Operand::Reg(fp(true, rd)),
+                Operand::Reg(fp(true, rn)),
+            ])
+            .expect("D,D");
+            let w_gp2fp = sut_word(&[
+                Operand::Reg(fp(false, rd)),
+                Operand::Reg(gpr(false, rn)),
+            ])
+            .expect("S,W");
+            let w_fp2gp = sut_word(&[
+                Operand::Reg(gpr(false, rd)),
+                Operand::Reg(fp(false, rn)),
+            ])
+            .expect("W,S");
+            prop_assert_eq!(w_rd, w + 1, "Rd+1 must increment bits[4:0] only");
+            prop_assert_eq!(w_rn, w + (1 << 5), "Rn+1 must increment bits[9:5] only");
+            prop_assert_eq!(w_d ^ w, 1u32 << 22, "S vs D must flip only ftype bit 22");
+            prop_assert_eq!(w_gp2fp ^ w_fp2gp, 1u32 << 16, "GP->FP XOR FP->GP must be opcode LSB bit 16");
+        }
+
+        #[test]
+        fn encode_fmov_neg_arity(
+            len in 0usize..=1,
+            n in 0u32..=31,
+        ) {
+            let mut ops = Vec::new();
+            if len >= 1 {
+                ops.push(Operand::Reg(fp(false, n)));
+            }
+            prop_assert!(
+                encode_fmov(&ops).is_err(),
+                "FMOV with {} operands must Err (llvm-mc: too few operands)",
+                len
+            );
+        }
+
+        #[test]
+        fn encode_fmov_neg_extra_operand(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(fp(false, rd)),
+                Operand::Reg(fp(false, rn)),
+                extra,
+            ];
+            prop_assert!(
+                encode_fmov(&ops).is_err(),
+                "FMOV has no 3rd operand; extra must Err"
+            );
+        }
+
+        #[test]
+        fn encode_fmov_neg_incompatible(
+            (dest, src) in incompatible_pair(),
+        ) {
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src.clone())];
+            prop_assert!(
+                encode_fmov(&ops).is_err(),
+                "incompatible FMOV dest={} src={} must Err",
+                dest,
+                src
+            );
+        }
+
+        #[test]
+        fn encode_fmov_neg_sp(
+            is_64 in any::<bool>(),
+            n in 0u32..=31,
+            which in 0u32..=1,
+            partner_fp in any::<bool>(),
+        ) {
+            let sp = if is_64 { "sp" } else { "wsp" };
+            let partner = if partner_fp {
+                fp(is_64, n)
+            } else {
+                gpr(is_64, n)
+            };
+            let mut ops = [
+                Operand::Reg(partner.clone()),
+                Operand::Reg(partner),
+            ];
+            ops[which as usize] = Operand::Reg(sp.into());
+            prop_assert!(
+                encode_fmov(&ops).is_err(),
+                "SP/WSP is not a valid FMOV operand (sp={})",
+                sp
+            );
+        }
+
+        #[test]
+        fn encode_fmov_diff_half(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            form in 0u32..=2,
+        ) {
+            let (dest, src) = match form {
+                0 => (format!("h{rd}"), format!("h{rn}")),
+                1 => (format!("h{rd}"), gpr(false, rn)),
+                _ => (gpr(false, rd), format!("h{rn}")),
+            };
+            let asm = format!("fmov {dest}, {src}");
+            let ops = [Operand::Reg(dest.clone()), Operand::Reg(src)];
+            let mc = llvm_mc_fp16_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc fp16 rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid fp16 {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FMOV half-precision mismatch for {}", asm);
+        }
+
+        #[test]
+        fn encode_fmov_neg_nonreg(
+            which in 0u32..=1,
+            kind in 0u32..=5,
+        ) {
+            // Imm at src is FMOV (immediate), a documented TODO, not this property.
+            let bad = match kind {
+                0 => Operand::Symbol("foo".into()),
+                1 => Operand::Label("1f".into()),
+                2 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                3 => Operand::Cond("eq".into()),
+                4 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                _ => Operand::Expr("#1.0".into()),
+            };
+            let mut ops = vec![
+                Operand::Reg("s0".into()),
+                Operand::Reg("s1".into()),
+            ];
+            ops[which as usize] = bad;
+            prop_assert!(
+                encode_fmov(&ops).is_err(),
+                "non-register at slot {} must Err",
+                which
+            );
+        }
+
+        #[test]
+        fn encode_fmov_neg_invalid_name(
+            which in 0u32..=1,
+            name in prop::sample::select(vec![
+                "foo", "s32", "d32", "h32", "x32", "r0", "s", "d", "",
+            ]),
+        ) {
+            let mut ops = vec![
+                Operand::Reg("s0".into()),
+                Operand::Reg("s1".into()),
+            ];
+            ops[which as usize] = Operand::Reg(name.to_string());
+            prop_assert!(
+                encode_fmov(&ops).is_err(),
+                "invalid name {:?} at slot {} must Err",
+                name,
+                which
+            );
+        }
+
+        #[test]
+        fn encode_fmov_diff_vd1(
+            rd in 0u32..=31,
+            rn in 0u32..=31,
+            to_vec in any::<bool>(),
+        ) {
+            let gp = gpr(true, if to_vec { rn } else { rd });
+            let vn = if to_vec { rd } else { rn };
+            let asm = if to_vec {
+                format!("fmov v{vn}.d[1], {gp}")
+            } else {
+                format!("fmov {gp}, v{vn}.d[1]")
+            };
+            let lane = Operand::RegLane {
+                reg: format!("v{vn}"),
+                elem_size: "d".into(),
+                index: 1,
+            };
+            let ops = if to_vec {
+                [lane, Operand::Reg(gp.clone())]
+            } else {
+                [Operand::Reg(gp.clone()), lane]
+            };
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {asm}: {e}"));
+            let sut = sut_word(&ops)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {asm}: {e}"));
+            prop_assert_eq!(sut, mc, "FMOV V.D[1] mismatch for {}", asm);
+        }
+    }
+}

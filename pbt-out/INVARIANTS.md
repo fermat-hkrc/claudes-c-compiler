@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_fmov)
+
+- Valid FMOV Sd,Sn / Dd,Dn / Sd,Wn / Dd,Xn / Wd,Sn / Xd,Dn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `fmov s0, s1` = 0x1e204020 and `fmov s0, w1` = 0x1e270020.
+- Success-path FP-to-FP word is ARM FMOV (register): 00011110 ftype 1 000000 10000 Rn Rd with ftype 00=S / 01=D. Equivalently w = (0b00011110<<24)|(ftype<<22)|(0b100000<<16)|(0b10000<<10)|(rn<<5)|rd.
+- Success-path GP↔FP word is ARM FMOV (general): sf 00 11110 ftype 1 00 opcode 000000 Rn Rd with opcode 111 GP→FP / 110 FP→GP; sf/ftype 0/00 for S/W and 1/01 for D/X.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; S vs D xor = 1<<22; GP→FP xor FP→GP = 1<<16 (1000 cases).
+- Fewer than 2 operands, non-register kinds (Symbol/Label/Mem/Cond/Shift/Expr), and invalid names (foo/s32/empty/r0) always Err (1000 cases).
+- Known-answer: `fmov s0, s1` = 0x1e204020; `fmov d0, d1` = 0x1e604020; `fmov s0, w1` = 0x1e270020; `fmov d0, x1` = 0x9e670020; `fmov w0, s1` = 0x1e260020; `fmov x0, d1` = 0x9e660020; `fmov s0, wzr` = 0x1e2703e0; `fmov d0, lr` = 0x9e6703c0; `fmov h0, h1` = 0x1ee04020 (llvm-mc fp16); `fmov x0, v0.d[1]` = 0x9eae0000.
+- Extra operand, mixed S/D, size-mismatched GP/FP, Q/V/B, SP/WSP, H (wrong ftype), and V.D[1] currently encode or reject incorrectly (see bugs).
+
+## Environment (encode_fmov)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (half: -mattr=+fullfp16). gas aarch64-linux-gnu-as agrees on `fmov s0, s1` = 0x1e204020.
+- ARM ARM FMOV (register): 0 00 11110 ftype 1 000000 10000 Rn Rd. FMOV (general): sf 00 11110 ftype 1 rmode opcode 000000 Rn Rd; register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:376 "fmov" => encode_fmov.
+- Callers: encoder dispatch only. Codegen emits S/W and D/X register forms (float_ops.rs, cast_ops.rs, alu.rs); asm_emitter.rs:205 notes "fmov requires d/s register form, not v".
+- encode_fmov checks operands.len() < 2 only (extra ignored); is_fp_reg includes q/v/h/b and "sp"; ftype is 01 iff a name starts with 'd' else 00; GP-FP path ignores GP width; RegLane is not matched.
+- FMOV (immediate) is a documented TODO (fp_scalar.rs:14-15) — Design Caveat, not a bug.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_fmov (nonreg / invalid-name / V.D[1]).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_fmov_*.md.
+
 # Confirmed invariants (encode_extr)
 
 - Valid EXTR Wd,Wn,Wm / Xd,Xn,Xm with 0 <= lsb < R (R=32/64), including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `extr w0, w1, w2, #0` = 0x13820020.
