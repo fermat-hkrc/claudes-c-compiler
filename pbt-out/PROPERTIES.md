@@ -1,311 +1,366 @@
-# Properties: encode_umulh
+# Properties: encode_neon_rbit
 
-## encode_umulh_diff_valid_gpr
+## encode_neon_rbit_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is Differential against llvm-mc. README claims the assembler "accepts the same textual assembly that GCC's gas would consume"; llvm-mc -triple=aarch64 is an independent GNU-style AArch64 assembler. State machine rejected: no lifecycle. Round-trip rejected: no in-tree UMULH decoder. encode_smulh fails the same-job gate (signed vs unsigned). Doc evidence: README.md:12; encoder/mod.rs:1-7; encoder/mod.rs:274; ARM ARM Data-processing (3 source) UMULH.
-- Seed: neighbouring encode_umaddl_pbt encode_umaddl_diff_valid_gpr; README.md:214
-- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_umulh([Reg(xreg(rd)), Reg(xreg(rn)), Reg(xreg(rm))]) = Word(llvm-mc("umulh Xd, Xn, Xm"))
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent AArch64 assembler. README claims gas-compatible textual assembly; encoder emits 32-bit AArch64 words. State machine rejected (pure function). Round-trip rejected (no in-tree RBIT decoder). Sibling encode_rbit (bitfield.rs) rejected (copied NEON formula; independence/same-job gate).
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b}. encode_neon_rbit([Vd.T, Vn.T]) = llvm-mc("rbit Vd.T, Vn.T") as little-endian u32
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_umulh
+function: encoder.neon.encode_neon_rbit
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: "0..=31", rn: "0..=31", rm: "0..=31" }
+  vars: [rd, rn, t]
+  domain: { rd: 0..31, rn: 0..31, t: {8b,16b} }
   relation:
     op: eq
-    lhs: encode_umulh([Reg(xreg(rd)), Reg(xreg(rn)), Reg(xreg(rm))])
-    rhs: llvm_mc_word("umulh Xd, Xn, Xm")
+    lhs: encode_neon_rbit([RegArrangement(v{rd}, t), RegArrangement(v{rn}, t)])
+    rhs: llvm_mc("rbit v{rd}.{t}, v{rn}.{t}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12 assembler accepts the same textual assembly that GCC's gas would consume; encoder/mod.rs:274 umulh dispatch; ARM ARM UMULH Xd,Xn,Xm
+  t: { gen: oneof, options: ["8b", "16b"] }
+evidence: src/backend/arm/assembler/README.md:11-13; encoder/mod.rs:1-7; encoder/mod.rs:902-909; neon.rs:1311-1328
 ```
 
-## encode_umulh_xor_smulh_u_bit
+## encode_neon_rbit_meta_q_bit
 - Tier: 4c
-- Rationale: Algebraic metamorphic. ARM ARM Data-processing (3 source) UMULH vs SMULH differ only in U (bit 23 / op31[2]). encode_smulh is a same-TU sibling with a different job (signed high multiply), so it is not a differential reference; the documented U-bit relation is a metamorphic transform. Stronger oracles: state machine no; round-trip no decoder; differential covered by encode_umulh_diff_valid_gpr.
-- Seed: neighbouring encode_umaddl_xor_smaddl_u_bit
-- Formal: ∀ rd,rn,rm ∈ {0..31}. encode_umulh([Xd,Xn,Xm]) XOR encode_smulh([Xd,Xn,Xm]) = 1<<23
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: ARM Advanced SIMD two-misc RBIT uses Q (bit 30) for .8b vs .16b and no other field. Metamorphic over a behavior-preserving T change. Stronger differential is the primary property; this pins the Q bit in isolation.
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}. encode_neon_rbit([Vd.8b, Vn.8b]) XOR encode_neon_rbit([Vd.16b, Vn.16b]) = 1<<30
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_umulh
+function: encoder.neon.encode_neon_rbit
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: "0..=31", rn: "0..=31", rm: "0..=31" }
+  vars: [rd, rn]
+  domain: { rd: 0..31, rn: 0..31 }
   relation:
     op: eq
-    lhs: encode_umulh(ops) XOR encode_smulh(ops)
-    rhs: 1u32 << 23
+    lhs: encode_neon_rbit([Vd.8b, Vn.8b]) XOR encode_neon_rbit([Vd.16b, Vn.16b])
+    rhs: 1 << 30
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Data-processing (3 source) UMULH op31=110 vs SMULH op31=010; llvm-mc umulh x0,x1,x2 XOR smulh x0,x1,x2 = 0x00800000
+evidence: neon.rs:1319-1326; ARM ARM Advanced SIMD two-register miscellaneous RBIT Q bit
 ```
 
-## encode_umulh_arm_fields
+## encode_neon_rbit_word_layout
 - Tier: 4d
-- Rationale: Algebraic invariant of the ARM ARM bit layout for UMULH: sf=1, bits[30:21]=00 11011 110, Rm at [20:16], o0=0 at 15, Ra=11111 at [14:10], Rn at [9:5], Rd at [4:0]. Stronger oracles covered separately. Doc evidence: data_processing.rs:691 comment; ARM ARM UMULH encoding.
-- Seed: neighbouring encode_umaddl_arm_fields; data_processing.rs:691
-- Formal: ∀ rd,rn,rm ∈ {0..31}. let w = encode_umulh([Xd,Xn,Xm]). w = 0x9BC07C00 | (rm<<16) | (rn<<5) | rd ∧ (w>>31)=1 ∧ ((w>>21)&0x3FF)=0b0011011110 ∧ ((w>>15)&1)=0 ∧ ((w>>10)&0x1F)=31
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: ARM two-misc RBIT layout 0 Q 1 01110 01 10000 00101 10 Rn Rd is cited on the function. Invariant over the success path; weaker than differential but localizes field-packing bugs.
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b}. let Q = [T=16b]. encode_neon_rbit([Vd.T, Vn.T]) = (Q<<30) | 0x2E605800 | (rn<<5) | rd
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_umulh
+function: encoder.neon.encode_neon_rbit
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: "0..=31", rn: "0..=31", rm: "0..=31" }
+  vars: [rd, rn, t]
+  domain: { rd: 0..31, rn: 0..31, t: {8b,16b} }
   relation:
     op: eq
-    lhs: encode_umulh([Reg(xreg(rd)), Reg(xreg(rn)), Reg(xreg(rm))])
-    rhs: 0x9BC07C00 | (rm << 16) | (rn << 5) | rd
+    lhs: encode_neon_rbit([Vd.T, Vn.T])
+    rhs: ((t==16b) << 30) | 0x2E605800 | (rn << 5) | rd
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: data_processing.rs:691 UMULH 1 00 11011 1 10 Rm 0 11111 Rn Rd; ARM ARM Data-processing (3 source)
+  t: { gen: oneof, options: ["8b", "16b"] }
+evidence: neon.rs:1324-1327; ARM ARM Advanced SIMD two-register miscellaneous RBIT
 ```
 
-## encode_umulh_neg_arity
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects UMULH with fewer than 3 operands ("too few operands"). get_reg on a missing index returns Err. Stronger oracles do not apply to the invalid domain. Doc evidence: llvm-mc probe `umulh x0, x1` errors; ARM ARM syntax UMULH Xd, Xn, Xm (3 registers).
-- Seed: neighbouring encode_umaddl_neg_arity
-- Formal: ∀ ops. |ops| < 3 ⇒ encode_umulh(ops) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+## encode_neon_rbit_meta_rd_rn
+- Tier: 4c
+- Rationale: Rd occupies bits [4:0] and Rn bits [9:5]; incrementing one register must add 1 or 32 and leave all other bits unchanged. Metamorphic field-isolation check.
+- Seed: (none)
+- Formal: ∀ rd ∈ {0..30}, rn ∈ {0..30}, T ∈ {8b,16b}. encode(rd+1,rn,T) - encode(rd,rn,T) = 1 AND encode(rd,rn+1,T) - encode(rd,rn,T) = 1<<5
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_umulh
-oracle: negative_error
+function: encoder.neon.encode_neon_rbit
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [ops]
-  domain: { ops: "len 0..=2 of Operand" }
+  vars: [rd, rn, t]
+  domain: { rd: 0..30, rn: 0..30, t: {8b,16b} }
   relation:
-    op: throws
-    expr: encode_umulh(ops)
-generators:
-  len: { gen: int, min: 0, max: 2, type: usize }
-expected_error: String
-evidence: llvm-mc umulh x0, x1 -> too few operands; ARM ARM UMULH Xd,Xn,Xm is a 3-register instruction
-```
-
-## encode_umulh_neg_extra_operand
-- Tier: 4e
-- Rationale: Negative/error contract. llvm-mc rejects a 4th operand ("invalid operand"). GNU-style UMULH has exactly 3 registers. Stronger oracles do not apply. Doc evidence: llvm-mc probe `umulh x0, x1, x2, x3` errors; README.md:12 gas-compatible assembly.
-- Seed: neighbouring encode_umaddl_neg_extra_operand
-- Formal: ∀ rd,rn,rm ∈ {0..31}. ∀ extra ∈ Operand. encode_umulh([Xd,Xn,Xm, extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, extra=Reg("x0")  (umulh x0, x0, x0, x0)
-- Bug report: pbt-out/bug_reports/encode_umulh_extra_operand.md
-
-```property
-function: encoder.encode_umulh
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, extra]
-  domain: { rd: "0..=31", rn: "0..=31", rm: "0..=31", extra: Operand }
-  relation:
-    op: throws
-    expr: encode_umulh([Xd, Xn, Xm, extra])
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, variants: ["Reg", "Imm", "Shift"] }
-expected_error: String
-evidence: llvm-mc umulh x0, x1, x2, x3 -> invalid operand; ARM ARM UMULH takes exactly Xd,Xn,Xm
-```
-
-## encode_umulh_neg_wrong_width
-- Tier: 4e
-- Rationale: Negative/error contract. ARM ARM and llvm-mc require 64-bit GPRs only; any W register is "invalid operand". encode_umulh discards is_64 so this is the documented-width contract, not a restatement of the body. Doc evidence: llvm-mc `umulh w0, w1, w2` / mixed W errors; ARM ARM UMULH Xd, Xn, Xm.
-- Seed: neighbouring encode_umaddl_neg_wrong_width
-- Formal: ∀ rd,rn,rm ∈ {0..30}. ∀ rd64,rn64,rm64 ∈ Bool. ¬(rd64 ∧ rn64 ∧ rm64) ⇒ encode_umulh([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm)]) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, rd64=false, rn64=false, rm64=false  (umulh w0, w0, w0)
-- Bug report: pbt-out/bug_reports/encode_umulh_wrong_width.md
-
-```property
-function: encoder.encode_umulh
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, rd64, rn64, rm64]
-  domain: { rd: "0..=30", rn: "0..=30", rm: "0..=30", rd64: bool, rn64: bool, rm64: bool }
-  relation:
-    op: throws
-    expr: encode_umulh([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm)])
+    op: holds
+    expr: encode(rd+1,rn,t) - encode(rd,rn,t) == 1 && encode(rd,rn+1,t) - encode(rd,rn,t) == 32
 generators:
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  rd64: { gen: bool }
-  rn64: { gen: bool }
-  rm64: { gen: bool }
-expected_error: String
-evidence: llvm-mc umulh w0,w1,w2 and mixed W/X all error; ARM ARM UMULH Xd,Xn,Xm (no 32-bit form)
+  t: { gen: oneof, options: ["8b", "16b"] }
+evidence: neon.rs:1324-1327; ARM ARM Rd[4:0] Rn[9:5]
 ```
 
-## encode_umulh_neg_sp
+## encode_neon_rbit_neg_arity
 - Tier: 4e
-- Rationale: Negative/error contract. ARM ARM register 31 in this format is XZR, never SP. llvm-mc rejects SP/WSP in any UMULH slot. parse_reg_num maps sp/wsp to 31, which is the producing statement, not the contract. Doc evidence: llvm-mc `umulh sp, x1, x2` errors; ARM ARM UMULH uses XZR for 31.
-- Seed: neighbouring encode_umaddl_neg_sp
-- Formal: ∀ which ∈ {0,1,2}. ∀ is_64 ∈ Bool. ∀ a,b ∈ {0..30}. encode_umulh(ops with slot `which` = SP/WSP) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: which=0, is_64=false, a=0, b=0  (umulh wsp, x0, x0)
-- Bug report: pbt-out/bug_reports/encode_umulh_sp_as_zr.md
-
-```property
-function: encoder.encode_umulh
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, is_64, a, b]
-  domain: { which: "0..=2", is_64: bool, a: "0..=30", b: "0..=30" }
-  relation:
-    op: throws
-    expr: encode_umulh(ops_with_sp_at(which))
-generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  is_64: { gen: bool }
-  a: { gen: int, min: 0, max: 30, type: u32 }
-  b: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: llvm-mc umulh sp,x1,x2 / umulh x0,sp,x2 / umulh x0,x1,sp all error; ARM ARM register 31 is XZR not SP
-```
-
-## encode_umulh_diff_alt_spellings
-- Tier: 2
-- Rationale: Differential vs llvm-mc over documented alternate GNU spellings of the same GPRs: x31/XZR/LR/uppercase. README gas-compatible contract. Documented bounds 0 and 31 sampled exactly via 0..=31. Stronger oracles rejected as in encode_umulh_diff_valid_gpr.
-- Seed: neighbouring encode_umaddl_diff_alt_spellings
-- Formal: ∀ rd,rn,rm ∈ {0..31}. ∀ dest/src spellings in {xN, x31, XZR, LR, uppercase}. encode_umulh(spelled regs) = Word(llvm-mc("umulh " + spelled))
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Function documents "neon rbit requires 2 operands". llvm-mc / gas RBIT vector form is binary. Fewer than 2 operands must Err. Non-register dest kinds must Err.
+- Seed: (none)
+- Formal: ∀ ops. |ops| < 2 ⇒ encode_neon_rbit(ops) is Err. ∀ rd,rn,T, dest ∈ {Imm, Mem, Shift, RegList, Label}. encode_neon_rbit([dest, Vn.T]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_umulh
-oracle: differential
+function: encoder.neon.encode_neon_rbit
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, dest_spell, src_n_spell, src_m_spell]
-  domain: { rd: "0..=31", rn: "0..=31", rm: "0..=31", dest_spell: "0..=4", src_n_spell: "0..=4", src_m_spell: "0..=4" }
+  vars: [n, rd, rn, t]
+  domain: { n: 0..1, rd: 0..31, rn: 0..31, t: {8b,16b} }
   relation:
-    op: eq
-    lhs: encode_umulh([Reg(dest), Reg(src_n), Reg(src_m)])
-    rhs: llvm_mc_word("umulh dest, src_n, src_m")
+    op: throws
+    expr: encode_neon_rbit(ops_of_len_n)
+generators:
+  n: { gen: int, min: 0, max: 1, type: usize }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, options: ["8b", "16b"] }
+expected_error: String
+evidence: neon.rs:1313-1315; ARM ARM RBIT Vd.T, Vn.T (exactly two operands)
+```
+
+## encode_neon_rbit_neg_extra_operands
+- Tier: 4e
+- Rationale: llvm-mc rejects a third operand on vector RBIT. GNU gas-compatible assembler must not silently ignore extra operands. Documented bound is exactly 2.
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b}, extra. llvm-mc("rbit Vd.T, Vn.T, extra") is Err ⇒ encode_neon_rbit([Vd.T, Vn.T, extra]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, extra=0, t="8b", extra_kind=0 — rbit v0.8b, v0.8b, v0.8b
+- Bug report: pbt-out/bug_reports/encode_neon_rbit_extra_operand.md
+
+```property
+function: encoder.neon.encode_neon_rbit
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, t, extra]
+  domain: { rd: 0..31, rn: 0..31, t: {8b,16b}, extra: Operand }
+  relation:
+    op: throws
+    expr: encode_neon_rbit([Vd.T, Vn.T, extra])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  dest_spell: { gen: int, min: 0, max: 4, type: u32 }
-  src_n_spell: { gen: int, min: 0, max: 4, type: u32 }
-  src_m_spell: { gen: int, min: 0, max: 4, type: u32 }
-evidence: llvm-mc accepts x31, XZR, LR, uppercase UMULH X0,X1,X2; README.md:12 gas-compatible; parse_reg_num maps lr->30, xzr->31, x31->31
+  t: { gen: oneof, options: ["8b", "16b"] }
+  extra: { gen: oneof, options: ["RegArrangement", "Imm", "Reg", "Mem"] }
+expected_error: String
+evidence: llvm-mc rejects rbit v0.8b, v1.8b, v2.8b; README.md:11-13 gas-compatible; ARM ARM binary RBIT
 ```
 
-## encode_umulh_neg_fp
+## encode_neon_rbit_neg_bad_arrangement
 - Tier: 4e
-- Rationale: Sweep (coverage_gaps had no profraw; manual arm audit of get_reg / parse_reg_num prefixes). Negative/error contract: FP/SIMD names (d/s/q/v/h/b) are not UMULH operands. llvm-mc rejects them. parse_reg_num accepting those prefixes is the producing statement, not Doc evidence. Doc evidence: llvm-mc `umulh d0, d1, d2` errors; ARM ARM UMULH Xd,Xn,Xm; Operand::Reg docs list FP names as a different register class.
-- Seed: neighbouring encode_umaddl_neg_fp
-- Formal: ∀ which ∈ {0,1,2}. ∀ prefix ∈ {d,s,q,v,h,b}. ∀ n ∈ {0..31}. encode_umulh(ops with slot `which` = prefix+n) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: neon.rs and ARM ARM restrict T to .8b/.16b. llvm-mc rejects .4h/.8h/.2s/.4s/.2d/.1d. Dest T outside {8b,16b} must Err. Bounds 8b/16b sampled exactly; neighbours (4h, 8h, empty, 8s) generated.
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}, T ∉ {8b,16b}. encode_neon_rbit([Vd.T, Vn.T]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.neon.encode_neon_rbit
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, t]
+  domain: { rd: 0..31, rn: 0..31, t: NEON arrangements except 8b and 16b }
+  relation:
+    op: throws
+    expr: encode_neon_rbit([Vd.T, Vn.T])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, options: ["4h", "8h", "2s", "4s", "2d", "1d", "8s", "4b", "", "b"] }
+expected_error: String
+evidence: neon.rs:1319-1321; ARM ARM RBIT T is 8B or 16B; llvm-mc rejects rbit v0.4h, v1.4h
+```
+
+## encode_neon_rbit_neg_mismatch_nonreg_invalid
+- Tier: 4e
+- Rationale: llvm-mc rejects mismatched T. ARM ARM requires the same T on Vd and Vn. Dest T is checked; source T is discarded — this property requires both to match.
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}, Td,Tn ∈ arrangements. Td ≠ Tn ⇒ encode_neon_rbit([Vd.Td, Vn.Tn]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: failing
-- Counterexample: which=0, prefix="d", n=0  (umulh d0, x1, x2)
-- Bug report: pbt-out/bug_reports/encode_umulh_fp_as_gpr.md
+- Counterexample: rd=0, rn=0, td="8b", tn="16b" — rbit v0.8b, v0.16b
+- Bug report: pbt-out/bug_reports/encode_neon_rbit_mismatch_arrangement.md
 
 ```property
-function: encoder.encode_umulh
+function: encoder.neon.encode_neon_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, prefix, n]
-  domain: { which: "0..=2", prefix: "{d,s,q,v,h,b}", n: "0..=31" }
+  vars: [rd, rn, td, tn]
+  domain: { rd: 0..31, rn: 0..31, td: {8b,16b}, tn: {8b,16b,4h,8h,2s,4s} }
   relation:
     op: throws
-    expr: encode_umulh(ops_with_fp_at(which))
+    expr: encode_neon_rbit([Vd.td, Vn.tn])
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  prefix: { gen: oneof, variants: ["d", "s", "q", "v", "h", "b"] }
-  n: { gen: int, min: 0, max: 31, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  td: { gen: oneof, options: ["8b", "16b"] }
+  tn: { gen: oneof, options: ["8b", "16b", "4h", "8h", "2s", "4s"] }
 expected_error: String
-evidence: llvm-mc umulh d0,d1,d2 / s0,s1,s2 error; ARM ARM UMULH Xd,Xn,Xm
+evidence: llvm-mc rejects rbit v0.8b, v1.16b; ARM ARM Vd.T, Vn.T same T
 ```
 
-## encode_umulh_neg_nonreg
+## encode_neon_rbit_neg_bare_src
 - Tier: 4e
-- Rationale: Sweep. Negative/error contract: a non-Reg operand at any of the three GPR slots must Err. get_reg returns Err on Imm/Shift/Mem/Label/Symbol/Cond/RegArrangement. llvm-mc has no UMULH form with those operand kinds. Doc evidence: get_reg "expected register"; ARM ARM 3-register syntax.
-- Seed: neighbouring encode_umaddl_neg_nonreg
-- Formal: ∀ which ∈ {0,1,2}. ∀ bad ∉ Reg. encode_umulh(ops with slot `which` = bad) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Strengthening after the first failing batch. Vector RBIT requires Vn.T; a bare register source is rejected by llvm-mc.
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b}. encode_neon_rbit([Vd.T, Reg(Vn)]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, t="8b" — rbit v0.8b, v0
+- Bug report: pbt-out/bug_reports/encode_neon_rbit_bare_src.md
+
+```property
+function: encoder.neon.encode_neon_rbit
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, t]
+  domain: { rd: 0..31, rn: 0..31, t: {8b,16b} }
+  relation:
+    op: throws
+    expr: encode_neon_rbit([Vd.T, Reg(Vn)])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, options: ["8b", "16b"] }
+expected_error: String
+evidence: llvm-mc rejects rbit v0.8b, v0; ARM ARM RBIT Vd.T, Vn.T
+```
+
+## encode_neon_rbit_neg_imm_src
+- Tier: 4e
+- Rationale: Strengthening. Immediate in the Vn slot is not a NEON register; get_neon_reg must Err.
+- Seed: (none)
+- Formal: ∀ rd ∈ {0..31}, T ∈ {8b,16b}, imm ∈ ℤ. encode_neon_rbit([Vd.T, Imm(imm)]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_umulh
+function: encoder.neon.encode_neon_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, bad]
-  domain: { which: "0..=2", bad: "non-Reg Operand" }
+  vars: [rd, t, imm]
+  domain: { rd: 0..31, t: {8b,16b}, imm: -2..2 }
   relation:
     op: throws
-    expr: encode_umulh(ops_with_nonreg_at(which))
+    expr: encode_neon_rbit([Vd.T, Imm(imm)])
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, options: ["8b", "16b"] }
+  imm: { gen: int, min: -2, max: 2, type: i64 }
 expected_error: String
-evidence: encoder/mod.rs:956 get_reg expected register; ARM ARM UMULH Xd,Xn,Xm
+evidence: neon.rs:7-21 get_neon_reg expected NEON register
 ```
 
-## encode_umulh_neg_invalid_name
+## encode_neon_rbit_neg_invalid_name
 - Tier: 4e
-- Rationale: Sweep. Negative/error contract: invalid register names (foo, x32, w32, x, r0, empty) must Err. parse_reg_num returns None; llvm-mc rejects them. Doc evidence: parse_reg_num Option; llvm-mc invalid operand.
-- Seed: neighbouring encode_umaddl_neg_invalid_name
-- Formal: ∀ which ∈ {0,1,2}. ∀ name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_umulh(ops with slot `which` = Reg(name)) is Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Strengthening. parse_reg_num rejects v32/foo/empty/v/v99/v-1. Invalid names must Err.
+- Seed: (none)
+- Formal: ∀ bad ∈ {v32, foo, "", v, v99, v-1}, rn ∈ {0..31}, T ∈ {8b,16b}. encode_neon_rbit([bad.T, Vn.T]) is Err AND encode_neon_rbit([Vn.T, bad.T]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_umulh
+function: encoder.neon.encode_neon_rbit
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, name]
-  domain: { which: "0..=2", name: "invalid register names" }
+  vars: [rn, t, bad]
+  domain: { rn: 0..31, t: {8b,16b}, bad: {v32,foo,"",v,v99,v-1} }
   relation:
     op: throws
-    expr: encode_umulh(ops_with_invalid_name_at(which))
+    expr: encode_neon_rbit([bad.T, Vn.T])
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, options: ["8b", "16b"] }
+  bad: { gen: oneof, options: ["v32", "foo", "", "v", "v99", "v-1"] }
 expected_error: String
-evidence: parse_reg_num returns None for foo/x32/w32/x/r0/empty; llvm-mc rejects invalid register names
+evidence: encoder/mod.rs:131-147 parse_reg_num; neon.rs get_neon_reg invalid NEON register
+```
+
+## encode_neon_rbit_neg_bad_prefix
+- Tier: 4e
+- Rationale: Strengthening. README documents V registers v0-v31 for NEON arrangements. llvm-mc rejects x0.8b / d0.8b as vector RBIT operands.
+- Seed: (none)
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b}, p ∈ {x,w,d,s,q,h,b}. encode_neon_rbit([p{rd}.T, p{rn}.T]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, t="8b", prefix="x" — rbit x0.8b, x0.8b
+- Bug report: pbt-out/bug_reports/encode_neon_rbit_non_v_prefix.md
+
+```property
+function: encoder.neon.encode_neon_rbit
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, t, prefix]
+  domain: { rd: 0..31, rn: 0..31, t: {8b,16b}, prefix: {x,w,d,s,q,h,b} }
+  relation:
+    op: throws
+    expr: encode_neon_rbit([prefix{rd}.T, prefix{rn}.T])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, options: ["8b", "16b"] }
+  prefix: { gen: oneof, options: ["x", "w", "d", "s", "q", "h", "b"] }
+expected_error: String
+evidence: README.md:275-277 v0-v31; llvm-mc rejects rbit x0.8b, x1.8b
+```
+
+## encode_neon_rbit_neg_sp
+- Tier: 4e
+- Rationale: Strengthening. SP is not a NEON register. llvm-mc rejects sp.8b. parse_reg_num maps sp to 31 (V31).
+- Seed: (none)
+- Formal: ∀ rd ∈ {0..31}, T ∈ {8b,16b}. encode_neon_rbit([sp.T, Vd.T]) is Err AND encode_neon_rbit([Vd.T, sp.T]) is Err
+- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Status: failing
+- Counterexample: rd=0, t="8b", which=0 — rbit sp.8b, v0.8b
+- Bug report: pbt-out/bug_reports/encode_neon_rbit_sp_as_neon.md
+
+```property
+function: encoder.neon.encode_neon_rbit
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, t]
+  domain: { rd: 0..31, t: {8b,16b} }
+  relation:
+    op: throws
+    expr: encode_neon_rbit([sp.T, Vd.T])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, options: ["8b", "16b"] }
+expected_error: String
+evidence: llvm-mc rejects rbit sp.8b, v0.8b; README.md:275-277 v0-v31
 ```

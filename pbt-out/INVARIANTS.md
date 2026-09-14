@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_neon_rbit)
+
+- Valid RBIT Vd.T, Vn.T with T in {8b,16b} and Vd/Vn in v0..v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Q bit: encode(.8b) XOR encode(.16b) = 1<<30 (1000 cases).
+- Success-path word: 0 Q 1 01110 01 10000 00101 10 Rn Rd. Equivalently w = (Q<<30) | 0x2E605800 | (rn<<5) | rd.
+- Rd+1 adds 1; Rn+1 adds 32 (1000 cases).
+- Fewer than 2 operands, dest T not in {8b,16b}, Imm/Mem/Shift/RegList/Label dest, Imm source, and invalid names (v32, foo, empty, v, v99, v-1) always Err.
+- Known-answer: `rbit v0.8b, v1.8b` = 0x2e605820; `rbit v31.16b, v0.16b` = 0x6e60581f; `rbit v31.8b, v31.8b` = 0x2e605bff.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD two-register miscellaneous RBIT (vector): T is 8B or 16B. Encoding 0 Q 1 01110 01 10000 00101 10 Rn Rd.
+- Dispatch: encoder/mod.rs:902-909 `"rbit"` + first operand RegArrangement => encode_neon_rbit, else scalar encode_rbit.
+- Parser lowercases arrangements; `is_register` accepts x/w/d/s/q/v/h/b and sp/wsp/xzr/wzr/lr, so `x0.8b` and `sp.8b` are caller-reachable.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- Operand::Reg source is accepted (see bugs).
+- parse_reg_num accepts x/w/d/s/q/h/b prefixes and maps sp to 31 (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_neon_rbit (arity / extra / T / Q / Rd / Rn / mismatch / bare src / Imm / invalid name / prefix / SP).
+
 # Confirmed invariants (encode_umulh)
 
 - Valid UMULH Xd, Xn, Xm with Rd/Rn/Rm in 0..31 (xzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

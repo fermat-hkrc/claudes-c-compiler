@@ -63,3 +63,4 @@
 | encode_neon_shift_left_imm | neon.rs | neon.rs | cargo test --lib | 5 passing / 5 failing properties (plus 2 passing KAT + 7 failing regression witnesses; 5 bugs; sweep non-v prefix and src-Reg) |
 | encode_umaddl | data_processing.rs | data_processing.rs | cargo test --lib | 8 passing / 4 failing properties (plus 4 passing KAT + 4 failing regression witnesses; 4 bugs; sweep alt-spellings/nonreg/invalid-name passing) |
 | encode_umulh | data_processing.rs | data_processing.rs | cargo test --lib | 7 passing / 4 failing properties (plus 4 passing KAT + 4 failing regression witnesses; 4 bugs; sweep nonreg/invalid-name passing, fp failing) |
+| encode_neon_rbit | neon.rs | neon.rs | cargo test --lib | 8 passing / 5 failing properties (plus 3 passing KAT + 5 failing regression witnesses; 5 bugs) |

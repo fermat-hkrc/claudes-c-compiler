@@ -1,29 +1,27 @@
-# PBT Campaign Report: encode_umulh
+# PBT Campaign Report: encode_neon_rbit
 
 ## Summary
 
 **Date:** 2026-09-14
-**Repository:** claudes-c-compiler
-**Modules tested:** encode_umulh
-**Tests:** 11 properties + 4 KAT + 4 regression witnesses
-**Result:** 7 passing properties, 4 failing properties (4 bugs)
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-driven sweep round)
+**Repository:** /home/toan/github/claudes-c-compiler
+**Modules tested:** encode_neon_rbit
+**Tests:** 13 properties (8 passing, 5 failing) plus 3 passing KAT and 5 failing regression witnesses
+**Result:** 8 passing, 5 bugs
+**Effort tier:** standard (5–8 properties, ≥1000 cases, one strengthening round, one contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_umulh | 11 properties (7 passing, 4 failing); 4 KAT passing; 4 regression witnesses failing | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_rbit | 13 properties (1000 cases each) | 5 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **encode_umulh ignores extra operands.** Law: UMULH takes exactly Xd, Xn, Xm. Shrunk input: `[Reg("x0"), Reg("x0"), Reg("x0"), Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg only reads indices 0..2. Serial reconfirm PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_umulh_extra_operand.md`. Regression: `test_encode_umulh_regression_extra_operand`.
-
-2. **encode_umulh accepts 32-bit W registers.** Law: UMULH has no W form. Shrunk input: `umulh w0, w0, w0`. Expected Err; actual Ok(Word) because is_64 is discarded. Serial reconfirm PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_umulh_wrong_width.md`. Regression: `test_encode_umulh_regression_wrong_width`.
-
-3. **encode_umulh encodes SP/WSP as ZR.** Law: register 31 is XZR, never SP. Shrunk input: `umulh wsp, x0, x0`. Expected Err; actual Ok encoding 31. Serial reconfirm PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_umulh_sp_as_zr.md`. Regression: `test_encode_umulh_regression_sp`.
-
-4. **encode_umulh encodes FP/SIMD names as GPRs.** Law: UMULH operands are X registers. Shrunk input: `umulh d0, x1, x2`. Expected Err; actual Ok(Word) with Rd=0. Serial reconfirm PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_umulh_fp_as_gpr.md`. Regression: `test_encode_umulh_regression_fp`.
+- **encode_neon_rbit_neg_extra_operands** (failing, shrunk). Witness: `rd=0, rn=0, extra=0, t="8b", extra_kind=0` → `rbit v0.8b, v0.8b, v0.8b`. Expected Err; actual Ok(Word). Serial reconfirm: `cargo test --lib encode_neon_rbit_pbt -- --test-threads=1`. Report: pbt-out/bug_reports/encode_neon_rbit_extra_operand.md
+- **encode_neon_rbit_neg_mismatch_nonreg_invalid** (failing, shrunk). Witness: `rd=0, rn=0, td="8b", tn="16b"` → `rbit v0.8b, v0.16b`. Expected Err; actual Ok(Word). Serial reconfirm as above. Report: pbt-out/bug_reports/encode_neon_rbit_mismatch_arrangement.md
+- **encode_neon_rbit_neg_bare_src** (failing, shrunk). Witness: `rd=0, rn=0, t="8b"` → dest `v0.8b`, src `Reg("v0")`. Expected Err; actual Ok(Word). Serial reconfirm as above. Report: pbt-out/bug_reports/encode_neon_rbit_bare_src.md
+- **encode_neon_rbit_neg_bad_prefix** (failing, shrunk). Witness: `rd=0, rn=0, t="8b", prefix="x"` → `rbit x0.8b, x0.8b`. Expected Err; actual Ok(Word). Serial reconfirm as above. Report: pbt-out/bug_reports/encode_neon_rbit_non_v_prefix.md
+- **encode_neon_rbit_neg_sp** (failing, shrunk). Witness: `rd=0, t="8b", which=0` → `rbit sp.8b, v0.8b`. Expected Err; actual Ok(Word) with Rd=31. Serial reconfirm as above. Report: pbt-out/bug_reports/encode_neon_rbit_sp_as_neon.md
 
 ## Design Caveats
 
@@ -33,30 +31,36 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_umulh_pbt) | 11 proptest properties (1000 cases each), 4 llvm-mc KAT, 4 failing regression witnesses |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_rbit_pbt) | 13 properties + 3 KAT + 5 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_umulh_extra_operand.md
-- pbt-out/bug_reports/encode_umulh_wrong_width.md
-- pbt-out/bug_reports/encode_umulh_sp_as_zr.md
-- pbt-out/bug_reports/encode_umulh_fp_as_gpr.md
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — coverage row for encode_neon_rbit
+- pbt-out/FUNCTION_INDEX.md — encode_neon_rbit marked yes
+- pbt-out/INVARIANTS.md — confirmed encode_neon_rbit invariants
+- pbt-out/bug_reports/encode_neon_rbit_extra_operand.md
+- pbt-out/bug_reports/encode_neon_rbit_mismatch_arrangement.md
+- pbt-out/bug_reports/encode_neon_rbit_bare_src.md
+- pbt-out/bug_reports/encode_neon_rbit_non_v_prefix.md
+- pbt-out/bug_reports/encode_neon_rbit_sp_as_neon.md
 
-Contract-surface sweep closed after 1 round (standard tier): coverage_gaps had no LLVM profraw; manual arm audit of extra / width / SP / FP / non-Reg / invalid-name / alt-spellings. Added encode_umulh_neg_fp (failing), encode_umulh_neg_nonreg (passing), encode_umulh_neg_invalid_name (passing).
+## Contract-surface sweep
+
+Round 1 of 1 (standard). `coverage_gaps` reported no instrumented profraw in this session. Manual audit of encode_neon_rbit: arity `< 2`, dest T ∉ {8b,16b}, Q bit, Rd/Rn fields, llvm-mc agreement, extra operand, mismatched T, bare src, Imm src, invalid names, non-V prefix, SP. No remaining documented branch without a property. Sweep closed because the tier's one round is done.
+
+## Harness
+
+Rung 1: extend `cargo test --lib`. Probe: `cargo test --lib encode_neon_shift_left_imm_kat_llvm_mc_v0_8b_v1_8b` → 1 passed. Framework: proptest 1.11. Rebuilds used `cargo test --lib encode_neon_rbit_pbt` (swap of `cargo check --lib`).
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 14:03 (campaign: coverage)
-> Files: 8/8 scanned (100%) | Functions: 61/253 total | PBT candidates: 61 | Tested: 61 (100%) | 0 pass, 61 fail
+> Last updated: 2026-09-14 14:23 (campaign: coverage)
+> Files: 8/8 scanned (100%) | Functions: 62/253 total | PBT candidates: 62 | Tested: 62 (100%) | 0 pass, 62 fail
 
 ## Summary
 
@@ -65,10 +69,10 @@ Contract-surface sweep closed after 1 round (standard tier): coverage_gaps had n
 | Total source files | 8 |
 | Files scanned | 8 / 8 (100%) |
 | Total functions (all files) | 253 |
-| PBT candidates (from FUNCTION_INDEX) | 61 |
-| **Tested (of PBT candidates)** | **61 / 61 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 61 / 0 |
-| **Overall (tested / all functions)** | **61 / 253 (24%)** |
+| PBT candidates (from FUNCTION_INDEX) | 62 |
+| **Tested (of PBT candidates)** | **62 / 62 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 62 / 0 |
+| **Overall (tested / all functions)** | **62 / 253 (25%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -76,13 +80,13 @@ Contract-surface sweep closed after 1 round (standard tier): coverage_gaps had n
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 61 | 61 | 0 | 100% |
+|  | 62 | 62 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 61 | 61 | 0 | 100% |
+| unknown | 62 | 62 | 0 | 100% |
 
 ## File Coverage
 
@@ -94,7 +98,7 @@ Contract-surface sweep closed after 1 round (standard tier): coverage_gaps had n
 | data_processing.rs | 36 | 22 | 22 | 100% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
-| neon.rs | 68 | 12 | 12 | 100% | covered |
+| neon.rs | 68 | 13 | 13 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -165,3 +169,4 @@ Contract-surface sweep closed after 1 round (standard tier): coverage_gaps had n
 | encode_neon_shift_left_imm | neon.rs |
 | encode_umaddl | data_processing.rs |
 | encode_umulh | data_processing.rs |
+| encode_neon_rbit | neon.rs |
