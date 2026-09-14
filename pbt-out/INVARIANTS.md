@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_movn)
+
+- Valid GPR + imm16 + optional lsl (hw in {0,1} for W, {0,1,2,3} for X; Rd=31 is xzr/wzr) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_movn(X-ops) XOR encode_movn(W-ops) at equal rd/imm/hw in {0,1} = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path word: sf at 31, bits [30:23]=00100101 (opc=00), hw at [22:21], imm16 at [20:5], Rd at [4:0].
+- `lr` as Rd encodes as X30 and matches llvm-mc (1000 cases).
+- Fewer than 2 operands, invalid names (foo, x32, w32, x, r0, empty), and non-imm16 second operands (unknown modifier, non-constant abs_g symbol, Symbol/Label/Mem/Reg) always Err.
+- Known-answer: `movn x0, #42` encodes as 0x92800540; `movn w0, #42` as 0x12800540; `movn x0, #42, lsl #16` as 0x92a00540.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Move wide (immediate) MOVN: `sf 00 100101 hw imm16 Rd`. Register 31 is XZR/WZR, never SP/WSP. imm16 in [0, 65535]. hw in {0,1} when sf=0; {0,1,2,3} when sf=1. Semantics: Rd := NOT(ZeroExtend(imm16) << (hw*16)).
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg).
+- Dispatch: encoder/mod.rs:222 movn.
+- Callers: emit.rs:873-902 movn Rd, #imm16 [, lsl #N] as the start of MOVN+MOVK sequences.
+- `:abs_g*:` modifiers are documented for movz/movk only (data_processing.rs:179-181); encode_movn has no Modifier path.
+
+## Quirks
+
+- Extra operands beyond the optional lsl are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- Immediate is masked with `(imm as u32) & 0xFFFF` with no range check (see bugs).
+- Non-lsl shift kinds default to hw=0; lsl amount is integer-divided by 16 with no range check (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg / get_imm / Shift lsl vs other / extra non-Shift / too few / FP / invalid name).
+
+---
+
 # Confirmed invariants (encode_movk)
 
 - Valid GPR + imm16 + optional lsl (hw in {0,1} for W, {0,1,2,3} for X; Rd=31 is xzr/wzr) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

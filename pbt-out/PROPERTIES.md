@@ -278,3 +278,379 @@ generators:
 expected_error: String
 evidence: data_processing.rs resolve_abs_g_modifier returns None then get_imm requires Imm llvm-mc rejects non-imm16 second operand
 ```
+
+# Properties: encode_movn
+
+## encode_movn_diff_imm_shift
+- Tier: 2
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function, no lifecycle). Round-trip rejected (no in-tree MOVN decoder). encode_movz/encode_movk rejected by same-job sibling gate (opc 10/11 vs 00; MOVZ zeros other halfwords, MOVK keeps them). Doc evidence: README.md:5-14 gas-compatible assembly; encoder/mod.rs:1-7 32-bit words; encoder/mod.rs:222 movn dispatch; ARM ARM Move wide (immediate) MOVN `sf 00 100101 hw imm16 Rd`; llvm-mc `-triple=aarch64`.
+- Seed: encode_movk_pbt::encode_movk_diff_imm_shift (same-file Move-wide differential vs llvm-mc); codegen emit.rs:873-902
+- Formal: ∀ rd ∈ {0..31}, is_64 ∈ {false,true}, imm ∈ {0..65535}, hw ∈ H(is_64). encode_movn([Reg(gpr(is_64,rd)), Imm(imm)] ++ shift(hw)) = llvm-mc("movn Rd, #imm[, lsl #(16*hw)]") where H(false)={0,1}, H(true)={0,1,2,3}, gpr(_,31)=xzr/wzr, and shift(0) may be omitted or `lsl #0`.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, is_64, imm, hw]
+  domain:
+    rd: 0..31
+    is_64: bool
+    imm: 0..65535
+    hw: valid_hw(is_64)
+  relation:
+    op: eq
+    lhs: encode_movn(reg_imm_optional_lsl(rd, is_64, imm, hw))
+    rhs: llvm_mc(movn_asm(rd, is_64, imm, hw))
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+  hw: { gen: int, min: 0, max: 3, type: u32 }
+evidence: src/backend/arm/assembler/README.md:5-14 encoder/mod.rs:222 ARM ARM Move wide immediate MOVN
+```
+
+## encode_movn_metamorphic_sf
+- Tier: 4
+- Rationale: ARM ARM sf bit is the sole 32/64-bit distinguisher of otherwise-identical MOVN encodings. Stronger differential covers full-word agreement; this metamorphic isolates sf. Round-trip rejected (no decoder). Doc evidence: ARM ARM `sf 00 100101 hw imm16 Rd`; README.md size-inference `x`/`w` prefix.
+- Seed: encode_movk_pbt::encode_movk_metamorphic_sf
+- Formal: ∀ rd ∈ {0..31}, imm ∈ {0..65535}, hw ∈ {0,1}. encode_movn(X-ops) XOR encode_movn(W-ops) = 1<<31 at equal rd/imm/hw.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, imm, hw]
+  domain:
+    rd: 0..31
+    imm: 0..65535
+    hw: 0..1
+  relation:
+    op: eq
+    lhs: encode_movn(x_ops) XOR encode_movn(w_ops)
+    rhs: 1 << 31
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+  hw: { gen: int, min: 0, max: 1, type: u32 }
+evidence: ARM ARM Move wide immediate sf at bit 31 README.md size inference
+```
+
+## encode_movn_invariant_arm_fields
+- Tier: 4
+- Rationale: ARM ARM field layout is an exact structural predicate on every success-path word. Differential is stronger for the whole word; this invariant pins each field so a single-bit drift is localizable. Doc evidence: ARM ARM `sf 00 100101 hw imm16 Rd` (opc=00 => bits [30:23]=00100101).
+- Seed: encode_movk_pbt::encode_movk_invariant_arm_fields
+- Formal: ∀ rd ∈ {0..31}, is_64 ∈ {false,true}, imm ∈ {0..65535}, hw ∈ H(is_64). let w = encode_movn(...). (w>>31)&1 = sf(is_64) ∧ (w>>23)&0xFF = 0b00100101 ∧ (w>>21)&3 = hw ∧ (w>>5)&0xFFFF = imm ∧ w&0x1F = rd.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [rd, is_64, imm, hw]
+  domain:
+    rd: 0..31
+    is_64: bool
+    imm: 0..65535
+    hw: valid_hw(is_64)
+  relation:
+    op: holds
+    expr: arm_movn_fields(encode_movn(ops), rd, is_64, imm, hw)
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+  hw: { gen: int, min: 0, max: 3, type: u32 }
+evidence: ARM ARM Move wide immediate MOVN sf 00 100101 hw imm16 Rd
+```
+
+## encode_movn_diff_lr
+- Tier: 2
+- Rationale: `lr` is a documented 64-bit alias of X30 (parse_reg_num and is_64bit_reg). Differential vs llvm-mc on that alias. Same-job sibling encode_movk has the same alias contract. Stronger state-machine/round-trip rejected as for the main differential.
+- Seed: encode_movk_pbt::encode_movk_diff_lr
+- Formal: ∀ imm ∈ {0..65535}, hw ∈ {0,1,2,3}. encode_movn([Reg("lr"), Imm(imm)] ++ shift(hw)) = llvm-mc("movn lr, #imm[, lsl #(16*hw)]").
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [imm, hw]
+  domain:
+    imm: 0..65535
+    hw: 0..3
+  relation:
+    op: eq
+    lhs: encode_movn(lr_imm_optional_lsl(imm, hw))
+    rhs: llvm_mc(movn_lr_asm(imm, hw))
+generators:
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+  hw: { gen: int, min: 0, max: 3, type: u32 }
+evidence: encoder/mod.rs:131-155 parse_reg_num lr=>30, is_64bit_reg lr; llvm-mc lr alias
+```
+
+## encode_movn_neg_imm_oob
+- Tier: 5
+- Rationale: llvm-mc and ARM ARM require imm16 in [0, 65535]. encode_movn masks with `& 0xFFFF` and does not reject. Documented error contract from llvm-mc: "immediate must be an integer in range [0, 65535]". Stronger oracles do not apply to the invalid domain.
+- Seed: encode_movk_pbt::encode_movk_neg_imm_oob
+- Formal: ∀ rd ∈ {0..31}, is_64 ∈ {false,true}, imm ∉ {0..65535}. encode_movn([Reg(gpr), Imm(imm)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, is_64=false, imm=-1 (movn w0, #-1)
+- Bug report: pbt-out/bug_reports/encode_movn_imm_oob.md
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, is_64, imm]
+  domain:
+    rd: 0..31
+    is_64: bool
+    imm: i64 \\ {0..65535}
+  relation:
+    op: throws
+    expr: encode_movn([Reg(gpr(is_64, rd)), Imm(imm)])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  imm: { gen: int, min: -9223372036854775808, max: 9223372036854775807, type: i64 }
+expected_error: String
+evidence: llvm-mc aarch64 "immediate must be an integer in range [0, 65535]"; ARM ARM imm16
+```
+
+## encode_movn_neg_invalid_shift
+- Tier: 5
+- Rationale: llvm-mc requires optional lsl with 0/16 (W) or 0/16/32/48 (X). Non-lsl kinds and other amounts are rejected. encode_movn integer-divides lsl amount by 16 and defaults non-lsl to hw=0. Documented error: "expected 'lsl' with optional integer 0, 16, 32 or 48".
+- Seed: encode_movk_pbt::encode_movk_neg_invalid_shift
+- Formal: ∀ rd, imm ∈ {0..65535}, (is_64, kind, amount) ∈ InvalidShift. encode_movn([Reg, Imm, Shift{kind,amount}]) is Err. InvalidShift = non-lsl kind, or lsl amount not in {0,16} (W) / {0,16,32,48} (X).
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, imm=0, is_64=false, kind="lsr", amount=0 (movn w0, #0, lsr #0)
+- Bug report: pbt-out/bug_reports/encode_movn_invalid_shift.md
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, imm, is_64, kind, amount]
+  domain:
+    rd: 0..31
+    imm: 0..65535
+    is_64: bool
+    kind: shift_kind
+    amount: invalid_lsl_or_any_non_lsl
+  relation:
+    op: throws
+    expr: encode_movn([Reg(gpr), Imm(imm), Shift{kind, amount}])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+expected_error: String
+evidence: llvm-mc aarch64 expected lsl with 0/16 (W) or 0/16/32/48 (X)
+```
+
+## encode_movn_neg_extra_operand
+- Tier: 5
+- Rationale: llvm-mc rejects a fourth operand after optional lsl ("invalid operand for instruction"). MOVN encoding has exactly Rd + imm16 + optional lsl. Extra operands must Err. encode_movn ignores operands beyond index 2.
+- Seed: encode_movk_pbt::encode_movk_neg_extra_operand
+- Formal: ∀ rd, is_64, imm ∈ {0..65535}, hw ∈ H(is_64), extra. encode_movn(valid_ops ++ [extra]) is Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: rd=0, is_64=true, hw=0, imm=0, extra=Reg("x0") (movn x0, #0, x0)
+- Bug report: pbt-out/bug_reports/encode_movn_extra_operand.md
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, is_64, imm, hw, extra]
+  domain:
+    rd: 0..31
+    is_64: bool
+    imm: 0..65535
+    hw: valid_hw(is_64)
+    extra: Operand
+  relation:
+    op: throws
+    expr: encode_movn(valid_ops ++ [extra])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+  hw: { gen: int, min: 0, max: 3, type: u32 }
+expected_error: String
+evidence: llvm-mc aarch64 rejects extra operand after optional lsl; ARM ARM exactly Rd+imm16+optional lsl
+```
+
+## encode_movn_neg_sp
+- Tier: 5
+- Rationale: ARM ARM register 31 in Move-wide is XZR/WZR, never SP/WSP. llvm-mc rejects `movn sp, #0` / `movn wsp, #0`. parse_reg_num maps sp/wsp to 31, so encode_movn currently encodes ZR.
+- Seed: encode_movk_pbt::encode_movk_neg_sp
+- Formal: ∀ is_64, imm ∈ {0..65535}, hw ∈ {0,1}. encode_movn([Reg(sp|wsp), Imm(imm)] ++ shift(hw)) is Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: is_64=false, imm=0, hw=0 (movn wsp, #0)
+- Bug report: pbt-out/bug_reports/encode_movn_sp.md
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [is_64, imm, hw]
+  domain:
+    is_64: bool
+    imm: 0..65535
+    hw: 0..1
+  relation:
+    op: throws
+    expr: encode_movn(sp_imm_optional_lsl(is_64, imm, hw))
+generators:
+  is_64: { gen: bool }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+  hw: { gen: int, min: 0, max: 1, type: u32 }
+expected_error: String
+evidence: ARM ARM Move wide Rd=31 is XZR/WZR never SP; llvm-mc rejects movn sp/wsp
+```
+
+## encode_movn_neg_too_few
+- Tier: 5
+- Rationale: Contract-surface sweep. get_reg(0)/get_imm(1) fail when fewer than 2 operands. llvm-mc: "too few operands for instruction".
+- Seed: encode_movk_pbt::encode_movk_neg_too_few
+- Formal: ∀ n ∈ {0,1}, ops prefix of a valid pair of length n. encode_movn(ops) is Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, rd, is_64, imm]
+  domain:
+    n: 0..1
+    rd: 0..31
+    is_64: bool
+    imm: 0..65535
+  relation:
+    op: throws
+    expr: encode_movn(ops[..n])
+generators:
+  n: { gen: int, min: 0, max: 1, type: usize }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+expected_error: String
+evidence: llvm-mc aarch64 too few operands; get_reg/get_imm require operand 0 and 1
+```
+
+## encode_movn_neg_fp
+- Tier: 5
+- Rationale: Contract-surface sweep. llvm-mc rejects FP/SIMD names as MOVN Rd. parse_reg_num accepts d/s/q/v/h/b prefixes so encode_movn currently encodes them as GPRs.
+- Seed: encode_movk_pbt::encode_movk_neg_fp
+- Formal: ∀ fp ∈ {d,s,q,v,h,b}{0..31}, imm ∈ {0..65535}. encode_movn([Reg(fp), Imm(imm)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: failing
+- Counterexample: fp="d0", imm=0 (movn d0, #0)
+- Bug report: pbt-out/bug_reports/encode_movn_fp_as_gpr.md
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [fp, imm]
+  domain:
+    fp: fp_simd_name
+    imm: 0..65535
+  relation:
+    op: throws
+    expr: encode_movn([Reg(fp), Imm(imm)])
+generators:
+  fp: { gen: string }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+expected_error: String
+evidence: llvm-mc aarch64 rejects movn d0, #0; ARM ARM Rd is GPR
+```
+
+## encode_movn_neg_invalid_name
+- Tier: 5
+- Rationale: Contract-surface sweep. parse_reg_num returns None for foo/x32/w32/x/r0/empty, so get_reg Errs. llvm-mc rejects those names.
+- Seed: encode_movk_pbt::encode_movk_neg_invalid_name
+- Formal: ∀ name ∈ {foo, x32, w32, x, r0, ""}, imm ∈ {0..65535}. encode_movn([Reg(name), Imm(imm)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [name, imm]
+  domain:
+    name: invalid_gpr_name
+    imm: 0..65535
+  relation:
+    op: throws
+    expr: encode_movn([Reg(name), Imm(imm)])
+generators:
+  name: { gen: string }
+  imm: { gen: int, min: 0, max: 65535, type: i64 }
+expected_error: String
+evidence: parse_reg_num None for non-GPR names; llvm-mc rejects them
+```
+
+## encode_movn_neg_bad_second
+- Tier: 5
+- Rationale: Contract-surface sweep. get_imm requires Operand::Imm; Modifier/Symbol/Label/Mem/Reg at slot 1 must Err. (abs_g is documented for movz/movk only, data_processing.rs:179-181.) llvm-mc rejects non-imm16 second operands (except reloc abs_g, which this encoder does not implement for movn).
+- Seed: encode_movk_pbt::encode_movk_neg_bad_second
+- Formal: ∀ rd, is_64, second ∈ {Modifier(lo12), Modifier(abs_g0, non-constant), Symbol, Label, Mem, Reg}. encode_movn([Reg(gpr), second]) is Err.
+- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.data_processing.encode_movn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, is_64, second]
+  domain:
+    rd: 0..31
+    is_64: bool
+    second: non_imm16_second_operand
+  relation:
+    op: throws
+    expr: encode_movn(reg_and_second(rd, is_64, second))
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+expected_error: String
+evidence: get_imm requires Imm; data_processing.rs:179-181 abs_g is for movz/movk; llvm-mc rejects non-imm16 second
+```
