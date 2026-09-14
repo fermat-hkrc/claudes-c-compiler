@@ -13,3 +13,4 @@
 | encode_bl | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 2 failing KAT + 1 passing KAT + 3 regression witnesses) |
 | encode_blr | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 2 passing KAT + 4 failing regression witnesses) |
 | encode_br | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 2 passing KAT + 4 failing regression witnesses) |
+| encode_branch | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 1 passing KAT + 2 failing KAT + 3 failing regression witnesses) |

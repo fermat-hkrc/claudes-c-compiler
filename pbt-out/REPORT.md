@@ -1,62 +1,92 @@
-# PBT Campaign Report: encode_br
+# PBT Campaign Report: encode_branch
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** claudes-c-compiler
-**Modules tested:** encode_br
-**Tests:** 9 properties (plus 2 KAT + 4 regression witnesses)
-**Result:** 6 passing, 3 failing (4 SUT bugs)
-**Effort tier:** standard (1 coverage-driven sweep round)
+**Modules tested:** encode_branch
+**Tests:** 9 properties (plus 3 KAT + 3 regression witnesses)
+**Result:** 6 passing, 3 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 coverage-driven contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_br | 9 properties (6 pass / 3 fail) | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_branch | 9 properties (6 pass, 3 fail) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_br_neg_w_reg** (negative_error). Law: ∀ n ∈ {0..30} ∪ {wzr, wsp}. encode_br([Reg(wn)]) is Err. Shrunk counterexample: `n = 0` (`br w0`). Expected: Err. Actual: Ok(Word(0xd61f0000)) — same as `br x0`. encode_br discards the is_64 flag from get_reg. Serial reconfirm (`PBT_TEST_JOBS=1`). Report: `pbt-out/bug_reports/encode_br_w_reg.md`. Regression: `test_encode_br_regression_w_reg`.
+### 1. encode_branch rejects immediate PC-offset form `b #imm`
+- **Law:** ∀ aligned imm in [-2^27, 2^27-4]. encode_branch([Imm(imm)]) = Word(llvm-mc("b #imm"))
+- **Shrunk counterexample:** Imm(-134217728); also Imm(0), Imm(4)
+- **Expected:** Word matching llvm-mc (`b #0` → 0x14000000, `b #4` → 0x14000001, `b #-134217728` → 0x16000000)
+- **Actual:** Err("expected symbol at operand 0, got Some(Imm(...))") — encode_branch only calls get_symbol and never fills imm26
+- **Root cause:** missing Imm encoding path; comment says imm26 is filled by linker/assembler for reloc form only
+- **Impact:** gas-compat hole for hand-written `b #imm`; codegen currently emits labels so compiler output is unaffected
+- **Severity:** medium
+- **Fix:** match Imm, range-check alignment and ±128 MiB, return Word(0b000101<<26 | ((imm/4) as u32 & 0x03ffffff)); Err otherwise
+- **Bug report:** pbt-out/bug_reports/encode_branch_imm_offset.md
+- **Serial reconfirmation:** PBT_TEST_JOBS=1 reproduced
 
-2. **encode_br_neg_extra_operand** (negative_error). Law: ∀ extra ∈ {Reg,Imm,Symbol,Mem}, encode_br([Reg(xn), extra]) is Err. Shrunk counterexample: `n = 0, which = 0` (`br x0, x1`). Expected: Err. Actual: Ok(Word(0xd61f0000)). get_reg only inspects operand 0. Serial reconfirm (`PBT_TEST_JOBS=1`). Report: `pbt-out/bug_reports/encode_br_extra_operand.md`. Regression: `test_encode_br_regression_extra_operand`.
+### 2. encode_branch ignores extra operands
+- **Law:** B takes a single target; encode_branch([Symbol(s), extra]) must be Err
+- **Shrunk counterexample:** [Symbol("labl0"), Reg("x0")]
+- **Expected:** Err (llvm-mc: invalid operand)
+- **Actual:** Ok(WordWithReloc Jump26) — get_symbol only inspects operand 0
+- **Root cause:** no arity check
+- **Impact:** typos such as `b foo, x0` silently assemble
+- **Severity:** medium
+- **Fix:** return Err when operands.len() != 1
+- **Bug report:** pbt-out/bug_reports/encode_branch_extra_operand.md
+- **Serial reconfirmation:** PBT_TEST_JOBS=1 reproduced
 
-3. **encode_br_neg_wrong_reg_class** (negative_error) — SP. Law: encode_br([Reg("sp")]) is Err. Shrunk counterexample: `which = 0, n = 0` (`br sp`). Expected: Err. Actual: Ok(Word(0xd61f03e0)) — same as `br xzr`. parse_reg_num maps sp to 31. Serial reconfirm (`PBT_TEST_JOBS=1`). Report: `pbt-out/bug_reports/encode_br_sp_as_zr.md`. Regression: `test_encode_br_regression_sp`.
-
-4. **encode_br_neg_wrong_reg_class** (negative_error) — FP. Law: encode_br([Reg("d0")]) is Err. Witness: `br d0`. Expected: Err. Actual: Ok(Word(0xd61f0000)) — treated as x0. parse_reg_num maps d/s/q/v/h/b prefixes. Serial reconfirm via `test_encode_br_regression_fp_reg` (`PBT_TEST_JOBS=1`). Report: `pbt-out/bug_reports/encode_br_fp_reg.md`. Regression: `test_encode_br_regression_fp_reg`.
+### 3. encode_branch accepts :lo12: / modifier operands as Jump26 symbols
+- **Law:** B operand is a label or encodable integer PC offset; Modifier/ModifierOffset must be Err
+- **Shrunk counterexample:** Modifier { kind: "lo12", symbol: "foo" }
+- **Expected:** Err (llvm-mc does not treat `:lo12:` as B)
+- **Actual:** Ok(WordWithReloc Jump26 to "foo") — get_symbol discards kind
+- **Root cause:** get_symbol treats Modifier as a plain symbol
+- **Impact:** wrong relocation class relative to source text
+- **Severity:** medium
+- **Fix:** reject Modifier/ModifierOffset in encode_branch (or in get_symbol when used for B/BL)
+- **Bug report:** pbt-out/bug_reports/encode_branch_modifier.md
+- **Serial reconfirmation:** PBT_TEST_JOBS=1 reproduced
 
 ## Design Caveats
 
-(none)
+Parser-misclassified Reg/Cond/Barrier names at the B target slot are treated as symbols and emit Jump26. encode_branch_symbol_misclassified confirms this.
+Doc evidence: `src/backend/arm/assembler/encoder/mod.rs:982-986` — "The parser misclassifies symbol names that collide with register names, condition codes, or barrier names. These are valid symbols in context."
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/compare_branch.rs (mod encode_br_pbt) | 9 properties + 2 KAT + 4 regressions |
+| src/backend/arm/assembler/encoder/compare_branch.rs (mod encode_branch_pbt) | 9 properties + 3 KAT + 3 regression witnesses |
 
 ## Output Directories
 
-- `pbt-out/PLAN.md` — campaign phases
-- `pbt-out/PROPERTIES.md` — property ledger
-- `pbt-out/FUNCTION_INDEX.md` — merged function index (encode_br marked yes)
-- `pbt-out/COVERAGE.md` — per-function coverage ledger
-- `pbt-out/COVERAGE_STATUS.md` — coverage statistics
-- `pbt-out/INVARIANTS.md` — confirmed invariants (encode_br section appended)
-- `pbt-out/REPORT.md` — this report
-- `pbt-out/bug_reports/encode_br_w_reg.md`
-- `pbt-out/bug_reports/encode_br_extra_operand.md`
-- `pbt-out/bug_reports/encode_br_sp_as_zr.md`
-- `pbt-out/bug_reports/encode_br_fp_reg.md`
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — per-function coverage table
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/FUNCTION_INDEX.md — merged function index (encode_branch marked yes)
+- pbt-out/INVARIANTS.md — confirmed encode_branch invariants
+- pbt-out/bug_reports/encode_branch_imm_offset.md
+- pbt-out/bug_reports/encode_branch_extra_operand.md
+- pbt-out/bug_reports/encode_branch_modifier.md
 
-Contract-surface sweep: 1 round (tier allowance). `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_reg arms reachable from encode_br (empty / non-Reg covered by arity and bad_operand; parse_reg_num None covered by `encode_br_neg_invalid_name`; SP/W/FP/extra filed as bugs). Closed because the tier's 1 round is done.
+## Contract-surface sweep
+
+STANDARD owes 1 round. `coverage_gaps` had no LLVM profraw. Manual arm audit of get_symbol (the only branching helper encode_branch calls): Symbol/Label/SymbolOffset already covered; Modifier/ModifierOffset hit by the failing negative property; Imm/empty/Mem/Shift covered; undocumented catch-all kinds not targeted. Added encode_branch_symbol_misclassified for the documented Reg/Cond/Barrier workaround (passing). Sweep closed: tier round spent.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 01:45 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 11/184 total | PBT candidates: 11 | Tested: 11 (100%) | 0 pass, 11 fail
+> Last updated: 2026-09-14 01:54 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 12/184 total | PBT candidates: 12 | Tested: 12 (100%) | 0 pass, 12 fail
 
 ## Summary
 
@@ -65,10 +95,10 @@ Contract-surface sweep: 1 round (tier allowance). `coverage_gaps` had no LLVM pr
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 11 |
-| **Tested (of PBT candidates)** | **11 / 11 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 11 / 0 |
-| **Overall (tested / all functions)** | **11 / 184 (6%)** |
+| PBT candidates (from FUNCTION_INDEX) | 12 |
+| **Tested (of PBT candidates)** | **12 / 12 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 12 / 0 |
+| **Overall (tested / all functions)** | **12 / 184 (7%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -76,20 +106,20 @@ Contract-surface sweep: 1 round (tier allowance). `coverage_gaps` had no LLVM pr
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 11 | 11 | 0 | 100% |
+|  | 12 | 12 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 11 | 11 | 0 | 100% |
+| unknown | 12 | 12 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 3 | 3 | 100% | covered |
+| compare_branch.rs | 21 | 4 | 4 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 4 | 4 | 100% | covered |
 | load_store.rs | 20 | 1 | 1 | 100% | covered |
@@ -113,3 +143,4 @@ Contract-surface sweep: 1 round (tier allowance). `coverage_gaps` had no LLVM pr
 | encode_bl | compare_branch.rs |
 | encode_blr | compare_branch.rs |
 | encode_br | compare_branch.rs |
+| encode_branch | compare_branch.rs |

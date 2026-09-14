@@ -305,3 +305,30 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_reg (parse_reg_num None via encode_br_neg_invalid_name).
 
+---
+
+# Confirmed invariants (encode_branch)
+
+- Symbol / Label / SymbolOffset produce WordWithReloc { Jump26, symbol, addend } with word = 0x14000000 and imm26 field 0 (1000 cases). ELF type is 282 (R_AARCH64_JUMP26).
+- encode_bl(ops).word XOR encode_branch(ops).word = 1<<31 for the same SymbolOffset operands (ARM ARM bit 31); reloc types Call26 vs Jump26; same symbol and addend (1000 cases).
+- Success-path reloc word: bits[31:26] = 000101, bits[25:0] = 0.
+- Empty operands always Err.
+- Unaligned or out-of-range Imm always Err (because all Imm currently Err — see bugs).
+- Parser-misclassified Reg/Cond/Barrier names at operand 0 are treated as symbols (get_symbol workaround) and emit Jump26 (1000 cases).
+- Known-answer: llvm-mc `b #0` encodes as 0x14000000; `b #4` as 0x14000001. SUT does not yet match (see bugs).
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM B signed PC offset: [-134217728, 134217724], multiple of 4.
+- llvm-mc rejects bare `b` (too few operands), `b foo, x0` (invalid operand), `b #1` (expected label or encodable integer pc offset), `b :lo12:foo`.
+- Codegen emits `b <label>`, not `b #imm`.
+
+## Quirks
+
+- encode_branch never encodes Imm: get_symbol rejects it (see bugs).
+- Extra operands beyond index 0 are ignored (see bugs).
+- get_symbol accepts Modifier / ModifierOffset, so `:lo12:` produces Jump26 instead of Err (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_symbol (Reg/Cond/Barrier via encode_branch_symbol_misclassified).
+
