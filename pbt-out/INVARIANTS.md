@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_cset)
+
+- Same-width GPR CSET (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond14 including hs/lo aliases, excluding al/nv) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_cset([Rd, cond]) equals encode_csinc([Rd, ZR, ZR, invert(cond)]) (ARM ARM CSET alias of CSINC) (1000 cases).
+- encode_cset([Rd, cond]) equals encode_cinc([Rd, ZR, cond]) (CINC with Rn=ZR) (1000 cases).
+- Success-path word: sf at 31 from Rd width, op=0 at 30, S=0 at 29, bits [28:21]=0b11010100, Rm=31 at [20:16], invert(cond)=cond XOR 1 at [15:12], op2=01 at [11:10], Rn=31 at [9:5], Rd at [4:0].
+- Fewer than 2 operands always Err.
+- Unknown condition names (zz, foo, eqq, empty, "eq ", always) always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1, x99) always Err.
+- Non-register/non-cond (Imm/Mem/Symbol/Shift/Label) in either slot always Err.
+- Known-answer: `cset x0, eq` encodes as 0x9a9f17e0; `cset w0, ne` as 0x1a9f07e0; `csinc x0, xzr, xzr, ne` disassembles as the same CSET.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- CSET register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `cset sp, ...`).
+- CSET takes Wt/Xt only (llvm-mc rejects `cset d0, ...`).
+- Cond AL and NV are invalid for the CSET alias (unlike architectural CSEL).
+- llvm-mc rejects a third operand.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- encode_cond accepts al/nv and invert(cond)=cond XOR 1 is applied with no AL/NV guard (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `cset sp, eq` encodes as `cset xzr, eq` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (encode_cond None / parse_reg_num None / get_reg non-Reg / cond-not-Cond).
+
+---
+
 # Confirmed invariants (encode_csel)
 
 - Same-width GPR CSEL (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond16 including al/nv and hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
