@@ -1,76 +1,80 @@
-# PBT Campaign Report: encode_neon_shift_right
+# PBT Campaign Report: encode_neg
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_shift_right
-**Tests:** 15 total (6 passing properties + 4 failing properties + 1 passing KAT + 4 failing regression witnesses)
-**Result:** 6 passing properties, 4 failing properties (4 bug-report files)
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening/sweep round, ≥1 metamorphic/differential, 1 coverage_gaps round)
+**Modules tested:** encode_neg (src/backend/riscv/assembler/encoder/pseudo.rs)
+**Tests:** 9 properties + 1 KAT + 1 regression witness
+**Result:** 8 passing, 1 bug
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening/sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_shift_right | 15 | 4 | differential (llvm-mc), algebraic.metamorphic (U bit, Q/opcode), algebraic.invariant (ARM fields), negative_error |
+| encode_neg | 9 properties (8 passing, 1 failing) + 1 KAT + 1 regression | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-Each entry is a failing proptest property with a shrunk counterexample, reconfirmed serially (`PBT_TEST_JOBS=1`). Expected: Err. Actual: Ok(Word).
+### encode_neg silently ignores extra operands
+- **Law:** `neg` is a two-operand pseudoinstruction (`neg rd, rs`). Extra operands must be rejected.
+- **Shrunk counterexample:** `[Reg("zero"), Reg("zero"), Reg("zero")]`
+- **Expected:** Err (llvm-mc: "invalid operand for instruction")
+- **Actual:** Ok(Word(0x40000033)) — encodes as `neg zero, zero`
+- **Root cause:** `encode_neg` only calls `get_reg` on indices 0 and 1; trailing operands are never examined.
+- **Impact:** Assembler accepts `neg rd, rs, extra` and emits the two-operand encoding, silently disagreeing with llvm-mc / the documented form.
+- **Severity:** medium
+- **Fix:** Reject `operands.len() != 2` (or `operands.get(2).is_some()`).
+- **Bug report:** pbt-out/bug_reports/encode_neg_extra_operand.md
+- **Regression test:** `encode_neg_pbt::test_encode_neg_regression_extra_operand` (fails until fixed)
+- **Serial reconfirm:** reproduced with `PBT_TEST_JOBS=1`
 
-1. **encode_neon_shift_right_neg_mismatched_t** — Falsifiable. Shrunk counterexample: `rd=0, rn=0, td="8b", ts="16b", shift=1, u_bit=0, opcode=9` (`srshr v0.8b, v0.16b, #1`). Law: dest T must equal source T. Report: `pbt-out/bug_reports/encode_neon_shift_right_mismatched_t.md`.
+## Design Caveats (if any)
 
-2. **encode_neon_shift_right_neg_extra_operand** — Falsifiable. Shrunk counterexample: `rd=0, rn=0, extra=0, t="8b", shift=1, u_bit=0, opcode=9` (`srshr v0.8b, v0.8b, #1, v0.8b`). Law: exactly three operands. Report: `pbt-out/bug_reports/encode_neon_shift_right_extra_operand.md`.
-
-3. **encode_neon_shift_right_neg_shift_i64_trunc** — Falsifiable. Shrunk counterexample: `Imm(4294967297)` for T=8b (`get_imm as u32` → 1). Law: i64 shift outside [1, esize] must Err. Report: `pbt-out/bug_reports/encode_neon_shift_right_shift_i64_trunc.md`.
-
-4. **encode_neon_shift_right_neg_reg_source** — Falsifiable. Shrunk counterexample: `prefix="x", n=0` (`srshr v0.8b, x0, #1`). Law: source must be Vn.T, not a bare register. Report: `pbt-out/bug_reports/encode_neon_shift_right_reg_source.md`.
-
-## Design Caveats
-
-(none)
+- **Imm 0..=31 as a register number.** `get_reg` accepts `Operand::Imm(n)` for `0 <= n <= 31`. llvm-mc rejects textual `neg 10, 11`. This is an in-tree documented extension, not a bug.
+  - Doc evidence: `src/backend/riscv/assembler/encoder/mod.rs:351-352` — quote: `// GCC sometimes emits bare register numbers (0-31) in inline asm`
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_shift_right_pbt) | 15 (1 KAT + 10 properties + 4 regressions) |
+| src/backend/riscv/assembler/encoder/pseudo.rs (mod encode_neg_pbt) | 9 properties + 1 KAT + 1 regression |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_shift_right_mismatched_t.md
-- pbt-out/bug_reports/encode_neon_shift_right_extra_operand.md
-- pbt-out/bug_reports/encode_neon_shift_right_shift_i64_trunc.md
-- pbt-out/bug_reports/encode_neon_shift_right_reg_source.md
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — coverage ledger (encode_neg row appended)
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/FUNCTION_INDEX.md — merged index including pseudo.rs
+- pbt-out/INVARIANTS.md — encode_neg invariants prepended
+- pbt-out/bug_reports/encode_neg_extra_operand.md — extra-operand bug
+- pbt-out/build.log — pre-campaign `cargo check --lib` log
 
-Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps` had no profraw; manual arm audit of arity (`len < 3`), dest T / Q, discarded source T, `get_imm as u32`, `get_neon_reg` Operand::Reg dest+source, extra operands, 1d Reserved. Added `encode_neon_shift_right_neg_shift_i64_trunc` and `encode_neon_shift_right_neg_reg_source`.
+**Contract-surface sweep:** 1 round (standard). `coverage_gaps` had no LLVM profraw; manual arm audit of `get_reg` (Reg / Imm 0..=31 / Imm OOB / other kinds / missing index) plus documented SUB expansion vs llvm-mc. Added `encode_neg_diff_llvm_mc_sub` and SymbolOffset/MemSymbol invalid kinds. Closed because the tier's one sweep round is done.
+
+**Skipped targets:** (none). In-scope symbol only.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 09:58 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 45/184 total | PBT candidates: 45 | Tested: 45 (100%) | 0 pass, 45 fail
+> Last updated: 2026-09-14 10:13 (campaign: coverage)
+> Files: 7/7 scanned (100%) | Functions: 46/229 total | PBT candidates: 46 | Tested: 46 (100%) | 0 pass, 46 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 6 |
-| Files scanned | 6 / 6 (100%) |
-| Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 45 |
-| **Tested (of PBT candidates)** | **45 / 45 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 45 / 0 |
-| **Overall (tested / all functions)** | **45 / 184 (24%)** |
+| Total source files | 7 |
+| Files scanned | 7 / 7 (100%) |
+| Total functions (all files) | 229 |
+| PBT candidates (from FUNCTION_INDEX) | 46 |
+| **Tested (of PBT candidates)** | **46 / 46 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 46 / 0 |
+| **Overall (tested / all functions)** | **46 / 229 (20%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -78,13 +82,13 @@ Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 45 | 45 | 0 | 100% |
+|  | 46 | 46 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 45 | 45 | 0 | 100% |
+| unknown | 46 | 46 | 0 | 100% |
 
 ## File Coverage
 
@@ -96,6 +100,7 @@ Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps
 | data_processing.rs | 36 | 14 | 14 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 7 | 7 | 100% | covered |
+| pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
 
@@ -149,3 +154,4 @@ Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps
 | encode_mul | data_processing.rs |
 | encode_mvn | data_processing.rs |
 | encode_neon_shift_right | neon.rs |
+| encode_neg | pseudo.rs |

@@ -1,4 +1,4 @@
-> Total files: 6 | Total functions: 184 | PBT candidates: 45 | Excluded: 139
+> Total files: 7 | Total functions: 229 | PBT candidates: 46 | Excluded: 183
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -187,3 +187,47 @@
 | encode_cneg | compare_branch.rs | 276 | function | yes | - |
 | encode_cinc | compare_branch.rs | 293 | function | yes | - |
 | encode_cinv | compare_branch.rs | 309 | function | yes | - |
+| encode_li | pseudo.rs | 5 | function | no | out of campaign scope |
+| sign_extend_li | pseudo.rs | 18 | function | no | out of campaign scope |
+| encode_li_32bit | pseudo.rs | 29 | function | no | out of campaign scope |
+| encode_li_immediate | pseudo.rs | 51 | function | no | out of campaign scope |
+| encode_mv | pseudo.rs | 225 | function | no | out of campaign scope |
+| encode_not | pseudo.rs | 233 | function | no | out of campaign scope |
+| encode_neg | pseudo.rs | 239 | function | yes | - |
+| encode_negw | pseudo.rs | 245 | function | no | out of campaign scope |
+| encode_sext_w | pseudo.rs | 251 | function | no | out of campaign scope |
+| encode_seqz | pseudo.rs | 257 | function | no | out of campaign scope |
+| encode_snez | pseudo.rs | 263 | function | no | out of campaign scope |
+| encode_sltz | pseudo.rs | 269 | function | no | out of campaign scope |
+| encode_sgtz | pseudo.rs | 275 | function | no | out of campaign scope |
+| encode_beqz | pseudo.rs | 282 | function | no | out of campaign scope |
+| encode_bnez | pseudo.rs | 291 | function | no | out of campaign scope |
+| encode_blez | pseudo.rs | 300 | function | no | out of campaign scope |
+| encode_bgez | pseudo.rs | 309 | function | no | out of campaign scope |
+| encode_bltz | pseudo.rs | 318 | function | no | out of campaign scope |
+| encode_bgtz | pseudo.rs | 327 | function | no | out of campaign scope |
+| encode_bgt | pseudo.rs | 336 | function | no | out of campaign scope |
+| encode_ble | pseudo.rs | 346 | function | no | out of campaign scope |
+| encode_bgtu | pseudo.rs | 356 | function | no | out of campaign scope |
+| encode_bleu | pseudo.rs | 366 | function | no | out of campaign scope |
+| get_branch_target | pseudo.rs | 376 | function | no | out of campaign scope |
+| encode_j_pseudo | pseudo.rs | 387 | function | no | out of campaign scope |
+| encode_jr | pseudo.rs | 407 | function | no | out of campaign scope |
+| encode_call | pseudo.rs | 412 | function | no | out of campaign scope |
+| encode_tail | pseudo.rs | 425 | function | no | out of campaign scope |
+| encode_jump | pseudo.rs | 438 | function | no | out of campaign scope |
+| encode_la | pseudo.rs | 458 | function | no | out of campaign scope |
+| encode_lla | pseudo.rs | 464 | function | no | out of campaign scope |
+| encode_rdcsr | pseudo.rs | 483 | function | no | out of campaign scope |
+| encode_csrr | pseudo.rs | 494 | function | no | out of campaign scope |
+| encode_csrw | pseudo.rs | 500 | function | no | out of campaign scope |
+| encode_csrs | pseudo.rs | 510 | function | no | out of campaign scope |
+| encode_csrc | pseudo.rs | 520 | function | no | out of campaign scope |
+| encode_fmv_s | pseudo.rs | 531 | function | no | out of campaign scope |
+| encode_fmv_d | pseudo.rs | 538 | function | no | out of campaign scope |
+| encode_fabs_s | pseudo.rs | 544 | function | no | out of campaign scope |
+| encode_fabs_d | pseudo.rs | 551 | function | no | out of campaign scope |
+| encode_fneg_s | pseudo.rs | 557 | function | no | out of campaign scope |
+| encode_fneg_d | pseudo.rs | 564 | function | no | out of campaign scope |
+| extract_modifier_symbol | pseudo.rs | 573 | function | no | out of campaign scope |
+| parse_reloc_modifier | pseudo.rs | 583 | function | no | out of campaign scope |

@@ -1,3 +1,31 @@
+# Confirmed invariants (encode_neg)
+
+- Valid two-GPR NEG with ABI names / x0–x31 / fp matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases).
+- encode_neg(rd, rs) equals llvm-mc `sub rd, x0, rs` (1000 cases). Documented expansion at README.md:321.
+- encode_neg(rd, rs) equals encode_alu_reg([rd, x0, rs], funct3=000, funct7=0100000) (1000 cases).
+- Success-path word: opcode[6:0]=0110011, rd[11:7], funct3[14:12]=000, rs1[19:15]=0, rs2[24:20], funct7[31:25]=0100000.
+- ABI names and xN (and fp/s0) of the same number encode identically (1000 cases).
+- Imm(n) for n in 0..=31 encodes as register xN (get_reg GCC inline-asm extension) (1000 cases).
+- Fewer than 2 operands, FP/vector/unknown names, out-of-range Imm, and non-Reg kinds always Err.
+- Known-answer: `neg a0, a1` / `sub a0, x0, a1` encode as 0x40b00533; `neg zero, zero` as 0x40000033; `neg t6, ra` / `neg x31, x1` as 0x40100fb3; `neg fp, s0` / `neg x8, x8` as 0x40800433.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding
+- RISC-V Unprivileged ISA: NEG rd, rs = SUB rd, x0, rs. SUB R-type opcode OP=0110011, funct3=000, funct7=0100000, rs1=x0.
+- Dispatch: encoder/mod.rs:749 `"neg" => encode_neg`. Sibling encode_negw is SUBW (out of scope).
+- Callers: alu.rs:23 `neg t0, t0`; atomics.rs:450 `neg t2, t2`; intrinsics.rs `neg t3/t5`.
+
+## Quirks
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- get_reg accepts Imm 0..=31 as a register number (Doc evidence: encoder/mod.rs:351-352 GCC inline asm).
+- reg_num case-folds; llvm-mc rejects uppercase ABI names. SUT is more lenient on codegen-emitted lowercase assembly.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg Reg/Imm/other/missing, extra operand, SUB expansion vs llvm-mc).
+
+---
+
 # Confirmed invariants (encode_neon_shift_right)
 
 - Valid vector SRSHR/URSHR/SSRA/USRA/SRSRA/URSRA with T in {8b,16b,4h,8h,2s,4s,2d}, Vd/Vn in v0–v31, shift in [1, esize] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
