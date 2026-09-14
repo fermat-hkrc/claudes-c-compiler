@@ -24,3 +24,4 @@
 | encode_csel | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 2 failing properties (plus 3 passing KAT + 4 failing regression witnesses) |
 | encode_cset | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 3 failing properties (plus 3 passing KAT + 5 failing regression witnesses) |
 | encode_csetm | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 3 failing negative-contract properties (4 bugs: extra operand, AL/NV, SP-as-ZR, FP-as-GPR; 3 KAT pass; 5 regression witnesses fail) |
+| encode_csinc | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 2 failing properties (4 bugs: extra operand, SP-as-ZR, mixed width, FP-as-GPR; 4 KAT pass; 4 regression witnesses fail) |
