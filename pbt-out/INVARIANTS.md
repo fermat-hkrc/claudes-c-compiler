@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_ldaxr_stlxr)
+
+- Valid LDAXR/STLXR/LDAXRB/STLXRB/LDAXRH/STLXRH with Rt/Rn/Ws in 0..31 (xzr/wzr at 31 for data/status, sp at 31 for base, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Alternate spellings x31, uppercase Xn/SP/XZR, lr match llvm-mc (1000 cases).
+- encode_ldaxr_stlxr XOR encode_ldxr_stxr at equal operands = 1<<15 (ARM ARM o0) (1000 cases). ldaxr XOR stlxr(wzr) = 1<<22 (L). X XOR W = 1<<30 (size). stlxrb XOR stlxrh = 1<<30.
+- Success-path word: size 001000 0 L 0 Rs o0=1 Rt2=11111 Rn Rt. Equivalently load w = (size<<30) | 0x085FFC00 | (rn<<5) | rt; store w = (size<<30) | 0x0800FC00 | (ws<<16) | (rn<<5) | rt. size is 0b11/0b10 for X/W, 0b00 byte, 0b01 half.
+- Fewer than required operands, Imm/Symbol/pre/post-index, invalid base names (foo, x32), MemRegOffset, and MemExpr always Err (1000 cases).
+- Known-answer: `ldaxr x0, [x1]` = 0xC85FFC20; `ldaxr w0, [x1]` = 0x885FFC20; `ldaxrb w0, [x1]` = 0x085FFC20; `ldaxrh w0, [x1]` = 0x485FFC20; `stlxr w0, x1, [x2]` = 0xC800FC41; `stlxr w0, w1, [x2]` = 0x8800FC41; `ldaxr x0, [sp]` = 0xC85FFFE0; `ldaxr lr, [x2]` = 0xC85FFC5E.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Load/Store Exclusive LDAXR/STLXR: size 001000 0 L 0 Rs o0=1 Rt2=11111 Rn Rt. Syntax LDAXR Wt/Xt, [Xn|SP]{,#0}; STLXR Ws, Wt/Xt, [Xn|SP]{,#0}; byte/half take Wt. Register 31 is ZR for Rt/Ws, SP for Rn. Sibling encode_ldxr_stxr is o0=0 (different job).
+- Dispatch: encoder/mod.rs:354-359 ldaxr/stlxr/ldaxrb/stlxrb/ldaxrh/stlxrh => encode_ldaxr_stlxr.
+- Callers: src/backend/arm/codegen/inline_asm.rs Acquire => ldaxr, Release => stlxr, AcqRel/SeqCst => both.
+
+## Quirks
+
+- Extra operands beyond the exclusive arity are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP as Rt encodes as ZR (see bugs).
+- W register as base and XZR as base encode as Xn/SP (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- get_reg discards is_64 for STLXR status, so X-as-Ws encodes (see bugs).
+- forced_size overrides data width, so ldaxrb Xt encodes as Wt (see bugs).
+- Mem { base, .. } ignores offset, so nonzero exclusive offset encodes as [Xn] (see bugs).
+- No Ws-vs-Rt/Rn overlap check (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_ldaxr_stlxr (arity / extra / SP / FP / W-base / XZR-base / X-Ws / offset / Ws-overlap / X-data-byte / alt-spellings / MemRegOffset).
+- Nine failing negative-contract properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ldaxr_stlxr_*.md.
+
 # Confirmed invariants (encode_uxtw)
 
 - Fewer than 2 operands, invalid names (foo, x32, w32, x, r0, empty, x-1, x99, w), and non-register kinds at GPR slots always Err (1000 cases each).
