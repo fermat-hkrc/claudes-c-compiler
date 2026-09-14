@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 02:07 (campaign: English campaign)
-> Files: 6/6 scanned (100%) | Functions: 13/184 total | PBT candidates: 13 | Tested: 13 (100%) | 0 pass, 13 fail
+> Last updated: 2026-09-14 02:21 (campaign: English campaign)
+> Files: 6/6 scanned (100%) | Functions: 14/184 total | PBT candidates: 14 | Tested: 14 (100%) | 0 pass, 14 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 13 |
-| **Tested (of PBT candidates)** | **13 / 13 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 13 / 0 |
-| **Overall (tested / all functions)** | **13 / 184 (7%)** |
+| PBT candidates (from FUNCTION_INDEX) | 14 |
+| **Tested (of PBT candidates)** | **14 / 14 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 14 / 0 |
+| **Overall (tested / all functions)** | **14 / 184 (8%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,20 +21,20 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 13 | 13 | 0 | 100% |
+|  | 14 | 14 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 13 | 13 | 0 | 100% |
+| unknown | 14 | 14 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 5 | 5 | 100% | covered |
+| compare_branch.rs | 21 | 6 | 6 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 4 | 4 | 100% | covered |
 | load_store.rs | 20 | 1 | 1 | 100% | covered |
@@ -60,3 +60,4 @@
 | encode_br | compare_branch.rs |
 | encode_branch | compare_branch.rs |
 | encode_cbz | compare_branch.rs |
+| encode_ccmp_ccmn | compare_branch.rs |

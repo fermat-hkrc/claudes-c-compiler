@@ -1,3 +1,36 @@
+# Confirmed invariants (encode_cinc)
+
+- Same-width GPR CINC (x0–x30/xzr/lr and w0–w30/wzr, cond in Cond14 including hs/lo aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_cinc([Rd, Rn, cond]) equals encode_csinc([Rd, Rn, Rn, invert(cond)]) (ARM ARM CINC alias of CSINC) (1000 cases).
+- encode_cinc([Rd, ZR, cond]) equals encode_cset([Rd, cond]) (CSET is CINC with Rn=XZR/WZR) (1000 cases).
+- Success-path word: sf at 31 from Rd width, op=0 at 30, S=0 at 29, bits [28:21]=0b11010100, Rm=Rn at [20:16], invert(cond)=cond XOR 1 at [15:12], op2=01 at [11:10], Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands always Err.
+- Unknown condition names (zz, foo, eqq, empty, "eq ", always) always Err.
+- Invalid register names (x32, w32, empty, foo, r0, x, x-1, x99) always Err.
+- Non-register/non-cond (Imm/Mem/Symbol/Shift/Label) in any of the three slots always Err.
+- Known-answer: `cinc x0, x1, eq` encodes as 0x9a811420; `cinc w0, w1, ne` as 0x1a810420; `cinc x0, xzr, eq` as 0x9a9f17e0 (same as `cset x0, eq`).
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- CINC register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `cinc sp, ...`).
+- CINC takes Wt/Xt only (llvm-mc rejects `cinc d0, ...`).
+- Cond AL and NV are invalid for the CINC alias (llvm-mc: "condition codes AL and NV are invalid for this instruction").
+- llvm-mc rejects mixed x/w and a fourth operand.
+- llvm-mc disassembles `cinc x0, xzr, eq` as `cset x0, eq` with the same encoding.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- encode_cond accepts al/nv, so CINC AL/NV encodes as CSINC with inverted cond (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `cinc sp, ...` encodes as `cinc xzr, ...` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- sf is taken only from operand 0; Rn width is never checked, so mixed x/w encodes (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (encode_cond None, parse_reg_num None, get_reg non-Reg / cond-not-Cond).
+
+---
+
 # Confirmed invariants (encode_adc)
 
 - Same-width GPR ADC/ADCS (x0–x30/xzr and w0–w30/wzr, both S values) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
