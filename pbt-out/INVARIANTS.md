@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_umulh)
+
+- Valid UMULH Xd, Xn, Xm with Rd/Rn/Rm in 0..31 (xzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Alternate spellings x31, XZR, LR, uppercase Xn match llvm-mc (1000 cases).
+- encode_umulh XOR encode_smulh at equal registers = 1<<23 (ARM ARM U bit) (1000 cases).
+- Success-path word: bit 31=1, bits[30:21]=00 11011 110, Rm at [20:16], o0=0 at 15, Ra=11111 at [14:10], Rn at [9:5], Rd at [4:0]. Equivalently w = 0x9BC07C00 | (rm<<16) | (rn<<5) | rd.
+- Fewer than 3 operands, invalid names (foo, x32, w32, x, r0, empty), and non-register kinds at GPR slots always Err.
+- Known-answer: `umulh x0, x1, x2` = 0x9bc27c20; `umulh xzr, xzr, xzr` = 0x9bdf7fff; `umulh lr, x1, x30` = 0x9bde7c3e; `umulh x0, x1, xzr` = 0x9bdf7c20; `smulh x0, x1, x2` = 0x9b427c20 (XOR = 1<<23).
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) UMULH: sf=1 op54=00 11011 op31=110 Rm o0=0 Ra=11111 Rn Rd. Syntax UMULH Xd, Xn, Xm. No 32-bit form. Register 31 is XZR, never SP. Sibling encode_smulh is U=0 (different job).
+- Dispatch: encoder/mod.rs:274 `"umulh" => encode_umulh(operands)` (scalar only; no NEON arrangement path).
+- Callers: assembler README Data Processing table lists umulh.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- is_64 from get_reg is discarded; W registers are encoded (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / extra / width / SP / FP / non-Reg / invalid name / x31 / uppercase / lr).
+
+---
+
 # Confirmed invariants (encode_umaddl)
 
 - Valid UMADDL Xd, Wn, Wm, Xa with Rd/Rn/Rm/Ra in 0..31 (xzr/wzr at 31, lr as X30) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
