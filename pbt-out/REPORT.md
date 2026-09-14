@@ -1,10 +1,10 @@
-# PBT Campaign Report: encode_bfi
+# PBT Campaign Report: encode_bfxil
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bfi
+**Modules tested:** encode_bfxil
 **Tests:** 13 properties (8 passing, 5 failing) plus 6 passing KAT and 5 failing regression witnesses
 **Result:** 8 passing, 5 bugs
 **Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening round, 1 coverage_gaps sweep)
@@ -13,49 +13,49 @@
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bfi | 13 properties + 6 KAT + 5 regressions | 5 | differential (llvm-mc), algebraic.metamorphic (BFI alias of BFM; Rd/Rn fields), algebraic.invariant (ARM BFM layout), negative_error |
+| encode_bfxil | 13 properties + 6 KAT + 5 regressions | 5 | differential (llvm-mc), algebraic.metamorphic (BFXIL alias of BFM; Rd/Rn fields), algebraic.invariant (ARM BFM layout), negative_error |
 
 ## Bugs Found
 
 ### 1. Extra operand ignored
-- **Law:** BFI takes exactly four operands; a fifth must be Err.
+- **Law:** BFXIL takes exactly four operands; a fifth must be Err.
 - **Minimal input:** `[Reg("w0"), Reg("w0"), Imm(0), Imm(1), Reg("x0")]`
 - **Expected:** Err
 - **Actual:** Ok(Word) — get_reg/get_imm read only indices 0..3
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfi_extra_operand.md
+- **Bug report:** pbt-out/bug_reports/encode_bfxil_extra_operand.md
 
 ### 2. SP/WSP encoded as ZR
 - **Law:** Register 31 is WZR/XZR, not SP/WSP.
-- **Minimal input:** `bfi wsp, w0, #0, #1`
+- **Minimal input:** `bfxil wsp, w0, #0, #1`
 - **Expected:** Err
 - **Actual:** Ok(Word) — parse_reg_num maps sp/wsp to 31
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfi_sp.md
+- **Bug report:** pbt-out/bug_reports/encode_bfxil_sp.md
 
 ### 3. Out-of-range #lsb/#width panics or encodes
 - **Law:** 0 <= lsb < R and 1 <= width <= R-lsb; otherwise Err.
-- **Minimal input:** `bfi w0, w0, #0, #0` (debug overflow at `width - 1`)
+- **Minimal input:** `bfxil w0, w0, #0, #0` (debug overflow at `lsb + width - 1`)
 - **Expected:** Err
 - **Actual:** panic in debug; other out-of-range values encode Ok(Word)
 - **Severity:** high
-- **Bug report:** pbt-out/bug_reports/encode_bfi_lsb_width.md
+- **Bug report:** pbt-out/bug_reports/encode_bfxil_lsb_width.md
 
 ### 4. Mixed W/X accepted
 - **Law:** Both registers must be the same width (Wd,Wn or Xd,Xn).
-- **Minimal input:** `bfi x0, w0, #0, #1`
+- **Minimal input:** `bfxil x0, w0, #0, #1`
 - **Expected:** Err
 - **Actual:** Ok(Word) — is_64 taken only from Rd
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfi_mixed_width.md
+- **Bug report:** pbt-out/bug_reports/encode_bfxil_mixed_width.md
 
 ### 5. FP/SIMD registers accepted as GPR
 - **Law:** Rd/Rn must be W/X (or ZR), not S/D/Q/V/H/B.
-- **Minimal input:** `bfi d0, x1, #0, #1`
+- **Minimal input:** `bfxil d0, x1, #0, #1`
 - **Expected:** Err
 - **Actual:** Ok(Word) — parse_reg_num accepts prefix d
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_bfi_fp.md
+- **Bug report:** pbt-out/bug_reports/encode_bfxil_fp.md
 
 All five reproduced serially with `PBT_TEST_JOBS=1`.
 
@@ -67,33 +67,31 @@ All five reproduced serially with `PBT_TEST_JOBS=1`.
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_bfi_pbt) | 13 properties + 6 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_bfxil_pbt) | 13 properties + 6 KAT + 5 regressions |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger (appended encode_bfi)
+- pbt-out/COVERAGE.md — coverage ledger (appended encode_bfxil)
 - pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/FUNCTION_INDEX.md — merged bitfield.rs functions
-- pbt-out/INVARIANTS.md — confirmed encode_bfi invariants
-- pbt-out/bug_reports/encode_bfi_extra_operand.md
-- pbt-out/bug_reports/encode_bfi_sp.md
-- pbt-out/bug_reports/encode_bfi_lsb_width.md
-- pbt-out/bug_reports/encode_bfi_mixed_width.md
-- pbt-out/bug_reports/encode_bfi_fp.md
+- pbt-out/FUNCTION_INDEX.md — merged; encode_bfxil now a PBT candidate
+- pbt-out/INVARIANTS.md — confirmed encode_bfxil invariants
+- pbt-out/bug_reports/encode_bfxil_extra_operand.md
+- pbt-out/bug_reports/encode_bfxil_sp.md
+- pbt-out/bug_reports/encode_bfxil_lsb_width.md
+- pbt-out/bug_reports/encode_bfxil_mixed_width.md
+- pbt-out/bug_reports/encode_bfxil_fp.md
 
-## Sweep
-
-Contract-surface sweep round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_bfi (arity / extra / SP / mixed W-X / FP / lsb-width / nonreg / invalid-name / alt-spellings). Added encode_bfi_neg_invalid_name (passing). Closed: tier round spent and documented surface covered.
+Contract-surface sweep closed: coverage_gaps had no LLVM profraw; manual arm audit of encode_bfxil (arity / extra / SP / mixed W-X / FP / lsb-width / nonreg / invalid-name / alt-spellings). Tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 18:04 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 76/284 total | PBT candidates: 76 | Tested: 76 (100%) | 0 pass, 76 fail
+> Last updated: 2026-09-14 18:19 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 77/284 total | PBT candidates: 77 | Tested: 77 (100%) | 0 pass, 77 fail
 
 ## Summary
 
@@ -102,10 +100,10 @@ Contract-surface sweep round 1/1: `coverage_gaps` had no LLVM profraw. Manual ar
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 284 |
-| PBT candidates (from FUNCTION_INDEX) | 76 |
-| **Tested (of PBT candidates)** | **76 / 76 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 76 / 0 |
-| **Overall (tested / all functions)** | **76 / 284 (27%)** |
+| PBT candidates (from FUNCTION_INDEX) | 77 |
+| **Tested (of PBT candidates)** | **77 / 77 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 77 / 0 |
+| **Overall (tested / all functions)** | **77 / 284 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -113,13 +111,13 @@ Contract-surface sweep round 1/1: `coverage_gaps` had no LLVM profraw. Manual ar
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 76 | 76 | 0 | 100% |
+|  | 77 | 77 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 76 | 76 | 0 | 100% |
+| unknown | 77 | 77 | 0 | 100% |
 
 ## File Coverage
 
@@ -218,3 +216,4 @@ Contract-surface sweep round 1/1: `coverage_gaps` had no LLVM profraw. Manual ar
 | encode_fcvt_precision | fp_scalar.rs |
 | encode_neon_aes | neon.rs |
 | encode_bfi | bitfield.rs |
+| encode_bfxil | bitfield.rs |

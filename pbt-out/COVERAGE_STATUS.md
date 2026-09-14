@@ -1,19 +1,19 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 17:28 (campaign: English campaign)
-> Files: 9/9 scanned (100%) | Functions: 74/267 total | PBT candidates: 74 | Tested: 74 (100%) | 0 pass, 74 fail
+> Last updated: 2026-09-14 18:05 (campaign: English campaign)
+> Files: 10/10 scanned (100%) | Functions: 76/284 total | PBT candidates: 76 | Tested: 76 (100%) | 0 pass, 76 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 9 |
-| Files scanned | 9 / 9 (100%) |
-| Total functions (all files) | 267 |
-| PBT candidates (from FUNCTION_INDEX) | 74 |
-| **Tested (of PBT candidates)** | **74 / 74 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 74 / 0 |
-| **Overall (tested / all functions)** | **74 / 267 (28%)** |
+| Total source files | 10 |
+| Files scanned | 10 / 10 (100%) |
+| Total functions (all files) | 284 |
+| PBT candidates (from FUNCTION_INDEX) | 76 |
+| **Tested (of PBT candidates)** | **76 / 76 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 76 / 0 |
+| **Overall (tested / all functions)** | **76 / 284 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 74 | 74 | 0 | 100% |
+|  | 76 | 76 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 74 | 74 | 0 | 100% |
+| unknown | 76 | 76 | 0 | 100% |
 
 ## File Coverage
 
@@ -37,10 +37,10 @@
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 14 | 5 | 5 | 100% | covered |
+| fp_scalar.rs | 13 | 4 | 5 | 125% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
-| neon.rs | 68 | 13 | 13 | 100% | covered |
+| neon.rs | 68 | 14 | 14 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -124,3 +124,5 @@
 | encode_int_to_float | fp_scalar.rs |
 | encode_fcmp | fp_scalar.rs |
 | encode_fcvt_precision | fp_scalar.rs |
+| encode_neon_aes | neon.rs |
+| encode_bfi | bitfield.rs |

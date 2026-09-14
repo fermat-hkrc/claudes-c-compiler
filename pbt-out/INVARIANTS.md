@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_bfxil)
+
+- Valid BFXIL Wd,Wn / Xd,Xn with 0 <= lsb < R and 1 <= width <= R-lsb (R=32/64), including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `bfxil w0, w1, #0, #1` = 0x33000020.
+- Success-path word is BFM: sf 01 100110 N immr imms Rn Rd with N=sf, immr=lsb, imms=lsb+width-1. Equivalently w = (sf<<31)|(0b01<<29)|(0b100110<<23)|(sf<<22)|(immr<<16)|(imms<<10)|(rn<<5)|rd.
+- Algebraic alias: encode_bfxil(Rd,Rn,#lsb,#width) = encode_bfm(Rd,Rn,#lsb,#(lsb+width-1)) (1000 cases).
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only (1000 cases).
+- Fewer than 4 operands, non-register/non-imm kinds at the wrong slot, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `bfxil w0, w1, #0, #1` = 0x33000020; `bfxil w0, w1, #1, #1` = 0x33010420; `bfxil x0, x1, #1, #8` = 0xb3412020; `bfxil wzr, wzr, #31, #1` = 0x331f7fff; `bfxil x0, xzr, #63, #1` = 0xb37fffe0; `bfxil lr, x1, #8, #16` = 0xb3485c3e.
+- Extra operand, SP/WSP, mixed W/X, FP/SIMD prefixes, and out-of-range lsb/width currently encode or panic instead of Err (see bugs).
+
+## Environment (encode_bfxil)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on `bfxil w0, w1, #0, #1` = 0x33000020.
+- ARM ARM Bitfield Move BFXIL alias of BFM: BFXIL Wd, Wn, #lsb, #width <=> BFM Wd, Wn, #lsb, #(lsb+width-1) with 0 <= lsb < 32 and 1 <= width <= 32-lsb (64-bit analog). Encoding sf 01 100110 N immr imms Rn Rd; N=sf; register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:893 "bfxil" => encode_bfxil.
+- Callers: encoder dispatch only.
+- Sibling encode_bfm is the raw form (used as algebraic alias after ARM mapping, not as a differential sibling).
+- encode_bfxil computes imms = lsb + width - 1 without checking ARM bounds; width=0 and lsb=0 panics in debug (subtract overflow); large lsb+width panics (add overflow).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_bfxil (arity / extra / SP / mixed W-X / FP / lsb-width / nonreg / invalid-name / alt-spellings).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_bfxil_*.md.
+
 # Confirmed invariants (encode_bfi)
 
 - Valid BFI Wd,Wn / Xd,Xn with 0 <= lsb < R and 1 <= width <= R-lsb (R=32/64), including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `bfi w0, w1, #0, #1` = 0x33000020.
