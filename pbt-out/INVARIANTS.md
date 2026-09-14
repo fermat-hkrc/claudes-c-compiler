@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_bfm)
+
+- Valid BFM Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as BFI/BFXIL aliases; the 32-bit word still matches.
+- Success-path word is ARM Bitfield Move BFM: sf 01 100110 N immr imms Rn Rd with N=sf. Equivalently w = (sf<<31)|(0b01<<29)|(0b100110<<23)|(sf<<22)|(immr<<16)|(imms<<10)|(rn<<5)|rd. opc bits[30:29]=01.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only (1000 cases).
+- Fewer than 4 operands, non-register/non-imm kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `bfm w0, w1, #0, #0` = 0x33000020; `bfm w0, w1, #1, #0` = 0x33010020; `bfm x0, x1, #1, #8` = 0xb3412020; `bfm wzr, wzr, #31, #0` = 0x331f03ff; `bfm x0, xzr, #63, #63` = 0xb37fffe0; `bfm lr, x1, #8, #16` = 0xb348403e.
+- Extra operand, SP/WSP, mixed W/X, FP/SIMD prefixes, and out-of-range immr/imms currently encode instead of Err (see bugs).
+
+## Environment (encode_bfm)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Bitfield Move BFM: BFM <Rd>, <Rn>, #<immr>, #<imms>. Encoding sf 01 100110 N immr imms Rn Rd; N=sf; register 31 is ZR not SP. Constraints 0<=immr,imms<datasize.
+- Dispatch: encoder/mod.rs:891 "bfm" => encode_bfm(operands).
+- Callers: encoder dispatch only.
+- Sibling encode_bfi / encode_bfxil are alias lsb/width forms (not same-job differentials). Sibling encode_ubfm/encode_sbfm are different opc.
+- encode_bfm does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31; immr/imms are `as u32` with no range check.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_bfm (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / immr-imms).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_bfm_*.md.
+
 # Confirmed invariants (encode_ubfiz)
 
 - Valid UBFIZ Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as UBFX/LSL/LSR aliases; the 32-bit word still matches.

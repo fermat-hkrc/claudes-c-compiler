@@ -1,31 +1,31 @@
-# PBT Campaign Report: encode_ubfiz
+# PBT Campaign Report: encode_bfm
 
 ## Summary
 
 **Date:** 2026-09-14
-**Repository:** claudes-c-compiler
-**Modules tested:** encode_ubfiz
-**Tests:** 13 properties (plus 6 KAT + 5 regression witnesses)
-**Result:** 8 passing, 5 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 contract-surface sweep round)
+**Repository:** /home/toan/github/claudes-c-compiler
+**Modules tested:** encode_bfm
+**Tests:** 12 properties (plus 6 KAT + 5 regression witnesses)
+**Result:** 7 passing, 5 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, ≥1 metamorphic/differential, 1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ubfiz | 13 properties (8 pass / 5 fail); 6 KAT pass; 5 regression witnesses fail | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_bfm | 12 properties (7 passing / 5 failing) + 6 KAT + 5 regression | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_ubfiz silently ignores a 5th operand** — law: UBFIZ has exactly four operands. Minimal input: `ubfiz w0, w0, #0, #1, x0`. Expected Err; actual Ok(Word) because `encode_ubfiz` never checks `operands.len()`. Serial reconfirm with `PBT_TEST_JOBS=1`. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_extra_operand.md`. Regression: `test_encode_ubfiz_regression_extra_operand`.
+1. **encode_bfm ignores extra operands** — Law: BFM takes exactly four operands. Shrunk input: `[Reg("w0"), Reg("w0"), Imm(0), Imm(0), Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg/get_imm only read indices 0..3. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_extra_operand.md`. Regression: `test_encode_bfm_regression_extra_operand`.
 
-2. **encode_ubfiz accepts SP/WSP as register 31** — law: register 31 is ZR not SP. Minimal input: `ubfiz wsp, w0, #0, #1`. Expected Err; actual Ok(Word) via `parse_reg_num` mapping sp/wsp to 31. Serial reconfirm. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_sp.md`. Regression: `test_encode_ubfiz_regression_sp`.
+2. **encode_bfm treats SP/WSP as ZR** — Law: register 31 is WZR/XZR, not SP/WSP. Shrunk input: `bfm wsp, w0, #0, #0`. Expected Err; actual Ok(Word) because parse_reg_num maps sp/wsp to 31. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_sp.md`. Regression: `test_encode_bfm_regression_sp`.
 
-3. **encode_ubfiz panics or encodes out-of-range #lsb/#width** — law: 0<=lsb<R, 1<=width<=R-lsb. Minimal input: `ubfiz w0, w0, #0, #0` panics in debug at `width - 1` (bitfield.rs:85). llvm-mc rejects with range error. Serial reconfirm. Severity: high. Report: `pbt-out/bug_reports/encode_ubfiz_lsb_width.md`. Regression: `test_encode_ubfiz_regression_width_zero`.
+3. **encode_bfm accepts out-of-range immr/imms** — Law: 0 <= immr,imms < R (32 W / 64 X). Shrunk input: `bfm w0, w0, #-1, #0`. Expected Err; actual Ok(Word) via `as u32` wrap with no range check (also encodes immr/imms = R). Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_immr_imms.md`. Regression: `test_encode_bfm_regression_immr_neg`.
 
-4. **encode_ubfiz accepts mixed W/X register widths** — law: Rd and Rn must share datasize. Minimal input: `ubfiz x0, w0, #0, #1`. Expected Err; actual Ok(Word) because sf is taken from Rd only. Serial reconfirm. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_mixed_width.md`. Regression: `test_encode_ubfiz_regression_mixed_width`.
+4. **encode_bfm accepts mixed W/X registers** — Law: Rd and Rn must have the same width. Shrunk input: `bfm x0, w0, #0, #0`. Expected Err; actual Ok(Word) using sf from Rd only. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_mixed_width.md`. Regression: `test_encode_bfm_regression_mixed_width`.
 
-5. **encode_ubfiz accepts FP/SIMD registers as GPR operands** — law: UBFIZ operands are GPRs only. Minimal input: `ubfiz d0, x1, #0, #1`. Expected Err; actual Ok(Word) because `parse_reg_num` accepts d/s/q/v/h/b. Serial reconfirm. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfiz_fp.md`. Regression: `test_encode_ubfiz_regression_fp`.
+5. **encode_bfm accepts FP/SIMD registers** — Law: Rd/Rn are GPRs. Shrunk input: `bfm d0, x1, #0, #0`. Expected Err; actual Ok(Word) as 32-bit BFM w0. Serial reconfirm with PBT_TEST_JOBS=1. Severity: medium. Report: `pbt-out/bug_reports/encode_bfm_fp.md`. Regression: `test_encode_bfm_regression_fp`.
 
 ## Design Caveats
 
@@ -35,35 +35,31 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_ubfiz_pbt) | 13 properties + 6 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_bfm_pbt) | 12 properties + 6 KAT + 5 regression witnesses |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/REPORT.md — this report
-- pbt-out/COVERAGE.md — coverage ledger row for encode_ubfiz
-- pbt-out/COVERAGE_STATUS.md — scanned vs tested
-- pbt-out/FUNCTION_INDEX.md — encode_ubfiz marked PBT candidate
-- pbt-out/INVARIANTS.md — confirmed encode_ubfiz invariants
-- pbt-out/bug_reports/encode_ubfiz_extra_operand.md
-- pbt-out/bug_reports/encode_ubfiz_sp.md
-- pbt-out/bug_reports/encode_ubfiz_lsb_width.md
-- pbt-out/bug_reports/encode_ubfiz_mixed_width.md
-- pbt-out/bug_reports/encode_ubfiz_fp.md
+- pbt-out/FUNCTION_INDEX.md — merged function index (encode_bfm now a candidate)
+- pbt-out/COVERAGE.md — coverage ledger row for encode_bfm
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/INVARIANTS.md — confirmed encode_bfm invariants
+- pbt-out/bug_reports/encode_bfm_extra_operand.md
+- pbt-out/bug_reports/encode_bfm_sp.md
+- pbt-out/bug_reports/encode_bfm_immr_imms.md
+- pbt-out/bug_reports/encode_bfm_mixed_width.md
+- pbt-out/bug_reports/encode_bfm_fp.md
 
-## Sweep
-
-Contract-surface sweep round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_ubfiz (invalid-name / nonreg / alt-spellings / mixed / FP). Added encode_ubfiz_diff_alt_spellings, encode_ubfiz_neg_nonreg, encode_ubfiz_neg_invalid_name (passing) and encode_ubfiz_neg_mixed_width / encode_ubfiz_neg_fp (failing, filed). Closed: tier round spent and documented surface covered.
-
-First batch was not all-green (3 negative contracts failed), so the extra all-pass strengthening round was not owed; the required metamorphic/differential properties ran (llvm-mc differential + UBFIZ/UBFM alias + Rd/Rn field independence).
+Sweep close-out: coverage_gaps had no LLVM profraw in this session; one standard-tier round was a manual arm audit of encode_bfm (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / immr-imms). Closed because the tier round was spent and the documented contract surface has a property.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 21:13 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 89/289 total | PBT candidates: 89 | Tested: 89 (100%) | 0 pass, 89 fail
+> Last updated: 2026-09-14 21:27 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 90/289 total | PBT candidates: 90 | Tested: 90 (100%) | 0 pass, 90 fail
 
 ## Summary
 
@@ -72,10 +68,10 @@ First batch was not all-green (3 negative contracts failed), so the extra all-pa
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 89 |
-| **Tested (of PBT candidates)** | **89 / 89 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 89 / 0 |
-| **Overall (tested / all functions)** | **89 / 289 (31%)** |
+| PBT candidates (from FUNCTION_INDEX) | 90 |
+| **Tested (of PBT candidates)** | **90 / 90 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 90 / 0 |
+| **Overall (tested / all functions)** | **90 / 289 (31%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -83,13 +79,13 @@ First batch was not all-green (3 negative contracts failed), so the extra all-pa
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 89 | 89 | 0 | 100% |
+|  | 90 | 90 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 89 | 89 | 0 | 100% |
+| unknown | 90 | 90 | 0 | 100% |
 
 ## File Coverage
 
@@ -201,3 +197,4 @@ First batch was not all-green (3 negative contracts failed), so the extra all-pa
 | encode_rev16 | bitfield.rs |
 | encode_rev32 | bitfield.rs |
 | encode_ubfiz | bitfield.rs |
+| encode_bfm | bitfield.rs |
