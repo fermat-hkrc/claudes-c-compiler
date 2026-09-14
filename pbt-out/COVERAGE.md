@@ -2,6 +2,7 @@
 
 | Function | Source file | Test file | Test target | Notes |
 |----------|-------------|-----------|-------------|-------|
+| encode_ubfx | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing, fp/mixed/extra/sp/lsb-width failing) |
 | encode_ubfm | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing, fp/mixed/extra/sp/immr-imms failing) |
 | encode_sbfx | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing, fp/mixed/extra/sp/lsb-width failing) |
 | encode_sbfm | bitfield.rs | bitfield.rs | cargo test --lib | 7 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing, fp/mixed/extra/sp/immr failing) |

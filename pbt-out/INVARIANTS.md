@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_ubfx)
+
+- Same-width GPR UBFX (x0–x30/xzr/lr and w0–w30/wzr, 0<=lsb<R, 1<=width<=R-lsb) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as LSR/UBFM aliases; the 32-bit word still matches.
+- encode_ubfx([Rd, Rn, lsb, width]) equals encode_ubfm([Rd, Rn, lsb, lsb+width-1]) (ARM ARM UBFX alias of UBFM) (1000 cases).
+- Success-path word is ARM Bitfield Move UBFM: sf 10 100110 N immr imms Rn Rd with N=sf, immr=lsb, imms=lsb+width-1. Equivalently w = (sf<<31)|(0b10<<29)|(0b100110<<23)|(sf<<22)|(lsb<<16)|((lsb+width-1)<<10)|(rn<<5)|rd. opc bits[30:29]=10.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only (1000 cases).
+- Fewer than 4 operands, non-register/non-imm kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Alternate spellings (x31/w31, XZR/WZR, LR, uppercase) match llvm-mc (1000 cases).
+- Known-answer: `ubfx w0, w1, #0, #1` = 0x53000020; `ubfx w0, w1, #1, #1` = 0x53010420; `ubfx x0, x1, #1, #8` = 0xd3412020; `ubfx wzr, wzr, #31, #1` = 0x531f7fff; `ubfx x0, xzr, #63, #1` = 0xd37fffe0; `ubfx lr, x1, #8, #16` = 0xd3485c3e.
+- Extra operand, SP/WSP, mixed W/X, FP/SIMD prefixes, and out-of-range lsb/width currently encode or panic instead of Err (see bugs).
+
+## Environment (encode_ubfx)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Unsigned Bitfield Extract UBFX: UBFX <Rd>, <Rn>, #<lsb>, #<width> aliases UBFM <Rd>, <Rn>, #<lsb>, #(<lsb>+<width>-1). Encoding sf 10 100110 N immr imms Rn Rd; N=sf; register 31 is ZR not SP. Constraints 0<=lsb<datasize, 1<=width<=datasize-lsb.
+- Dispatch: encoder/mod.rs:885 "ubfx" => encode_ubfx(operands).
+- Callers: encoder dispatch only. encode_ubfm_pbt uses encode_ubfx as algebraic UBFX alias, not as a unit test of encode_ubfx.
+- Sibling encode_ubfm is the raw immr/imms form (not a same-job differential). Sibling encode_sbfx/encode_bfxil/encode_ubfiz are different opc or alias mapping.
+- encode_ubfx does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31; lsb/width are `as u32` with no range check; `lsb + width - 1` overflows in debug on width=0.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_ubfx (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings / lsb-width).
+- Five failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ubfx_*.md.
+
 # Confirmed invariants (encode_ubfm)
 
 - Same-width GPR UBFM (x0–x30/xzr/lr and w0–w30/wzr, 0<=immr,imms<R) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc may disassemble some encodings as UBFX/UBFIZ/LSL/LSR aliases; the 32-bit word still matches.

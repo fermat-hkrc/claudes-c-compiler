@@ -1,31 +1,41 @@
-# PBT Campaign Report: encode_ubfm
+# PBT Campaign Report: encode_ubfx
 
 ## Summary
 
 **Date:** 2026-09-14
-**Repository:** claudes-c-compiler
-**Modules tested:** encode_ubfm
-**Tests:** 13 properties (plus 6 KAT + 5 regression witnesses)
+**Repository:** /home/toan/github/claudes-c-compiler
+**Modules tested:** encode_ubfx
+**Tests:** 13 properties (8 passing, 5 failing) plus 6 passing KAT and 5 failing regression witnesses
 **Result:** 8 passing, 5 bugs
-**Effort tier:** standard (5–8 properties/target, ≥1000 generator runs, 1 strengthening/sweep round)
+**Effort tier:** standard (1 contract-surface sweep round; ≥1000 proptest cases; ≥1 metamorphic/differential)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ubfm | 13 properties (8 pass, 5 fail) + 6 KAT pass + 5 regression fail | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_ubfx | 13 properties + 6 KAT + 5 regressions | 5 | differential (llvm-mc), algebraic.metamorphic (UBFX alias of UBFM; Rd/Rn fields), algebraic.invariant (ARM fields), negative_error (arity / extra / SP / lsb-width / mixed / FP / nonreg / invalid-name) |
 
 ## Bugs Found
 
-1. **encode_ubfm ignores extra operands** — Law: UBFM arity is 4. Shrunk input `[Reg("w0"), Reg("w0"), Imm(0), Imm(0), Reg("x0")]` returns Ok(Word) instead of Err. Root cause: get_reg/get_imm only index 0..3. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_extra_operand.md`. Serial reconfirm: PBT_TEST_JOBS=1.
+1. **encode_ubfx_neg_extra_operand** (Negative/Error Contract). Law: UBFX takes exactly four operands. Shrunk counterexample: `[Reg("w0"), Reg("w0"), Imm(0), Imm(1), extra=Reg("x0")]`. Expected Err; actual Ok(Word) because get_reg/get_imm only read indices 0..3. Serial reconfirm PBT_TEST_JOBS=1. llvm-mc rejects the extra operand.
+   - Path: pbt-out/bug_reports/encode_ubfx_extra_operand.md
+   - Regression: test_encode_ubfx_regression_extra_operand
 
-2. **encode_ubfm accepts SP/WSP as Rd or Rn** — Law: register 31 is ZR not SP. Shrunk input `ubfm wsp, w0, #0, #0` returns Ok(Word) with Rd=31. Root cause: parse_reg_num maps sp/wsp to 31. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_sp.md`. Serial reconfirm: PBT_TEST_JOBS=1.
+2. **encode_ubfx_neg_sp** (Negative/Error Contract). Law: register 31 is ZR not SP. Shrunk counterexample: which=0, sp64=false, is_64=false, other=0 — `ubfx wsp, w0, #0, #1`. Expected Err; actual Ok(Word) (parse_reg_num maps wsp to 31). Serial reconfirm PBT_TEST_JOBS=1.
+   - Path: pbt-out/bug_reports/encode_ubfx_sp.md
+   - Regression: test_encode_ubfx_regression_sp
 
-3. **encode_ubfm accepts out-of-range immr/imms** — Law: 0<=immr,imms<R. Shrunk input `ubfm w0, w0, #-1, #0` returns Ok(Word) via `(-1i64) as u32` wrap. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_immr_imms.md`. Serial reconfirm: PBT_TEST_JOBS=1.
+3. **encode_ubfx_neg_lsb_width** (Negative/Error Contract). Law: 0<=lsb<R and 1<=width<=R-lsb. Shrunk counterexample: is_64=false, rd=0, rn=0, lsb=0, width=0 — `ubfx w0, w0, #0, #0`. Expected Err; actual debug panic (`attempt to subtract with overflow` at bitfield.rs:15 `lsb + width - 1`). Serial reconfirm PBT_TEST_JOBS=1.
+   - Path: pbt-out/bug_reports/encode_ubfx_lsb_width.md
+   - Regression: test_encode_ubfx_regression_width_zero
 
-4. **encode_ubfm accepts mixed W/X registers** — Law: Rd and Rn same datasize. Shrunk input `ubfm x0, w0, #0, #0` returns Ok(Word) using sf from Rd. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_mixed_width.md`.
+4. **encode_ubfx_neg_mixed_width** (Negative/Error Contract). Law: Rd and Rn must be the same width. Shrunk counterexample: rd=0, rn=0, rd64=true, rn64=false — `ubfx x0, w0, #0, #1`. Expected Err; actual Ok(Word) (sf taken only from Rd). Serial reconfirm PBT_TEST_JOBS=1.
+   - Path: pbt-out/bug_reports/encode_ubfx_mixed_width.md
+   - Regression: test_encode_ubfx_regression_mixed_width
 
-5. **encode_ubfm accepts FP/SIMD registers** — Law: UBFM is GPR-only. Shrunk input `ubfm d0, x1, #0, #0` returns Ok(Word). Root cause: parse_reg_num accepts d/s/q/v/h/b; is_fp_reg unused. Severity: medium. Report: `pbt-out/bug_reports/encode_ubfm_fp.md`.
+5. **encode_ubfx_neg_fp** (Negative/Error Contract). Law: Rd/Rn must be GPR, not FP/SIMD. Shrunk counterexample: which=0, prefix="d", n=0 — `ubfx d0, x1, #0, #1`. Expected Err; actual Ok(Word) (parse_reg_num maps d0 to 0). Serial reconfirm PBT_TEST_JOBS=1.
+   - Path: pbt-out/bug_reports/encode_ubfx_fp.md
+   - Regression: test_encode_ubfx_regression_fp
 
 ## Design Caveats
 
@@ -35,7 +45,7 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_ubfm_pbt) | 13 properties + 6 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_ubfx_pbt) | 13 properties + 6 KAT + 5 regressions |
 
 ## Output Directories
 
@@ -46,20 +56,20 @@
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_ubfm_extra_operand.md
-- pbt-out/bug_reports/encode_ubfm_sp.md
-- pbt-out/bug_reports/encode_ubfm_immr_imms.md
-- pbt-out/bug_reports/encode_ubfm_mixed_width.md
-- pbt-out/bug_reports/encode_ubfm_fp.md
+- pbt-out/bug_reports/encode_ubfx_extra_operand.md
+- pbt-out/bug_reports/encode_ubfx_sp.md
+- pbt-out/bug_reports/encode_ubfx_lsb_width.md
+- pbt-out/bug_reports/encode_ubfx_mixed_width.md
+- pbt-out/bug_reports/encode_ubfx_fp.md
 
-Sweep closed: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual arm audit of encode_ubfm (invalid-name / nonreg / alt-spellings / mixed / FP / extra / SP / immr-imms). Added encode_ubfm_diff_alt_spellings, encode_ubfm_neg_nonreg, encode_ubfm_neg_invalid_name (passing) and encode_ubfm_neg_mixed_width, encode_ubfm_neg_fp (failing, filed). Documented surface covered.
+Sweep close: tier round 1/1 spent; coverage_gaps had no LLVM profraw so a manual arm audit covered arity / extra / SP / mixed / FP / nonreg / invalid-name / alt-spellings / lsb-width. Documented contract surface has a property against each clause.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 22:05 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 93/289 total | PBT candidates: 93 | Tested: 93 (100%) | 0 pass, 93 fail
+> Last updated: 2026-09-14 22:17 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 94/289 total | PBT candidates: 94 | Tested: 94 (100%) | 0 pass, 94 fail
 
 ## Summary
 
@@ -68,10 +78,10 @@ Sweep closed: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual 
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 93 |
-| **Tested (of PBT candidates)** | **93 / 93 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 93 / 0 |
-| **Overall (tested / all functions)** | **93 / 289 (32%)** |
+| PBT candidates (from FUNCTION_INDEX) | 94 |
+| **Tested (of PBT candidates)** | **94 / 94 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 94 / 0 |
+| **Overall (tested / all functions)** | **94 / 289 (33%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -79,13 +89,13 @@ Sweep closed: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual 
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 93 | 93 | 0 | 100% |
+|  | 94 | 94 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 93 | 93 | 0 | 100% |
+| unknown | 94 | 94 | 0 | 100% |
 
 ## File Coverage
 
@@ -108,6 +118,7 @@ Sweep closed: tier round 1/1 spent. `coverage_gaps` had no LLVM profraw; manual 
 
 | Function | Source |
 |----------|--------|
+| encode_ubfx | bitfield.rs |
 | encode_ubfm | bitfield.rs |
 | encode_sbfx | bitfield.rs |
 | encode_sbfm | bitfield.rs |
