@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_neon_qshrn)
+
+- Valid vector SQSHRN/UQSHRN/SQRSHRN/UQRSHRN (+2) with Ta in {8h,4s,2d}, Tb matching Ta and the 2-suffix, Vd/Vn in v0–v31, shift in [1, dest_esize] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode(..., is_high=false) XOR encode(..., is_high=true) = 1<<30 (ARM ARM Q bit) (1000 cases).
+- encode(..., u=0) XOR encode(..., u=1) = 1<<29 (ARM ARM U bit) (1000 cases).
+- encode(..., is_rounding=false) XOR encode(..., is_rounding=true) = 1<<11 (opcode 100101 vs 100111) (1000 cases).
+- Success-path word: bit 31=0, Q at 30, U at 29, bits [28:23]=011110, immh:immb at [22:16]=src_esize-shift, opcode at [15:10]=100101/100111, Rn at [9:5], Rd at [4:0].
+- Fewer than 3 operands, unsupported source Ta (not 8h/4s/2d), non-RegArrangement/non-Imm kinds, invalid names (v32, foo, empty, v, v-1), and bare Operand::Reg source always Err.
+- Known-answer: `sqshrn v0.8b, v1.8h, #1` encodes as 0x0f0f9420; `#8` as 0x0f089420; `sqshrn2 v0.16b, v1.8h, #1` as 0x4f0f9420; `uqshrn v0.8b, v1.8h, #1` as 0x2f0f9420; `sqrshrn v0.8b, v1.8h, #1` as 0x0f0f9c20; `uqrshrn2 v0.4s, v1.2d, #32` as 0x6f209c20; `sqshrn v0.4h, v1.4s, #16` as 0x0f109420.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD shift by immediate SQSHRN/UQSHRN/SQRSHRN/UQRSHRN: `0 Q U 011110 immh immb opcode Rn Rd`. opcode 100101 non-rounding / 100111 rounding. U=0 signed / U=1 unsigned. Q=0 lower half / Q=1 (`2` suffix) upper half. dest_esize = 8<<HighestSetBit(immh); shift = 2*esize - UInt(immh:immb) in [1, dest_esize]. Ta/Tb: 8H→8B/16B (1..8), 4S→4H/8H (1..16), 2D→2S/4S (1..32).
+- Dispatch: encoder/mod.rs:637-648. Scalar sqshrn (non-arrangement dest) is encode_neon_scalar_qshrn, out of scope.
+- Sibling encode_neon_shrn neon.rs:1443-1444 checks `shift > half_bits` with half_bits = source/2.
+
+## Quirks
+
+- Shift range uses source element size (16/32/64), so dest_esize+1 through source_esize encode (see bugs).
+- Dest arrangement is discarded (see bugs).
+- Extra operands beyond index 2 are ignored (see bugs).
+- get_neon_reg accepts Operand::Reg, so GPR/FP dest encodes as Vd (see bugs). Reachable from uqshrn/sqshrn2/sqrshrn/uqrshrn (+2).
+- Shift is `get_imm as u32`, so Imm(1+2^32) encodes as #1 (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / Ta / get_imm as u32 / get_neon_reg Reg dest+source).
+
+---
+
 # Confirmed invariants (encode_movz)
 
 - Valid GPR + imm16 + optional lsl (hw in {0,1} for W, {0,1,2,3} for X; Rd=31 is xzr/wzr) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
