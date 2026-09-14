@@ -46,3 +46,4 @@
 | encode_msub | data_processing.rs | data_processing.rs | cargo test --lib | 8 passing / 4 failing properties (plus 3 passing KAT + 4 failing regression witnesses; 4 bugs) |
 | encode_mul | data_processing.rs | data_processing.rs | cargo test --lib | 9 passing / 6 failing properties (plus 4 passing KAT + 6 failing regression witnesses; 6 bugs) |
 | encode_mvn | data_processing.rs | data_processing.rs | cargo test --lib | 7 passing / 10 failing properties (plus 4 passing KAT + 10 failing regression witnesses; 9 bugs) |
+| encode_neon_shift_right | neon.rs | neon.rs | cargo test --lib | 6 passing / 4 failing properties (plus 1 passing KAT + 4 failing regression witnesses; 4 bugs) |

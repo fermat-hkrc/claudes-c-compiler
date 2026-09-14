@@ -1,43 +1,31 @@
-# PBT Campaign Report: encode_mvn
+# PBT Campaign Report: encode_neon_shift_right
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mvn
-**Tests:** 31 total (7 passing properties + 10 failing properties + 4 passing KAT + 10 failing regression witnesses)
-**Result:** 7 passing properties, 10 failing properties (9 bug-report files)
-**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening round, ≥1 metamorphic/differential, 1 coverage_gaps round)
+**Modules tested:** encode_neon_shift_right
+**Tests:** 15 total (6 passing properties + 4 failing properties + 1 passing KAT + 4 failing regression witnesses)
+**Result:** 6 passing properties, 4 failing properties (4 bug-report files)
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening/sweep round, ≥1 metamorphic/differential, 1 coverage_gaps round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mvn | 31 | 9 | differential (llvm-mc), algebraic.metamorphic (ORN/ZR alias, sf XOR), algebraic.invariant (ARM fields), negative_error |
+| encode_neon_shift_right | 15 | 4 | differential (llvm-mc), algebraic.metamorphic (U bit, Q/opcode), algebraic.invariant (ARM fields), negative_error |
 
 ## Bugs Found
 
-Each entry is a failing proptest property with a shrunk counterexample, reconfirmed serially (`PBT_TEST_JOBS=1`, `--test-threads=1`). Expected: Err. Actual: Ok(Word).
+Each entry is a failing proptest property with a shrunk counterexample, reconfirmed serially (`PBT_TEST_JOBS=1`). Expected: Err. Actual: Ok(Word).
 
-1. **encode_mvn_neg_extra_operand** — Falsifiable. Shrunk counterexample: `rd=0, rm=0, is_64=false, extra=Reg("x0")`. Law: trailing non-shift operand must Err. Report: `pbt-out/bug_reports/encode_mvn_extra_operand.md`.
+1. **encode_neon_shift_right_neg_mismatched_t** — Falsifiable. Shrunk counterexample: `rd=0, rn=0, td="8b", ts="16b", shift=1, u_bit=0, opcode=9` (`srshr v0.8b, v0.16b, #1`). Law: dest T must equal source T. Report: `pbt-out/bug_reports/encode_neon_shift_right_mismatched_t.md`.
 
-2. **encode_mvn_neg_trailing_after_shift** — Falsifiable. Shrunk counterexample: `rd=0, rm=0, is_64=false, extra=Reg("x0")` after `lsl #1`. Law: operand after a valid shift must Err. Same report: `pbt-out/bug_reports/encode_mvn_extra_operand.md`.
+2. **encode_neon_shift_right_neg_extra_operand** — Falsifiable. Shrunk counterexample: `rd=0, rn=0, extra=0, t="8b", shift=1, u_bit=0, opcode=9` (`srshr v0.8b, v0.8b, #1, v0.8b`). Law: exactly three operands. Report: `pbt-out/bug_reports/encode_neon_shift_right_extra_operand.md`.
 
-3. **encode_mvn_neg_mixed_width** — Falsifiable. Shrunk counterexample: `rd=0, rm=0, rd64=false, rm64=true` (`mvn w0, x0`). Law: mixed X/W must Err. Report: `pbt-out/bug_reports/encode_mvn_mixed_width.md`.
+3. **encode_neon_shift_right_neg_shift_i64_trunc** — Falsifiable. Shrunk counterexample: `Imm(4294967297)` for T=8b (`get_imm as u32` → 1). Law: i64 shift outside [1, esize] must Err. Report: `pbt-out/bug_reports/encode_neon_shift_right_shift_i64_trunc.md`.
 
-4. **encode_mvn_neg_sp** — Falsifiable. Shrunk counterexample: `which=0, is_64=false, other=0` (`mvn wsp, w0`). Law: SP/WSP must Err. Report: `pbt-out/bug_reports/encode_mvn_sp.md`.
-
-5. **encode_mvn_neg_fp** — Falsifiable. Shrunk counterexample: `which=0, prefix="d", n=0` (`mvn d0, x1`). Law: FP/SIMD name must Err. Report: `pbt-out/bug_reports/encode_mvn_fp_reg.md`.
-
-6. **encode_mvn_neg_shift_range** — Falsifiable. Shrunk counterexample: `rd=0, rm=0, is_64=false, kind="lsl", amt_w=32` (`mvn w0, w0, lsl #32`). Law: 32-bit imm6 range is 0..31. Report: `pbt-out/bug_reports/encode_mvn_shift_range.md`.
-
-7. **encode_mvn_neg_neon_t** — Falsifiable. Shrunk counterexample: `vd=0, vn=0, t="4h"` (`mvn v0.4h, v0.4h`). Law: NEON T in {8b,16b} only. Report: `pbt-out/bug_reports/encode_mvn_neon_t.md`.
-
-8. **encode_mvn_neg_neon_mismatch_t** — Falsifiable. Shrunk counterexample: `vd=0, vn=0, td="16b", tn="8b"` (`mvn v0.16b, v0.8b`). Law: matching T required. Report: `pbt-out/bug_reports/encode_mvn_neon_mismatch_t.md`.
-
-9. **encode_mvn_neg_bad_shift_kind** — Falsifiable. Shrunk counterexample: `rd=0, rm=0, is_64=false, kind="foo", amt=0`. Law: unknown shift kind must Err. Report: `pbt-out/bug_reports/encode_mvn_bad_shift_kind.md`.
-
-10. **encode_mvn_neg_neon_extra** — Falsifiable. Shrunk counterexample: `vd=0, vn=0, extra=Reg("x0")` (`mvn v0.16b, v0.16b, x0`). Law: NEON MVN has no 3rd operand. Report: `pbt-out/bug_reports/encode_mvn_neon_extra.md`.
+4. **encode_neon_shift_right_neg_reg_source** — Falsifiable. Shrunk counterexample: `prefix="x", n=0` (`srshr v0.8b, x0, #1`). Law: source must be Vn.T, not a bare register. Report: `pbt-out/bug_reports/encode_neon_shift_right_reg_source.md`.
 
 ## Design Caveats
 
@@ -47,7 +35,7 @@ Each entry is a failing proptest property with a shrunk counterexample, reconfir
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_mvn_pbt) | 31 (4 KAT + 17 properties + 10 regressions) |
+| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_shift_right_pbt) | 15 (1 KAT + 10 properties + 4 regressions) |
 
 ## Output Directories
 
@@ -58,24 +46,19 @@ Each entry is a failing proptest property with a shrunk counterexample, reconfir
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_mvn_extra_operand.md
-- pbt-out/bug_reports/encode_mvn_mixed_width.md
-- pbt-out/bug_reports/encode_mvn_sp.md
-- pbt-out/bug_reports/encode_mvn_fp_reg.md
-- pbt-out/bug_reports/encode_mvn_shift_range.md
-- pbt-out/bug_reports/encode_mvn_neon_t.md
-- pbt-out/bug_reports/encode_mvn_neon_mismatch_t.md
-- pbt-out/bug_reports/encode_mvn_bad_shift_kind.md
-- pbt-out/bug_reports/encode_mvn_neon_extra.md
+- pbt-out/bug_reports/encode_neon_shift_right_mismatched_t.md
+- pbt-out/bug_reports/encode_neon_shift_right_extra_operand.md
+- pbt-out/bug_reports/encode_neon_shift_right_shift_i64_trunc.md
+- pbt-out/bug_reports/encode_neon_shift_right_reg_source.md
 
-Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps` had no profraw; manual arm audit of get_reg 0..1, sf, Shift at index 2, shift-kind default, imm6 mask, Rn=31, neon Q, neon extra. Added `encode_mvn_neg_bad_shift_kind`, `encode_mvn_neg_trailing_after_shift`, `encode_mvn_neg_neon_extra`.
+Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps` had no profraw; manual arm audit of arity (`len < 3`), dest T / Q, discarded source T, `get_imm as u32`, `get_neon_reg` Operand::Reg dest+source, extra operands, 1d Reserved. Added `encode_neon_shift_right_neg_shift_i64_trunc` and `encode_neon_shift_right_neg_reg_source`.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 09:42 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 44/184 total | PBT candidates: 44 | Tested: 44 (100%) | 0 pass, 44 fail
+> Last updated: 2026-09-14 09:58 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 45/184 total | PBT candidates: 45 | Tested: 45 (100%) | 0 pass, 45 fail
 
 ## Summary
 
@@ -84,10 +67,10 @@ Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 44 |
-| **Tested (of PBT candidates)** | **44 / 44 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 44 / 0 |
-| **Overall (tested / all functions)** | **44 / 184 (24%)** |
+| PBT candidates (from FUNCTION_INDEX) | 45 |
+| **Tested (of PBT candidates)** | **45 / 45 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 45 / 0 |
+| **Overall (tested / all functions)** | **45 / 184 (24%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -95,13 +78,13 @@ Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 44 | 44 | 0 | 100% |
+|  | 45 | 45 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 44 | 44 | 0 | 100% |
+| unknown | 45 | 45 | 0 | 100% |
 
 ## File Coverage
 
@@ -112,7 +95,7 @@ Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 14 | 14 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
-| neon.rs | 68 | 6 | 6 | 100% | covered |
+| neon.rs | 68 | 7 | 7 | 100% | covered |
 
 ## Recommended Focus
 
@@ -165,3 +148,4 @@ Contract-surface sweep closed after 1 round (STANDARD allowance): `coverage_gaps
 | encode_msub | data_processing.rs |
 | encode_mul | data_processing.rs |
 | encode_mvn | data_processing.rs |
+| encode_neon_shift_right | neon.rs |
