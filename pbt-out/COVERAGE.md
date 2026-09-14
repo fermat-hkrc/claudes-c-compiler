@@ -81,3 +81,4 @@
 | encode_bfxil | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing) |
 | encode_cas | load_store.rs | load_store.rs | cargo test --lib | 6 passing / 4 failing properties (plus 8 passing KAT + 8 failing regression witnesses; 8 bugs; sweep invalid-name/alt-spellings passing) |
 | encode_cls | bitfield.rs | bitfield.rs | cargo test --lib | 7 passing / 4 failing properties (plus 6 passing KAT + 4 failing regression witnesses; 4 bugs; sweep invalid-name/nonreg/alt-spellings passing) |
+| encode_clz | bitfield.rs | bitfield.rs | cargo test --lib | 7 passing / 4 failing properties (plus 6 passing KAT + 4 failing regression witnesses; 4 bugs; sweep invalid-name/nonreg/alt-spellings passing) |

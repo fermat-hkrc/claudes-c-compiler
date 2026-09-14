@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_clz)
+
+- Valid CLZ Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `clz w0, w1` = 0x5ac01020.
+- Success-path word is ARM Data-processing (1 source) CLZ: sf 1 0 11010110 00000 000100 Rn Rd. Equivalently w = (sf<<31)|(1<<30)|(0b011010110<<21)|(0b000100<<10)|(rn<<5)|rd. bits[30]=1; bits[29]=0; bits[28:21]=11010110; bits[20:16]=00000; bits[15:10]=000100.
+- Metamorphic: Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; X vs W xor = 1<<31 (1000 cases).
+- Fewer than 2 operands, non-register kinds, and invalid names (foo/x32/empty/r0) always Err (1000 cases).
+- Known-answer: `clz w0, w1` = 0x5ac01020; `clz x0, x1` = 0xdac01020; `clz wzr, wzr` = 0x5ac013ff; `clz xzr, xzr` = 0xdac013ff; `clz lr, x1` = 0xdac0103e; `clz x0, xzr` = 0xdac013e0.
+- Extra operand, SP/WSP, mixed W/X, and FP/SIMD prefixes currently encode instead of Err (see bugs).
+
+## Environment (encode_clz)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on `clz w0, w1` = 0x5ac01020.
+- ARM ARM Data-processing (1 source) CLZ: CLZ <Wd>, <Wn> / CLZ <Xd>, <Xn>. Encoding sf 1 0 11010110 00000 000100 Rn Rd; register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:573-575 scalar clz => encode_clz; NEON RegArrangement => encode_neon_two_misc.
+- Callers: encoder dispatch only.
+- Sibling encode_cls is a different opcode (000101, count leading sign bits) — not a differential sibling.
+- encode_clz does not check operands.len() (extra ignored); takes sf from Rd without checking Rn width or FP prefix; parse_reg_num maps sp/wsp to 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_clz (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings).
+- Four failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_clz_*.md.
+
 # Confirmed invariants (encode_cls)
 
 - Valid CLS Wd,Wn / Xd,Xn including wzr/xzr, w31/x31, lr, uppercase, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on `cls w0, w1` = 0x5ac01420.

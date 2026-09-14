@@ -1,31 +1,69 @@
-# PBT Campaign Report: encode_cls
+# PBT Campaign Report: encode_clz
 
 ## Summary
 
 **Date:** 2026-09-14
-**Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_cls
-**Tests:** 11 properties + 6 KAT + 4 regression witnesses
-**Result:** 7 passing properties, 4 bugs
-**Effort tier:** standard (1 coverage-driven sweep round; generator runs = 1000)
+**Repository:** claudes-c-compiler
+**Modules tested:** encode_clz
+**Tests:** 11 properties (7 passing, 4 failing) plus 6 passing KAT gates and 4 failing regression witnesses
+**Result:** 7 passing, 4 bugs
+**Effort tier:** standard (5–8 properties, ≥1000 cases, 1 coverage-driven sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_cls | 11 properties (7 passing, 4 failing) + 6 KAT + 4 regression | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_clz | 11 properties (7 pass / 4 fail) + 6 KAT + 4 regression | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **encode_cls ignores extra operands.** `cls w0, w0, x0` encodes as `cls w0, w0` (0x5ac01400) instead of Err. Law: two-operand CLS. Counterexample: [Reg("w0"), Reg("w0"), Reg("x0")]. Root cause: no `operands.len()` check; `get_reg` only reads indices 0 and 1. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_extra_operand.md`. Regression: `test_encode_cls_regression_extra_operand`.
+### 1. Extra operand silently ignored
+- **Law:** CLZ is two-operand; a third operand must Err (llvm-mc: invalid operand).
+- **Shrunk counterexample:** `[Reg("w0"), Reg("w0"), Reg("x0")]` (`clz w0, w0, x0`)
+- **Expected:** Err
+- **Actual:** Ok(Word(0x5ac01000)) — same as `clz w0, w0`
+- **Root cause:** encode_clz never checks `operands.len()`; get_reg only reads indices 0 and 1.
+- **Impact:** Trailing garbage is assembled instead of rejected.
+- **Severity:** medium
+- **Fix:** Reject `operands.len() != 2`.
+- **Bug report:** pbt-out/bug_reports/encode_clz_extra_operand.md
+- **Serial reconfirmation:** reproduced with `PBT_TEST_JOBS=1 cargo test --lib encode_clz_neg -- --test-threads=1`
 
-2. **encode_cls accepts SP/WSP as register 31.** `cls wsp, w0` encodes as `cls wzr, w0` (0x5ac0141f) instead of Err. Law: ARM CLS register 31 is ZR not SP. Counterexample: [Reg("wsp"), Reg("w0")]. Root cause: `parse_reg_num` maps sp/wsp to 31; encode_cls does not reject SP. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_sp.md`. Regression: `test_encode_cls_regression_sp`.
+### 2. SP/WSP accepted as register 31
+- **Law:** ARM CLZ register 31 is ZR not SP; SP/WSP must Err.
+- **Shrunk counterexample:** `[Reg("wsp"), Reg("w0")]` (`clz wsp, w0`)
+- **Expected:** Err
+- **Actual:** Ok(Word(0x5ac0101f)) — parse_reg_num maps sp/wsp to 31
+- **Root cause:** No SP rejection; register 31 is treated as ZR.
+- **Impact:** SP operands encode as ZR.
+- **Severity:** medium
+- **Fix:** Reject SP/WSP in Rd and Rn.
+- **Bug report:** pbt-out/bug_reports/encode_clz_sp.md
+- **Serial reconfirmation:** reproduced serially as above
 
-3. **encode_cls accepts mixed W/X widths.** `cls x0, w0` encodes as `cls x0, x0` (0xdac01400) instead of Err. Law: matching W/W or X/X. Counterexample: [Reg("x0"), Reg("w0")]. Root cause: sf taken from Rd only; Rn width ignored. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_mixed_width.md`. Regression: `test_encode_cls_regression_mixed_width`.
+### 3. Mixed W/X widths accepted
+- **Law:** CLZ requires matching W/W or X/X; mixed width must Err.
+- **Shrunk counterexample:** `[Reg("x0"), Reg("w0")]` (`clz x0, w0`)
+- **Expected:** Err
+- **Actual:** Ok(Word(0xdac01000)) — encoded as `clz x0, x0` (sf from Rd only)
+- **Root cause:** `let (rn, _) = get_reg(operands, 1)?` discards Rn width.
+- **Impact:** Source text and encoding disagree on operand size.
+- **Severity:** medium
+- **Fix:** Require Rd and Rn to have the same GPR width.
+- **Bug report:** pbt-out/bug_reports/encode_clz_mixed_width.md
+- **Serial reconfirmation:** reproduced serially as above
 
-4. **encode_cls accepts FP/SIMD registers as GPRs.** `cls d0, x1` encodes as `cls w0, w1` (0x5ac01420) instead of Err. Law: scalar CLS is integer GPR only. Counterexample: [Reg("d0"), Reg("x1")]. Root cause: `parse_reg_num` accepts d/s/q/v/h/b; encode_cls does not call `is_fp_reg`. Severity: medium. Report: `pbt-out/bug_reports/encode_cls_fp.md`. Regression: `test_encode_cls_regression_fp`.
-
-All four reproduced serially (`cargo test --lib encode_cls -- --test-threads=1`).
+### 4. FP/SIMD registers accepted as scalar CLZ operands
+- **Law:** Scalar CLZ operands are GPRs only; `clz d0, x1` must Err. (NEON vector CLZ is a different dispatch path.)
+- **Shrunk counterexample:** `[Reg("d0"), Reg("x1")]` (`clz d0, x1`)
+- **Expected:** Err
+- **Actual:** Ok(Word(0x5ac01020)) — same as `clz w0, w1`
+- **Root cause:** parse_reg_num accepts d/s/q/v/h/b; get_reg does not call is_fp_reg.
+- **Impact:** FP names are silently remapped to GPR encodings.
+- **Severity:** medium
+- **Fix:** Reject FP/SIMD names in Rd and Rn.
+- **Bug report:** pbt-out/bug_reports/encode_clz_fp.md
+- **Serial reconfirmation:** reproduced serially as above
 
 ## Design Caveats
 
@@ -35,32 +73,30 @@ All four reproduced serially (`cargo test --lib encode_cls -- --test-threads=1`)
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_cls_pbt) | 11 properties (7 pass / 4 fail) + 6 KAT + 4 failing regression witnesses |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_clz_pbt) | 11 properties + 6 KAT + 4 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_cls_extra_operand.md
-- pbt-out/bug_reports/encode_cls_sp.md
-- pbt-out/bug_reports/encode_cls_mixed_width.md
-- pbt-out/bug_reports/encode_cls_fp.md
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — per-function coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/FUNCTION_INDEX.md — merged function index (encode_clz marked yes)
+- pbt-out/INVARIANTS.md — confirmed encode_clz invariants
+- pbt-out/bug_reports/encode_clz_extra_operand.md
+- pbt-out/bug_reports/encode_clz_sp.md
+- pbt-out/bug_reports/encode_clz_mixed_width.md
+- pbt-out/bug_reports/encode_clz_fp.md
 
-## Sweep
-
-Round 1/1: `coverage_gaps` had no LLVM profraw; manual arm audit of encode_cls (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings). Added encode_cls_diff_alt_spellings, encode_cls_neg_nonreg, encode_cls_neg_invalid_name (all passing). Closed: tier round spent and documented surface covered.
+Sweep close-out: coverage_gaps had no LLVM profraw; one manual arm-audit round of encode_clz (arity / extra / SP / mixed W-X / FP / nonreg / invalid-name / alt-spellings). Added encode_clz_diff_alt_spellings, encode_clz_neg_nonreg, encode_clz_neg_invalid_name (all passing). Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 18:51 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 79/284 total | PBT candidates: 79 | Tested: 79 (100%) | 0 pass, 79 fail
+> Last updated: 2026-09-14 19:03 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 80/284 total | PBT candidates: 80 | Tested: 80 (100%) | 0 pass, 80 fail
 
 ## Summary
 
@@ -69,10 +105,10 @@ Round 1/1: `coverage_gaps` had no LLVM profraw; manual arm audit of encode_cls (
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 284 |
-| PBT candidates (from FUNCTION_INDEX) | 79 |
-| **Tested (of PBT candidates)** | **79 / 79 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 79 / 0 |
-| **Overall (tested / all functions)** | **79 / 284 (28%)** |
+| PBT candidates (from FUNCTION_INDEX) | 80 |
+| **Tested (of PBT candidates)** | **80 / 80 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 80 / 0 |
+| **Overall (tested / all functions)** | **80 / 284 (28%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -80,13 +116,13 @@ Round 1/1: `coverage_gaps` had no LLVM profraw; manual arm audit of encode_cls (
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 79 | 79 | 0 | 100% |
+|  | 80 | 80 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 79 | 79 | 0 | 100% |
+| unknown | 80 | 80 | 0 | 100% |
 
 ## File Coverage
 
@@ -188,3 +224,4 @@ Round 1/1: `coverage_gaps` had no LLVM profraw; manual arm audit of encode_cls (
 | encode_bfxil | bitfield.rs |
 | encode_cas | load_store.rs |
 | encode_cls | bitfield.rs |
+| encode_clz | bitfield.rs |

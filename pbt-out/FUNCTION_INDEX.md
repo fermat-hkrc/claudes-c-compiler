@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 284 | PBT candidates: 79 | Excluded: 205
+> Total files: 10 | Total functions: 284 | PBT candidates: 80 | Excluded: 204
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -284,7 +284,7 @@
 | encode_bfi | bitfield.rs | 104 | function | yes | - |
 | encode_bfxil | bitfield.rs | 119 | function | yes | - |
 | encode_extr | bitfield.rs | 133 | function | no | out of campaign scope |
-| encode_clz | bitfield.rs | 148 | function | no | out of campaign scope |
+| encode_clz | bitfield.rs | 148 | function | yes | - |
 | encode_cls | bitfield.rs | 158 | function | yes | - |
 | encode_rbit | bitfield.rs | 167 | function | no | out of campaign scope |
 | encode_rev | bitfield.rs | 186 | function | no | out of campaign scope |
