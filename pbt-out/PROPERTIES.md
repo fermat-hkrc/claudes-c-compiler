@@ -1,236 +1,243 @@
-# Properties: encode_bl
+# Properties: encode_blr
 
-## encode_bl_diff_imm_llvm_mc
+## encode_blr_diff_xn_llvm_mc
 - Tier: 7
-- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler) for the ARM ARM immediate form `bl #imm`. State machine rejected (pure function, no lifecycle). In-tree BL decoder does not exist so algebraic round-trip is unavailable. encode_branch is a different job (B/Jump26, no link) and fails the same-job sibling gate as a differential reference. Doc evidence: assembler README gas-compat; ARM ARM BL bits[31:26]=100101, imm26 = offset/4; llvm-mc accepts aligned offsets in [-134217728, 134217724].
-- Seed: src/backend/arm/assembler/encoder/load_store.rs encode_adr_pbt::encode_adr_diff_imm_llvm_mc (sibling PC-relative immediate generalization)
-- Formal: ∀ imm ∈ {k·4 | k ∈ ℤ, -2^25 ≤ k ≤ 2^25-1}. encode_bl([Imm(imm)]) = Word(llvm-mc("bl #imm")).
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler) for the ARM ARM register form `blr Xn`. State machine rejected (pure function, no lifecycle). In-tree BLR decoder does not exist so algebraic round-trip is unavailable. encode_br is a different job (BR, no link) and fails the same-job sibling gate as a differential reference. Doc evidence: assembler README gas-compat; ARM ARM Unconditional branch (register) BLR bits[31:25]=1101011 opc=0001 Rn at [9:5]; codegen emits `blr x17`.
+- Seed: src/backend/arm/assembler/encoder/compare_branch.rs encode_bl_pbt::encode_bl_diff_imm_llvm_mc (sibling encoder differential)
+- Formal: ∀ n ∈ {0..30} ∪ {xzr, lr}. encode_blr([Reg(name(n))]) = Word(llvm-mc("blr " + name(n))).
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: imm = -134217728 (bl #-134217728); also Imm(0), Imm(4)
-- Bug report: pbt-out/bug_reports/encode_bl_imm_offset.md
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_bl
+function: encoder.compare_branch.encode_blr
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [imm]
-  domain: { imm: aligned_i64_in_pm_128MiB }
+  vars: [n]
+  domain: { n: x_reg_or_xzr_or_lr }
   relation:
     op: eq
-    lhs: encode_bl([Imm(imm)]) as Word
-    rhs: llvm_mc("bl #imm")
+    lhs: encode_blr([Reg(name(n))]) as Word
+    rhs: llvm_mc("blr " + name(n))
 generators:
-  imm: { gen: int, min: -134217728, max: 134217724, type: i64 }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; encoder/mod.rs:317 bl dispatch; compare_branch.rs:186 BL 100101 imm26; ARM ARM Unconditional branch (immediate)
+  n: { gen: int, min: 0, max: 32, type: u32 }
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; README.md:220 Branches lists blr; encoder/mod.rs:319 blr dispatch; compare_branch.rs:221 BLR 1101011 0001 11111 Rn; ARM ARM Unconditional branch (register); codegen/calls.rs:233 blr x17
 ```
 
-## encode_bl_symbol_reloc
+## encode_blr_word_layout
 - Tier: 4
-- Rationale: Algebraic invariant from the documented reloc contract: BL to a symbol/label/symbol+addend returns WordWithReloc { word = 0b100101<<26, Call26, symbol, addend } with imm26 left 0 for the assembler/linker to fill. Stronger differential via llvm-mc -show-encoding is unavailable on this path (encoding uses A placeholders / a CALL26 fixup, not a numeric word). encode_branch is not a same-job sibling.
-- Seed: src/backend/arm/assembler/encoder/load_store.rs encode_adr_pbt::encode_adr_symbol_reloc
-- Formal: ∀ s ∈ ident, ∀ addend ∈ i64. encode_bl([Symbol(s)]) = encode_bl([Label(s)]) = WordWithReloc{word:0x94000000, Call26, s, 0} ∧ encode_bl([SymbolOffset(s,addend)]) = WordWithReloc{word:0x94000000, Call26, s, addend} ∧ Call26.elf_type()=283.
+- Rationale: Algebraic invariant from ARM ARM Unconditional branch (register) BLR encoding: fixed bits 0xd63f0000 with Rn occupying [9:5] and op4 [4:0] zero. Stronger differential already covers the happy path against llvm-mc; this pins the field split independently of the assembler. encode_br is not a same-job sibling.
+- Seed: encode_bl_pbt::encode_bl_word_layout
+- Formal: ∀ n ∈ 0..31. let w = encode_blr([Reg(xn)]). w = 0xd63f0000 | (n << 5) ∧ (w >> 25) = 0b1101011 ∧ ((w >> 21) & 0xF) = 0b0001 ∧ (w & 0x1F) = 0 ∧ ((w >> 5) & 0x1F) = n.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_bl
+function: encoder.compare_branch.encode_blr
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [s, addend]
-  domain: { s: ident, addend: i64 }
+  vars: [n]
+  domain: { n: u32 in 0..=31 }
   relation:
-    op: holds
-    expr: word_is_0x94000000_and_reloc_is_Call26_with_symbol_and_addend
+    op: eq
+    lhs: encode_blr([Reg("x"+n)]).word
+    rhs: 0xd63f0000 | (n << 5)
 generators:
-  suffix: { gen: int, min: 0, max: 1000, type: u32 }
-  addend: { gen: int, min: -4096, max: 4096, type: i64 }
-evidence: README.md:247-253 Call26 ELF 283 for bl; encoder/mod.rs:49 R_AARCH64_CALL26; compare_branch.rs:186-192 WordWithReloc Call26 word 0b100101<<26
+  n: { gen: int, min: 0, max: 31, type: u32 }
+evidence: compare_branch.rs:221 BLR 1101011 0001 11111 000000 Rn 00000; ARM ARM Unconditional branch (register) opc=0001 op2=11111 op4=00000
 ```
 
-## encode_bl_meta_vs_b
+## encode_blr_meta_vs_br
 - Tier: 4
-- Rationale: Algebraic metamorphic: ARM ARM BL is B with bit 31 set (100101 vs 000101) and reloc Call26 vs Jump26. encode_branch is not a same-job differential reference; the relation is the documented opcode/reloc pair. Stronger differential already covers the immediate happy path; this isolates the BL-vs-B contract independently of llvm-mc.
-- Seed: encode_adc_pbt S-bit XOR; encode_bics opc XOR
-- Formal: ∀ s ∈ ident, ∀ addend ∈ i64. let bl = encode_bl([SymbolOffset(s,addend)]); let b = encode_branch([SymbolOffset(s,addend)]). bl.word XOR b.word = 1<<31 ∧ bl.reloc_type=Call26 ∧ b.reloc_type=Jump26 ∧ bl.symbol=b.symbol=s ∧ bl.addend=b.addend=addend.
+- Rationale: Algebraic metamorphic: ARM ARM BLR is BR with opc bit 21 set (0001 vs 0000 at bits[24:21]). encode_br is not a same-job differential reference; the relation is the documented opcode pair. Stronger differential already covers the happy path; this isolates the BLR-vs-BR contract independently of llvm-mc.
+- Seed: encode_bl_pbt::encode_bl_meta_vs_b
+- Formal: ∀ n ∈ 0..31. encode_blr([Reg(xn)]).word XOR encode_br([Reg(xn)]).word = 1<<21.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_bl
+function: encoder.compare_branch.encode_blr
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [s, addend]
-  domain: { s: ident, addend: i64 }
+  vars: [n]
+  domain: { n: u32 in 0..=31 }
   relation:
     op: eq
-    lhs: encode_bl(ops).word XOR encode_branch(ops).word
-    rhs: 1 << 31
+    lhs: encode_blr(ops).word XOR encode_br(ops).word
+    rhs: 1 << 21
 generators:
-  suffix: { gen: int, min: 0, max: 1000, type: u32 }
-  addend: { gen: int, min: -4096, max: 4096, type: i64 }
-evidence: compare_branch.rs:173 B 000101 Jump26; compare_branch.rs:186 BL 100101 Call26; ARM ARM Unconditional branch (immediate) op bit 31
+  n: { gen: int, min: 0, max: 31, type: u32 }
+evidence: compare_branch.rs:214 BR 1101011 0000 11111; compare_branch.rs:221 BLR 1101011 0001 11111; ARM ARM Unconditional branch (register) opc bit 21
 ```
 
-## encode_bl_word_layout
+## encode_blr_neg_arity
 - Tier: 4
-- Rationale: Algebraic invariant pinning each field of the reloc-form word so a swapped opcode would fail even if llvm-mc were unavailable: bits[31:26]=100101, bits[25:0]=0 (imm26 filled later). Stronger differential already covers numeric equality on the immediate path.
-- Seed: (none)
-- Formal: ∀ s ∈ ident. let W = encode_bl([Symbol(s)]).word. W[31:26]=0b100101 ∧ W[25:0]=0.
+- Rationale: Negative/error contract: llvm-mc and gas reject bare `blr` (too few operands). ARM ARM BLR requires Rn. Stronger differential does not apply on the empty domain.
+- Seed: encode_bl_pbt::encode_bl_neg_arity
+- Formal: encode_blr([]) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_bl
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [s]
-  domain: { s: ident }
-  relation:
-    op: holds
-    expr: ((word >> 26) & 0x3F) == 0b100101 && (word & 0x3FFFFFF) == 0
-generators:
-  suffix: { gen: int, min: 0, max: 1000, type: u32 }
-evidence: compare_branch.rs:186 BL 100101 imm26; ARM ARM Unconditional branch (immediate); README.md:376 JUMP26/CALL26 encode imm26 field later
-```
-
-## encode_bl_neg_arity
-- Tier: 3
-- Rationale: Negative/error contract: BL requires a target operand. llvm-mc reports "too few operands for instruction" for bare `bl`. Stronger oracles do not apply to the missing-operand path.
-- Seed: encode_adr_pbt::encode_adr_neg_bad_operands
-- Formal: ∀ ops with |ops|=0. encode_bl(ops) is Err.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_bl
+function: encoder.compare_branch.encode_blr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: []
-  domain: { ops: empty }
+  domain: {}
   relation:
     op: throws
-    expr: encode_bl([])
-expected_error: String
+    expr: encode_blr([])
+    error: String
 generators:
   dummy: { gen: int, min: 0, max: 0, type: u32 }
-evidence: llvm-mc rejects `bl`; README.md:5-14 gas-compat; get_symbol errors when operand 0 is missing
-```
-
-## encode_bl_neg_imm_unaligned_oor
-- Tier: 3
-- Rationale: Negative/error contract from ARM ARM / llvm-mc: the PC offset must be a multiple of 4 and in [-2^27, 2^27-4]. llvm-mc rejects #1, #134217728, #-134217732. Bounds -134217728 / 134217724 and bound±4 (and unaligned 1) are sampled exactly.
-- Seed: encode_adr_pbt::encode_adr_neg_imm_range
-- Formal: ∀ imm ∈ {-134217732, -134217729, -1, 1, 2, 3, 5, 134217725, 134217728, i64::MIN, i64::MAX}. encode_bl([Imm(imm)]) is Err.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_bl
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [imm]
-  domain: { imm: unaligned_or_out_of_26bit_range }
-  relation:
-    op: throws
-    expr: encode_bl([Imm(imm)])
 expected_error: String
-generators:
-  imm: { gen: int, min: -134217732, max: 134217728, type: i64 }
-evidence: llvm-mc rejects `bl #1` and `bl #134217728`; ARM ARM imm26 range ±128MB, offset multiple of 4; README.md:5-14 gas-compat
+evidence: llvm-mc -triple=aarch64 rejects bare blr (too few operands); assembler README.md:5-14 gas-compat; ARM ARM BLR requires Xn
 ```
 
-## encode_bl_neg_extra_operand
-- Tier: 3
-- Rationale: Negative/error contract: BL takes a single target. llvm-mc rejects `bl foo, x0`. Stronger differential does not apply to invalid encodings.
-- Seed: encode_bics_pbt::encode_bics_neg_extra_operand
-- Formal: ∀ s ∈ ident, ∀ extra ∈ {Reg, Imm, Symbol, Mem}. encode_bl([Symbol(s), extra]) is Err.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: suffix=0, which=0 (bl labl0, x0)
-- Bug report: pbt-out/bug_reports/encode_bl_extra_operand.md
-
-```property
-function: encoder.compare_branch.encode_bl
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [s, extra]
-  domain: { extra: non_empty_second_operand }
-  relation:
-    op: throws
-    expr: encode_bl([Symbol(s), extra])
-expected_error: String
-generators:
-  suffix: { gen: int, min: 0, max: 1000, type: u32 }
-  which: { gen: int, min: 0, max: 3, type: u32 }
-evidence: llvm-mc rejects `bl foo, x0`; README.md:5-14 gas-compat; ARM ARM BL has a single label/imm operand
-```
-
-## encode_bl_neg_bad_operand
-- Tier: 3
-- Rationale: Negative/error contract: Mem/Shift/Extend/RegArrangement/Modifier are not BL targets. llvm-mc rejects `bl :lo12:foo` and register-offset memory; ARM ARM BL operand is a label or PC offset. Modifier is accepted by get_symbol (kind dropped) which would violate the gas-compat contract.
-- Seed: encode_adr_pbt::encode_adr_neg_modifier
-- Formal: ∀ bad ∈ {Mem, Shift, Extend, RegArrangement, Modifier, ModifierOffset}. encode_bl([bad]) is Err.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: which=4 (Operand::Modifier { kind: lo12, symbol: foo })
-- Bug report: pbt-out/bug_reports/encode_bl_modifier.md
-
-```property
-function: encoder.compare_branch.encode_bl
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [bad]
-  domain: { bad: Mem|Shift|Extend|RegArrangement|Modifier|ModifierOffset }
-  relation:
-    op: throws
-    expr: encode_bl([bad])
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 5, type: u32 }
-evidence: llvm-mc rejects `bl :lo12:foo`; ARM ARM BL operand is label or encodable integer pc offset; README.md:5-14 gas-compat
-```
-
-## encode_bl_symbol_misclassified
+## encode_blr_neg_w_reg
 - Tier: 4
-- Rationale: Algebraic invariant covering get_symbol parser-misclassification arms (coverage sweep). Doc evidence: encoder/mod.rs:982-986 states that symbol names colliding with register/cond/barrier names are valid symbols in context. llvm-mc accepts `bl eq` and `bl sy` as Call26 labels. Stronger differential via -show-encoding is unavailable (A placeholders).
-- Seed: encode_adr_pbt::encode_adr_symbol_misclassified
-- Formal: ∀ which ∈ {Reg,Cond,Barrier}, ∀ name ∈ {eq,ne,lt,gt,sy,ish,st,ld}. encode_bl([which(name)]) = WordWithReloc{word:0x94000000, Call26, name, 0}.
+- Rationale: Negative/error contract: ARM ARM Rn is a 64-bit GPR; llvm-mc rejects `blr wN` / `blr wzr` / `blr wsp`. Gas-compat assembler must Err, not silently encode as Xn. Stronger differential does not apply on the invalid domain.
+- Seed: encode_adr_pbt W-register rejection
+- Formal: ∀ n ∈ {0..30} ∪ {wzr, wsp}. encode_blr([Reg(wn)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: n = 0 (blr w0) -> Ok(Word(0xd63f0000))
+- Bug report: pbt-out/bug_reports/encode_blr_w_reg.md
+
+```property
+function: encoder.compare_branch.encode_blr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n]
+  domain: { n: w_reg_or_wzr_or_wsp }
+  relation:
+    op: throws
+    expr: encode_blr([Reg(wn)])
+    error: String
+generators:
+  n: { gen: int, min: 0, max: 32, type: u32 }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects blr w0 / wzr / wsp; ARM ARM Unconditional branch (register) Rn is Xn; README.md:5-14 gas-compat
+```
+
+## encode_blr_neg_extra_operand
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc rejects a second operand (`blr x0, x1`, `blr x0, #0`). Gas-compat assembler must Err rather than silently drop extras. Stronger differential does not apply on the invalid domain.
+- Seed: encode_bl_pbt::encode_bl_neg_extra_operand
+- Formal: ∀ n ∈ 0..30, ∀ extra ∈ {Reg, Imm, Symbol, Mem}. encode_blr([Reg(xn), extra]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: n = 0, which = 0 ([Reg("x0"), Reg("x1")]) -> Ok(Word(0xd63f0000))
+- Bug report: pbt-out/bug_reports/encode_blr_extra_operand.md
+
+```property
+function: encoder.compare_branch.encode_blr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, extra]
+  domain: { n: 0..=30, extra: extra_operand }
+  relation:
+    op: throws
+    expr: encode_blr([Reg(xn), extra])
+    error: String
+generators:
+  n: { gen: int, min: 0, max: 30, type: u32 }
+  which: { gen: int, min: 0, max: 3, type: u32 }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects blr x0, x1 and blr x0, #0 (invalid operand); README.md:5-14 gas-compat
+```
+
+## encode_blr_neg_bad_operand
+- Tier: 4
+- Rationale: Negative/error contract: BLR takes a 64-bit GPR, not Imm/Mem/Shift/Extend/RegArrangement/Modifier/Symbol. llvm-mc rejects `blr #0` and `blr foo`. Stronger differential does not apply on the invalid domain.
+- Seed: encode_bl_pbt::encode_bl_neg_bad_operand
+- Formal: ∀ op ∈ {Imm, Mem, Shift, Extend, RegArrangement, Modifier, Symbol, Label}. encode_blr([op]) is Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_bl
-oracle: algebraic.invariant
+function: encoder.compare_branch.encode_blr
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, name]
-  domain: { which: {Reg,Cond,Barrier}, name: {eq,ne,lt,gt,sy,ish,st,ld} }
+  vars: [op]
+  domain: { op: non_gpr_operand }
   relation:
-    op: holds
-    expr: encode_bl([which(name)]) is Call26 reloc with symbol=name addend=0 word=0x94000000
+    op: throws
+    expr: encode_blr([op])
+    error: String
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  name: { gen: oneof, options: [eq, ne, lt, gt, sy, ish, st, ld] }
-evidence: encoder/mod.rs:982-986 parser-misclassified Reg/Cond/Barrier are valid symbols in context; llvm-mc accepts `bl eq` as Call26
+  which: { gen: int, min: 0, max: 7, type: u32 }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects blr #0 and blr foo; ARM ARM BLR requires Xn; README.md:5-14 gas-compat
+```
+
+## encode_blr_neg_wrong_reg_class
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc rejects SP (register 31 is XZR, not SP for BLR), FP/SIMD names (d/s/q/v/h/b), and invalid names (x32, foo, empty, r0). parse_reg_num currently maps those prefixes; gas-compat requires Err. Stronger differential does not apply on the invalid domain. Bounds x30 (valid) vs x32 (invalid) and n=31 as xzr (valid) vs sp (invalid) are sampled exactly.
+- Seed: encode_adc_pbt invalid register names
+- Formal: ∀ name ∈ {sp, wsp} ∪ {p+n | p∈{d,s,q,v,h,b}, n∈0..31} ∪ {x32, w32, foo, "", r0, x}. encode_blr([Reg(name)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: which = 0, n = 0 (blr sp) -> Ok(Word(0xd63f03e0)); also blr d0 -> Ok(Word(0xd63f0000))
+- Bug report: pbt-out/bug_reports/encode_blr_sp_as_zr.md; pbt-out/bug_reports/encode_blr_fp_reg.md
+
+```property
+function: encoder.compare_branch.encode_blr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [name]
+  domain: { name: sp_or_fp_or_invalid }
+  relation:
+    op: throws
+    expr: encode_blr([Reg(name)])
+    error: String
+generators:
+  which: { gen: int, min: 0, max: 8, type: u32 }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects blr sp / d0 / x32 / r0 / foo; ARM ARM Rn is Xn not SP; README.md:5-14 gas-compat
+```
+
+## encode_blr_neg_invalid_name
+- Tier: 4
+- Rationale: Coverage-sweep of get_reg's parse_reg_num None arm. Names that are not a valid register encoding (x32, w32, foo, empty, r0, x, x-1, x99) must Err. Distinct from SP/FP which parse_reg_num currently accepts (filed as bugs). llvm-mc rejects these names. Stronger differential does not apply on the invalid domain.
+- Seed: encode_adc_pbt invalid register names
+- Formal: ∀ name ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_blr([Reg(name)]) is Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_blr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [name]
+  domain: { name: invalid_reg_name }
+  relation:
+    op: throws
+    expr: encode_blr([Reg(name)])
+    error: String
+generators:
+  which: { gen: int, min: 0, max: 7, type: u32 }
+expected_error: String
+evidence: llvm-mc -triple=aarch64 rejects blr x32 / foo / r0; parse_reg_num returns None for those names; README.md:5-14 gas-compat
 ```

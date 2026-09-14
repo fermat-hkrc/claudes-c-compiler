@@ -1,19 +1,19 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-11 12:33 (campaign: English campaign)
-> Files: 5/5 scanned (100%) | Functions: 8/164 total | PBT candidates: 8 | Tested: 8 (100%) | 0 pass, 8 fail
+> Last updated: 2026-09-14 01:18 (campaign: English campaign)
+> Files: 6/6 scanned (100%) | Functions: 9/184 total | PBT candidates: 9 | Tested: 9 (100%) | 0 pass, 9 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 5 |
-| Files scanned | 5 / 5 (100%) |
-| Total functions (all files) | 164 |
-| PBT candidates (from FUNCTION_INDEX) | 8 |
-| **Tested (of PBT candidates)** | **8 / 8 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 8 / 0 |
-| **Overall (tested / all functions)** | **8 / 164 (5%)** |
+| Total source files | 6 |
+| Files scanned | 6 / 6 (100%) |
+| Total functions (all files) | 184 |
+| PBT candidates (from FUNCTION_INDEX) | 9 |
+| **Tested (of PBT candidates)** | **9 / 9 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 9 / 0 |
+| **Overall (tested / all functions)** | **9 / 184 (5%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,19 +21,20 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 8 | 8 | 0 | 100% |
+|  | 9 | 9 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 8 | 8 | 0 | 100% |
+| unknown | 9 | 9 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
+| compare_branch.rs | 21 | 1 | 1 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 4 | 4 | 100% | covered |
 | load_store.rs | 20 | 1 | 1 | 100% | covered |
@@ -54,3 +55,4 @@
 | encode_bic | data_processing.rs |
 | encode_neon_three_diff_narrow | neon.rs |
 | encode_bics | data_processing.rs |
+| encode_bl | compare_branch.rs |

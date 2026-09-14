@@ -1,4 +1,4 @@
-> Total files: 6 | Total functions: 184 | PBT candidates: 9 | Excluded: 175
+> Total files: 6 | Total functions: 184 | PBT candidates: 10 | Excluded: 174
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -180,7 +180,7 @@
 | encode_bl | compare_branch.rs | 184 | function | yes | - |
 | encode_cond_branch | compare_branch.rs | 197 | function | no | out of campaign scope |
 | encode_br | compare_branch.rs | 212 | function | no | out of campaign scope |
-| encode_blr | compare_branch.rs | 219 | function | no | out of campaign scope |
+| encode_blr | compare_branch.rs | 219 | function | yes | - |
 | encode_ret | compare_branch.rs | 226 | function | no | out of campaign scope |
 | encode_cbz | compare_branch.rs | 237 | function | no | out of campaign scope |
 | encode_tbz | compare_branch.rs | 254 | function | no | out of campaign scope |
