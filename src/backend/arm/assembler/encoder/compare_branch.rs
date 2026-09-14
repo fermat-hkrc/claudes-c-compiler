@@ -2671,3 +2671,770 @@ mod encode_cbz_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_ccmp_ccmn_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler (imm and register forms);
+    //   algebraic.invariant (word layout); algebraic.metamorphic (CCMP vs CCMN);
+    //   negative_error (arity / imm5-nzcv range / extra / wrong class).
+    // Evidence: src/backend/arm/assembler/README.md:5-14 gas-compat;
+    //   README.md:218 Compare lists ccmp; encoder/mod.rs:1-7 32-bit AArch64 words;
+    //   encoder/mod.rs:304-305 ccmp/ccmn dispatch; compare_branch.rs:53-54
+    //   CCMP bit 30 = 1, CCMN bit 30 = 0; parser.rs:1987 ccmp x10, x13, 0, eq;
+    //   ARM ARM Conditional compare (immediate): sf op S 11010010 imm5 cond 1 0 Rn 0 nzcv;
+    //   ARM ARM Conditional compare (register): sf op S 11010010 Rm cond 0 0 Rn 0 nzcv.
+    // Stronger considered:
+    //   - State machine: rejected — encode_ccmp_ccmn is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no CCMP/CCMN decoder
+    //   - encode_cmp / encode_cmn as differential sibling: rejected — different job
+    //     (SUBS/ADDS XZR aliases, no cond/nzcv)
+    // Weaker available: algebraic.invariant (opcode/sf/op/S/o2/Rn/Rm/imm5/cond/nzcv),
+    //   algebraic.metamorphic (bit-30 XOR), negative_error (arity/range/extra/SP/FP/mixed)
+    // Differential: candidate=encode_ccmp_ccmn, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=[Reg(rn), Imm(imm5), Imm(nzcv), Cond(c)] <-> `ccmp/ccmn rn, #imm5, #nzcv, c`;
+    //   [Reg(rn), Reg(rm), Imm(nzcv), Cond(c)] <-> `ccmp/ccmn rn, rm, #nzcv, c`
+
+    use super::encode_ccmp_ccmn;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const CONDS: [&str; 18] = [
+        "eq", "ne", "cs", "hs", "cc", "lo", "mi", "pl",
+        "vs", "vc", "hi", "ls", "ge", "lt", "gt", "le", "al", "nv",
+    ];
+    const COND_CANON: [&str; 16] = [
+        "eq", "ne", "cs", "cc", "mi", "pl", "vs", "vc",
+        "hi", "ls", "ge", "lt", "gt", "le", "al", "nv",
+    ];
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    fn mnemonic(is_ccmp: bool) -> &'static str {
+        if is_ccmp { "ccmp" } else { "ccmn" }
+    }
+
+    fn gpr(is_64: bool, n: u32) -> String {
+        let n = n.min(31);
+        if is_64 {
+            if n == 31 {
+                "xzr".to_string()
+            } else {
+                format!("x{}", n)
+            }
+        } else if n == 31 {
+            "wzr".to_string()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn gpr_strat() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("x0".to_string()),
+            Just("x30".to_string()),
+            Just("xzr".to_string()),
+            Just("lr".to_string()),
+            Just("X0".to_string()),
+            Just("w0".to_string()),
+            Just("w30".to_string()),
+            Just("wzr".to_string()),
+            (0u32..=31).prop_map(|n| gpr(true, n)),
+            (0u32..=31).prop_map(|n| gpr(false, n)),
+        ]
+    }
+
+    fn same_width_pair() -> impl Strategy<Value = (String, String)> {
+        (any::<bool>(), 0u32..=31, 0u32..=31).prop_map(|(is_64, n, m)| (gpr(is_64, n), gpr(is_64, m)))
+    }
+
+    fn imm5_strat() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(1i64),
+            Just(15i64),
+            Just(16i64),
+            Just(30i64),
+            Just(31i64),
+            0i64..=31,
+        ]
+    }
+
+    fn nzcv_strat() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(0i64),
+            Just(1i64),
+            Just(14i64),
+            Just(15i64),
+            0i64..=15,
+        ]
+    }
+
+    fn cond_strat() -> impl Strategy<Value = String> {
+        prop::sample::select(CONDS.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    fn oor_imm5() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(-1i64),
+            Just(-2i64),
+            Just(32i64),
+            Just(33i64),
+            Just(64i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            32i64..=256,
+            -256i64..=-1,
+        ]
+    }
+
+    fn oor_nzcv() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(-1i64),
+            Just(-2i64),
+            Just(16i64),
+            Just(17i64),
+            Just(255i64),
+            Just(i64::MIN),
+            Just(i64::MAX),
+            16i64..=256,
+            -256i64..=-1,
+        ]
+    }
+
+    fn extra_operand(which: u32) -> Operand {
+        match which % 6 {
+            0 => Operand::Reg("x1".into()),
+            1 => Operand::Imm(0),
+            2 => Operand::Symbol("bar".into()),
+            3 => Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+            4 => Operand::Cond("eq".into()),
+            _ => Operand::Shift {
+                kind: "lsl".into(),
+                amount: 0,
+            },
+        }
+    }
+
+    fn wrong_reg_name(which: u32, n: u32) -> String {
+        let n = n.min(31);
+        match which % 16 {
+            0 => "sp".to_string(),
+            1 => "wsp".to_string(),
+            2 => format!("d{}", n),
+            3 => format!("s{}", n),
+            4 => format!("q{}", n),
+            5 => format!("v{}", n),
+            6 => format!("h{}", n),
+            7 => format!("b{}", n),
+            8 => "x32".to_string(),
+            9 => "w32".to_string(),
+            10 => "foo".to_string(),
+            11 => "".to_string(),
+            12 => "r0".to_string(),
+            13 => "x".to_string(),
+            14 => "x-1".to_string(),
+            _ => "x99".to_string(),
+        }
+    }
+
+    fn word_of(r: Result<EncodeResult, String>) -> Result<u32, TestCaseError> {
+        match r {
+            Ok(EncodeResult::Word(w)) => Ok(w),
+            other => Err(TestCaseError::fail(format!("expected Word, got {:?}", other))),
+        }
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ccmp_ccmn_kat_llvm_mc_ccmp_imm() {
+        let want = 0xfa400800u32;
+        let mc = llvm_mc_word("ccmp x0, #0, #0, eq").expect("llvm-mc KAT");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+        ];
+        match encode_ccmp_ccmn(&ops, true) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for ccmp x0, #0, #0, eq, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_ccmp_ccmn_kat_llvm_mc_ccmp_reg() {
+        let want = 0xfa410000u32;
+        let mc = llvm_mc_word("ccmp x0, x1, #0, eq").expect("llvm-mc KAT reg");
+        assert_eq!(mc, want, "llvm-mc KAT reg mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+        ];
+        match encode_ccmp_ccmn(&ops, true) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for ccmp x0, x1, #0, eq, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    #[test]
+    fn encode_ccmp_ccmn_kat_llvm_mc_ccmn_imm() {
+        let want = 0xba400800u32;
+        let mc = llvm_mc_word("ccmn x0, #0, #0, eq").expect("llvm-mc KAT ccmn");
+        assert_eq!(mc, want, "llvm-mc KAT ccmn mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+        ];
+        match encode_ccmp_ccmn(&ops, false) {
+            Ok(EncodeResult::Word(w)) => assert_eq!(w, want),
+            other => panic!(
+                "SUT KAT: expected Word({:#010x}) for ccmn x0, #0, #0, eq, got {:?}",
+                want, other
+            ),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_diff_imm_llvm_mc(
+            rn in gpr_strat(),
+            is_ccmp in any::<bool>(),
+            imm5 in imm5_strat(),
+            nzcv in nzcv_strat(),
+            cond in cond_strat(),
+        ) {
+            let asm = format!(
+                "{} {}, #{}, #{}, {}",
+                mnemonic(is_ccmp), rn, imm5, nzcv, cond
+            );
+            let ops = [
+                Operand::Reg(rn.clone()),
+                Operand::Imm(imm5),
+                Operand::Imm(nzcv),
+                Operand::Cond(cond.clone()),
+            ];
+            let sut = word_of(encode_ccmp_ccmn(&ops, is_ccmp))?;
+            let mc = llvm_mc_word(&asm).map_err(|e| TestCaseError::fail(format!(
+                "llvm-mc rejected valid {}: {}",
+                asm, e
+            )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_diff_reg_llvm_mc(
+            pair in same_width_pair(),
+            is_ccmp in any::<bool>(),
+            nzcv in nzcv_strat(),
+            cond in cond_strat(),
+        ) {
+            let (rn, rm) = pair;
+            let asm = format!(
+                "{} {}, {}, #{}, {}",
+                mnemonic(is_ccmp), rn, rm, nzcv, cond
+            );
+            let ops = [
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                Operand::Imm(nzcv),
+                Operand::Cond(cond.clone()),
+            ];
+            let sut = word_of(encode_ccmp_ccmn(&ops, is_ccmp))?;
+            let mc = llvm_mc_word(&asm).map_err(|e| TestCaseError::fail(format!(
+                "llvm-mc rejected valid {}: {}",
+                asm, e
+            )))?;
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_meta_ccmp_vs_ccmn(
+            rn in gpr_strat(),
+            use_imm in any::<bool>(),
+            rm_n in 0u32..=31,
+            imm5 in imm5_strat(),
+            nzcv in nzcv_strat(),
+            cond in cond_strat(),
+        ) {
+            let ops = if use_imm {
+                vec![
+                    Operand::Reg(rn.clone()),
+                    Operand::Imm(imm5),
+                    Operand::Imm(nzcv),
+                    Operand::Cond(cond.clone()),
+                ]
+            } else {
+                let is_64 = rn.eq_ignore_ascii_case("xzr")
+                    || rn.eq_ignore_ascii_case("lr")
+                    || rn.to_ascii_lowercase().starts_with('x');
+                vec![
+                    Operand::Reg(rn.clone()),
+                    Operand::Reg(gpr(is_64, rm_n)),
+                    Operand::Imm(nzcv),
+                    Operand::Cond(cond.clone()),
+                ]
+            };
+            let w_ccmp = word_of(encode_ccmp_ccmn(&ops, true))?;
+            let w_ccmn = word_of(encode_ccmp_ccmn(&ops, false))?;
+            prop_assert_eq!(
+                w_ccmp ^ w_ccmn,
+                1u32 << 30,
+                "CCMP XOR CCMN must be bit 30 (ccmp={:#010x} ccmn={:#010x})",
+                w_ccmp, w_ccmn
+            );
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_word_layout(
+            rn_num in 0u32..=31,
+            rm_num in 0u32..=31,
+            is_64 in any::<bool>(),
+            is_ccmp in any::<bool>(),
+            use_imm in any::<bool>(),
+            imm5 in imm5_strat(),
+            nzcv in nzcv_strat(),
+            cond_val in 0u32..=15,
+        ) {
+            let rn = gpr(is_64, rn_num);
+            let cond = COND_CANON[cond_val as usize].to_string();
+            let ops = if use_imm {
+                vec![
+                    Operand::Reg(rn),
+                    Operand::Imm(imm5),
+                    Operand::Imm(nzcv),
+                    Operand::Cond(cond),
+                ]
+            } else {
+                vec![
+                    Operand::Reg(rn),
+                    Operand::Reg(gpr(is_64, rm_num)),
+                    Operand::Imm(nzcv),
+                    Operand::Cond(cond),
+                ]
+            };
+            let w = word_of(encode_ccmp_ccmn(&ops, is_ccmp))?;
+            let sf = if is_64 { 1u32 } else { 0u32 };
+            let op = if is_ccmp { 1u32 } else { 0u32 };
+            prop_assert_eq!(w >> 31, sf, "sf [31]");
+            prop_assert_eq!((w >> 30) & 1, op, "op [30]");
+            prop_assert_eq!((w >> 29) & 1, 1u32, "S [29]");
+            prop_assert_eq!((w >> 21) & 0xFF, 0b11010010u32, "opcode [28:21]");
+            if use_imm {
+                prop_assert_eq!((w >> 16) & 0x1F, imm5 as u32, "imm5 [20:16]");
+                prop_assert_eq!((w >> 11) & 1, 1u32, "o2 [11] immediate");
+            } else {
+                prop_assert_eq!((w >> 16) & 0x1F, rm_num, "Rm [20:16]");
+                prop_assert_eq!((w >> 11) & 1, 0u32, "o2 [11] register");
+            }
+            prop_assert_eq!((w >> 12) & 0xF, cond_val, "cond [15:12]");
+            prop_assert_eq!((w >> 10) & 1, 0u32, "bit 10");
+            prop_assert_eq!((w >> 5) & 0x1F, rn_num, "Rn [9:5]");
+            prop_assert_eq!((w >> 4) & 1, 0u32, "bit 4");
+            prop_assert_eq!(w & 0xF, nzcv as u32, "nzcv [3:0]");
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_arity(is_ccmp in any::<bool>(), n in 0u32..=3) {
+            let full = [
+                Operand::Reg("x0".into()),
+                Operand::Imm(0),
+                Operand::Imm(0),
+                Operand::Cond("eq".into()),
+            ];
+            let ops = &full[..n as usize];
+            prop_assert!(
+                encode_ccmp_ccmn(ops, is_ccmp).is_err(),
+                "{} with {} operands must Err (llvm-mc: too few operands)",
+                mnemonic(is_ccmp), n
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_imm5_nzcv_oor(
+            rn in gpr_strat(),
+            is_ccmp in any::<bool>(),
+            cond in cond_strat(),
+            kind in 0u32..=2,
+            bad_imm5 in oor_imm5(),
+            bad_nzcv in oor_nzcv(),
+            good_imm5 in imm5_strat(),
+            good_nzcv in nzcv_strat(),
+        ) {
+            let (imm5, nzcv) = match kind {
+                0 => (bad_imm5, good_nzcv),
+                1 => (good_imm5, bad_nzcv),
+                _ => (bad_imm5, bad_nzcv),
+            };
+            prop_assume!(!(0..=31).contains(&imm5) || !(0..=15).contains(&nzcv));
+            let ops = [
+                Operand::Reg(rn.clone()),
+                Operand::Imm(imm5),
+                Operand::Imm(nzcv),
+                Operand::Cond(cond.clone()),
+            ];
+            prop_assert!(
+                encode_ccmp_ccmn(&ops, is_ccmp).is_err(),
+                "{} {}, #{}, #{}, {} must Err (imm5 in [0,31], nzcv in [0,15])",
+                mnemonic(is_ccmp), rn, imm5, nzcv, cond
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_extra_operand(
+            rn in gpr_strat(),
+            is_ccmp in any::<bool>(),
+            imm5 in imm5_strat(),
+            nzcv in nzcv_strat(),
+            cond in cond_strat(),
+            which in 0u32..=5,
+        ) {
+            let extra = extra_operand(which);
+            let ops = [
+                Operand::Reg(rn),
+                Operand::Imm(imm5),
+                Operand::Imm(nzcv),
+                Operand::Cond(cond),
+                extra,
+            ];
+            prop_assert!(
+                encode_ccmp_ccmn(&ops, is_ccmp).is_err(),
+                "{} with a 5th operand (which={}) must Err (llvm-mc: invalid operand)",
+                mnemonic(is_ccmp), which
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_wrong_reg_class(
+            which in 0u32..=15,
+            n in 0u32..=31,
+            is_ccmp in any::<bool>(),
+        ) {
+            let name = wrong_reg_name(which, n);
+            let ops = [
+                Operand::Reg(name.clone()),
+                Operand::Imm(0),
+                Operand::Imm(0),
+                Operand::Cond("eq".into()),
+            ];
+            prop_assert!(
+                encode_ccmp_ccmn(&ops, is_ccmp).is_err(),
+                "{} {} must Err (llvm-mc rejects SP / FP / invalid names)",
+                mnemonic(is_ccmp), name
+            );
+        }
+
+        // Oracle: negative_error (mixed-width Rn/Rm — same property)
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_mixed_width(
+            n in 0u32..=30,
+            m in 0u32..=30,
+            x_first in any::<bool>(),
+            is_ccmp in any::<bool>(),
+            nzcv in nzcv_strat(),
+            cond in cond_strat(),
+        ) {
+            let (rn, rm) = if x_first {
+                (format!("x{}", n), format!("w{}", m))
+            } else {
+                (format!("w{}", n), format!("x{}", m))
+            };
+            let ops = [
+                Operand::Reg(rn.clone()),
+                Operand::Reg(rm.clone()),
+                Operand::Imm(nzcv),
+                Operand::Cond(cond),
+            ];
+            prop_assert!(
+                encode_ccmp_ccmn(&ops, is_ccmp).is_err(),
+                "{} {}, {} mixed width must Err (llvm-mc rejects mixed x/w)",
+                mnemonic(is_ccmp), rn, rm
+            );
+        }
+
+        // Oracle: negative_error (coverage sweep: encode_cond None arm)
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_invalid_cond(
+            rn in gpr_strat(),
+            is_ccmp in any::<bool>(),
+            use_imm in any::<bool>(),
+            which in 0u32..=5,
+        ) {
+            let bad = match which {
+                0 => "xx",
+                1 => "foo",
+                2 => "",
+                3 => "eqz",
+                4 => "n",
+                _ => "zzzz",
+            };
+            let ops = if use_imm {
+                vec![
+                    Operand::Reg(rn),
+                    Operand::Imm(0),
+                    Operand::Imm(0),
+                    Operand::Cond(bad.into()),
+                ]
+            } else {
+                vec![
+                    Operand::Reg(rn.clone()),
+                    Operand::Reg(rn),
+                    Operand::Imm(0),
+                    Operand::Cond(bad.into()),
+                ]
+            };
+            prop_assert!(
+                encode_ccmp_ccmn(&ops, is_ccmp).is_err(),
+                "{} with cond '{}' must Err (llvm-mc: invalid condition code)",
+                mnemonic(is_ccmp), bad
+            );
+        }
+
+        // Oracle: negative_error (coverage sweep: parse_reg_num None on Rm)
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_invalid_rm(
+            n in 0u32..=30,
+            is_ccmp in any::<bool>(),
+            which in 0u32..=7,
+        ) {
+            let rm = match which {
+                0 => "x32",
+                1 => "w32",
+                2 => "foo",
+                3 => "",
+                4 => "r0",
+                5 => "x",
+                6 => "x-1",
+                _ => "x99",
+            };
+            let ops = [
+                Operand::Reg(format!("x{}", n)),
+                Operand::Reg(rm.to_string()),
+                Operand::Imm(0),
+                Operand::Cond("eq".into()),
+            ];
+            prop_assert!(
+                encode_ccmp_ccmn(&ops, is_ccmp).is_err(),
+                "{} x{}, {} must Err (invalid rm)",
+                mnemonic(is_ccmp), n, rm
+            );
+        }
+
+        // Oracle: negative_error (coverage sweep: neither Imm nor Reg at op1 / non-Imm nzcv / non-Cond)
+        // Target: encoder.compare_branch.encode_ccmp_ccmn
+        #[test]
+        fn encode_ccmp_ccmn_neg_bad_operand_kind(
+            is_ccmp in any::<bool>(),
+            slot in 1u32..=3,
+            which in 0u32..=5,
+        ) {
+            let bad = match which {
+                0 => Operand::Mem {
+                    base: "x0".into(),
+                    offset: 0,
+                },
+                1 => Operand::Symbol("foo".into()),
+                2 => Operand::Shift {
+                    kind: "lsl".into(),
+                    amount: 0,
+                },
+                3 => Operand::Extend {
+                    kind: "sxtw".into(),
+                    amount: 0,
+                },
+                4 => Operand::Label("L".into()),
+                _ => Operand::Barrier("sy".into()),
+            };
+            let mut ops = vec![
+                Operand::Reg("x0".into()),
+                Operand::Imm(0),
+                Operand::Imm(0),
+                Operand::Cond("eq".into()),
+            ];
+            ops[slot as usize] = bad;
+            prop_assert!(
+                encode_ccmp_ccmn(&ops, is_ccmp).is_err(),
+                "{} with bad kind at slot {} (which={}) must Err",
+                mnemonic(is_ccmp), slot, which
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_ccmp_ccmn_regression_imm5_oor() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Imm(-1),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_ccmp_ccmn(&ops, false).is_err(),
+            "ccmn x0, #-1, #0, eq must Err; llvm-mc rejects imm5 outside [0, 31]"
+        );
+    }
+
+    #[test]
+    fn test_encode_ccmp_ccmn_regression_nzcv_oor() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Imm(0),
+            Operand::Imm(16),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_ccmp_ccmn(&ops, true).is_err(),
+            "ccmp x0, #0, #16, eq must Err; llvm-mc rejects nzcv outside [0, 15]"
+        );
+    }
+
+    #[test]
+    fn test_encode_ccmp_ccmn_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+            Operand::Reg("x1".into()),
+        ];
+        assert!(
+            encode_ccmp_ccmn(&ops, false).is_err(),
+            "ccmn x0, #0, #0, eq, x1 must Err; llvm-mc rejects a fifth operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_ccmp_ccmn_regression_sp() {
+        let ops = [
+            Operand::Reg("sp".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_ccmp_ccmn(&ops, false).is_err(),
+            "ccmn sp, #0, #0, eq must Err; llvm-mc rejects SP (register 31 is XZR)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ccmp_ccmn_regression_fp_reg() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_ccmp_ccmn(&ops, true).is_err(),
+            "ccmp d0, #0, #0, eq must Err; llvm-mc rejects FP/SIMD Rn"
+        );
+    }
+
+    #[test]
+    fn test_encode_ccmp_ccmn_regression_mixed_width() {
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Reg("x0".into()),
+            Operand::Imm(0),
+            Operand::Cond("eq".into()),
+        ];
+        assert!(
+            encode_ccmp_ccmn(&ops, false).is_err(),
+            "ccmn w0, x0, #0, eq must Err; llvm-mc rejects mixed x/w"
+        );
+    }
+}

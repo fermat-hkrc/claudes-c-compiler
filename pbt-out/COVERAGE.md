@@ -15,3 +15,4 @@
 | encode_br | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 2 passing KAT + 4 failing regression witnesses) |
 | encode_branch | compare_branch.rs | compare_branch.rs | cargo test --lib | 6 passing / 3 failing properties (plus 1 passing KAT + 2 failing KAT + 3 failing regression witnesses) |
 | encode_cbz | compare_branch.rs | compare_branch.rs | cargo test --lib | 7 passing / 3 failing properties (plus 1 passing KAT + 3 failing KAT + 4 failing regression witnesses) |
+| encode_ccmp_ccmn | compare_branch.rs | compare_branch.rs | cargo test --lib | 8 passing / 4 failing properties (plus 3 passing KAT + 6 failing regression witnesses) |

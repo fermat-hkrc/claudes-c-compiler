@@ -364,3 +364,35 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of get_symbol (Reg/Cond/Barrier via encode_cbz_symbol_misclassified; other kinds via encode_cbz_neg_bad_label_kind).
 
+---
+
+# Confirmed invariants (encode_ccmp_ccmn)
+
+- Same-width GPR CCMP/CCMN immediate form (`Rn, #imm5, #nzcv, cond` with imm5 in [0,31], nzcv in [0,15], all 16 cond codes plus hs/cs/lo/cc aliases) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Same-width GPR CCMP/CCMN register form (`Rn, Rm, #nzcv, cond`) matches llvm-mc (1000 cases).
+- encode_ccmp_ccmn(ops, true).word XOR encode_ccmp_ccmn(ops, false).word = 1<<30 (ARM ARM op bit) for both forms (1000 cases).
+- Success-path word: sf at 31, op at 30, S=1 at 29, bits [28:21]=0b11010010, cond at [15:12], Rn at [9:5], nzcv at [3:0], bit 10=0, bit 4=0; o2 at 11 is 1 for immediate (imm5 at [20:16]) and 0 for register (Rm at [20:16]).
+- Fewer than 4 operands always Err.
+- Invalid condition names (xx, foo, empty, eqz, n, zzzz) always Err.
+- Invalid Rm names (x32, w32, foo, empty, r0, x, x-1, x99) always Err.
+- Mem / Symbol / Shift / Extend / Label / Barrier in slots 1, 2, or 3 always Err.
+- Known-answer: `ccmp x0, #0, #0, eq` encodes as 0xfa400800; `ccmp x0, x1, #0, eq` as 0xfa410000; `ccmn x0, #0, #0, eq` as 0xba400800.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- CCMP/CCMN register 31 is XZR/WZR, never SP/WSP (llvm-mc rejects `ccmp sp, ...` and `ccmp wsp, ...`).
+- CCMP/CCMN takes Wt/Xt only (llvm-mc rejects `ccmp d0, ...`).
+- imm5 unsigned [0, 31]; nzcv unsigned [0, 15]; llvm-mc rejects #-1, #32, #16.
+- llvm-mc rejects mixed x/w (`ccmp x0, w1` / `ccmn w0, x0`) and a fifth operand.
+
+## Quirks
+
+- imm5 is stored as `*imm5 as u32 & 0x1F` and nzcv as `*nzcv as u32 & 0xF`, so out-of-range values are truncated (see bugs).
+- Extra operands beyond index 3 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so `ccmp sp, ...` encodes as `ccmp xzr, ...` (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as 32-bit GPRs (see bugs).
+- sf is taken only from operand 0; Rm width is never checked, so mixed x/w encodes (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (encode_cond None, parse_reg_num None on Rm, unsupported operand kinds).
+

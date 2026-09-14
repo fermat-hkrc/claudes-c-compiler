@@ -1,270 +1,341 @@
-# Properties: encode_cbz
+# Properties: encode_ccmp_ccmn
 
-## encode_cbz_diff_imm_llvm_mc
+## encode_ccmp_ccmn_diff_imm_llvm_mc
 - Tier: 2
-- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler) for the ARM ARM immediate form `cbz/cbnz Rt, #imm`. State machine rejected (pure function, no lifecycle). In-tree CBZ decoder does not exist so algebraic round-trip is unavailable. encode_tbz / encode_cond_branch are different jobs (test-bit / B.cond) and fail the same-job sibling gate as a differential reference. Doc evidence: assembler README gas-compat; ARM ARM Compare and branch (immediate) sf 011010 op imm19 Rt; README CondBr19 for CBZ/CBNZ.
-- Seed: src/backend/arm/assembler/encoder/compare_branch.rs encode_branch_pbt::encode_branch_diff_imm_llvm_mc
-- Formal: ∀ rt ∈ {x0..x30,xzr,lr,w0..w30,wzr}, is_nz ∈ {false,true}, imm ∈ {k*4 | k ∈ ℤ, -2^20 ≤ imm ≤ 2^20-4}. encode_cbz([Reg(rt), Imm(imm)], is_nz) = Word(llvm-mc(mnemonic(is_nz) + " " + rt + ", #" + imm)).
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent AArch64 assembler) for the ARM ARM immediate form `ccmp/ccmn Rn, #imm5, #nzcv, cond`. State machine rejected (pure function, no lifecycle). In-tree CCMP decoder does not exist so algebraic round-trip is unavailable. encode_cmp / encode_cmn are different jobs (SUBS/ADDS aliases without cond/nzcv) and fail the same-job sibling gate as a differential reference. Doc evidence: assembler README gas-compat; ARM ARM Conditional compare (immediate) sf op S 11010010 imm5 cond 1 0 Rn 0 nzcv; dispatch ccmp/ccmn.
+- Seed: src/backend/arm/assembler/encoder/compare_branch.rs encode_cbz_pbt::encode_cbz_diff_imm_llvm_mc
+- Formal: ∀ rn ∈ {x0..x30,xzr,lr,w0..w30,wzr}, is_ccmp ∈ {true,false}, imm5 ∈ {0..31}, nzcv ∈ {0..15}, cond ∈ Cond16. encode_ccmp_ccmn([Reg(rn), Imm(imm5), Imm(nzcv), Cond(cond)], is_ccmp) = Word(llvm-mc(mnemonic(is_ccmp) + " " + rn + ", #" + imm5 + ", #" + nzcv + ", " + cond)).
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: failing
-- Counterexample: [Reg("x0"), Imm(-1048576)], is_nz=false  (also Imm(0), Imm(4))
-- Bug report: pbt-out/bug_reports/encode_cbz_imm_offset.md
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rt, is_nz, imm]
-  domain: { rt: gpr_name, is_nz: bool, imm: aligned_pc_offset_19 }
+  vars: [rn, is_ccmp, imm5, nzcv, cond]
+  domain: { rn: gpr_name, is_ccmp: bool, imm5: u5, nzcv: u4, cond: cond_code }
   relation:
     op: eq
-    lhs: encode_cbz([Reg(rt), Imm(imm)], is_nz) as Word
-    rhs: llvm_mc(cbz_mnemonic(is_nz) + " " + rt + ", #" + imm)
+    lhs: encode_ccmp_ccmn([Reg(rn), Imm(imm5), Imm(nzcv), Cond(cond)], is_ccmp) as Word
+    rhs: llvm_mc(ccmp_mnemonic(is_ccmp) + " " + rn + ", #" + imm5 + ", #" + nzcv + ", " + cond)
 generators:
-  rt: { gen: string }
-  is_nz: { gen: bool }
-  imm: { gen: int, min: -1048576, max: 1048572, type: i64 }
-evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; README.md:220 Branches lists cbz/cbnz; encoder/mod.rs:321-322 cbz/cbnz dispatch; compare_branch.rs:242 CBZ/CBNZ sf 011010 op imm19 Rt; ARM ARM Compare and branch (immediate)
+  rn: { gen: string }
+  is_ccmp: { gen: bool }
+  imm5: { gen: int, min: 0, max: 31, type: i64 }
+  nzcv: { gen: int, min: 0, max: 15, type: i64 }
+  cond: { gen: string }
+evidence: src/backend/arm/assembler/README.md:5-14 gas-compatible AArch64; README.md:218 Compare lists ccmp; encoder/mod.rs:304-305 ccmp/ccmn dispatch; compare_branch.rs:53-54 CCMP/CCMN Rn #imm5 #nzcv cond; ARM ARM Conditional compare (immediate)
 ```
 
-## encode_cbz_symbol_reloc
-- Tier: 4
-- Rationale: Algebraic invariant from README CondBr19 / R_AARCH64_CONDBR19 ELF 280 and the encoder contract that symbol/label targets leave imm19=0 for the assembler/linker to fill. Stronger differential cannot compare a concrete word for unresolved labels (llvm-mc emits a fixup, not a numeric encoding). encode_cond_branch is not a same-job sibling.
-- Seed: encode_branch_pbt::encode_branch_symbol_reloc
-- Formal: ∀ rt ∈ GPR, is_nz ∈ bool, s ∈ ident, a ∈ i64. encode_cbz([Reg(rt), Symbol(s)], is_nz) = WordWithReloc{word=base(rt,is_nz), CondBr19, s, 0} ∧ encode_cbz([Reg(rt), Label(s)], is_nz) = same ∧ encode_cbz([Reg(rt), SymbolOffset(s,a)], is_nz) = WordWithReloc{word=base(rt,is_nz), CondBr19, s, a} ∧ elf_type(CondBr19)=280 ∧ (word & 0x00ffffe0)=0.
+## encode_ccmp_ccmn_diff_reg_llvm_mc
+- Tier: 2
+- Rationale: Differential against llvm-mc for the ARM ARM register form `ccmp/ccmn Rn, Rm, #nzcv, cond` with matching width. Stronger state-machine and round-trip rejected as above. Same-width GPR is required by gas (llvm-mc rejects mixed x/w). Doc evidence: parser.rs:1987 `ccmp x10, x13, 0, eq`; ARM ARM Conditional compare (register).
+- Seed: encode_blr_pbt::encode_blr_diff_xn_llvm_mc
+- Formal: ∀ (rn, rm) same-width GPR pair, is_ccmp ∈ bool, nzcv ∈ {0..15}, cond ∈ Cond16. encode_ccmp_ccmn([Reg(rn), Reg(rm), Imm(nzcv), Cond(cond)], is_ccmp) = Word(llvm-mc(mnemonic(is_ccmp) + " " + rn + ", " + rm + ", #" + nzcv + ", " + cond)).
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cbz
-oracle: algebraic.invariant
+function: encoder.compare_branch.encode_ccmp_ccmn
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [rt, is_nz, s, a]
-  domain: { rt: gpr_name, is_nz: bool, s: label_ident, a: i64 }
-  body: encode_cbz([Reg(rt), SymbolOffset(s, a)], is_nz) == WordWithReloc(base(rt,is_nz), CondBr19, s, a)
+  vars: [rn, rm, is_ccmp, nzcv, cond]
+  domain: { rn: gpr_name, rm: gpr_name_same_width, is_ccmp: bool, nzcv: u4, cond: cond_code }
+  relation:
+    op: eq
+    lhs: encode_ccmp_ccmn([Reg(rn), Reg(rm), Imm(nzcv), Cond(cond)], is_ccmp) as Word
+    rhs: llvm_mc(ccmp_mnemonic(is_ccmp) + " " + rn + ", " + rm + ", #" + nzcv + ", " + cond)
 generators:
-  rt: { gen: string }
-  is_nz: { gen: bool }
-  s: { gen: string }
-  a: { gen: int, min: -4096, max: 4096, type: i64 }
-evidence: encoder/mod.rs:76 R_AARCH64_CONDBR19; encoder/mod.rs:115 CondBr19 => 280; README.md:267 CondBr19 280; compare_branch.rs:242-251 imm19 filled by linker/assembler
+  rn: { gen: string }
+  rm: { gen: string }
+  is_ccmp: { gen: bool }
+  nzcv: { gen: int, min: 0, max: 15, type: i64 }
+  cond: { gen: string }
+evidence: parser.rs:1987 ccmp x10, x13, 0, eq; encoder/mod.rs:304-305; ARM ARM Conditional compare (register) sf op S 11010010 Rm cond 0 0 Rn 0 nzcv
 ```
 
-## encode_cbz_meta_cbz_vs_cbnz
+## encode_ccmp_ccmn_meta_ccmp_vs_ccmn
 - Tier: 4
-- Rationale: Algebraic metamorphic: ARM ARM CBNZ is CBZ with bit 24 set (op field). encode_cbz(..., true) is not a same-job differential reference; the relation is the documented opcode pair. Stronger differential already covers the happy path; this isolates the CBZ-vs-CBNZ contract independently of llvm-mc.
-- Seed: encode_branch_pbt::encode_branch_meta_vs_bl
-- Formal: ∀ rt ∈ GPR, s ∈ ident, a ∈ i64. encode_cbz([Reg(rt), SymbolOffset(s,a)], true).word XOR encode_cbz([Reg(rt), SymbolOffset(s,a)], false).word = 1<<24 ∧ both reloc types are CondBr19 ∧ same symbol and addend.
+- Rationale: Algebraic metamorphic: ARM ARM CCMN is CCMP with bit 30 clear (op field). encode_ccmp_ccmn(..., true) is not a same-job differential reference; the relation is the documented opcode pair. Stronger differential already covers the happy path; this isolates the CCMP-vs-CCMN contract independently of llvm-mc. Doc evidence: compare_branch.rs:54 "The only difference: CCMP has bit 30 = 1, CCMN has bit 30 = 0".
+- Seed: encode_cbz_pbt::encode_cbz_meta_cbz_vs_cbnz
+- Formal: ∀ valid 4-operand CCMP encoding (imm or reg form). encode_ccmp_ccmn(ops, true).word XOR encode_ccmp_ccmn(ops, false).word = 1<<30.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rt, s, a]
-  domain: { rt: gpr_name, s: label_ident, a: i64 }
+  vars: [ops]
+  domain: { ops: valid_ccmp_operands }
   relation:
     op: eq
-    lhs: encode_cbz(ops, true).word XOR encode_cbz(ops, false).word
-    rhs: 1 << 24
+    lhs: encode_ccmp_ccmn(ops, true).word XOR encode_ccmp_ccmn(ops, false).word
+    rhs: 1 << 30
 generators:
-  rt: { gen: string }
-  s: { gen: string }
-  a: { gen: int, min: -4096, max: 4096, type: i64 }
-evidence: compare_branch.rs:242 CBZ/CBNZ sf 011010 op imm19 Rt; ARM ARM Compare and branch (immediate) bit 24 op
+  ops: { gen: string }
+evidence: compare_branch.rs:54 CCMP bit 30 = 1, CCMN bit 30 = 0; ARM ARM Conditional compare op field
 ```
 
-## encode_cbz_word_layout
+## encode_ccmp_ccmn_word_layout
 - Tier: 4
-- Rationale: Algebraic invariant from ARM ARM Compare and branch (immediate): bits[30:25]=011010, sf at 31 from Rt width, op at 24 from is_nz, Rt at [4:0], imm19 field zero until reloc fill. Stronger differential already covers Imm against llvm-mc; this pins the field split on the reloc path independently of the assembler.
-- Seed: encode_branch_pbt::encode_branch_word_layout
-- Formal: ∀ n ∈ 0..31, is_64 ∈ bool, is_nz ∈ bool. let (w, r) = encode_cbz([Reg(name(n,is_64)), Symbol(s)], is_nz). (w >> 25) & 0x3f = 0b011010 ∧ (w >> 31) = sf(is_64) ∧ ((w >> 24) & 1) = is_nz ∧ (w & 0x1f) = n ∧ (w & 0x00ffffe0) = 0 ∧ r is CondBr19.
+- Rationale: Algebraic invariant from ARM ARM field layout. Stronger differential already covers numeric agreement; this pins individual fields (sf, op, S, opcode, o2, Rn, Rm/imm5, cond, nzcv) so a coincidental word match cannot hide a field swap.
+- Seed: encode_blr_pbt::encode_blr_word_layout
+- Formal: ∀ rn_num ∈ 0..31, is_64 ∈ bool, is_ccmp ∈ bool, imm5 ∈ 0..31, nzcv ∈ 0..15, cond_val ∈ 0..15. let w = encode_ccmp_ccmn(imm-form).word. (w>>31)=sf ∧ ((w>>30)&1)=op ∧ ((w>>29)&1)=1 ∧ ((w>>21)&0xFF)=0b11010010 ∧ ((w>>16)&0x1F)=imm5 ∧ ((w>>12)&0xF)=cond_val ∧ ((w>>11)&1)=1 ∧ ((w>>5)&0x1F)=rn_num ∧ (w&0xF)=nzcv ∧ ((w>>10)&1)=0 ∧ ((w>>4)&1)=0. Register form identical except o2=0 and (w>>16)&0x1F = rm_num.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [n, is_64, is_nz]
-  domain: { n: u32 0..=31, is_64: bool, is_nz: bool }
-  body: layout(encode_cbz([Reg(name(n,is_64)), Symbol(s)], is_nz)) holds
+  vars: [rn_num, is_64, is_ccmp, imm5, nzcv, cond_val]
+  domain: { rn_num: u5, is_64: bool, is_ccmp: bool, imm5: u5, nzcv: u4, cond_val: u4 }
+  body: word fields match ARM ARM Conditional compare (immediate)
 generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
+  rn_num: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-  is_nz: { gen: bool }
-evidence: compare_branch.rs:242 CBZ/CBNZ sf 011010 op imm19 Rt; ARM ARM Compare and branch (immediate)
+  is_ccmp: { gen: bool }
+  imm5: { gen: int, min: 0, max: 31, type: i64 }
+  nzcv: { gen: int, min: 0, max: 15, type: i64 }
+  cond_val: { gen: int, min: 0, max: 15, type: u32 }
+evidence: ARM ARM Conditional compare (immediate/register); compare_branch.rs:53-76
 ```
 
-## encode_cbz_neg_arity
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc / gas: bare `cbz` and `cbz x0` are "too few operands". Stronger oracles do not apply to the empty/short-operand domain.
-- Seed: encode_branch_pbt::encode_branch_neg_arity
-- Formal: ∀ is_nz ∈ bool. encode_cbz([], is_nz) = Err ∧ encode_cbz([Reg("x0")], is_nz) = Err.
+## encode_ccmp_ccmn_neg_arity
+- Tier: 5
+- Rationale: Negative/error contract from llvm-mc/gas: CCMP/CCMN requires four operands (Rn, Rm-or-imm5, nzcv, cond). Stronger oracles do not apply to the invalid domain. llvm-mc reports "too few operands" for 0..3 operands.
+- Seed: encode_blr_pbt::encode_blr_neg_arity
+- Formal: ∀ is_ccmp ∈ bool, ops with |ops| < 4. encode_ccmp_ccmn(ops, is_ccmp) = Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_nz]
-  domain: { is_nz: bool }
+  vars: [is_ccmp, n]
+  domain: { is_ccmp: bool, n: 0..3 }
   relation:
-    op: holds
-    expr: encode_cbz([], is_nz).is_err() && encode_cbz([Reg("x0")], is_nz).is_err()
+    op: throws
+    expr: encode_ccmp_ccmn(ops_of_len(n), is_ccmp)
 generators:
-  is_nz: { gen: bool }
+  is_ccmp: { gen: bool }
+  n: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects `cbz` and `cbz x0` as too few operands; README.md:5-14 gas-compat
+evidence: llvm-mc aarch64 rejects ccmp with fewer than 4 operands (too few operands)
 ```
 
-## encode_cbz_neg_extra_operand
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc: `cbz x0, label, extra` is "invalid operand". Gas-compat assembler must reject a third operand. Stronger oracles do not apply to over-arity.
-- Seed: encode_branch_pbt::encode_branch_neg_extra_operand
-- Formal: ∀ rt ∈ GPR, s ∈ ident, extra ∈ Operand, is_nz ∈ bool. encode_cbz([Reg(rt), Symbol(s), extra], is_nz) = Err.
+## encode_ccmp_ccmn_neg_imm5_nzcv_oor
+- Tier: 5
+- Rationale: Negative/error contract from llvm-mc/ARM ARM: imm5 must be in [0, 31] and nzcv in [0, 15]. Bounds 0/31/32/-1 and 0/15/16/-1 are sampled exactly. Stronger differential does not apply on the invalid domain. SUT currently masks with 0x1F/0xF so this is the bound-straddle property most likely to fail.
+- Seed: encode_bl_pbt::encode_bl_neg_imm_unaligned_oor
+- Formal: ∀ rn ∈ GPR, is_ccmp ∈ bool, cond ∈ Cond16, (imm5, nzcv) with imm5 ∉ [0,31] ∨ nzcv ∉ [0,15]. encode_ccmp_ccmn([Reg(rn), Imm(imm5), Imm(nzcv), Cond(cond)], is_ccmp) = Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: [Reg("x0"), Symbol("labl0"), Reg("x1")], is_nz=false
-- Bug report: pbt-out/bug_reports/encode_cbz_extra_operand.md
+- Counterexample: [Reg("x0"), Imm(-1), Imm(0), Cond("eq")], is_ccmp=false  (also nzcv=16)
+- Bug report: pbt-out/bug_reports/encode_ccmp_ccmn_imm5_nzcv_truncated.md
 
 ```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rt, s, extra, is_nz]
-  domain: { rt: gpr_name, s: label_ident, extra: Operand, is_nz: bool }
+  vars: [rn, is_ccmp, imm5, nzcv, cond]
+  domain: { rn: gpr_name, is_ccmp: bool, imm5: oor_or_valid_i64, nzcv: oor_or_valid_i64, cond: cond_code }
   relation:
-    op: holds
-    expr: encode_cbz([Reg(rt), Symbol(s), extra], is_nz).is_err()
+    op: throws
+    expr: encode_ccmp_ccmn([Reg(rn), Imm(imm5), Imm(nzcv), Cond(cond)], is_ccmp)
 generators:
-  rt: { gen: string }
-  s: { gen: string }
-  extra: { gen: int, min: 0, max: 3, type: u32 }
-  is_nz: { gen: bool }
+  rn: { gen: string }
+  is_ccmp: { gen: bool }
+  imm5: { gen: int, min: -2, max: 33, type: i64 }
+  nzcv: { gen: int, min: -2, max: 17, type: i64 }
+  cond: { gen: string }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects `cbz x0, #0, x1` as invalid operand; README.md:5-14 gas-compat
+evidence: llvm-mc aarch64 imm5 in range 0 to 31 and nzcv in range 0 to 15; ARM ARM imm5 5-bit unsigned, nzcv 4-bit
 ```
 
-## encode_cbz_neg_wrong_reg
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc / ARM ARM: CBZ Rt is a GPR (Wt/Xt/WZR/XZR), never SP/WSP or FP/SIMD. Stronger oracles do not apply to the invalid-Rt domain.
+## encode_ccmp_ccmn_neg_extra_operand
+- Tier: 5
+- Rationale: Negative/error contract from llvm-mc: a fifth operand is invalid. Stronger oracles do not apply. SUT only inspects indices 0..3 so extra operands are the documented extra-operand bug class from sibling encoders.
+- Seed: encode_blr_pbt::encode_blr_neg_extra_operand
+- Formal: ∀ valid 4-operand CCMP ops, extra ∈ Operand, is_ccmp ∈ bool. encode_ccmp_ccmn(ops ++ [extra], is_ccmp) = Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: [Reg("x0"), Imm(0), Imm(0), Cond("eq"), Reg("x1")], is_ccmp=false
+- Bug report: pbt-out/bug_reports/encode_ccmp_ccmn_extra_operand.md
+
+```property
+function: encoder.compare_branch.encode_ccmp_ccmn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops, extra, is_ccmp]
+  domain: { ops: valid_ccmp_operands, extra: Operand, is_ccmp: bool }
+  relation:
+    op: throws
+    expr: encode_ccmp_ccmn(ops ++ [extra], is_ccmp)
+generators:
+  is_ccmp: { gen: bool }
+  extra: { gen: string }
+  ops: { gen: string }
+expected_error: String
+evidence: llvm-mc aarch64 rejects ccmp x0, #0, #0, eq, x1 with invalid operand
+```
+
+## encode_ccmp_ccmn_neg_wrong_reg_class
+- Tier: 5
+- Rationale: Negative/error contract from llvm-mc/ARM ARM: Rn/Rm are Wt/Xt (XZR/WZR for 31), never SP/WSP, never FP/SIMD, never mixed x/w. Invalid names (x32, foo) also Err. Stronger oracles do not apply on the invalid domain.
 - Seed: encode_blr_pbt::encode_blr_neg_wrong_reg_class
-- Formal: ∀ name ∈ {sp, wsp, dN, sN, qN, vN, hN, bN, x32, foo, ""}, is_nz ∈ bool. encode_cbz([Reg(name), Symbol("L")], is_nz) = Err.
+- Formal: ∀ is_ccmp ∈ bool, name ∈ {sp, wsp, dN, sN, qN, vN, hN, bN, x32, w32, foo, "", r0, x, x-1, x99}. encode_ccmp_ccmn([Reg(name), Imm(0), Imm(0), Cond("eq")], is_ccmp) = Err. Also mixed-width Rn/Rm (xN, wM) = Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: [Reg("sp"), Symbol("L")], is_nz=false  (also Reg("d0"))
-- Bug report: pbt-out/bug_reports/encode_cbz_sp_as_zr.md; pbt-out/bug_reports/encode_cbz_fp_reg.md
+- Counterexample: [Reg("sp"), Imm(0), Imm(0), Cond("eq")], is_ccmp=false  (also d0 FP)
+- Bug report: pbt-out/bug_reports/encode_ccmp_ccmn_sp_as_zr.md ; pbt-out/bug_reports/encode_ccmp_ccmn_fp_reg.md
 
 ```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [name, is_nz]
-  domain: { name: invalid_rt, is_nz: bool }
+  vars: [name, is_ccmp]
+  domain: { name: invalid_or_wrong_class_reg, is_ccmp: bool }
   relation:
-    op: holds
-    expr: encode_cbz([Reg(name), Symbol("L")], is_nz).is_err()
+    op: throws
+    expr: encode_ccmp_ccmn([Reg(name), Imm(0), Imm(0), Cond("eq")], is_ccmp)
 generators:
   name: { gen: string }
-  is_nz: { gen: bool }
+  is_ccmp: { gen: bool }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects `cbz sp, #0`, `cbz wsp, label`, `cbz d0, #0`; ARM ARM Rt is Wt/Xt
+evidence: llvm-mc aarch64 rejects ccmp sp, wsp, d0 and mixed-width ccmp x0, w1; ARM ARM Rn/Rm are GPR Wt/Xt with 31=XZR/WZR
 ```
 
-## encode_cbz_neg_imm_unaligned_oor
-- Tier: 3
-- Rationale: Negative/error contract from ARM ARM / llvm-mc: PC offset must be a multiple of 4 in [-1048576, 1048572]. Unaligned or out-of-range immediates must Err. Stronger differential does not apply to the invalid-imm domain.
-- Seed: encode_branch_pbt::encode_branch_neg_imm_unaligned_oor
-- Formal: ∀ rt ∈ GPR, is_nz ∈ bool, imm ∈ i64 \ aligned_pc_offset_19. encode_cbz([Reg(rt), Imm(imm)], is_nz) = Err.
+## encode_ccmp_ccmn_neg_mixed_width
+- Tier: 5
+- Rationale: Negative/error contract from llvm-mc: CCMP/CCMN register form requires matching GPR width. Mixed x/w is rejected by gas. Stronger oracles do not apply on the invalid domain.
+- Seed: encode_ccmp_ccmn_neg_wrong_reg_class
+- Formal: ∀ n,m ∈ 0..30, is_ccmp ∈ bool, nzcv ∈ [0,15], cond ∈ Cond16. encode_ccmp_ccmn([Reg(xN), Reg(wM), Imm(nzcv), Cond(cond)], is_ccmp) = Err ∧ encode_ccmp_ccmn([Reg(wN), Reg(xM), ...], is_ccmp) = Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Status: failing
+- Counterexample: [Reg("w0"), Reg("x0"), Imm(0), Cond("eq")], is_ccmp=false
+- Bug report: pbt-out/bug_reports/encode_ccmp_ccmn_mixed_width.md
 
 ```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rt, is_nz, imm]
-  domain: { rt: gpr_name, is_nz: bool, imm: unaligned_or_oor_pc_offset_19 }
+  vars: [n, m, is_ccmp, nzcv, cond]
+  domain: { n: 0..30, m: 0..30, is_ccmp: bool, nzcv: u4, cond: cond_code }
   relation:
-    op: holds
-    expr: encode_cbz([Reg(rt), Imm(imm)], is_nz).is_err()
+    op: throws
+    expr: encode_ccmp_ccmn([Reg(wN), Reg(xM), Imm(nzcv), Cond(cond)], is_ccmp)
 generators:
-  rt: { gen: string }
-  is_nz: { gen: bool }
-  imm: { gen: int, type: i64 }
+  n: { gen: int, min: 0, max: 30, type: u32 }
+  m: { gen: int, min: 0, max: 30, type: u32 }
+  is_ccmp: { gen: bool }
+  nzcv: { gen: int, min: 0, max: 15, type: i64 }
+  cond: { gen: string }
 expected_error: String
-evidence: llvm-mc -triple=aarch64 rejects `cbz x0, #1` and `cbz w0, #1048576` as expected label or encodable integer pc offset; ARM ARM imm19 range ±1 MiB multiple of 4
+evidence: llvm-mc aarch64 rejects mixed-width ccmp x0, w1 and ccmn w0, x0
 ```
 
-## encode_cbz_symbol_misclassified
-- Tier: 4
-- Rationale: Algebraic invariant from the documented get_symbol workaround (encoder/mod.rs:982-986): parser-misclassified Reg/Cond/Barrier names are valid symbols in a branch-target context. Coverage-sweep property to reach those match arms. Stronger differential cannot compare a concrete word for unresolved labels.
-- Seed: encode_branch_pbt::encode_branch_symbol_misclassified
-- Formal: ∀ name ∈ {eq,ne,lt,gt,sy,ish,st,ld}, which ∈ {Reg,Cond,Barrier}, is_nz ∈ bool. encode_cbz([Reg("x0"), which(name)], is_nz) = WordWithReloc{word=base(X,is_nz), CondBr19, name, 0}.
+## encode_ccmp_ccmn_neg_invalid_cond
+- Tier: 5
+- Rationale: Coverage-sweep negative/error contract for the encode_cond None arm. llvm-mc reports invalid condition code. Stronger oracles do not apply on the invalid domain.
+- Seed: encode_ccmp_ccmn_neg_arity
+- Formal: ∀ rn ∈ GPR, is_ccmp ∈ bool, use_imm ∈ bool, cond ∉ Cond16. encode_ccmp_ccmn([Reg(rn), Imm|Reg, Imm(0), Cond(cond)], is_ccmp) = Err.
 - Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_cbz
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [name, which, is_nz]
-  domain: { name: colliding_ident, which: {Reg,Cond,Barrier}, is_nz: bool }
-  body: encode_cbz([Reg("x0"), which(name)], is_nz) == WordWithReloc(base(X,is_nz), CondBr19, name, 0)
-generators:
-  name: { gen: string }
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  is_nz: { gen: bool }
-evidence: encoder/mod.rs:982-986 get_symbol parser-misclassification workaround; README.md:456-464 deferred branch relocs
-```
-
-## encode_cbz_neg_bad_label_kind
-- Tier: 3
-- Rationale: Negative/error contract: CBZ label slot is a symbol/label/imm, not Mem/Shift/Extend/RegArrangement/Expr/RegList. get_symbol's other arm returns Err. Stronger oracles do not apply to the wrong-kind domain. Coverage-sweep property to reach that arm.
-- Seed: encode_branch_pbt::encode_branch_neg_bad_operand
-- Formal: ∀ kind ∈ {Mem, Shift, Extend, RegArrangement, Expr, RegList}, is_nz ∈ bool. encode_cbz([Reg("x0"), kind], is_nz) = Err.
-- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_cbz
+function: encoder.compare_branch.encode_ccmp_ccmn
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, is_nz]
-  domain: { which: u32 0..=5, is_nz: bool }
+  vars: [rn, is_ccmp, cond]
+  domain: { rn: gpr_name, is_ccmp: bool, cond: invalid_cond }
   relation:
-    op: holds
-    expr: encode_cbz([Reg("x0"), bad_kind(which)], is_nz).is_err()
+    op: throws
+    expr: encode_ccmp_ccmn([Reg(rn), Imm(0), Imm(0), Cond(cond)], is_ccmp)
 generators:
+  rn: { gen: string }
+  is_ccmp: { gen: bool }
+  cond: { gen: string }
+expected_error: String
+evidence: llvm-mc aarch64 rejects ccmp x0, #0, #0, xx with invalid condition code; encode_cond returns None for unknown names
+```
+
+## encode_ccmp_ccmn_neg_invalid_rm
+- Tier: 5
+- Rationale: Coverage-sweep negative/error contract for parse_reg_num None on Rm. Invalid Rm names must Err.
+- Seed: encode_blr_pbt::encode_blr_neg_invalid_name
+- Formal: ∀ n ∈ 0..30, is_ccmp ∈ bool, rm ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_ccmp_ccmn([Reg(xN), Reg(rm), Imm(0), Cond("eq")], is_ccmp) = Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_ccmp_ccmn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, is_ccmp, rm]
+  domain: { n: 0..30, is_ccmp: bool, rm: invalid_reg_name }
+  relation:
+    op: throws
+    expr: encode_ccmp_ccmn([Reg(xN), Reg(rm), Imm(0), Cond("eq")], is_ccmp)
+generators:
+  n: { gen: int, min: 0, max: 30, type: u32 }
+  is_ccmp: { gen: bool }
+  rm: { gen: string }
+expected_error: String
+evidence: parse_reg_num returns None for x32/foo/empty; llvm-mc rejects those Rm names
+```
+
+## encode_ccmp_ccmn_neg_bad_operand_kind
+- Tier: 5
+- Rationale: Coverage-sweep negative/error contract for the unsupported-operands fallthrough when slot 1/2/3 is Mem/Symbol/Shift/Extend/Label/Barrier rather than Imm/Reg/Cond.
+- Seed: encode_cbz_pbt::encode_cbz_neg_bad_label_kind
+- Formal: ∀ is_ccmp ∈ bool, slot ∈ {1,2,3}, bad ∈ {Mem, Symbol, Shift, Extend, Label, Barrier}. encode_ccmp_ccmn(ops with slot replaced by bad, is_ccmp) = Err.
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_ccmp_ccmn
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [is_ccmp, slot, which]
+  domain: { is_ccmp: bool, slot: 1..3, which: 0..5 }
+  relation:
+    op: throws
+    expr: encode_ccmp_ccmn(ops_with_bad_kind(slot, which), is_ccmp)
+generators:
+  is_ccmp: { gen: bool }
+  slot: { gen: int, min: 1, max: 3, type: u32 }
   which: { gen: int, min: 0, max: 5, type: u32 }
-  is_nz: { gen: bool }
 expected_error: String
-evidence: encoder/mod.rs:988 get_symbol other => Err; llvm-mc rejects non-label second operands
+evidence: compare_branch.rs:79-80 unsupported ccmp/ccmn operands when neither immediate nor register form matches
 ```
