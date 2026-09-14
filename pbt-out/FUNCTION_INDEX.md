@@ -1,4 +1,4 @@
-> Total files: 9 | Total functions: 267 | PBT candidates: 75 | Excluded: 192
+> Total files: 10 | Total functions: 284 | PBT candidates: 76 | Excluded: 208
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -273,4 +273,21 @@
 | encode_ucvtf | fp_scalar.rs | 202 | function | no | out of campaign scope |
 | encode_scvtf | fp_scalar.rs | 206 | function | no | out of campaign scope |
 | encode_int_to_float | fp_scalar.rs | 210 | function | yes | - |
-| encode_fcvt_precision | fp_scalar.rs | 235 | function | yes | - |
+| encode_fcvt_precision | fp_scalar.rs | 235 | function | yes | -
+| encode_ubfx | bitfield.rs | 7 | function | no | out of campaign scope |
+| encode_sbfx | bitfield.rs | 22 | function | no | out of campaign scope |
+| encode_ubfm | bitfield.rs | 37 | function | no | out of campaign scope |
+| encode_sbfm | bitfield.rs | 49 | function | no | out of campaign scope |
+| encode_sbfiz | bitfield.rs | 61 | function | no | out of campaign scope |
+| encode_ubfiz | bitfield.rs | 76 | function | no | out of campaign scope |
+| encode_bfm | bitfield.rs | 91 | function | no | out of campaign scope |
+| encode_bfi | bitfield.rs | 104 | function | yes | - |
+| encode_bfxil | bitfield.rs | 119 | function | no | out of campaign scope |
+| encode_extr | bitfield.rs | 133 | function | no | out of campaign scope |
+| encode_clz | bitfield.rs | 148 | function | no | out of campaign scope |
+| encode_cls | bitfield.rs | 158 | function | no | out of campaign scope |
+| encode_rbit | bitfield.rs | 167 | function | no | out of campaign scope |
+| encode_rev | bitfield.rs | 186 | function | no | out of campaign scope |
+| encode_rev16 | bitfield.rs | 196 | function | no | out of campaign scope |
+| encode_rev32 | bitfield.rs | 205 | function | no | out of campaign scope |
+| encode_crc32 | bitfield.rs | 226 | function | no | out of campaign scope |

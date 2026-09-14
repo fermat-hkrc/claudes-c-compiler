@@ -1,33 +1,63 @@
-# PBT Campaign Report: encode_neon_aes
+# PBT Campaign Report: encode_bfi
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_aes
-**Tests:** 8 properties (plus 2 KAT, 1 isolated invalid-name, 1 sweep, 6 regression witnesses)
-**Result:** 4 passing, 4 failing properties; 6 SUT bugs
-**Effort tier:** standard (5–8 properties, ≥1000 cases, 1 contract-surface sweep round)
+**Modules tested:** encode_bfi
+**Tests:** 13 properties (8 passing, 5 failing) plus 6 passing KAT and 5 failing regression witnesses
+**Result:** 8 passing, 5 bugs
+**Effort tier:** standard (5–8 properties/target, ≥1000 cases, 1 strengthening round, 1 coverage_gaps sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_aes | 8 properties (4 passing / 4 failing) | 6 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_bfi | 13 properties + 6 KAT + 5 regressions | 5 | differential (llvm-mc), algebraic.metamorphic (BFI alias of BFM; Rd/Rn fields), algebraic.invariant (ARM BFM layout), negative_error |
 
 ## Bugs Found
 
-1. **Extra operand ignored.** Law: AES takes exactly two operands. Shrunk input: `aese v0.16b, v0.16b, v0.16b`. Expected Err; actual Ok(Word(0x4e284800)) because arity is `len() < 2`. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_extra_operand.md`. Regression: `test_encode_neon_aes_regression_extra_operand`. Serial reconfirm: `PBT_TEST_JOBS=1 cargo test --lib encode_neon_aes -- --test-threads=1`.
+### 1. Extra operand ignored
+- **Law:** BFI takes exactly four operands; a fifth must be Err.
+- **Minimal input:** `[Reg("w0"), Reg("w0"), Imm(0), Imm(1), Reg("x0")]`
+- **Expected:** Err
+- **Actual:** Ok(Word) — get_reg/get_imm read only indices 0..3
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_bfi_extra_operand.md
 
-2. **Arrangement other than .16B accepted.** Law: ARM ARM Cryptographic AES is only Vd.16B, Vn.16B. Shrunk input: `aese v0.8b, v0.8b`. Expected Err; actual Ok(Word(0x4e284800)) because arrangement is discarded. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_bad_arrangement.md`. Regression: `test_encode_neon_aes_regression_8b_arrangement`.
+### 2. SP/WSP encoded as ZR
+- **Law:** Register 31 is WZR/XZR, not SP/WSP.
+- **Minimal input:** `bfi wsp, w0, #0, #1`
+- **Expected:** Err
+- **Actual:** Ok(Word) — parse_reg_num maps sp/wsp to 31
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_bfi_sp.md
 
-3. **Mismatched dest/src arrangement accepted.** Law: dest and src T must both be .16B. Shrunk input: `aese v0.16b, v0.8b`. Expected Err; actual Ok(Word(0x4e284800)). Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_mismatch_arrangement.md`. Regression: `test_encode_neon_aes_regression_mismatch_arr`.
+### 3. Out-of-range #lsb/#width panics or encodes
+- **Law:** 0 <= lsb < R and 1 <= width <= R-lsb; otherwise Err.
+- **Minimal input:** `bfi w0, w0, #0, #0` (debug overflow at `width - 1`)
+- **Expected:** Err
+- **Actual:** panic in debug; other out-of-range values encode Ok(Word)
+- **Severity:** high
+- **Bug report:** pbt-out/bug_reports/encode_bfi_lsb_width.md
 
-4. **Bare Vn without arrangement accepted.** Law: source must be Vn.16B. Input: `[RegArrangement{v0,"16b"}, Reg("v0")]`. Expected Err; actual Ok(Word(0x4e284800)) because `get_neon_reg` accepts `Operand::Reg`. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_bare_src.md`. Regression: `test_encode_neon_aes_regression_bare_src`.
+### 4. Mixed W/X accepted
+- **Law:** Both registers must be the same width (Wd,Wn or Xd,Xn).
+- **Minimal input:** `bfi x0, w0, #0, #1`
+- **Expected:** Err
+- **Actual:** Ok(Word) — is_64 taken only from Rd
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_bfi_mixed_width.md
 
-5. **Non-V register prefix accepted.** Law: operands are SIMD Vd/Vn. Shrunk input: `aese x0.16b, x0.16b`. Expected Err; actual Ok(Word(0x4e284800)) because `parse_reg_num` accepts x/w/d/s/q/h/b. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_non_v_prefix.md`. Regression: `test_encode_neon_aes_regression_x_prefix`.
+### 5. FP/SIMD registers accepted as GPR
+- **Law:** Rd/Rn must be W/X (or ZR), not S/D/Q/V/H/B.
+- **Minimal input:** `bfi d0, x1, #0, #1`
+- **Expected:** Err
+- **Actual:** Ok(Word) — parse_reg_num accepts prefix d
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_bfi_fp.md
 
-6. **SP/WSP encoded as V31.** Law: SP is not an AES operand. Input: `aese sp.16b, v0.16b` (sweep also `wsp`). Expected Err; actual Ok with Rd=31. Severity: medium. Report: `pbt-out/bug_reports/encode_neon_aes_sp_as_neon.md`. Regression: `test_encode_neon_aes_regression_sp`.
+All five reproduced serially with `PBT_TEST_JOBS=1`.
 
 ## Design Caveats
 
@@ -37,48 +67,45 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_aes_pbt) | 8 properties + 2 KAT + 1 isolated invalid-name + 1 sweep + 6 regressions |
+| src/backend/arm/assembler/encoder/bitfield.rs (mod encode_bfi_pbt) | 13 properties + 6 KAT + 5 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_aes_extra_operand.md
-- pbt-out/bug_reports/encode_neon_aes_bad_arrangement.md
-- pbt-out/bug_reports/encode_neon_aes_mismatch_arrangement.md
-- pbt-out/bug_reports/encode_neon_aes_bare_src.md
-- pbt-out/bug_reports/encode_neon_aes_non_v_prefix.md
-- pbt-out/bug_reports/encode_neon_aes_sp_as_neon.md
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — coverage ledger (appended encode_bfi)
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/FUNCTION_INDEX.md — merged bitfield.rs functions
+- pbt-out/INVARIANTS.md — confirmed encode_bfi invariants
+- pbt-out/bug_reports/encode_bfi_extra_operand.md
+- pbt-out/bug_reports/encode_bfi_sp.md
+- pbt-out/bug_reports/encode_bfi_lsb_width.md
+- pbt-out/bug_reports/encode_bfi_mixed_width.md
+- pbt-out/bug_reports/encode_bfi_fp.md
 
-## Contract-surface sweep
+## Sweep
 
-Round 1/1: `coverage_gaps` had no LLVM profraw; manual arm audit of encode_neon_aes. Added `encode_neon_aes_neg_src_nonreg_dest_reg_wsp` (non-register src passes; WSP dest fails — same SP-as-V31 bug). Closed because the tier round is spent and the documented surface is covered.
-
-Skipped target: (none). Build contract `cargo check --lib` / test target `cargo test --lib` succeeded.
+Contract-surface sweep round 1/1: `coverage_gaps` had no LLVM profraw. Manual arm audit of encode_bfi (arity / extra / SP / mixed W-X / FP / lsb-width / nonreg / invalid-name / alt-spellings). Added encode_bfi_neg_invalid_name (passing). Closed: tier round spent and documented surface covered.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 17:43 (campaign: coverage)
-> Files: 9/9 scanned (100%) | Functions: 75/267 total | PBT candidates: 75 | Tested: 75 (100%) | 0 pass, 75 fail
+> Last updated: 2026-09-14 18:04 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 76/284 total | PBT candidates: 76 | Tested: 76 (100%) | 0 pass, 76 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 9 |
-| Files scanned | 9 / 9 (100%) |
-| Total functions (all files) | 267 |
-| PBT candidates (from FUNCTION_INDEX) | 75 |
-| **Tested (of PBT candidates)** | **75 / 75 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 75 / 0 |
-| **Overall (tested / all functions)** | **75 / 267 (28%)** |
+| Total source files | 10 |
+| Files scanned | 10 / 10 (100%) |
+| Total functions (all files) | 284 |
+| PBT candidates (from FUNCTION_INDEX) | 76 |
+| **Tested (of PBT candidates)** | **76 / 76 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 76 / 0 |
+| **Overall (tested / all functions)** | **76 / 284 (27%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -86,13 +113,13 @@ Skipped target: (none). Build contract `cargo check --lib` / test target `cargo 
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 75 | 75 | 0 | 100% |
+|  | 76 | 76 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 75 | 75 | 0 | 100% |
+| unknown | 76 | 76 | 0 | 100% |
 
 ## File Coverage
 
@@ -102,7 +129,7 @@ Skipped target: (none). Build contract `cargo check --lib` / test target `cargo 
 | compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
-| fp_scalar.rs | 14 | 5 | 5 | 100% | covered |
+| fp_scalar.rs | 13 | 4 | 5 | 125% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 9 | 9 | 100% | covered |
 | neon.rs | 68 | 14 | 14 | 100% | covered |
@@ -190,3 +217,4 @@ Skipped target: (none). Build contract `cargo check --lib` / test target `cargo 
 | encode_fcmp | fp_scalar.rs |
 | encode_fcvt_precision | fp_scalar.rs |
 | encode_neon_aes | neon.rs |
+| encode_bfi | bitfield.rs |
