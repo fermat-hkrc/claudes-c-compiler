@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_ret)
+
+- Valid RET with omitted Rn or Rn in {x0–x30, xzr, lr} (including uppercase X0) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Bare `ret` ≡ `ret x30` ≡ `ret lr` = Word(0xd65f03c0) (ARM ARM omitted Xn is X30).
+- encode_ret XOR encode_br at equal Rn = 1<<22 (ARM ARM opc RET=0010 vs BR=0000) (1000 cases).
+- Success-path word: bits[31:25]=1101011, opc[24:21]=0010, op2[20:16]=11111, op3[15:10]=000000, Rn[9:5], op4[4:0]=00000; w = 0xd65f0000 | (rn << 5).
+- Non-register operand kinds (Imm/Mem/Shift/Extend/RegArrangement/Modifier/Symbol/Label) always Err.
+- Invalid register names (x32, w32, foo, empty, r0, x, x-1, x99) always Err.
+- Known-answer: `ret` encodes as 0xd65f03c0; `ret x0` as 0xd65f0000; `ret xzr` as 0xd65f03e0.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Unconditional branch (register) RET: bits[31:25]=1101011 opc=0010 op2=11111 op3=000000 Rn[9:5] op4=00000. Omitted Xn defaults to X30. Rn is Xn; register 31 is XZR, never SP.
+- Dispatch: encoder/mod.rs:320 `"ret" => encode_ret`. Sibling encode_br is BR (opc=0000), different job. Sibling encode_blr is BLR (opc=0001), different job.
+- Callers: assembler README Branches table lists ret; codegen/prologue.rs:319 emits bare `ret`.
+
+## Quirks
+
+- Extra operands beyond index 0 are ignored (see bugs).
+- W-form Rn is accepted and encoded as the matching X register (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as XZR (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- llvm-mc accepts `ret x31` as `ret xzr`; SUT parse_reg_num also maps x31 to 31 (agreement, not a bug).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (empty-default / get_reg success / get_reg None / get_reg other / extra / W / SP / FP).
+
+---
+
 # Confirmed invariants (encode_orn)
 
 - Valid three-GPR same-width ORN with Rd/Rn/Rm in x0–x30/xzr or w0–w30/wzr and optional LSL/LSR/ASR/ROR in range matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

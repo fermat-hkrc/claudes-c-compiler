@@ -1,43 +1,31 @@
-# PBT Campaign Report: encode_orn
+# PBT Campaign Report: encode_ret
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_orn
-**Tests:** 13
-**Result:** 9 passing, 10 bugs
-**Effort tier:** standard (1 coverage-driven sweep round; coverage_gaps had no profraw — manual arm audit of arity / Imm / Shift / NEON T / extra operands / get_reg kinds)
+**Modules tested:** encode_ret
+**Tests:** 10
+**Result:** 6 passing, 4 bugs
+**Effort tier:** standard (1 coverage-driven sweep round; coverage_gaps had no profraw — manual arm audit of empty-default / get_reg success / get_reg None / get_reg other / extra / W / SP / FP)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_orn | 13 properties + 4 KAT + 10 regression | 10 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_ret | 10 properties + 3 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-1. **GNU ORN-immediate alias rejected.** `orn w0, w0, #0xaaaaaaaa` must encode as `orr w0, w0, #0x55555555` (llvm-mc 0x3200f000). SUT returns Err("expected register at operand 2"). Law: README.md:14 gas-compatible text; dispatch `"orn" => encode_orn`. Severity: medium. Report: `pbt-out/bug_reports/encode_orn_imm_alias.md`.
+1. **Extra operand ignored.** Failing property `encode_ret_neg_extra_operand`. Shrunk witness: n=0, which=0 — `ret x0, x1` encodes as Word(0xd65f0000) instead of Err. llvm-mc: invalid operand. Law: ARM ARM RET takes at most one Xn; README.md:14 gas-compat. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_extra_operand.md`.
 
-2. **Trailing non-shift 4th operand ignored.** `orn w0, w0, w0, w0` encodes as three-operand ORN. llvm-mc rejects it. Severity: low. Report: `pbt-out/bug_reports/encode_orn_extra_operand.md`.
+2. **W-form Rn accepted.** Failing property `encode_ret_neg_w_reg`. Shrunk witness: n=0 — `ret w0` encodes as Word(0xd65f0000) instead of Err. llvm-mc rejects W-form; ARM ARM Rn is Xn. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_w_reg.md`.
 
-3. **Mixed X/W widths accepted.** `orn w0, w0, x0` encodes using sf from Rd only. llvm-mc rejects it. Severity: medium. Report: `pbt-out/bug_reports/encode_orn_mixed_width.md`.
+3. **SP encoded as XZR.** Failing property `encode_ret_neg_wrong_reg_class`. Shrunk witness: which=0, n=0 — `ret sp` encodes as Word(0xd65f03e0) instead of Err. llvm-mc rejects SP; ARM ARM register 31 is XZR never SP. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_sp.md`.
 
-4. **SP/WSP encoded as ZR.** `orn wsp, w0, w0` assembles as WZR. ARM ARM register 31 is ZR, never SP. Severity: medium. Report: `pbt-out/bug_reports/encode_orn_sp_as_zr.md`.
+4. **FP/SIMD names encoded as GPRs.** Failing property `encode_ret_neg_fp_reg`. Shrunk witness: which=0, n=0 — `ret d0` encodes as Word(0xd65f0000) instead of Err. llvm-mc rejects FP Rn; ARM ARM Rn is Xn. Severity: medium. Report: `pbt-out/bug_reports/encode_ret_fp_reg.md`.
 
-5. **FP/SIMD names encoded as GPRs.** `orn d0, x1, x2` assembles as `orn x0, x1, x2`. parse_reg_num accepts d/s/q/v/h/b. Severity: medium. Report: `pbt-out/bug_reports/encode_orn_fp_as_gpr.md`.
-
-6. **Out-of-range shift masked.** `orn w0, w0, w0, lsl #32` encodes imm6=32 (UNALLOCATED for sf=0) instead of Err. Severity: medium. Report: `pbt-out/bug_reports/encode_orn_shift_out_of_range.md`.
-
-7. **Unknown shift kind defaults to LSL.** `orn w0, w0, w0, lslx #0` encodes as LSL #0. Severity: low. Report: `pbt-out/bug_reports/encode_orn_unknown_shift_kind.md`.
-
-8. **NEON T other than 8b/16b encoded as 8b.** `orn v0.8h, v0.8h, v0.8h` encodes Q=0 bitwise ORN. llvm-mc rejects it. Severity: medium. Report: `pbt-out/bug_reports/encode_orn_invalid_neon_arr.md`.
-
-9. **Mismatched NEON arrangements / bare Reg sources accepted.** `orn v0.8b, v0.16b, v0.8b` encodes as 8b ORN; Vn/Vm T discarded. Severity: medium. Report: `pbt-out/bug_reports/encode_orn_neon_mismatch.md`.
-
-10. **Trailing operand after a valid shift ignored.** `orn w0, w0, w0, lsl #1, w0` encodes as shifted ORN. Severity: low. Report: `pbt-out/bug_reports/encode_orn_trailing_after_shift.md`.
-
-All ten reproduced serially (`PBT_TEST_JOBS=1`) or are pure-function failures with the same shrunk witness as the parallel run.
+All four reproduced serially (`PBT_TEST_JOBS=1 --test-threads=1`).
 
 ## Design Caveats
 
@@ -47,25 +35,28 @@ All ten reproduced serially (`PBT_TEST_JOBS=1`) or are pure-function failures wi
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_orn_pbt) | 4 KAT + 19 properties + 10 regression witnesses |
+| src/backend/arm/assembler/encoder/compare_branch.rs (mod encode_ret_pbt) | 3 KAT + 10 properties + 4 regression witnesses |
 
 ## Output Directories
 
 - pbt-out/PLAN.md — campaign checklist
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/REPORT.md — this report
-- pbt-out/FUNCTION_INDEX.md — encode_orn marked yes
-- pbt-out/COVERAGE.md — encode_orn row appended
+- pbt-out/FUNCTION_INDEX.md — encode_ret marked yes
+- pbt-out/COVERAGE.md — encode_ret row appended
 - pbt-out/COVERAGE_STATUS.md — updated
-- pbt-out/INVARIANTS.md — encode_orn section prepended
-- pbt-out/bug_reports/encode_orn_*.md — 10 bug reports
+- pbt-out/INVARIANTS.md — encode_ret section prepended
+- pbt-out/bug_reports/encode_ret_extra_operand.md
+- pbt-out/bug_reports/encode_ret_w_reg.md
+- pbt-out/bug_reports/encode_ret_sp.md
+- pbt-out/bug_reports/encode_ret_fp_reg.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 11:17 (campaign: coverage)
-> Files: 7/7 scanned (100%) | Functions: 50/229 total | PBT candidates: 50 | Tested: 50 (100%) | 0 pass, 50 fail
+> Last updated: 2026-09-14 11:29 (campaign: coverage)
+> Files: 7/7 scanned (100%) | Functions: 51/229 total | PBT candidates: 51 | Tested: 51 (100%) | 0 pass, 51 fail
 
 ## Summary
 
@@ -74,10 +65,10 @@ All ten reproduced serially (`PBT_TEST_JOBS=1`) or are pure-function failures wi
 | Total source files | 7 |
 | Files scanned | 7 / 7 (100%) |
 | Total functions (all files) | 229 |
-| PBT candidates (from FUNCTION_INDEX) | 50 |
-| **Tested (of PBT candidates)** | **50 / 50 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 50 / 0 |
-| **Overall (tested / all functions)** | **50 / 229 (22%)** |
+| PBT candidates (from FUNCTION_INDEX) | 51 |
+| **Tested (of PBT candidates)** | **51 / 51 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 51 / 0 |
+| **Overall (tested / all functions)** | **51 / 229 (22%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -85,20 +76,20 @@ All ten reproduced serially (`PBT_TEST_JOBS=1`) or are pure-function failures wi
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 50 | 50 | 0 | 100% |
+|  | 51 | 51 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 50 | 50 | 0 | 100% |
+| unknown | 51 | 51 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 17 | 17 | 100% | covered |
+| compare_branch.rs | 21 | 18 | 18 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 16 | 16 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
@@ -162,3 +153,4 @@ All ten reproduced serially (`PBT_TEST_JOBS=1`) or are pure-function failures wi
 | encode_neon_shift_imm | neon.rs |
 | encode_neon_tbl | neon.rs |
 | encode_orn | data_processing.rs |
+| encode_ret | compare_branch.rs |

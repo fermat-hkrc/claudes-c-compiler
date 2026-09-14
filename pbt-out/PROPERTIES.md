@@ -1,378 +1,263 @@
-# Properties: encode_orn
+# Properties: encode_ret
 
-## encode_orn_diff_reg_llvm_mc
+## encode_ret_diff_xn_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler of the same GNU-style ORN text). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree ORN decoder. encode_eon rejected (same-job gate: EON / opc=10). SUT-boundary: internal-helper of the GNU-style AArch64 assembler; mapping operands <-> `orn Rd, Rn, Rm{, shift}`.
-- Seed: (none)
-- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt ∈ [0, 31+32·is_64]. encode_orn([Rd, Rn, Rm, Shift(kind,amt)]) = Word(v) ∧ llvm-mc(-triple=aarch64, "orn Rd, Rn, Rm, kind #amt") = v
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler of the same GNU-style RET text). State machine rejected: pure function, no lifecycle. Round-trip rejected: no in-tree RET decoder. encode_br rejected (same-job gate: BR / opc=0000). encode_blr rejected (same-job gate: BLR / opc=0001). SUT-boundary: internal-helper of the GNU-style AArch64 assembler; mapping [] <-> `ret`, [Reg("xN"|"xzr"|"lr")] <-> `ret xN`.
+- Seed: src/backend/arm/codegen/prologue.rs:319 emits bare `ret`; peephole.rs:1028 classifies it
+- Formal: ∀ name ∈ {⊥} ∪ {x0..x30, xzr, lr, X0}. encode_ret(ops(name)) = Word(v) ∧ llvm-mc(-triple=aarch64, asm(name)) = v, where ops(⊥)=[] and asm(⊥)="ret"
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_orn
+function: encode_ret
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, kind: {lsl,lsr,asr,ror}, amt: 0..63 co-gen with is_64 }
+  vars: [name]
+  domain: { name: optional X-register name or omitted }
   relation:
     op: eq
-    lhs: encode_orn(ops)
-    rhs: llvm_mc_word("orn Rd, Rn, Rm, kind #amt")
+    lhs: encode_ret(ops)
+    rhs: llvm_mc_word(asm)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: src/backend/arm/assembler/README.md:14 same textual assembly as gas; README.md:214 orn under Data Processing; data_processing.rs:909 Encode ORN; ARM ARM Logical (shifted register) ORN sf 01 01010 shift N=1 Rm imm6 Rn Rd
+  name: { gen: optional, elem: { gen: string } }
+evidence: src/backend/arm/assembler/README.md:14 same textual assembly as gas; README.md:220 ret under Branches; compare_branch.rs:232 RET 1101011 0010 11111 Rn; ARM ARM Unconditional branch (register) RET opc=0010, omitted Xn defaults to X30
 ```
 
-## encode_orn_diff_neon_llvm_mc
-- Tier: 2
-- Rationale: README.md:224 lists orn under NEON three-same. Differential vs llvm-mc for T in {8b,16b}. encode_logical NEON ORR is a different opcode (size=10 vs 11). SUT-boundary: same GNU-style assembler helper; mapping <-> `orn Vd.T, Vn.T, Vm.T`.
+## encode_ret_word_layout
+- Tier: 4
+- Rationale: Algebraic invariant from ARM ARM / body comment: bits[31:25]=1101011, opc[24:21]=0010, op2=11111, op3=000000, Rn[9:5], op4=00000. Differential is stronger and used on the X-reg domain; this pins the field layout independently of llvm-mc.
 - Seed: (none)
-- Formal: ∀ d, n, m ∈ {0..31}, T ∈ {8b,16b}. encode_orn([Vd.T, Vn.T, Vm.T]) = Word(v) ∧ llvm-mc("orn Vd.T, Vn.T, Vm.T") = v
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ n ∈ {0..31}. encode_ret([Reg(xn)]) = Word(w) ⇒ w = 0xd65f0000 | (n << 5) ∧ (w>>25)=0b1101011 ∧ ((w>>21)&0xF)=0b0010 ∧ (w&0x1F)=0 ∧ ((w>>5)&0x1F)=n
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_orn
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [d, n, m, t]
-  domain: { d: 0..31, n: 0..31, m: 0..31, t: {8b,16b} }
-  relation:
-    op: eq
-    lhs: encode_orn(ops)
-    rhs: llvm_mc_word("orn Vd.T, Vn.T, Vm.T")
-generators:
-  d: { gen: int, min: 0, max: 31, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-evidence: README.md:224 orn under NEON three-same; data_processing.rs:922 ARM ARM Advanced SIMD three-same ORN 0 Q 0 01110 11 1 Rm 000111 Rn Rd
-```
-
-## encode_orn_diff_imm_llvm_mc
-- Tier: 2
-- Rationale: GNU as / llvm-mc accept `orn Rd, Rn, #imm` as the alias `orr Rd, Rn, #~imm` (logical immediate). README.md:14 "accepts the same textual assembly that GCC's gas would consume". Dispatch `"orn" => encode_orn` so this function owns that text.
-- Seed: (none)
-- Formal: ∀ rd ∈ {0..30}, rn ∈ {0..31}, is_64 ∈ Bool, imm a valid AArch64 inverted-bitmask. encode_orn([Rd, Rn, Imm(imm)]) = Word(v) ∧ llvm-mc("orn Rd, Rn, #imm") = v
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, is_64=false, seed=0 — orn w0, w0, #0xaaaaaaaa
-- Bug report: pbt-out/bug_reports/encode_orn_imm_alias.md
-
-```property
-function: encode_orn
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, is_64, imm]
-  domain: { rd: 0..30, rn: 0..31, imm: valid inverted bitmask }
-  relation:
-    op: eq
-    lhs: encode_orn([Rd, Rn, Imm(imm)])
-    rhs: llvm_mc_word("orn Rd, Rn, #imm")
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  imm: { gen: int, min: 0, max: 18446744073709551615, type: u64 }
-evidence: README.md:14 gas-compatible GNU-style assembly; llvm-mc orn x0, x1, #1 encodes as orr x0, x1, #0xfffffffffffffffe
-```
-
-## encode_orn_metamorphic_n_bit_vs_orr
-- Tier: 4c
-- Rationale: ARM ARM Logical (shifted register) ORN is ORR with N=1 (bit 21). encode_logical(opc=01) is ORR (N=0), different job so not a differential sibling; the N-bit relation is an independent field metamorphic. Required metamorphic companion to the differential.
-- Seed: (none)
-- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt in range. encode_orn(ops) XOR encode_logical(ops, opc=01) = 1<<21
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_orn
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
-  relation:
-    op: eq
-    lhs: encode_orn(ops) XOR encode_logical(ops, 0b01)
-    rhs: 1 << 21
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: ARM ARM Logical (shifted register) N at bit 21; ORN N=1 vs ORR N=0 with opc=01; data_processing.rs:933 N=1
-```
-
-## encode_orn_metamorphic_mvn_alias
-- Tier: 4c
-- Rationale: Documented alias at data_processing.rs:753: MVN Rd, Rm = ORN Rd, XZR, Rm. encode_mvn is same-job on this subset. Also required to match llvm-mc `orn Rd, ZR, Rm` / `mvn Rd, Rm`.
-- Seed: (none)
-- Formal: ∀ rd, rm ∈ {0..31}, is_64 ∈ Bool, kind ∈ {lsl,lsr,asr,ror}, amt in range. encode_orn([Rd, ZR, Rm, shift]) = encode_mvn([Rd, Rm, shift]) = llvm-mc("orn Rd, ZR, Rm, shift")
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_orn
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rm, is_64, kind, amt]
-  domain: { rd: 0..31, rm: 0..31 }
-  relation:
-    op: eq
-    lhs: encode_orn([Rd, ZR, Rm, shift])
-    rhs: encode_mvn([Rd, Rm, shift])
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: data_processing.rs:753 MVN Rd, Rm -> ORN Rd, XZR, Rm; llvm-mc orn x0, xzr, x1 encodes as mvn x0, x1
-```
-
-## encode_orn_invariant_arm_fields
-- Tier: 4d
-- Rationale: ARM ARM field layout of shifted-register ORN is an exact structural predicate on every success-path GPR word. Stronger differential already covers value equality vs llvm-mc; this pins each field independently. Bounds 0/1/31/32/63 sampled exactly via amt generator.
-- Seed: (none)
-- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool, kind, amt in range. word sf=is_64 ∧ opc=01 ∧ bits[28:24]=01010 ∧ shift=kind ∧ N=1 ∧ Rm=rm ∧ imm6=amt ∧ Rn=rn ∧ Rd=rd
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_orn
+function: encode_ret
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_64, kind, amt]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, amt: 0..(31+32*is_64) }
+  vars: [n]
+  domain: { n: 0..31 }
   relation:
-    op: holds
-    expr: sf==(is_64) && opc==0b01 && op==0b01010 && N==1 && Rm==rm && imm6==amt && Rn==rn && Rd==rd
+    op: eq
+    lhs: encode_ret([Reg(xn)])
+    rhs: Word(0xd65f0000 | (n << 5))
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 63, type: u32 }
-evidence: ARM ARM Logical (shifted register) ORN sf 01 01010 shift 1 Rm imm6 Rn Rd; data_processing.rs:933
+  n: { gen: int, min: 0, max: 31, type: u32 }
+evidence: compare_branch.rs:232 RET 1101011 0010 11111 000000 Rn 00000; ARM ARM Unconditional branch (register) RET opc=0010
 ```
 
-## encode_orn_neg_arity_invalid_name
-- Tier: 4e
-- Rationale: llvm-mc rejects fewer than 3 operands ("too few operands") and invalid register names (x32, foo, empty, r0). Documented arity at data_processing.rs:911 "orn requires 3 operands".
-- Seed: (none)
-- Formal: ∀ n ∈ {0,1,2}. encode_orn(n GPRs) = Err. ∀ bad ∈ {x32,w32,foo,"",r0,x}. encode_orn([Rd, Rn, Reg(bad)]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+## encode_ret_meta_default_x30_lr
+- Tier: 4
+- Rationale: ARM ARM / body comment: omitted Xn defaults to X30 (LR). GNU as / llvm-mc alias `ret` ≡ `ret x30` ≡ `ret lr`. Metamorphic equality of the three operand forms.
+- Seed: prologue.rs:319 bare `ret`; compare_branch.rs:227-228 default Rn=30
+- Formal: ∀. encode_ret([]) = encode_ret([Reg("x30")]) = encode_ret([Reg("lr")]) = Word(0xd65f03c0)
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_orn
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, bad]
-  domain: { n: 0..2, bad: {x32,w32,foo,empty,r0,x} }
-  relation:
-    op: holds
-    expr: encode_orn(ops).is_err()
-generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
-  bad: { gen: oneof, items: ["x32", "w32", "foo", "", "r0", "x"] }
-expected_error: String
-evidence: llvm-mc too few operands; data_processing.rs:911 orn requires 3 operands; parse_reg_num rejects x32/foo
-```
-
-## encode_orn_neg_error_contracts
-- Tier: 4e
-- Rationale: llvm-mc / ARM ARM reject mixed X/W, SP/WSP (register 31 is ZR not SP), FP/SIMD names as GPRs, out-of-range imm6, unknown shift kinds, trailing non-shift 4th operand, and NEON T not in {8B,16B}. Implemented as encode_orn_neg_extra_operand / mixed_width / sp_fp / shift_range / unknown_shift / invalid_neon_arr.
-- Seed: (none)
-- Formal: ∀ mixed-width / SP / FP / amt out of range / unknown shift / extra non-shift / T not in {8b,16b}. encode_orn(ops) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: failing
-- Counterexample: extra which=0 (w0,w0,w0,w0); mixed rd64=false rn64=false rm64=true; wsp at operand 0; lsl #32 on W; unknown lslx; T=8h
-- Bug report: pbt-out/bug_reports/encode_orn_extra_operand.md; pbt-out/bug_reports/encode_orn_mixed_width.md; pbt-out/bug_reports/encode_orn_sp_as_zr.md; pbt-out/bug_reports/encode_orn_fp_as_gpr.md; pbt-out/bug_reports/encode_orn_shift_out_of_range.md; pbt-out/bug_reports/encode_orn_unknown_shift_kind.md; pbt-out/bug_reports/encode_orn_invalid_neon_arr.md
-
-```property
-function: encode_orn
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30 }
-  relation:
-    op: holds
-    expr: encode_orn(invalid_ops).is_err()
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: llvm-mc rejects mixed width, SP, FP, lsl #32 on W, lsl #64 on X, extra operand, T=4h/8h/2s/4s/2d; ARM ARM register 31 is XZR/WZR; ARM ARM T in 8B/16B
-```
-
-## encode_orn_metamorphic_sf
-- Tier: 4c
-- Rationale: Coverage sweep. ARM ARM sf is bit 31 of Logical (shifted register). Equal-number X vs W encodings must differ only in sf. amt in 0..31 so both widths are allocated.
-- Seed: (none)
-- Formal: ∀ rd, rn, rm ∈ {0..30}, kind ∈ {lsl,lsr,asr,ror}, amt ∈ [0,31]. encode_orn(X-ops) XOR encode_orn(W-ops) = 1<<31
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_orn
+function: encode_ret
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, kind, amt]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30, amt: 0..31 }
+  vars: [dummy]
+  domain: { dummy: unit }
   relation:
     op: eq
-    lhs: encode_orn(ops_x) XOR encode_orn(ops_w)
-    rhs: 1 << 31
+    lhs: encode_ret([])
+    rhs: encode_ret([Reg("x30")])
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  kind: { gen: oneof, items: ["lsl", "lsr", "asr", "ror"] }
-  amt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Logical (shifted register) sf at bit 31
+  dummy: { gen: int, min: 0, max: 0, type: u32 }
+evidence: compare_branch.rs:227-228 empty operands default to x30 (LR); ARM ARM RET omitted Xn is X30; llvm-mc ret / ret x30 / ret lr all encode 0xd65f03c0
 ```
 
-## encode_orn_metamorphic_neon_q
-- Tier: 4c
-- Rationale: Coverage sweep. ARM ARM Q is bit 30 of Advanced SIMD three-same ORN; T=8B (Q=0) vs T=16B (Q=1) at equal Rd/Rn/Rm must differ only in Q.
+## encode_ret_meta_vs_br
+- Tier: 4
+- Rationale: ARM ARM Unconditional branch (register): RET opc=0010 vs BR opc=0000, otherwise identical. For the same Rn, RET XOR BR = bit 22. encode_br is a different-job sibling used only as a metamorphic companion, not a differential reference.
 - Seed: (none)
-- Formal: ∀ d, n, m ∈ {0..31}. encode_orn(T=8b) XOR encode_orn(T=16b) = 1<<30
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ n ∈ {0..31}. encode_ret([Reg(xn)]) XOR encode_br([Reg(xn)]) = 1<<22
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_orn
+function: encode_ret
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [d, n, m]
-  domain: { d: 0..31, n: 0..31, m: 0..31 }
+  vars: [n]
+  domain: { n: 0..31 }
   relation:
     op: eq
-    lhs: encode_orn(ops_8b) XOR encode_orn(ops_16b)
-    rhs: 1 << 30
+    lhs: encode_ret([Reg(xn)]) XOR encode_br([Reg(xn)])
+    rhs: 1u32 << 22
 generators:
-  d: { gen: int, min: 0, max: 31, type: u32 }
   n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM Advanced SIMD three-same Q at bit 30; data_processing.rs:921 q = 1 iff arr_d == 16b
+evidence: compare_branch.rs:214 BR 1101011 0000 11111 Rn; compare_branch.rs:232 RET 1101011 0010 11111 Rn; ARM ARM opc BR=0000 RET=0010 (bit 22)
 ```
 
-## encode_orn_neg_neon_mismatch_or_bare
-- Tier: 4e
-- Rationale: Coverage sweep. llvm-mc rejects mismatched Vd/Vn/Vm arrangements and bare GPR/V names in vector ORN. ARM ARM requires T in {8B,16B} matching across operands.
+## encode_ret_neg_w_reg
+- Tier: 4
+- Rationale: ARM ARM Rn is Xn (64-bit GPR). llvm-mc rejects `ret wN`. README.md:14 gas-compat. Negative/error contract: W-form Rn must Err.
 - Seed: (none)
-- Formal: ∀ d, n, m ∈ {0..31}. encode_orn([Vd.8b, Vn.16b, Vm.8b]) = Err ∧ encode_orn([Vd.8b, Reg(Vn), Vm.8b]) = Err ∧ encode_orn([Vd.8b, Vn.8b, Reg(Xm)]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ n ∈ {0..32}. encode_ret([Reg(wn)]) is Err, where w32 maps to wzr/wsp
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: d=0, n=0, m=0, which=0 — orn v0.8b, v0.16b, v0.8b
-- Bug report: pbt-out/bug_reports/encode_orn_neon_mismatch.md
+- Counterexample: n=0 (ret w0 encodes as ret x0 / 0xd65f0000)
+- Bug report: pbt-out/bug_reports/encode_ret_w_reg.md
 
 ```property
-function: encode_orn
+function: encode_ret
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [d, n, m, which]
-  domain: { d: 0..31, n: 0..31, m: 0..31, which: 0..2 }
+  vars: [n]
+  domain: { n: 0..32 }
   relation:
-    op: holds
-    expr: encode_orn(ops).is_err()
+    op: throws
+    expr: encode_ret([Reg(wn)])
 generators:
-  d: { gen: int, min: 0, max: 31, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  which: { gen: int, min: 0, max: 2, type: u32 }
+  n: { gen: int, min: 0, max: 32, type: u32 }
 expected_error: String
-evidence: llvm-mc orn v0.8b, v1.16b, v2.8b is invalid operand; ARM ARM T must match
+evidence: ARM ARM RET Rn is Xn; llvm-mc rejects ret w0; README.md:14 same textual assembly as gas
 ```
 
-## encode_orn_neg_trailing_after_shift
-- Tier: 4e
-- Rationale: Coverage sweep. llvm-mc rejects a 5th operand after a valid shift. Extra operands after the optional shift are not part of the ORN grammar.
+## encode_ret_neg_extra_operand
+- Tier: 4
+- Rationale: llvm-mc rejects `ret xN, extra`. ARM ARM RET takes at most one Xn. README.md:14 gas-compat. Extra operand must Err.
 - Seed: (none)
-- Formal: ∀ rd, rn, rm ∈ {0..30}, is_64 ∈ Bool, extra ∈ {Reg, Imm, Symbol}. encode_orn([Rd, Rn, Rm, LSL #1, extra]) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ n ∈ {0..30}, extra ∈ {Reg, Imm, Symbol, Mem}. encode_ret([Reg(xn), extra]) is Err
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: failing
-- Counterexample: rd=rn=rm=0, is_64=false, extra=Reg(w0) — orn w0, w0, w0, lsl #1, w0
-- Bug report: pbt-out/bug_reports/encode_orn_trailing_after_shift.md
+- Counterexample: n=0, which=0 (ret x0, x1 encodes as ret x0 / 0xd65f0000)
+- Bug report: pbt-out/bug_reports/encode_ret_extra_operand.md
 
 ```property
-function: encode_orn
+function: encode_ret
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, extra]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30 }
+  vars: [n, extra]
+  domain: { n: 0..30, extra: one of Reg Imm Symbol Mem }
   relation:
-    op: holds
-    expr: encode_orn([Rd, Rn, Rm, Shift(lsl,1), extra]).is_err()
+    op: throws
+    expr: encode_ret([Reg(xn), extra])
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
+  n: { gen: int, min: 0, max: 30, type: u32 }
+  extra: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: llvm-mc rejects trailing tokens after a valid shift
+evidence: llvm-mc rejects ret x0, x1; ARM ARM RET takes at most one Xn; README.md:14 gas-compat
 ```
 
-## encode_orn_neg_non_reg_kinds
-- Tier: 4e
-- Rationale: Coverage sweep. get_reg documents "expected register" for non-Reg kinds. Imm/Mem/Symbol/Cond at a GPR slot of shifted-register ORN must Err (llvm-mc rejects them).
+## encode_ret_neg_bad_operand
+- Tier: 4
+- Rationale: RET takes a GPR or nothing. Imm/Mem/Shift/Extend/RegArrangement/Modifier/Symbol/Label are not valid RET operands (llvm-mc / ARM ARM). Must Err.
 - Seed: (none)
-- Formal: ∀ which ∈ {0,1,2}, kind ∈ {Imm, Mem, Symbol, Cond}. encode_orn(ops with that slot replaced) = Err
-- Test file: src/backend/arm/assembler/encoder/data_processing.rs
+- Formal: ∀ bad ∈ {Imm, Mem, Shift, Extend, RegArrangement, Modifier, Symbol, Label}. encode_ret([bad]) is Err
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_orn
+function: encode_ret
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, kind]
-  domain: { which: 0..2, kind: {Imm, Mem, Symbol, Cond} }
+  vars: [which]
+  domain: { which: 0..7 }
   relation:
-    op: holds
-    expr: encode_orn(ops).is_err()
+    op: throws
+    expr: encode_ret([bad(which)])
 generators:
-  which: { gen: int, min: 0, max: 2, type: u32 }
-  kind: { gen: int, min: 0, max: 3, type: u32 }
+  which: { gen: int, min: 0, max: 7, type: u32 }
 expected_error: String
-evidence: llvm-mc invalid operand; get_reg expected register at operand idx
+evidence: ARM ARM RET operand is optional Xn; get_reg at encoder/mod.rs:956 expected register; llvm-mc rejects non-GPR
+```
+
+## encode_ret_neg_wrong_reg_class
+- Tier: 4
+- Rationale: ARM ARM register 31 is XZR not SP; Rn is GPR not FP/SIMD. llvm-mc rejects `ret sp` / `ret d0` / invalid names. Must Err.
+- Seed: (none)
+- Formal: ∀ name ∈ {sp, wsp, dN, sN, qN, vN, hN, bN, x32, w32, foo, "", r0, x, x-1, x99}. encode_ret([Reg(name)]) is Err
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: which=0, n=0 (ret sp encodes as ret xzr / 0xd65f03e0)
+- Bug report: pbt-out/bug_reports/encode_ret_sp.md
+
+```property
+function: encode_ret
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [name]
+  domain: { name: SP or FP or invalid GPR names }
+  relation:
+    op: throws
+    expr: encode_ret([Reg(name)])
+generators:
+  name: { gen: string }
+expected_error: String
+evidence: ARM ARM RET Rn is Xn, register 31 is XZR never SP; parse_reg_num encoder/mod.rs:131; llvm-mc rejects ret sp / ret d0
+```
+
+## encode_ret_neg_fp_reg
+- Tier: 4
+- Rationale: ARM ARM RET Rn is Xn. llvm-mc rejects `ret d0` and other FP/SIMD names. Dedicated generator over {d,s,q,v,h,b} so a failure shrinks to an FP witness (distinct from SP).
+- Seed: (none)
+- Formal: ∀ prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_ret([Reg(prefix||n)]) is Err
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: failing
+- Counterexample: which=0, n=0 (ret d0 encodes as ret x0 / 0xd65f0000)
+- Bug report: pbt-out/bug_reports/encode_ret_fp_reg.md
+
+```property
+function: encode_ret
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, n]
+  domain: { which: 0..5, n: 0..31 }
+  relation:
+    op: throws
+    expr: encode_ret([Reg(fp_name(which, n))])
+generators:
+  which: { gen: int, min: 0, max: 5, type: u32 }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: ARM ARM RET Rn is Xn; llvm-mc rejects ret d0; parse_reg_num encoder/mod.rs:141 accepts d/s/q/v/h/b
+```
+
+## encode_ret_neg_invalid_name
+- Tier: 4
+- Rationale: Coverage sweep of get_reg parse_reg_num None arm. Names that are not a valid register encoding (x32, w32, foo, empty, r0, x, x-1, x99) must Err with invalid register. Distinct from SP/FP which parse_reg_num accepts.
+- Seed: (none)
+- Formal: ∀ name ∈ {x32, w32, foo, "", r0, x, x-1, x99}. encode_ret([Reg(name)]) is Err
+- Test file: src/backend/arm/assembler/encoder/compare_branch.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_ret
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which]
+  domain: { which: 0..7 }
+  relation:
+    op: throws
+    expr: encode_ret([Reg(invalid_name(which))])
+generators:
+  which: { gen: int, min: 0, max: 7, type: u32 }
+expected_error: String
+evidence: get_reg encoder/mod.rs:956-961 parse_reg_num None returns invalid register; ARM ARM RET Rn is a GPR number 0-31
 ```
