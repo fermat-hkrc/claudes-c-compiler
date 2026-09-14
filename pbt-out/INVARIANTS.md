@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_msub)
+
+- Valid four-GPR same-width MSUB with Rd/Rn/Rm/Ra in x0–x30/xzr or w0–w30/wzr matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- encode_msub(Rd, Rn, Rm, ZR) equals llvm-mc `mneg Rd, Rn, Rm` and llvm-mc `msub Rd, Rn, Rm, ZR` (1000 cases). Documented alias at data_processing.rs:677.
+- encode_msub(X-ops) XOR encode_msub(W-ops) at equal register numbers = 1<<31 (ARM ARM sf) (1000 cases).
+- Success-path word: sf at 31, bits [30:21]=0011011000, Rm at [20:16], o0=1 at 15, Ra at [14:10], Rn at [9:5], Rd at [4:0].
+- `lr` in any of the four slots encodes as X30 and matches llvm-mc (1000 cases).
+- Fewer than 4 operands, non-register operands (Imm/Symbol/Mem/Shift/Cond/Label), and invalid names (foo, x32, w32, x, r0, empty) always Err.
+- Known-answer: `msub x0, x1, x2, x3` encodes as 0x9b028c20; `msub w0, w1, w2, w3` as 0x1b028c20; `msub x0, x1, x2, xzr` / `mneg x0, x1, x2` as 0x9b02fc20.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Data-processing (3 source) MSUB: `sf 00 11011 000 Rm 1 Ra Rn Rd`. Register 31 is XZR/WZR, never SP/WSP. All four registers same width. Exactly four operands. o0 (bit 15) is 1 (MADD is 0).
+- `lr` is a 64-bit alias of X30 (llvm-mc and is_64bit_reg).
+- Dispatch: encoder/mod.rs:246 msub.
+- Callers: alu.rs:178,183,207,211 emit `msub w0, w3, w2, w1` / `msub x0, x3, x2, x1` for remainder.
+- Sibling encode_mneg data_processing.rs:677 documents MNEG as MSUB with Ra=XZR.
+
+## Quirks
+
+- Extra operands beyond index 3 are ignored (see bugs).
+- parse_reg_num maps sp/wsp to 31, so SP encodes as ZR (see bugs).
+- Mixed X/W is accepted; sf is taken only from Rd (see bugs).
+- parse_reg_num accepts d/s/q/v/h/b prefixes, so FP names encode as GPRs (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (get_reg 0..3 / sf / parse_reg_num lr / invalid / non-Reg / extra / mixed / SP / FP).
+
+---
+
 # Confirmed invariants (encode_neon_qshrn)
 
 - Valid vector SQSHRN/UQSHRN/SQRSHRN/UQRSHRN (+2) with Ta in {8h,4s,2d}, Tb matching Ta and the 2-suffix, Vd/Vn in v0–v31, shift in [1, dest_esize] matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

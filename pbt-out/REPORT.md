@@ -1,70 +1,67 @@
-# PBT Campaign Report: encode_neon_qshrn
+# PBT Campaign Report: encode_msub
 
 ## Summary
 
 **Date:** 2026-09-14
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_qshrn
-**Tests:** 10 properties (plus 2 KAT + 5 regression witnesses)
-**Result:** 6 passing, 5 bugs
-**Effort tier:** standard (1 coverage-driven sweep round; coverage_gaps had no profraw — manual arm audit of arity / Ta match / get_imm as u32 / get_neon_reg Reg dest and source)
+**Modules tested:** encode_msub
+**Tests:** 12 properties (plus 3 KAT + 4 regression witnesses)
+**Result:** 8 passing, 4 bugs
+**Effort tier:** standard (1 coverage-driven sweep round; coverage_gaps had no profraw — manual arm audit of get_reg 0..3 / sf from Rd / o0=1 / extra operand / mixed width / SP / FP)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_qshrn | 10 properties + 2 KAT + 5 regressions | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_msub | 12 properties + 3 KAT + 4 regressions | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### 1. Shift range uses source element size, not dest element size
-- **Law:** shift ∈ [1, dest_esize] (8/16/32 for Ta 8H/4S/2D)
-- **Shrunk input:** `sqshrn v0.8b, v0.8h, #9`
-- **Expected:** Err (llvm-mc: immediate must be in [1, 8])
-- **Actual:** Ok(Word) with immh=0000 (reserved / different encoding group)
-- **Root cause:** `if shift == 0 || shift > element_bits` uses source size 16/32/64; sibling `encode_neon_shrn` correctly uses `half_bits = element_bits / 2`
-- **Impact:** silent wrong encoding of an assembler-invalid shift
-- **Severity:** high
-- **Bug report:** pbt-out/bug_reports/encode_neon_qshrn_shift_oob.md
-- **Regression:** `test_encode_neon_qshrn_regression_shift_oob_dest_esize` (fails, as required)
+### 1. Extra operands beyond index 3 are ignored
+- **Law:** MSUB takes exactly four register operands
+- **Shrunk input:** `msub w0, w0, w0, w0, x0`
+- **Expected:** Err (llvm-mc: invalid operand for instruction)
+- **Actual:** Ok(Word) — same as `msub w0, w0, w0, w0`; extra operand ignored
+- **Root cause:** encode_msub only calls get_reg(0..3); no arity upper bound
+- **Impact:** a typo extra operand is assembled instead of diagnosed
+- **Severity:** medium
+- **Bug report:** pbt-out/bug_reports/encode_msub_extra_operand.md
+- **Regression:** `test_encode_msub_regression_extra_operand` (fails, as required)
 
-### 2. Destination arrangement Tb is ignored
-- **Law:** Vd.Tb must match Ta and the `2` suffix
-- **Shrunk input:** `sqshrn v0.4h, v0.8h, #1`
+### 2. Mixed X/W register widths are accepted
+- **Law:** ARM MSUB uses a single sf bit; all four registers must be the same width
+- **Shrunk input:** `msub w0, w0, w0, x0`
 - **Expected:** Err (llvm-mc: invalid operand)
-- **Actual:** Ok(Word) — `get_neon_reg(operands, 0)` discards dest arrangement
+- **Actual:** Ok(Word) — sf taken only from Rd; Rn/Rm/Ra widths discarded
+- **Root cause:** `let (rn, _) = get_reg(...)` (and Rm/Ra) ignore is_64
+- **Impact:** the object file contains a different instruction than the source text
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_qshrn_mismatched_dest_tb.md
-- **Regression:** `test_encode_neon_qshrn_regression_mismatched_dest_tb` (fails, as required)
+- **Bug report:** pbt-out/bug_reports/encode_msub_mixed_width.md
+- **Regression:** `test_encode_msub_regression_mixed_width` (fails, as required)
 
-### 3. Extra operands beyond index 2 are ignored
-- **Law:** exactly three operands
-- **Shrunk input:** `sqshrn v0.8b, v0.8h, #1, v0.8b`
-- **Expected:** Err
-- **Actual:** Ok(Word) — only `len < 3` is checked
+### 3. SP/WSP is encoded as XZR/WZR
+- **Law:** register 31 is WZR/XZR, never WSP/SP
+- **Shrunk input:** `msub wsp, w0, w0, w0`
+- **Expected:** Err (llvm-mc: invalid operand)
+- **Actual:** Ok(Word) — same encoding as `msub wzr, w0, w0, w0`
+- **Root cause:** parse_reg_num maps sp/wsp to 31
+- **Impact:** writes WZR instead of addressing the stack pointer
+- **Severity:** high
+- **Bug report:** pbt-out/bug_reports/encode_msub_sp.md
+- **Regression:** `test_encode_msub_regression_sp` (fails, as required)
+
+### 4. FP/SIMD register names are accepted as GPRs
+- **Law:** integer MSUB is GPR-only
+- **Shrunk input:** `msub d0, x1, x2, x3`
+- **Expected:** Err (llvm-mc: invalid operand)
+- **Actual:** Ok(Word) — encodes as 32-bit MSUB with Rd=0
+- **Root cause:** parse_reg_num accepts d/s/q/v/h/b prefixes; is_64bit_reg is false so sf=0
+- **Impact:** object file contains a GPR multiply-subtract, not an FP instruction and not a diagnostic
 - **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_qshrn_extra_operand.md
-- **Regression:** `test_encode_neon_qshrn_regression_extra_operand` (fails, as required)
+- **Bug report:** pbt-out/bug_reports/encode_msub_fp_reg.md
+- **Regression:** `test_encode_msub_regression_fp_reg` (fails, as required)
 
-### 4. GPR/FP dest is accepted as Vd
-- **Law:** dest must be Vd.Tb
-- **Shrunk input:** dest=`x0` (`Operand::Reg("x0")`)
-- **Expected:** Err
-- **Actual:** Ok(Word) via `get_neon_reg` `Operand::Reg` + `parse_reg_num`. Reachable from `uqshrn`/`sqshrn2`/`sqrshrn`/`uqrshrn` (+2), which dispatch unconditionally.
-- **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_qshrn_gpr_dest.md
-- **Regression:** `test_encode_neon_qshrn_regression_gpr_dest` (fails, as required)
-
-### 5. i64 shift truncated with `as u32`
-- **Law:** the assembler immediate must be in [1, dest_esize]; high bits must not be dropped
-- **Shrunk input:** `Imm(4294967297)` (`1 + 2^32`)
-- **Expected:** Err
-- **Actual:** Ok(Word) encoding shift `#1`
-- **Severity:** medium
-- **Bug report:** pbt-out/bug_reports/encode_neon_qshrn_shift_i64_trunc.md
-- **Regression:** `test_encode_neon_qshrn_regression_shift_i64_trunc` (fails, as required)
-
-Serial reconfirm: all five failures reproduced with `PBT_TEST_JOBS=1` / `--test-threads=1`.
+Serial reconfirm: all four property failures reproduced with `PBT_TEST_JOBS=1` / `--test-threads=1`.
 
 ## Design Caveats
 
@@ -74,29 +71,28 @@ Serial reconfirm: all five failures reproduced with `PBT_TEST_JOBS=1` / `--test-
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_qshrn_pbt) | 10 properties + 2 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/data_processing.rs (mod encode_msub_pbt) | 12 properties + 3 KAT + 4 regression witnesses |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_qshrn_shift_oob.md
-- pbt-out/bug_reports/encode_neon_qshrn_mismatched_dest_tb.md
-- pbt-out/bug_reports/encode_neon_qshrn_extra_operand.md
-- pbt-out/bug_reports/encode_neon_qshrn_gpr_dest.md
-- pbt-out/bug_reports/encode_neon_qshrn_shift_i64_trunc.md
+- pbt-out/PLAN.md — campaign phases
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/REPORT.md — this report
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/FUNCTION_INDEX.md — function index (encode_msub marked candidate)
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/bug_reports/encode_msub_extra_operand.md
+- pbt-out/bug_reports/encode_msub_mixed_width.md
+- pbt-out/bug_reports/encode_msub_sp.md
+- pbt-out/bug_reports/encode_msub_fp_reg.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 08:57 (campaign: coverage)
-> Files: 6/6 scanned (100%) | Functions: 41/184 total | PBT candidates: 41 | Tested: 41 (100%) | 0 pass, 41 fail
+> Last updated: 2026-09-14 09:10 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 42/184 total | PBT candidates: 42 | Tested: 42 (100%) | 0 pass, 42 fail
 
 ## Summary
 
@@ -105,10 +101,10 @@ Serial reconfirm: all five failures reproduced with `PBT_TEST_JOBS=1` / `--test-
 | Total source files | 6 |
 | Files scanned | 6 / 6 (100%) |
 | Total functions (all files) | 184 |
-| PBT candidates (from FUNCTION_INDEX) | 41 |
-| **Tested (of PBT candidates)** | **41 / 41 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 41 / 0 |
-| **Overall (tested / all functions)** | **41 / 184 (22%)** |
+| PBT candidates (from FUNCTION_INDEX) | 42 |
+| **Tested (of PBT candidates)** | **42 / 42 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 42 / 0 |
+| **Overall (tested / all functions)** | **42 / 184 (23%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -116,13 +112,13 @@ Serial reconfirm: all five failures reproduced with `PBT_TEST_JOBS=1` / `--test-
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 41 | 41 | 0 | 100% |
+|  | 42 | 42 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 41 | 41 | 0 | 100% |
+| unknown | 42 | 42 | 0 | 100% |
 
 ## File Coverage
 
@@ -131,7 +127,7 @@ Serial reconfirm: all five failures reproduced with `PBT_TEST_JOBS=1` / `--test-
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 17 | 17 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 11 | 11 | 100% | covered |
+| data_processing.rs | 36 | 12 | 12 | 100% | covered |
 | load_store.rs | 20 | 5 | 5 | 100% | covered |
 | neon.rs | 68 | 6 | 6 | 100% | covered |
 
@@ -183,3 +179,4 @@ Serial reconfirm: all five failures reproduced with `PBT_TEST_JOBS=1` / `--test-
 | encode_movn | data_processing.rs |
 | encode_movz | data_processing.rs |
 | encode_neon_qshrn | neon.rs |
+| encode_msub | data_processing.rs |
