@@ -66,3 +66,16 @@ proptest! {
         prop_assert_eq!(once, twice);
     }
 }
+
+    /// Deterministic witness for issue #508 (PUA collision): a literal
+    /// U+E080 in the source byte stream round-trips to a single 0x80 byte.
+    /// Asserts the DESIRED (preserving) behavior; ignored until the team
+    /// decides the fix direction for the collision (see
+    /// pbt-out/bug_reports/encoding_pua_collision.md).
+    #[test]
+    #[ignore = "issue #508 — PUA collision, pending team decision"]
+    fn pua_collision_witness() {
+        let s = bytes_to_string(vec![0xEE, 0x82, 0x80]); // literal U+E080 in a UTF-8 source
+        let back = decode_all(&s);
+        assert_eq!(back, vec![0xEE, 0x82, 0x80], "round-trip must preserve literal PUA chars");
+    }

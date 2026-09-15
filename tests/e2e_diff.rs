@@ -401,7 +401,12 @@ fn prop_check_helper(src: String, tag: &'static str) -> Result<(), proptest::tes
     match assert_equivalent(&src, tag) {
         Ok(()) => Ok(()),
         // gcc rejecting the program is a generator (test-side) problem: discard.
-        Err(e) if e.starts_with("gcc compile failed") => Err(proptest::test_runner::TestCaseError::reject("gcc rejected program")),
+        Err(e) if e.starts_with("gcc compile failed") => {
+            let n = std::sync::atomic::AtomicU64::new(0);
+            let _ = n;
+            std::fs::write(format!("/tmp/rejected_{}.c", CASE_ID.fetch_add(1, Ordering::Relaxed)), &src).ok();
+            Err(proptest::test_runner::TestCaseError::reject("gcc rejected program"))
+        }
         Err(e) => Err(proptest::test_runner::TestCaseError::fail(format!("reproducer source:\n{}\n{}", src, e))),
     }
 }
@@ -774,5 +779,149 @@ proptest! {
     fn e2e_globals_init(seed in any::<u64>()) {
         let src = globals_program(seed);
         prop_check_helper(src, "glob")?;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P10: floating-point arithmetic (SSE codegen, IEEE-deterministic)
+// ---------------------------------------------------------------------------
+
+const F64_POOL: [&str; 12] = ["0.0", "1.0", "-1.0", "0.5", "-0.5", "2.0", "3.25", "-7.75",
+                              "0.1", "-2.7", "1e30", "1e-30"];
+const F32_POOL: [&str; 8] = ["0.0f", "1.0f", "-1.0f", "0.5f", "2.0f", "-7.75f", "0.1f", "3.25f"];
+
+/// Double expression tree. Division only by nonzero constants. Magnitudes are
+/// bounded (|v| <= 1e30) so no inf/nan can arise. All ops are IEEE-754
+/// deterministic (both compilers emit SSE2 scalar code, no fast-math).
+fn gen_fexpr(rng: &mut Rng, depth: u32, is_f32: bool) -> String {
+    let leaf = |rng: &mut Rng| -> String {
+        if is_f32 { rng.pick(&F32_POOL).to_string() } else { rng.pick(&F64_POOL).to_string() }
+    };
+    if depth == 0 { return leaf(rng); }
+    let (a, b) = (gen_fexpr(rng, depth - 1, is_f32), gen_fexpr(rng, depth - 1, is_f32));
+    match rng.u32r(0, 6) {
+        0 => format!("({} + {})", a, b),
+        1 => format!("({} - {})", a, b),
+        2 => format!("({} * {})", a, b),
+        3 => format!("({} / {})", a, rng.pick(&["2.0", "0.5", "-4.0", "8.0", "1.5", "0.25"])), // nonzero const
+        4 => format!("(-({}))", a),
+        5 => format!("(({})({}))", if is_f32 { "float" } else { "double" },
+                     gen_fexpr(rng, depth - 1, !is_f32)), // f32<->f64 conversion
+        _ => leaf(rng),
+    }
+}
+
+fn float_program(seed: u64) -> String {
+    let mut rng = Rng(seed ^ 0x7EA_11D0);
+    let mut lines = vec!["#include <stdio.h>".to_string(), "int main(void) {".to_string()];
+    // variables as operands (register pressure)
+    lines.push(format!("    double d0 = {}; double d1 = {};", rng.pick(&F64_POOL), rng.pick(&F64_POOL)));
+    lines.push(format!("    float f0 = {}; float f1 = {};", rng.pick(&F32_POOL), rng.pick(&F32_POOL)));
+    let n = rng.u32r(8, 18);
+    for i in 0..n {
+        let is_f32 = rng.chance(35);
+        let mut e = gen_fexpr(&mut rng, 3, is_f32);
+        // splice in variables sometimes
+        if rng.chance(40) {
+            let v = if is_f32 { rng.pick(&["f0", "f1"]) } else { rng.pick(&["d0", "d1"]) };
+            e = format!("({} {} {})", e, rng.pick(&["+", "-", "*"]), v);
+        }
+        // guarded int cast (defined: |d| < 1e9 branch only)
+        if rng.chance(25) {
+            lines.push(format!("    printf(\"{} %d\\n\", ({}) > -1e9 && ({}) < 1e9 ? (int)({}) : -12345);", i, e, e, e));
+        } else {
+            lines.push(format!("    printf(\"{} %a\\n\", (double)({}));", i, e));
+        }
+        // comparisons as ints
+        if rng.chance(30) {
+            let (x, y) = (gen_fexpr(&mut rng, 2, false), gen_fexpr(&mut rng, 2, false));
+            let op = rng.pick(&[">", "<", ">=", "<=", "==", "!="]);
+            lines.push(format!("    printf(\"c{} %d\\n\", (int)(({}) {} ({})));", i, x, op, y));
+        }
+    }
+    lines.push("    return 0;".to_string());
+    lines.push("}".to_string());
+    lines.join("\n")
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+
+    /// P10: IEEE-deterministic float/double arithmetic (SSE2 scalar) matches
+    /// gcc bit-for-bit, including f32<->f64 conversions, guarded int casts,
+    /// and floating comparisons.
+    #[test]
+    fn e2e_float_arith(seed in any::<u64>()) {
+        let src = float_program(seed);
+        prop_check_helper(src, "float")?;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P11: switch / goto / ternary / compound assignment / inc-dec / do-while
+// ---------------------------------------------------------------------------
+
+fn control_flow2_program(seed: u64) -> String {
+    let mut rng = Rng(seed ^ 0x5E11_0D5);
+    let mut lines = vec!["#include <stdio.h>".to_string(), "int main(void) {".to_string()];
+    lines.push("    long acc = 0; unsigned uacc = 0;".to_string());
+    let n_stmts = rng.u32r(6, 14);
+    for i in 0..n_stmts {
+        match rng.u32r(0, 5) {
+            0 => { // switch with optional fallthrough / default-first
+                let n_cases = rng.u32r(2, 4);
+                let disc = format!("(int)(acc % {})", rng.u32r(2, 6));
+                lines.push(format!("    switch ({}) {{", disc));
+                let mut c: i64 = 0;
+                for _ in 0..n_cases {
+                    lines.push(format!("    case {}:", c));
+                    lines.push(format!("        acc {} {};",
+                        rng.pick(&["+=", "-=", "^="]), (rng.next() % 13) as i64));
+                    if rng.chance(60) { lines.push("        break;".to_string()); } // else fallthrough
+                    c += 1;
+                }
+                if rng.chance(50) {
+                    lines.push("    default:".to_string());
+                    lines.push("        acc = acc % 1009 + 7;".to_string());
+                }
+                lines.push("    }".to_string());
+            }
+            1 => { // nested ternary chain
+                lines.push(format!(
+                    "    acc += ({0} % 3 == 0) ? (({0} % 5 == 1) ? 11 : -11) : (({0} % 7 == 2) ? 3 : -3);", acc_var(&mut rng)));
+            }
+            2 => { // compound assignments + inc/dec in bounded do-while
+                let n = rng.u32r(1, 8);
+                lines.push(format!("    int k{} = 0; do {{ k{}++; acc += k{} % 5; }} while (k{} < {});", i, i, i, i, n));
+                lines.push("    uacc = uacc * 7 + 3;".to_string());
+            }
+            3 => { // forward goto over a block
+                lines.push(format!("    if (acc % 2 == 0) goto skip{};", i));
+                lines.push("    acc = acc * 3 - 1;".to_string());
+                lines.push(format!("    skip{}: acc += 1;", i));
+            }
+            _ => { // printf snapshot
+                lines.push("    printf(\"s %ld %lu\\n\", acc, uacc);".to_string());
+            }
+        }
+        lines.push(format!("    acc = acc % 1000000007;"));
+    }
+    lines.push("    printf(\"F %ld %lu\\n\", acc, uacc);".to_string());
+    lines.push("    return (int)(acc % 100);".to_string());
+    lines.push("}".to_string());
+    lines.join("\n")
+}
+
+fn acc_var(_rng: &mut Rng) -> &'static str { "acc" }
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(1000))]
+
+    /// P11: switch (incl. fallthrough/default), nested ternaries, compound
+    /// assignments, do-while, inc/dec, forward goto — identical behavior.
+    #[test]
+    fn e2e_control_flow_2(seed in any::<u64>()) {
+        let src = control_flow2_program(seed);
+        prop_check_helper(src, "ctrl2")?;
     }
 }

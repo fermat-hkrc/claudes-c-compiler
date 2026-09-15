@@ -5,11 +5,11 @@
 **Date:** 2026-09-15
 **Repository:** fermat-hkrc/claudes-c-compiler (branch `explore/pbt-test`)
 **Modules tested:** e2e_diff (full compiler pipeline, x86-64), common::encoding, common::const_arith, common::types
-**Tests:** 10 properties (5 E2E differential × 1000 cases + 1 strengthening round × 400 cases + 4 unit properties × 1000 cases)
+**Tests:** 12 properties (8 E2E differential × 1000 cases + 1 strengthening round × 400 cases + 4 unit properties × 1000 cases) + 1 ignored deterministic witness (issue #508)
 **Effort tier:** standard(约 30 分钟名义预算;实际因调试生成器与长时 E2E 运行超支,如实记录)
-**Result:** 10 passed, 0 failed — plus 1 low-severity candidate finding filed for user decision (PUA collision, see Bugs Found)
+**Result:** 12 passed, 0 failed — plus 1 low-severity candidate finding (PUA collision, issue #508 filed)
 
-性质测试结果:`Results: 10 passed, 0 failed`
+性质测试结果:`Results: 12 passed, 0 failed`(第二轮扩展:浮点算术 P10、switch/goto/三元 P11 各 1000 例全过)
 
 - 差分 oracle:E2E 性质将随机生成的无 UB、确定性 C 程序分别交给 `ccc`(x86-64)与 `gcc 13.3` 编译运行,比较 (stdout, exit code)。规范证据:DESIGN_DOC.md:164 "x86-64 code generation (SysV AMD64 ABI)"。
 - 强化轮(P1s):叶节点仅取边界值(INT_MIN/MAX、UINT_MAX、LONG_MIN 等)、表达式深度 3→4、类型转换频率加倍 —— 400 例全过。
@@ -19,7 +19,7 @@
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|--------------|
-| e2e_diff (driver→lexer→parser→sema→IR→opt→codegen→asm→link) | 6 (P1-P5 + P1s) | 0 confirmed / 1 candidate (PUA 见注) | differential vs gcc-13.3 |
+| e2e_diff (driver→lexer→parser→sema→IR→opt→codegen→asm→link) | 8 (P1-P5, P1s, P10-P11) | 0 confirmed / 1 candidate (PUA 见注) | differential vs gcc-13.3 |
 | common::encoding | 2 (P6/P7) | 0 (1 candidate, 见 Bugs Found) | algebraic round_trip / idempotence |
 | common::const_arith | 1 (P8) | 0 | differential vs independent C11 reference model |
 | common::types | 1 (P9) | 0 | algebraic invariant (minimality + overflow branch) |
@@ -51,9 +51,9 @@
 
 | File | Tests |
 |------|-------|
-| tests/e2e_diff.rs | 6 (e2e_arith_expr, e2e_arith_boundary, e2e_control_flow, e2e_struct_layout, e2e_calls_abi, e2e_globals_init) |
+| tests/e2e_diff.rs | 8 (e2e_arith_expr, e2e_arith_boundary, e2e_control_flow, e2e_struct_layout, e2e_calls_abi, e2e_globals_init, e2e_float_arith, e2e_control_flow_2) |
 | src/common/pbt_tests/mod.rs | (linker) |
-| src/common/pbt_tests/encoding_pbt.rs | 2 (pua_roundtrip, encode_idempotent) |
+| src/common/pbt_tests/encoding_pbt.rs | 3 (pua_roundtrip, encode_idempotent, pua_collision_witness #[ignore]) |
 | src/common/pbt_tests/const_arith_pbt.rs | 1 (const_binop_matches_c_semantics) |
 | src/common/pbt_tests/types_pbt.rs | 1 (align_up_laws) |
 | src/common/mod.rs | +2 行 `#[cfg(test)] mod pbt_tests;` |

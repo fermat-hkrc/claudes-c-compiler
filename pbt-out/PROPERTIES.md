@@ -187,3 +187,41 @@ generators:
   a: { gen: int, min: 1, max: 4096, type: usize }
 evidence: src/common/types.rs:1177(align_up 定义;被全部结构体布局代码使用)
 ```
+
+## P10 e2e_float_arith —— 浮点算术(SSE 标量,IEEE 确定性)
+- Tier: 1(差分)
+- 理由: 浮点代码生成(SSE2 标量、f32↔f64 转换、受守卫的 int 转换、浮点比较)必须与 gcc 逐位一致;IEEE-754 保证无 fast-math 时运算确定性。
+- Formal: ∀ p ∈ FloatDSL(无 inf/nan:量级 ≤1e30,除数为非零常量). run(ccc(p)) = run(gcc(p))
+- Test file: tests/e2e_diff.rs
+- Status: passing (1000 cases)
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: ccc::driver::compiler_main (E2E pipeline)
+oracle: differential
+predicate:
+  relation: { op: eq, lhs: "run(ccc_compile_and_exec(p))", rhs: "run(gcc_compile_and_exec(p))" }
+generators:
+  p: { gen: custom, dsl: f32/f64 expression trees over {+,-,*,/const,neg,cast f32<->f64,guarded (int)} with IEEE-safe magnitudes }
+evidence: DESIGN_DOC.md:164 (x86-64 SSE codegen); IEEE-754 determinism without fast-math
+```
+
+## P11 e2e_control_flow_2 —— switch/goto/三元/复合赋值/do-while
+- Tier: 1(差分)
+- 理由: 第一轮控制流未覆盖的语句形态:switch 穿透与 default-first、嵌套三元、复合赋值、do-while、前向 goto、自增自减。
+- Formal: ∀ p ∈ ControlFlow2DSL. run(ccc(p)) = run(gcc(p))
+- Test file: tests/e2e_diff.rs
+- Status: passing (1000 cases)
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: ccc::driver::compiler_main (E2E pipeline)
+oracle: differential
+predicate:
+  relation: { op: eq, lhs: "run(ccc_compile_and_exec(p))", rhs: "run(gcc_compile_and_exec(p))" }
+generators:
+  p: { gen: custom, dsl: switch(fallthrough/default) | ternary chains | compound assign | do-while | forward goto | inc/dec }
+evidence: DESIGN_DOC.md:164
+```

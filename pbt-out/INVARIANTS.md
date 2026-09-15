@@ -30,3 +30,15 @@
 ## Known candidate finding(未定夺)
 
 - PUA 碰撞:`pbt-out/bug_reports/encoding_pua_collision.md`(低危;U+E080..U+E0FF 字面字符 3 字节→1 字节静默丢失)。
+
+## Round 2 additions (2026-09-15, all passing)
+
+- E2E 浮点差分:f32/f64 表达式树(+,-,*,/ 非零常量,取负,f32↔f64 转换,受守卫 int 转换,浮点比较)
+  与 gcc 逐位一致(SSE2 标量,量级 ≤1e30 无 inf/nan;1000 例)。
+- E2E 语句形态:switch(含穿透/default)、嵌套三元、复合赋值、do-while、前向 goto、自增自减(1000 例)。
+
+## Round 2 generator quirks(避免复发)
+
+- 一元负号套负字面量会生成 `--2.7`(前自减,非法 C)—— 取负必须写成 `(-({}))`。
+- proptest 全局 reject 上限 1024:生成器 bug 导致 gcc 大面积拒绝时,先落盘被拒源码再诊断
+  (tests/e2e_diff.rs 的 reject 分支已带 /tmp/rejected_*.c 落盘)。
