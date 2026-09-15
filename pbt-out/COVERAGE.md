@@ -103,3 +103,4 @@
 | encode_fsqrt | fp_scalar.rs | fp_scalar.rs | cargo test --lib | 6 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing) |
 | encode_neon_dup | neon.rs | neon.rs | cargo test --lib | 6 passing / 4 failing properties (plus 1 passing KAT + 5 failing regression witnesses; 4 bugs; sweep elem-invalid-name/unsupported-elem-size passing) |
 | encode_ldrs | load_store.rs | load_store.rs | cargo test --lib | 8 passing / 9 failing properties (plus 5 passing KAT + 11 failing regression witnesses; 9 bugs; sweep invalid-name passing) |
+| encode_neon_ldnr | neon.rs | neon.rs | cargo test --lib | 5 passing / 10 failing properties (plus 1 passing KAT + 12 failing regression witnesses; 7 bugs; sweep mixed-arr / ld3r differential) |

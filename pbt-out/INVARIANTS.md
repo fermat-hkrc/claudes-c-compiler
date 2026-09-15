@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_ldnr)
+
+- Valid LD3R (T in {8b,16b,4h,8h,2s,4s,1d,2d}, consecutive wrapping v0–v31, Xn|SP base, no-offset and immediate post-index #3*esize) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.
+- Success-path LD3R word is ARM AdvSIMD replicate: 0 Q 001101 L 1 0 Rm opcode=111 size Rn Rt with bit12=0, bit21=0. No-offset L=0 Rm=0; imm post-index L=1 Rm=11111.
+- Metamorphic: Rt+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; 8b vs 16b (4h vs 8h, 2s vs 4s, 1d vs 2d) flips only Q bit 30 (1000 cases, n in {2,3,4}).
+- Fewer than 2 operands, non-RegList dest, non-Mem second operand, wrong list length, unsupported T, and invalid names (foo/x32/v32/r0/empty) always Err (1000 cases).
+- Known-answer: llvm-mc `ld2r {v0.8b, v1.8b}, [x1]` = 0x0d60c020; `ld3r {v0.8b, v1.8b, v2.8b}, [x1]` = 0x0d40e020 (SUT matches); `ld4r {v0.8b, v1.8b, v2.8b, v3.8b}, [x1]` = 0x0d60e020; `ld2r {v0.8b, v1.8b}, [x1], #2` = 0x0dffc020; `ld2r {v0.8b, v1.8b}, [x1], x2` = 0x0de2c020; `ld2r {v0.8b, v1.8b}, [sp]` = 0x0d60c3e0; `ld2r {v31.2d, v0.2d}, [x30]` = 0x4d60cfdf; SUT LD3R post `[x1], #3` = 0x0ddfe020.
+- LD2R/LD4R encodings, extra operand, W/XZR/x31/FP base, register post-index, illegal post-index #imm, non-consecutive lists, and [Xn, #imm] currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_ldnr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. gas aarch64-linux-gnu-as agrees on KAT vectors.
+- ARM AdvSIMD load/store single structure (replicate): 0 Q 001101 L R=1 S Rm opcode size Rn Rt; opcode 110 (LD1R/LD2R) / 111 (LD3R/LD4R); S at bit 21 (1 for LD2R/LD4R).
+- Dispatch: encoder/mod.rs:655-657 ld2r/ld3r/ld4r => encode_neon_ldnr(operands, 2/3/4). ld1r uses encode_neon_ld1r, not this function.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_ld1r is LD1R (different mnemonic). Sibling encode_neon_ld_st_single / encode_neon_ld_st_multi are different ARM classes.
+- encode_neon_ldnr checks only operands.len() < 2 (extra ignored); uses regs[0] + len only; Mem { base, .. } ignores offset; MemPostIndex always Rm=11111 ignoring offset; S placed at bit 12; parse_reg_num accepts w/d/s/q/v/h/b and maps xzr/x31/sp to 31.
+- Parser rejects empty register lists (parser.rs:2069-2071); empty RegList therefore not caller-reachable.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (mixed arrangement / LD3R differential).
+- Seven failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_ldnr_*.md.
+
 # Confirmed invariants (encode_ldrs)
 
 - Valid unsigned LDRSB/LDRSH (Wt/Xt including wzr/xzr, Xn|SP base, imm12 in 0..4095, scale 1 or 2) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

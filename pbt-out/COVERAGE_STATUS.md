@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 23:26 (campaign: English campaign)
-> Files: 10/10 scanned (100%) | Functions: 99/289 total | PBT candidates: 99 | Tested: 99 (100%) | 0 pass, 99 fail
+> Last updated: 2026-09-15 00:10 (campaign: English campaign)
+> Files: 10/10 scanned (100%) | Functions: 101/289 total | PBT candidates: 101 | Tested: 101 (100%) | 0 pass, 101 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 99 |
-| **Tested (of PBT candidates)** | **99 / 99 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 99 / 0 |
-| **Overall (tested / all functions)** | **99 / 289 (34%)** |
+| PBT candidates (from FUNCTION_INDEX) | 101 |
+| **Tested (of PBT candidates)** | **101 / 101 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 101 / 0 |
+| **Overall (tested / all functions)** | **101 / 289 (35%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 99 | 99 | 0 | 100% |
+|  | 101 | 101 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 99 | 99 | 0 | 100% |
+| unknown | 101 | 101 | 0 | 100% |
 
 ## File Coverage
 
@@ -39,8 +39,8 @@
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 10 | 10 | 100% | covered |
-| neon.rs | 68 | 15 | 15 | 100% | covered |
+| load_store.rs | 20 | 11 | 11 | 100% | covered |
+| neon.rs | 68 | 16 | 16 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -149,3 +149,5 @@
 | encode_fmadd_fmsub | fp_scalar.rs |
 | encode_fneg | fp_scalar.rs |
 | encode_fsqrt | fp_scalar.rs |
+| encode_neon_dup | neon.rs |
+| encode_ldrs | load_store.rs |
