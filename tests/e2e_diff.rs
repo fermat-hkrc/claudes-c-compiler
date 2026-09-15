@@ -302,6 +302,10 @@ fn gen_expr(rng: &mut Rng, depth: u32, ty: Ty, pool: &VarPool) -> E {
     e
 }
 
+thread_local! {
+    static BOUNDARY_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 fn gen_leaf(rng: &mut Rng, ty: Ty, pool: &VarPool) -> E {
     if !pool.vars.is_empty() && rng.chance(40) {
         let compatible: Vec<_> = pool.vars.iter().filter(|v| v.1 == ty).collect();
@@ -310,7 +314,12 @@ fn gen_leaf(rng: &mut Rng, ty: Ty, pool: &VarPool) -> E {
             return E { ty, lo: v.2, hi: v.3, code: v.0.clone(), impl_defined: false };
         }
     }
-    let v = *rng.pick(&interesting(ty));
+    let pool_v: Vec<i128> = if BOUNDARY_ONLY.get() {
+        interesting(ty).into_iter().filter(|x| x.abs() > 30000 || *x == 0 || *x == 1 || *x == -1).collect()
+    } else {
+        interesting(ty)
+    };
+    let v = *rng.pick(&pool_v);
     E { ty, lo: v, hi: v, code: const_code(ty, v), impl_defined: false }
 }
 
@@ -339,6 +348,11 @@ fn gen_cast(rng: &mut Rng, depth: u32, ty: Ty, pool: &VarPool) -> E {
 }
 
 fn arith_program(seed: u64) -> String {
+    arith_program_mode(seed, false)
+}
+
+fn arith_program_mode(seed: u64, boundary_only: bool) -> String {
+    BOUNDARY_ONLY.with(|b| b.set(boundary_only));
     let mut rng = Rng(seed ^ 0xA5A5_1234);
     let mut pool = VarPool { vars: vec![] };
     let mut lines = vec![
@@ -356,7 +370,9 @@ fn arith_program(seed: u64) -> String {
     for i in 0..n_exprs {
         let r: u32 = rng.u32r(0, 99);
         let ty = [Ty::I32, Ty::U32, Ty::I64, Ty::U64][rng.u32r(0, 3) as usize];
-        let e = if r < 15 { gen_cast(&mut rng, 3, ty, &pool) } else { gen_expr(&mut rng, 3, ty, &pool) };
+        let depth = if boundary_only { 4 } else { 3 };
+        let cast_pct = if boundary_only { 30 } else { 15 };
+        let e = if r < cast_pct { gen_cast(&mut rng, depth, ty, &pool) } else { gen_expr(&mut rng, depth, ty, &pool) };
         lines.push(format!("    printf(\"{} {}\\n\", {});", i, e.ty.fmt(), e.code));
     }
     let ret_ty = Ty::I64;
@@ -364,7 +380,9 @@ fn arith_program(seed: u64) -> String {
     lines.push(format!("    printf(\"R {}\\n\", {});", ret.ty.fmt(), ret.code));
     lines.push("    return (int)((unsigned long)({}) % 100);".replace("{}", &ret.code));
     lines.push("}".to_string());
-    lines.join("\n")
+    let out = lines.join("\n");
+    BOUNDARY_ONLY.with(|b| b.set(false));
+    out
 }
 
 proptest! {
@@ -470,6 +488,19 @@ fn control_flow_program(seed: u64) -> String {
     lines.push("    return (int)(acc % 100);".to_string());
     lines.push("}".to_string());
     lines.join("\n")
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(400))]
+
+    /// P1s (strengthening round): boundary-value-skewed, deeper (depth-4)
+    /// arithmetic expressions with aggressive casts — same differential
+    /// contract as P1, aimed at width/sign edges.
+    #[test]
+    fn e2e_arith_boundary(seed in any::<u64>()) {
+        let src = arith_program_mode(seed, true);
+        prop_check_helper(src, "arithb")?;
+    }
 }
 
 proptest! {

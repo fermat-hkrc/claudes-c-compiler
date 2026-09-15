@@ -32,23 +32,23 @@
 ## Module: e2e_diff
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
-- [ ] Test: write and run
-- [ ] Review: triage results
+- [x] Test: write and run
+- [x] Review: triage results
 
 ## Module: common::encoding
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
-- [ ] Test: write and run
-- [ ] Review: triage results
+- [x] Test: write and run
+- [x] Review: triage results
 
 ## Module: common::const_arith
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
-- [ ] Test: write and run
-- [ ] Review: triage results
+- [x] Test: write and run
+- [x] Review: triage results
 
 ## Module: common::types
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
-- [ ] Test: write and run
-- [ ] Review: triage results
+- [x] Test: write and run
+- [x] Review: triage results

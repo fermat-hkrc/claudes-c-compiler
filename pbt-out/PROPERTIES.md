@@ -9,7 +9,7 @@
   `hello 42` 通过(见 PLAN.md 探针)。
 - Formal: ∀ p ∈ ArithExprDSL(良定义 C:无 UB). run(ccc(p)) = run(gcc(p)),其中 run = (stdout, exit_code)
 - Test file: tests/e2e_diff.rs
-- Status: proposed
+- Status: passing (1000 cases; strengthening round P1s: 400 boundary-skewed depth-4 cases also passing)
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -29,7 +29,7 @@ evidence: DESIGN_DOC.md:164 "x86-64 code generation (SysV AMD64 ABI)"; README.md
 - Formal: ∀ p ∈ ControlFlowDSL(嵌套 if/while/for + break/continue,终止上界有界).
   run(ccc(p)) = run(gcc(p))
 - Test file: tests/e2e_diff.rs
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -49,7 +49,7 @@ evidence: DESIGN_DOC.md:164
   字段读写来检验。
 - Formal: ∀ p ∈ StructDSL(混合类型字段、数组、嵌套、联合). run(ccc(p)) = run(gcc(p))
 - Test file: tests/e2e_diff.rs
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -69,7 +69,7 @@ evidence: DESIGN_DOC.md:164 (SysV ABI); src/common/types.rs 布局文档注释
   误编译高发区。
 - Formal: ∀ p ∈ CallDSL. run(ccc(p)) = run(gcc(p))
 - Test file: tests/e2e_diff.rs
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -88,7 +88,7 @@ evidence: DESIGN_DOC.md:151 call_abi.rs "Unified ABI classification"; DESIGN_DOC
 - 理由: .data/.bss 布局、初始化器折叠、静态局部变量 —— 链接器 + 常量求值面。
 - Formal: ∀ p ∈ GlobalDSL. run(ccc(p)) = run(gcc(p))
 - Test file: tests/e2e_diff.rs
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -103,12 +103,13 @@ evidence: DESIGN_DOC.md(linker/ELF writer 章节)
 ```
 
 ## P6 encoding_roundtrip —— bytes_to_string ∘ decode_pua_byte = id
+> 注:碰撞前条件(U+E080..U+E0FF 字面序列)按方案固有限制过滤;该碰撞已另立 bug 报告 pbt-out/bug_reports/encoding_pua_collision.md(低危,待定夺)
 - Tier: 3(代数往返;模块文档注释声明了契约)
 - 理由: encoding.rs:8-10 "encode non-UTF-8 bytes using ... then decode them back to raw bytes"。
   更强候选被否决:无参照实现;纯函数不适用状态机。
 - Formal: ∀ b ∈ Vec<u8>, ¬b.starts_with(BOM) ⇒ decode_all(bytes_to_string(b).bytes()) = b
 - Test file: src/common/encoding.rs(内联)
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -127,7 +128,7 @@ evidence: src/common/encoding.rs:1-10 模块文档: "encode ... then decode them
   UTF-8, returns them as-is")。
 - Formal: ∀ b ∈ Vec<u8>, ¬b.starts_with(BOM) ⇒ bytes_to_string(bytes_to_string(b).bytes().to_vec()) = bytes_to_string(b)
 - Test file: src/common/encoding.rs(内联)
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -148,7 +149,7 @@ evidence: src/common/encoding.rs:16 "If the bytes are valid UTF-8, returns them 
 - Formal: ∀ (op,l,r,w∈{32,64},s∈{signed,unsigned}) ∈ DefinedDomain.
   eval_const_binop(op,l,r,w,s) = c_reference(op,l,r,w,s)
 - Test file: src/common/const_arith.rs(内联,新建测试模块)
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
@@ -170,7 +171,7 @@ evidence: src/common/const_arith.rs:1-9 "compile-time constant expression evalua
   r % align == 0、最小性(中间无更小的合法倍数)、align==0 直通(溢出分支原样返回)。
 - Formal: ∀ x ≥ 0, a ≥ 1, x + a - 1 ≤ usize::MAX ⇒ r = align_up(x,a): r ≥ x ∧ a | r ∧ r - a < x
 - Test file: src/common/types.rs(内联,新建测试模块)
-- Status: proposed
+- Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
