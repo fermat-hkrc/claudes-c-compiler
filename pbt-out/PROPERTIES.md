@@ -1,273 +1,495 @@
-# Properties: encode_neon_dup
+# Properties: encode_ldrs
 
-## encode_neon_dup_diff_general
+## encode_ldrs_diff_unsigned_llvm_mc
 - Tier: 2
-- Rationale: Differential vs llvm-mc is the strongest evidenced oracle for the GPR form. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree DUP decoder; UMOV is a different opcode). Sibling encode_neon_umov / encode_neon_ins rejected (same-job gate: UMOV opcode 001111, INS 000111). Doc evidence: README.md:12 GNU-style assembly contract; README.md:234 lists dup (element/GPR); encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:670 dup dispatch; ARM ARM Advanced SIMD DUP (general).
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_diff_llvm_mc
-- Formal: ∀ rd,rn ∈ [0,31], T ∈ {8b,16b,4h,8h,2s,4s,2d}, spell ∈ GPR spelling for T (Wn including wzr for T≠2d; Xn including xzr for T=2d). encode_neon_dup([RegArrangement(v{rd},T), Reg(spell(rn))]) = Word(w) ∧ llvm-mc("dup v{rd}.{T}, " ++ spell(rn)) = w
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (README.md:12 same textual assembly as gas; ARM unsigned LDRSB/LDRSH). State machine rejected (pure function). Round-trip rejected (no in-tree decoder). Sibling encode_ldrsw / encode_ldr_str / encode_ldur_stur rejected (different jobs: word sign-extend / generic LDR/STR / generic unscaled).
+- Seed: load_store.rs encode_ldrsw_diff_unsigned_llvm_mc
+- Formal: ∀ size ∈ {0,1}, is_64 ∈ {false,true}, rt,rn ∈ 0..31, imm12 ∈ 0..4095. encode_ldrs([Reg(Rt), Mem{Rn|SP, imm12·(1<<size)}], size) = llvm-mc("ldrsb|ldrsh Rt, [Rn|SP, #(imm12·scale)]") as a 32-bit LE word.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, t]
-  domain: { rd: 0..31, rn: 0..31, t: {8b,16b,4h,8h,2s,4s,2d} }
-  relation:
-    op: eq
-    lhs: encode_neon_dup([RegArrangement(v{rd}, t), Reg(gpr_for(t, rn))])
-    rhs: llvm_mc_word("dup v{rd}.{t}, " ++ gpr_for(t, rn))
+  vars: [size, is_64, rt, rn, imm12]
+  domain:
+    size: "0..1"
+    is_64: bool
+    rt: "0..31"
+    rn: "0..31"
+    imm12: "0..4095"
+  body: sut_word(ops, size) == llvm_mc_word(asm)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
-evidence: README.md:12 GNU-style assembly; README.md:234 dup (element/GPR); encoder/mod.rs:670 dup dispatch; ARM ARM DUP (general); llvm-mc -triple=aarch64 -show-encoding
+  imm12: { gen: int, min: 0, max: 4095, type: u32 }
+evidence: README.md:12 README.md:221 encoder/mod.rs:334-335 ARM ARM LDRSB/LDRSH (unsigned immediate)
 ```
 
-## encode_neon_dup_diff_element
+## encode_ldrs_diff_unscaled_pre_post_llvm_mc
 - Tier: 2
-- Rationale: Differential vs llvm-mc for the element form. Same stronger-oracle rejection as encode_neon_dup_diff_general. Dest T must match element size; index in ARM range. Doc evidence: README.md:234 dup (element/GPR); neon.rs:511-527 purpose comment; ARM ARM Advanced SIMD DUP (element).
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_diff_llvm_mc
-- Formal: ∀ rd,rn ∈ [0,31], (T,Ts) ∈ {(8b,b),(16b,b),(4h,h),(8h,h),(2s,s),(4s,s),(2d,d)}, i ∈ [0, imax(Ts)]. encode_neon_dup([RegArrangement(v{rd},T), RegLane(v{rn},Ts,i)]) = Word(w) ∧ llvm-mc("dup v{rd}.{T}, v{rn}.{Ts}[{i}]") = w
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Rationale: Differential vs llvm-mc for LDURSB/LDURSH (simm9 [-256,255]) and pre/post-index writeback. Same stronger-oracle rejection as unsigned.
+- Seed: load_store.rs encode_ldrsw_diff_unscaled_pre_post_llvm_mc
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn ∈ 0..31, simm ∈ [-256,255], form ∈ {Mem, Pre, Post}. (form≠Mem ∧ rt=rn ∧ rn≠31) excluded (ARM unpredictable). encode_ldrs matches llvm-mc for the corresponding ldrsb/ldrsh assembly.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, t, ts, i]
-  domain: { rd: 0..31, rn: 0..31, (t,ts): matching pairs, i: 0..imax(ts) }
-  relation:
-    op: eq
-    lhs: encode_neon_dup([RegArrangement(v{rd}, t), RegLane(v{rn}, ts, i)])
-    rhs: llvm_mc_word("dup v{rd}.{t}, v{rn}.{ts}[{i}]")
+  vars: [size, is_64, rt, rn, simm, form]
+  domain:
+    size: "0..1"
+    simm: "-256..255"
+    form: "0..2"
+  body: sut_word(ops, size) == llvm_mc_word(asm)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
-  i: { gen: int, min: 0, max: 15, type: u32 }
-evidence: README.md:234 dup (element/GPR); neon.rs:511-527 element form; ARM ARM DUP (element); llvm-mc -triple=aarch64 -show-encoding
+  simm: { gen: int, min: -256, max: 255, type: i64 }
+  form: { gen: int, min: 0, max: 2, type: u32 }
+evidence: ARM ARM LDURSB/LDURSH / LDRSB/LDRSH pre/post-index; llvm-mc rejects writeback Rt==Rn (Rn!=SP)
 ```
 
-## encode_neon_dup_arm_fields
+## encode_ldrs_diff_regoff_llvm_mc
+- Tier: 2
+- Rationale: Differential vs llvm-mc for register-offset LDRSB/LDRSH (option/S). Valid amounts: 0 for byte, {0,1} for half. Stronger oracles rejected as above.
+- Seed: load_store.rs encode_ldrsw_diff_regoff_llvm_mc
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn,rm ∈ 0..31, extend ∈ {lsl,sxtx,uxtw,sxtw}, amount ∈ valid(size). encode_ldrs([Reg(Rt), MemRegOffset{Rn, Rm, extend, amount}], size) = llvm-mc(...) and option/S fields match ARM.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt, rn, rm, ext_kind, amount_bit]
+  domain:
+    size: "0..1"
+    ext_kind: "0..3"
+    amount: "0 or size"
+  body: sut_word(ops, size) == llvm_mc_word(asm)
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ext_kind: { gen: int, min: 0, max: 3, type: u32 }
+  amount_bit: { gen: int, min: 0, max: 1, type: u32 }
+evidence: ARM ARM Load/store register (register offset) option/S; llvm-mc shift of #0 (byte) or #0/#1 (half)
+```
+
+## encode_ldrs_arm_fields
 - Tier: 4
-- Rationale: Algebraic invariant from ARM ARM DUP field layout, independent of llvm-mc. Stronger differential already owned by the two diff properties. Round-trip rejected (no decoder). Doc evidence: ARM ARM Advanced SIMD DUP (general/element); purpose comments neon.rs:496-527 name the ARM layout (not the producing assignment).
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_arm_fields
-- Formal: ∀ rd,rn ∈ [0,31], T ∈ valid. encode_neon_dup(GPR form) = Word(w) ⇒ bit31=0 ∧ Q=q(T) ∧ bits[29:21]=001110000 ∧ imm5=imm5_size(T) ∧ bits[15:10]=000011 ∧ Rn=rn ∧ Rd=rd. Element form same with bits[15:10]=000001 and imm5=imm5_index(Ts,i).
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+- Rationale: Algebraic invariant unpacking ARM fields independently of the SUT packer. Differential already covers bit-identity; this pins size/opc/V/imm12/imm9/bits[11:10]. Stronger differential is a sibling property, not a replacement.
+- Seed: load_store.rs encode_ldrsw_arm_fields
+- Formal: ∀ valid unsigned encoding: size_field=size, [29:27]=111, V=0, [25:24]=01, opc=is_64?10:11, imm12=offset/scale, Rn,Rt. Unscaled: [25:24]=00 bit21=0 [11:10]=00 imm9=simm. Pre [11:10]=11; post [11:10]=01. Regoff bit21=1 [11:10]=10.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, t, form]
-  domain: { rd: 0..31, rn: 0..31, t: valid T, form: {gpr, element} }
-  body: bit31(w)==0 && Q(w)==q(t) && bits[29:21]==0b001110000 && imm5(w)==expected_imm5 && bits[15:10]==opc && Rn==rn && Rd==rd
+  vars: [size, is_64, rt, rn, imm12, simm, rm]
+  domain:
+    size: "0..1"
+    imm12: "0..4095"
+    simm: "-256..255 unscaled-only"
+  body: unpack(encode_ldrs(ops, size)) matches ARM LDRSB/LDRSH fields
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
-evidence: ARM ARM DUP (general) 0 Q 0 01110 000 imm5 000011 Rn Rd; DUP (element) opcode 000001; neon.rs:496-527 purpose comments
+  imm12: { gen: int, min: 0, max: 4095, type: u32 }
+  simm: { gen: int, min: -256, max: 255, type: i64 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: ARM ARM LDRSB/LDRSH / LDURSB/LDURSH encodings
 ```
 
-## encode_neon_dup_metamorphic_fields
-- Tier: 4
-- Rationale: Algebraic metamorphic: independent Rd/Rn/Q/opcode fields. Rd+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; 8b vs 16b (4h vs 8h, 2s vs 4s) flips only Q bit 30; GPR vs element form flips only bit 11. ARM ARM DUP layout. Weaker than differential; required metamorphic angle.
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_metamorphic_u_bit
-- Formal: ∀ rd,rn ∈ [0,30], T_lo ∈ {8b,4h,2s}. let w = encode_neon_dup(GPR, rd, rn, T_lo). encode(rd+1)=w+1 ∧ encode(rn+1)=w+(1<<5) ∧ encode(T_hi) XOR w = (1<<30) ∧ encode(element i=0) XOR w = (1<<11)
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_ldrs_metamorphic_rt_rn_imm
+- Tier: 3
+- Rationale: Algebraic metamorphic: Rt+1 / Rn+1 / imm12+1 / pre⊕post / W↔X opc / B↔H size are independent field increments. Required metamorphic angle. Not a round-trip (no decoder).
+- Seed: load_store.rs encode_ldrsw_metamorphic_rt_rn_imm
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn ∈ 0..30, imm12 ∈ 0..4094, simm ∈ [-256,255]. enc(rt+1)-enc(rt)=1; enc(rn+1)-enc(rn)=32; enc(imm12+1)-enc(imm12)=1<<10; pre ⊕ post = 0b10<<10; W vs X flips only opc bits[23:22] (11 vs 10); ldrsb vs ldrsh flips only size bits[31:30].
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, t_lo]
-  domain: { rd: 0..30, rn: 0..30, t_lo: {8b,4h,2s} }
-  body: w_rd == w + 1 && w_rn == w + (1 << 5) && (w_q ^ w) == (1u32 << 30) && (w_elem ^ w) == (1u32 << 11)
+  vars: [size, is_64, rt, rn, imm12, simm]
+  domain:
+    rt: "0..30"
+    rn: "0..30"
+    imm12: "0..4094"
+    simm: "-256..255"
+  body: enc(rt+1)-enc(rt)==1 && enc(rn+1)-enc(rn)==32 && enc(imm12+1)-enc(imm12)==(1<<10) && (pre^post)==(0b10<<10)
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-  t_lo: { gen: oneof, values: ["8b", "4h", "2s"] }
-evidence: ARM ARM DUP Q at bit 30, Rd[4:0], Rn[9:5], general opcode bit11=1 vs element bit11=0
+  imm12: { gen: int, min: 0, max: 4094, type: u32 }
+  simm: { gen: int, min: -256, max: 255, type: i64 }
+evidence: ARM ARM field layout Rt[4:0] Rn[9:5] imm12[21:10] bits[11:10] opc[23:22] size[31:30]
 ```
 
-## encode_neon_dup_neg_arity_invalid
-- Tier: 5
-- Rationale: Negative/error contract. DUP requires 2 operands (neon.rs:492-494 "dup requires 2 operands"); invalid register names fail parse_reg_num (mod.rs:131-147); unsupported T fails neon_arr_to_q_size / arrangement match. llvm-mc rejects these. Stronger oracles do not cover the error domain.
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_neg_arity
-- Formal: ∀ ops. |ops|<2 ∨ dest/src invalid name ∈ {foo,v32,v,empty,v-1,v99} ∨ T ∉ {8b,16b,4h,8h,2s,4s,2d} ∨ dest/src non-register kind ⇒ encode_neon_dup(ops) = Err
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_ldrs_neg_arity_kinds
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc/gas reject 0/1 operands and a non-memory 2nd operand. encode_ldrs documents "ldrsb/ldrsh requires 2 operands" (load_store.rs:385) and "unsupported ldrsb/ldrsh operands" (load_store.rs:449).
+- Seed: load_store.rs encode_ldrsw_neg_arity_kinds
+- Formal: ∀ size ∈ {0,1}, rt ∈ 0..31, kind ∉ {Mem, MemPreIndex, MemPostIndex, MemRegOffset}. encode_ldrs([], size)=Err ∧ encode_ldrs([Reg(Rt)], size)=Err ∧ encode_ldrs([Reg(Rt), kind], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, bad, t_bad, which]
-  domain: { n: 0..1, bad: invalid names, t_bad: unsupported T }
-  relation:
-    op: throws
-    expr: encode_neon_dup(short_or_invalid)
+  vars: [size, rt, kind]
+  domain:
+    size: "0..1"
+    kind: Imm|Cond|Barrier|Shift|Extend|Label|MemExpr|RegList|Symbol
+  body: encode_ldrs(ops, size).is_err()
 generators:
-  n: { gen: int, min: 0, max: 1, type: usize }
-  which: { gen: int, min: 0, max: 5, type: u32 }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: neon.rs:492-494 dup requires 2 operands; neon.rs:532 unsupported dup arrangement; parse_reg_num None; llvm-mc rejects
+evidence: load_store.rs:385 "ldrsb/ldrsh requires 2 operands"; llvm-mc rejects non-memory 2nd operand; README.md:12
 ```
 
-## encode_neon_dup_neg_extra_operands
-- Tier: 5
-- Rationale: Negative/error contract. GNU-style DUP is a 2-operand instruction; llvm-mc rejects a 3rd operand. README.md:12 same textual assembly as gas. encode_neon_dup currently checks only len<2 (producing statement is not evidence that extras are allowed).
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_neg_extra
-- Formal: ∀ valid 2-operand DUP ops, extra ∈ Operand. encode_neon_dup(ops ++ [extra]) = Err ∧ llvm-mc(asm with 3rd operand) = Err
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_ldrs_neg_invalid_regs
+- Tier: 4
+- Rationale: Negative/error contract from llvm-mc/gas/ARM: dest is Wt|Xt (31=WZR/XZR, never SP/WSP/SIMD); base is Xn|SP (not W, not XZR); W index requires uxtw/sxtw; pre/post Rt==Rn (Rn!=SP) is unpredictable and assemblers reject it.
+- Seed: load_store.rs encode_ldrsw_neg_invalid_regs
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn. encode_ldrs rejects SP dest, WSP dest, SIMD dest, W base, XZR base, W index without extend, and pre-index Rt==Rn (rt≠31).
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, t="8b", extra_kind=0 — dup v0.8b, w0, w0
-- Bug report: pbt-out/bug_reports/encode_neon_dup_extra_operand.md
+- Counterexample: size=0, is_64=false, rt=0, rn=0, simd='d'; encode_ldrs([Reg("sp"), Mem{x0,0}], 0) = Ok(Word(0x3980001f))
+- Bug report: pbt-out/bug_reports/encode_ldrs_sp_dest.md
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, t, extra]
-  domain: { rd: 0..31, rn: 0..31, t: valid T }
-  relation:
-    op: throws
-    expr: encode_neon_dup(valid ++ [extra])
+  vars: [size, is_64, rt, rn, simd]
+  domain:
+    size: "0..1"
+    simd: "d|s|q|h|b"
+  body: encode_ldrs(invalid_reg_ops, size).is_err()
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: llvm-mc "invalid operand" for SP/WSP/SIMD dest, W/XZR base, W index without uxtw/sxtw; unpredictable writeback Rt==Rn
+```
+
+## encode_ldrs_neg_offset_range_extra
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc rejects offsets outside unsigned pimm and simm9. Documented bounds sampled at bound±1: byte 4096 / -257; half 8191, 8192, -257.
+- Seed: load_store.rs encode_ldrsw_neg_offset_range_extra
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn, off ∉ (unsigned pimm ∪ [-256,255]). encode_ldrs(Mem/Pre/Post with off)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: size=0, is_64=false, rt=0, rn=0, off=-257; encode_ldrs([Reg("w0"), Mem{x0,-257}], 0) = Ok(Word(0x38cff000))
+- Bug report: pbt-out/bug_reports/encode_ldrs_offset_range.md
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt, rn, off]
+  domain:
+    off: "-257, 4096, 8191, 8192, i64::MIN, i64::MAX"
+  body: encode_ldrs(ops, size).is_err()
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  off: { gen: int, min: -9223372036854775808, max: 9223372036854775807, type: i64 }
 expected_error: String
-evidence: README.md:12 GNU-style assembly; llvm-mc rejects `dup v0.4s, w1, w2`; ARM ARM DUP is 2-operand
+evidence: llvm-mc "index must be an integer in range [-256, 255]" when not a valid unsigned pimm
 ```
 
-## encode_neon_dup_neg_index_oor
-- Tier: 5
-- Rationale: Negative/error contract. ARM ARM DUP (element) index ranges: b 0-15, h 0-7, s 0-3, d 0-1. llvm-mc rejects OOR index. SUT masks index (`index & 0xF` etc.) — producing statement is not evidence that wrapping is allowed.
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_neg_arrangement_mismatch
-- Formal: ∀ rd,rn ∈ [0,31], T ∈ valid, i > imax(elem_of(T)). encode_neon_dup([RegArrangement(v{rd},T), RegLane(v{rn},elem_of(T),i)]) = Err ∧ llvm-mc rejects
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_ldrs_neg_extra
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc/gas reject a third operand. Strengthening: extra operand was bundled with offset-range and never reached after the offset fail.
+- Seed: load_store.rs encode_ldrsw_neg_extra
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn ∈ 0..31, extra. encode_ldrs([Reg(Rt), Mem{Rn,0}, extra], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, t="8b", i_extra=1 — dup v0.8b, v0.b[16]
-- Bug report: pbt-out/bug_reports/encode_neon_dup_index_oor.md
+- Counterexample: size=0, is_64=false, rt=0, rn=0, extra=Reg("x2"); encode_ldrs three operands = Ok(Word(0x39c00000))
+- Bug report: pbt-out/bug_reports/encode_ldrs_extra_operand.md
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, t, i]
-  domain: { i > imax(elem_of(t)) }
-  relation:
-    op: throws
-    expr: encode_neon_dup([RegArrangement(v{rd}, t), RegLane(v{rn}, elem_of(t), i)])
+  vars: [size, is_64, rt, rn, extra]
+  domain:
+    extra: Reg|Imm|Symbol|Mem
+  body: encode_ldrs([Rt, Mem, extra], size).is_err()
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  i: { gen: int, min: 1, max: 8, type: u32 }
 expected_error: String
-evidence: ARM ARM DUP (element) index ranges; llvm-mc `vector lane must be an integer in range`
+evidence: llvm-mc rejects a 3rd operand; README.md:12
 ```
 
-## encode_neon_dup_neg_size_mismatch
-- Tier: 5
-- Rationale: Negative/error contract. Dest T must match element size (8b/16b↔b, 4h/8h↔h, 2s/4s↔s, 2d↔d). llvm-mc rejects size mismatch. SUT uses dest T only for Q and elem_size independently for imm5 — producing statement is not evidence that mismatch is allowed.
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_neg_arrangement_mismatch
-- Formal: ∀ rd,rn ∈ [0,31], T ∈ valid, Ts ≠ elem_of(T), i ∈ [0, imax(Ts)]. encode_neon_dup([RegArrangement(v{rd},T), RegLane(v{rn},Ts,i)]) = Err ∧ llvm-mc rejects
-- Test file: src/backend/arm/assembler/encoder/neon.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, t="8b", ts_other="h", i_mis=0 — dup v0.8b, v0.h[0]
-- Bug report: pbt-out/bug_reports/encode_neon_dup_size_mismatch.md
-
-```property
-function: encoder.neon.encode_neon_dup
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, t, ts, i]
-  domain: { size(t) != ts }
-  relation:
-    op: throws
-    expr: encode_neon_dup([RegArrangement(v{rd}, t), RegLane(v{rn}, ts, i)])
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  i: { gen: int, min: 0, max: 3, type: u32 }
-expected_error: String
-evidence: ARM ARM DUP (element) dest T matches element size; llvm-mc rejects `dup v0.8b, v0.h[0]`
-```
-
-## encode_neon_dup_neg_gpr_width
-- Tier: 5
-- Rationale: Negative/error contract. ARM ARM DUP (general) source is Wn for 8/16/32-bit T and Xn for 64-bit T (.2d). llvm-mc rejects X on 32-bit T, W on .2d, SP/WSP, and FP/SIMD names as the GPR source. parse_reg_num accepting any prefix is not a license to encode a wrong-width or non-GPR source.
-- Seed: neon.rs encode_neon_float_two_misc_pbt encode_neon_float_two_misc_neg_sp
-- Formal: ∀ rd ∈ [0,31], T ∈ valid, bad_src ∈ wrong-width GPR ∪ {sp,wsp,d0,s0,q0,v0,h0,b0} (and lr when T≠2d, xzr when T≠2d, wzr when T=2d). encode_neon_dup([RegArrangement(v{rd},T), Reg(bad_src)]) = Err ∧ llvm-mc rejects
-- Test file: src/backend/arm/assembler/encoder/neon.rs
-- Status: failing
-- Counterexample: rd=0, t="8b", n=0, alias="sp" — dup v0.8b, x0
-- Bug report: pbt-out/bug_reports/encode_neon_dup_wrong_width_gpr.md
-
-```property
-function: encoder.neon.encode_neon_dup
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, t, bad_src]
-  domain: { rd: 0..31, t: valid T, bad_src: wrong-width or non-GPR }
-  relation:
-    op: throws
-    expr: encode_neon_dup([RegArrangement(v{rd}, t), Reg(bad_src)])
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
-expected_error: String
-evidence: ARM ARM DUP (general) Rn is W for T!=2D and X for T=2D; llvm-mc rejects `dup v0.2d, w1` and `dup v0.4s, x1` and `dup v0.4s, sp`
-```
-
-## encode_neon_dup_neg_elem_invalid
-- Tier: 5
-- Rationale: Coverage sweep (round 1/1). coverage_gaps had no LLVM profraw; manual arm audit of encode_neon_dup showed untested element-form parse_reg_num None (neon.rs:513) and unsupported elem_size `_` arm (neon.rs:525). Documented: parse_reg_num returns None for invalid names; purpose comment lists b/h/s/d only.
-- Seed: neon.rs encode_neon_dup_pbt encode_neon_dup_neg_arity_invalid
-- Formal: ∀ rd ∈ [0,31], T ∈ valid, bad ∈ {foo,v32,v,empty,v-1,v99}, bad_sz ∈ {q,x,8b,16b,empty,w,4s}. encode_neon_dup([RegArrangement(v{rd},T), RegLane(bad, elem_of(T), i)]) = Err ∧ encode_neon_dup([RegArrangement(v{rd},T), RegLane(v0, bad_sz, 0)]) = Err
-- Test file: src/backend/arm/assembler/encoder/neon.rs
+## encode_ldrs_diff_alt_spellings
+- Tier: 2
+- Rationale: Differential vs llvm-mc for x31/w31, uppercase X/W/SP/XZR/WZR, and lr. Strengthening / coverage of parse_reg_num aliases. Same-job sibling gate unchanged.
+- Seed: load_store.rs encode_ldrsw_diff_alt_spellings
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn ∈ 0..31, spelling ∈ {x31, uppercase, lr}. encode_ldrs(alias names) = llvm-mc(same aliases).
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_dup
+function: encoder.load_store.encode_ldrs
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt, rn, spelling]
+  domain:
+    spelling: "x31/w31, uppercase, lr"
+  body: sut_word(ops, size) == llvm_mc_word(asm)
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  spelling: { gen: int, min: 0, max: 2, type: u32 }
+evidence: parse_reg_num maps x31/w31/XZR/WZR/LR/SP; llvm-mc accepts the same aliases
+```
+
+## encode_ldrs_neg_bad_extend_base
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc rejects lsl amount other than scale (byte #0, half #0/#1), uxtx, and invalid base names. Coverage of register-offset error paths.
+- Seed: load_store.rs encode_ldrsw_neg_bad_extend_base
+- Formal: ∀ size ∈ {0,1}, is_64, rt, rn,rm ∈ 0..30. encode_ldrs rejects MemRegOffset with lsl #(size+1 or 3), uxtx, and Mem base "foo".
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: size=0, is_64=false, rt=0, rn=0, rm=0, kind=0 (lsl #1); Ok(Word(0x38e07800))
+- Bug report: pbt-out/bug_reports/encode_ldrs_bad_shift.md
+
+```property
+function: encoder.load_store.encode_ldrs
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, t, bad, bad_sz]
-  domain: { rd: 0..31, t: valid T, bad: invalid names, bad_sz: unsupported elem_size }
-  relation:
-    op: throws
-    expr: encode_neon_dup([RegArrangement(v{rd}, t), RegLane(bad_or_bad_sz)])
+  vars: [size, is_64, rt, rn, rm, kind]
+  domain:
+    kind: "lsl#(size+1), lsl#3, uxtx, base foo"
+  body: encode_ldrs(ops, size).is_err()
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+  kind: { gen: int, min: 0, max: 3, type: u32 }
 expected_error: String
-evidence: neon.rs:513 parse_reg_num None on element Rn; neon.rs:525 unsupported dup element size; parse_reg_num mod.rs:131-147
+evidence: llvm-mc "expected lsl or sxtx with optional shift of #0" (byte) / "#0 or #1" (half); invalid base
+```
+
+## encode_ldrs_neg_invalid_name
+- Tier: 4
+- Rationale: Negative/error contract for parse_reg_num None (foo/x32/w32/empty/r0/x). coverage_gaps had no LLVM profraw; this is the manual arm-audit sweep of the invalid-name / invalid-base error path (get_reg / parse_reg_num).
+- Seed: load_store.rs encode_ldrsw_neg_arity_kinds
+- Formal: ∀ size ∈ {0,1}, is_64, rt ∈ 0..31, bad ∈ {foo, x32, w32, empty, r0, x}. encode_ldrs([Reg(bad), Mem{x1,0}], size)=Err ∧ encode_ldrs([Reg(Rt), Mem{bad,0}], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt, bad]
+  domain:
+    bad: "foo|x32|w32|empty|r0|x"
+  body: encode_ldrs(ops, size).is_err()
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: encoder/mod.rs:131 parse_reg_num returns None for non x/w/d/s/q/v/h/b prefixes and num>31
+```
+
+## encode_ldrs_neg_fp_dest
+- Tier: 4
+- Rationale: Negative/error contract; split from encode_ldrs_neg_invalid_regs so SIMD dest shrinks independently.
+- Seed: load_store.rs encode_ldrsw_neg_invalid_regs
+- Formal: ∀ size ∈ {0,1}, rt ∈ 0..31, simd ∈ {d,s,q,h,b}. encode_ldrs([Reg(simd||rt), Mem{x1,0}], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: size=0, rt=0, simd='d'; Ok(Word(0x39c00020))
+- Bug report: pbt-out/bug_reports/encode_ldrs_fp_dest.md
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [size, rt, simd]
+  domain:
+    simd: "d|s|q|h|b"
+  body: encode_ldrs(ops, size).is_err()
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc invalid operand for SIMD dest
+```
+
+## encode_ldrs_neg_w_base
+- Tier: 4
+- Rationale: Negative/error contract; split so W-base shrinks independently.
+- Seed: load_store.rs encode_ldrsw_neg_invalid_regs
+- Formal: ∀ size ∈ {0,1}, is_64, rt ∈ 0..31, rn ∈ 0..30. encode_ldrs([Reg(Rt), Mem{Wn,0}], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: size=0, is_64=false, rt=0, rn=0; Ok(Word(0x39c00000))
+- Bug report: pbt-out/bug_reports/encode_ldrs_w_base.md
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt, rn]
+  domain:
+    rn: "0..30"
+  body: encode_ldrs(ops, size).is_err()
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: llvm-mc invalid operand for W base
+```
+
+## encode_ldrs_neg_xzr_base
+- Tier: 4
+- Rationale: Negative/error contract; split so XZR-base shrinks independently.
+- Seed: load_store.rs encode_ldrsw_neg_invalid_regs
+- Formal: ∀ size ∈ {0,1}, is_64, rt ∈ 0..31. encode_ldrs([Reg(Rt), Mem{xzr,0}], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: size=0, is_64=false, rt=0; Ok(Word(0x39c003e0))
+- Bug report: pbt-out/bug_reports/encode_ldrs_xzr_base.md
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt]
+  domain:
+    rt: "0..31"
+  body: encode_ldrs(ops, size).is_err()
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc invalid operand for XZR base
+```
+
+## encode_ldrs_neg_w_index
+- Tier: 4
+- Rationale: Negative/error contract; split so W-index-without-extend shrinks independently.
+- Seed: load_store.rs encode_ldrsw_neg_invalid_regs
+- Formal: ∀ size ∈ {0,1}, is_64, rt,rn,rm. encode_ldrs([Reg(Rt), MemRegOffset{Xn, Wm, None, None}], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: size=0, is_64=false, rt=0, rn=0, rm=0; Ok(Word(0x38e04800))
+- Bug report: pbt-out/bug_reports/encode_ldrs_w_index.md
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt, rn, rm]
+  domain:
+    rm: "0..31"
+  body: encode_ldrs(ops, size).is_err()
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc requires uxtw/sxtw on Wm
+```
+
+## encode_ldrs_neg_writeback_overlap
+- Tier: 4
+- Rationale: Negative/error contract; split so Rt==Rn writeback shrinks independently.
+- Seed: load_store.rs encode_ldrsw_neg_invalid_regs
+- Formal: ∀ size ∈ {0,1}, is_64, rt ∈ 0..30. encode_ldrs([Reg(Rt), MemPreIndex{x(rt), 4}], size)=Err.
+- Test file: src/backend/arm/assembler/encoder/load_store.rs
+- Status: failing
+- Counterexample: size=0, is_64=false, rt=0; Ok(Word(0x38c04c00))
+- Bug report: pbt-out/bug_reports/encode_ldrs_writeback_overlap.md
+
+```property
+function: encoder.load_store.encode_ldrs
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [size, is_64, rt]
+  domain:
+    rt: "0..30"
+  body: encode_ldrs(ops, size).is_err()
+generators:
+  size: { gen: int, min: 0, max: 1, type: u32 }
+  is_64: { gen: bool }
+  rt: { gen: int, min: 0, max: 30, type: u32 }
+expected_error: String
+evidence: llvm-mc unpredictable writeback when Rt==Rn and Rn!=SP
 ```

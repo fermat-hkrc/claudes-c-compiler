@@ -9151,3 +9151,1348 @@ mod encode_cas_pbt {
         );
     }
 }
+
+#[cfg(test)]
+mod encode_ldrs_pbt {
+    // Oracle: differential — llvm-mc AArch64 assembler
+    // Evidence: src/backend/arm/assembler/README.md "accepts the same textual assembly that GCC's gas would consume";
+    //   encoder/mod.rs:1-7 32-bit AArch64 words; encoder/mod.rs:334-335
+    //   "ldrsb" => encode_ldrs(operands, 0b00); "ldrsh" => encode_ldrs(operands, 0b01);
+    //   README.md:221 Loads/Stores table lists ldrsb, ldrsh;
+    //   ARM ARM LDRSB/LDRSH unsigned: size 111 V=0 01 opc imm12 Rn Rt
+    //   (size=00 byte / 01 half; opc=10 Xt / 11 Wt; pimm=imm12*scale, scale=1 or 2);
+    //   LDURSB/LDURSH: size 111 V=0 00 opc 0 imm9 00 Rn Rt (simm9 in [-256,255]);
+    //   pre bits[11:10]=11, post bits[11:10]=01; register: bit21=1 option S bits[11:10]=10.
+    //   Rt is Wt|Xt (31=WZR/XZR), never SP/SIMD; Rn is Xn|SP (not XZR).
+    // Stronger considered:
+    //   - State machine: rejected — encode_ldrs is a pure function with no lifecycle
+    //   - Algebraic round-trip via in-tree decoder: rejected — no LDRSB/LDRSH decoder
+    //   - encode_ldrsw / encode_ldr_str / encode_ldur_stur as differential siblings: rejected —
+    //     different jobs (LDRSW word sign-extend to Xt, LDR/STR, generic unscaled)
+    // Weaker available: algebraic.invariant (ARM field unpack), algebraic.metamorphic (Rt/Rn/imm12/opc/size),
+    //   negative_error (arity / extra / SP / FP / W-base / XZR-base / offset range / W-index / writeback overlap)
+    // Differential: candidate=encode_ldrs, reference=llvm-mc -triple=aarch64 -show-encoding,
+    //   SUT-boundary=internal-helper of GNU-style assembler,
+    //   mapping=(Reg(Wt|Xt), Mem{Xn|SP, imm}) <-> `ldrsb|ldrsh Wt|Xt, [Xn|SP{, #imm}]`
+
+    use super::encode_ldrs;
+    use super::super::EncodeResult;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    const LLVM_MC: &str = "/home/toan/tools/llvm15-official/bin/llvm-mc";
+    const CASES: u32 = 1000;
+    const SIMM_MIN: i64 = -256;
+    const SIMM_MAX: i64 = 255;
+
+    fn cfg() -> ProptestConfig {
+        ProptestConfig::with_cases(CASES)
+    }
+
+    fn mnemonic(size: u32) -> &'static str {
+        if size == 0 { "ldrsb" } else { "ldrsh" }
+    }
+
+    fn scale(size: u32) -> i64 {
+        1i64 << size
+    }
+
+    fn rt_name(n: u32, is_64: bool) -> String {
+        if is_64 {
+            if n == 31 { "xzr".into() } else { format!("x{}", n) }
+        } else if n == 31 {
+            "wzr".into()
+        } else {
+            format!("w{}", n)
+        }
+    }
+
+    fn rn_name(n: u32) -> String {
+        if n == 31 { "sp".into() } else { format!("x{}", n) }
+    }
+
+    fn rm_x(n: u32) -> String {
+        if n == 31 { "xzr".into() } else { format!("x{}", n) }
+    }
+
+    fn rm_w(n: u32) -> String {
+        if n == 31 { "wzr".into() } else { format!("w{}", n) }
+    }
+
+    fn wt_name(n: u32) -> String {
+        if n == 31 { "wzr".into() } else { format!("w{}", n) }
+    }
+
+    fn asm_mem(rn: &str, offset: i64) -> String {
+        if offset == 0 {
+            format!("[{}]", rn)
+        } else {
+            format!("[{}, #{}]", rn, offset)
+        }
+    }
+
+    fn sut_word(ops: &[Operand], size: u32) -> Result<u32, String> {
+        match encode_ldrs(ops, size)? {
+            EncodeResult::Word(w) => Ok(w),
+            other => Err(format!("expected Word, got {:?}", other)),
+        }
+    }
+
+    fn parse_llvm_encoding(stdout: &str) -> Result<u32, String> {
+        let marker = "encoding: [";
+        let start = stdout
+            .find(marker)
+            .ok_or_else(|| format!("no encoding in stdout: {stdout}"))?;
+        let rest = &stdout[start + marker.len()..];
+        let end = rest
+            .find(']')
+            .ok_or_else(|| format!("no closing bracket: {stdout}"))?;
+        let inner = &rest[..end];
+        let mut bytes = [0u8; 4];
+        let parts: Vec<&str> = inner.split(',').collect();
+        if parts.len() != 4 {
+            return Err(format!("expected 4 bytes, got {inner}"));
+        }
+        for (i, p) in parts.iter().enumerate() {
+            let p = p.trim();
+            let hex = p
+                .strip_prefix("0x")
+                .ok_or_else(|| format!("non-hex byte {p}"))?;
+            bytes[i] = u8::from_str_radix(hex, 16).map_err(|e| e.to_string())?;
+        }
+        Ok(u32::from_le_bytes(bytes))
+    }
+
+    fn llvm_mc_word(asm: &str) -> Result<u32, String> {
+        let mut child = Command::new(LLVM_MC)
+            .args(["-triple=aarch64", "-show-encoding"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn llvm-mc: {e}"))?;
+        {
+            let mut stdin = child.stdin.take().ok_or("llvm-mc stdin")?;
+            stdin
+                .write_all(asm.as_bytes())
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+            stdin
+                .write_all(b"\n")
+                .map_err(|e| format!("write llvm-mc: {e}"))?;
+        }
+        let out = child.wait_with_output().map_err(|e| format!("wait llvm-mc: {e}"))?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !out.status.success() || stderr.contains("error:") {
+            return Err(format!("llvm-mc error: {stderr}"));
+        }
+        parse_llvm_encoding(&stdout)
+    }
+
+    /// Unpack LDRSB/LDRSH fields per ARM ARM (not a copy of the SUT packer).
+    fn unpack_ldrs(word: u32) -> (u32, u32, u32, u32, u32, u32, u32, u32, u32) {
+        let size = (word >> 30) & 0b11;
+        let bits29_27 = (word >> 27) & 0b111;
+        let v = (word >> 26) & 1;
+        let bits25_24 = (word >> 24) & 0b11;
+        let opc = (word >> 22) & 0b11;
+        let bit21 = (word >> 21) & 1;
+        let bits11_10 = (word >> 10) & 0b11;
+        let rn = (word >> 5) & 0x1f;
+        let rt = word & 0x1f;
+        (size, bits29_27, v, bits25_24, opc, bit21, bits11_10, rn, rt)
+    }
+
+    fn unpack_imm12(word: u32) -> u32 {
+        (word >> 10) & 0xfff
+    }
+
+    fn unpack_imm9(word: u32) -> i64 {
+        let raw = (word >> 12) & 0x1ff;
+        if (raw & 0x100) != 0 {
+            (raw as i64) | !0x1ffi64
+        } else {
+            raw as i64
+        }
+    }
+
+    fn is_unsigned_pimm(offset: i64, size: u32) -> bool {
+        let sc = scale(size);
+        offset >= 0 && offset % sc == 0 && (offset / sc) < 4096
+    }
+
+    fn reg_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32), Just(30u32), Just(31u32), 0u32..=31]
+    }
+
+    fn size_bit() -> impl Strategy<Value = u32> {
+        prop_oneof![Just(0u32), Just(1u32)]
+    }
+
+    fn imm12_edge() -> impl Strategy<Value = u32> {
+        prop_oneof![
+            Just(0u32),
+            Just(1u32),
+            Just(64u32),
+            Just(4094u32),
+            Just(4095u32),
+            0u32..=4095
+        ]
+    }
+
+    fn simm9_in_range() -> impl Strategy<Value = i64> {
+        prop_oneof![
+            Just(SIMM_MIN),
+            Just(SIMM_MIN + 1),
+            Just(-1i64),
+            Just(0i64),
+            Just(1i64),
+            Just(2i64),
+            Just(3i64),
+            Just(SIMM_MAX - 1),
+            Just(SIMM_MAX),
+            SIMM_MIN..=SIMM_MAX,
+        ]
+    }
+
+    fn extra_operand() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Reg("x2".into())),
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(1)),
+            Just(Operand::Symbol("foo".into())),
+            Just(Operand::Mem {
+                base: "x3".into(),
+                offset: 0,
+            }),
+        ]
+    }
+
+    fn bad_address_kind() -> impl Strategy<Value = Operand> {
+        prop_oneof![
+            Just(Operand::Imm(0)),
+            Just(Operand::Imm(4)),
+            Just(Operand::Cond("eq".into())),
+            Just(Operand::Barrier("sy".into())),
+            Just(Operand::Shift {
+                kind: "lsl".into(),
+                amount: 2,
+            }),
+            Just(Operand::Extend {
+                kind: "sxtw".into(),
+                amount: 0,
+            }),
+            Just(Operand::Label("L0".into())),
+            Just(Operand::MemExpr {
+                base: "x1".into(),
+                expr: "foo".into(),
+                writeback: false,
+            }),
+            Just(Operand::RegList(vec![Operand::Reg("x0".into())])),
+            Just(Operand::Symbol("foo".into())),
+        ]
+    }
+
+    fn offset_out_of_range(size: u32) -> impl Strategy<Value = i64> {
+        if size == 0 {
+            prop_oneof![
+                Just(SIMM_MIN - 1),
+                Just(-257i64),
+                Just(4096i64),
+                Just(4097i64),
+                Just(8192i64),
+                Just(i64::MIN),
+                Just(i64::MAX),
+                Just(1i64 << 40),
+                Just(-(1i64 << 40)),
+                (i64::MIN..=SIMM_MIN - 1),
+            ]
+            .boxed()
+        } else {
+            prop_oneof![
+                Just(SIMM_MIN - 1),
+                Just(-257i64),
+                Just(257i64),
+                Just(8191i64),
+                Just(8192i64),
+                Just(8193i64),
+                Just(8194i64),
+                Just(i64::MIN),
+                Just(i64::MAX),
+                Just(1i64 << 40),
+                Just(-(1i64 << 40)),
+                (i64::MIN..=SIMM_MIN - 1),
+            ]
+            .boxed()
+        }
+    }
+
+    /// Known-answer gate for the llvm-mc differential connection.
+    #[test]
+    fn encode_ldrs_kat_llvm_mc_x0_x1() {
+        let want = 0x39800020u32;
+        let mc = llvm_mc_word("ldrsb x0, [x1]").expect("llvm-mc KAT ldrsb");
+        assert_eq!(mc, want, "llvm-mc KAT mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops, 0).expect("SUT KAT ldrsb");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldrs_kat_llvm_mc_w0_ldrsh() {
+        let want = 0x79c00020u32;
+        let mc = llvm_mc_word("ldrsh w0, [x1]").expect("llvm-mc KAT ldrsh w");
+        assert_eq!(mc, want, "llvm-mc KAT ldrsh w mapping broken");
+        let ops = [
+            Operand::Reg("w0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        let sut = sut_word(&ops, 1).expect("SUT KAT ldrsh w");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldrs_kat_llvm_mc_pimm_max() {
+        let want_b = 0x39bffc20u32;
+        let mc_b = llvm_mc_word("ldrsb x0, [x1, #4095]").expect("llvm-mc KAT pimm byte max");
+        assert_eq!(mc_b, want_b, "llvm-mc KAT pimm byte max mapping broken");
+        let ops_b = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 4095,
+            },
+        ];
+        assert_eq!(sut_word(&ops_b, 0).expect("SUT KAT pimm byte max"), want_b);
+
+        let want_h = 0x79bffc20u32;
+        let mc_h = llvm_mc_word("ldrsh x0, [x1, #8190]").expect("llvm-mc KAT pimm half max");
+        assert_eq!(mc_h, want_h, "llvm-mc KAT pimm half max mapping broken");
+        let ops_h = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 8190,
+            },
+        ];
+        assert_eq!(sut_word(&ops_h, 1).expect("SUT KAT pimm half max"), want_h);
+    }
+
+    #[test]
+    fn encode_ldrs_kat_llvm_mc_unscaled_neg() {
+        let want = 0x389ff020u32;
+        let mc = llvm_mc_word("ldrsb x0, [x1, #-1]").expect("llvm-mc KAT #-1");
+        assert_eq!(mc, want, "llvm-mc KAT #-1 mapping broken");
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: -1,
+            },
+        ];
+        let sut = sut_word(&ops, 0).expect("SUT KAT #-1");
+        assert_eq!(sut, want);
+    }
+
+    #[test]
+    fn encode_ldrs_kat_llvm_mc_pre_post_regoff() {
+        let pre = llvm_mc_word("ldrsb x0, [x1, #4]!").expect("llvm-mc pre");
+        assert_eq!(pre, 0x38804c20u32);
+        let post = llvm_mc_word("ldrsb w0, [x1], #4").expect("llvm-mc post");
+        assert_eq!(post, 0x38c04420u32);
+        let reg = llvm_mc_word("ldrsh x0, [x1, x2]").expect("llvm-mc reg");
+        assert_eq!(reg, 0x78a26820u32);
+        let sp = llvm_mc_word("ldrsb x0, [sp, #1]").expect("llvm-mc sp");
+        assert_eq!(sp, 0x398007e0u32);
+        let xzr = llvm_mc_word("ldrsb xzr, [x1]").expect("llvm-mc xzr");
+        assert_eq!(xzr, 0x3980003fu32);
+        let wzr = llvm_mc_word("ldrsb wzr, [x1]").expect("llvm-mc wzr");
+        assert_eq!(wzr, 0x39c0003fu32);
+        let lr = llvm_mc_word("ldrsb x30, [x2]").expect("llvm-mc x30");
+        assert_eq!(lr, 0x3980005eu32);
+        let sxtw = llvm_mc_word("ldrsh w0, [x1, w2, sxtw]").expect("llvm-mc sxtw");
+        assert_eq!(sxtw, 0x78e2c820u32);
+    }
+
+    proptest! {
+        #![proptest_config(cfg())]
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_diff_unsigned_llvm_mc(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in reg_edge(),
+            imm12 in imm12_edge(),
+        ) {
+            let offset = (imm12 as i64) * scale(size);
+            let rt_n = rt_name(rt, is_64);
+            let rn_n = rn_name(rn);
+            let asm = format!("{} {}, {}", mnemonic(size), rt_n, asm_mem(&rn_n, offset));
+            let ops = [
+                Operand::Reg(rt_n.clone()),
+                Operand::Mem {
+                    base: rn_n,
+                    offset,
+                },
+            ];
+            let sut = sut_word(&ops, size)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_diff_unscaled_pre_post_llvm_mc(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in reg_edge(),
+            simm in simm9_in_range(),
+            form in 0u32..=2,
+        ) {
+            // ARM / llvm-mc: pre/post writeback with Rt==Rn (and Rn!=SP) is unpredictable.
+            prop_assume!(form == 0 || rt != rn || rn == 31);
+            let rt_n = rt_name(rt, is_64);
+            let rn_n = rn_name(rn);
+            let mnem = mnemonic(size);
+            let (ops, asm) = match form {
+                0 => {
+                    let asm = format!("{} {}, {}", mnem, rt_n, asm_mem(&rn_n, simm));
+                    let ops = vec![
+                        Operand::Reg(rt_n.clone()),
+                        Operand::Mem {
+                            base: rn_n.clone(),
+                            offset: simm,
+                        },
+                    ];
+                    (ops, asm)
+                }
+                1 => {
+                    let asm = format!("{} {}, [{}, #{}]!", mnem, rt_n, rn_n, simm);
+                    let ops = vec![
+                        Operand::Reg(rt_n.clone()),
+                        Operand::MemPreIndex {
+                            base: rn_n.clone(),
+                            offset: simm,
+                        },
+                    ];
+                    (ops, asm)
+                }
+                _ => {
+                    let asm = format!("{} {}, [{}], #{}", mnem, rt_n, rn_n, simm);
+                    let ops = vec![
+                        Operand::Reg(rt_n.clone()),
+                        Operand::MemPostIndex {
+                            base: rn_n.clone(),
+                            offset: simm,
+                        },
+                    ];
+                    (ops, asm)
+                }
+            };
+            let sut = sut_word(&ops, size)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: differential
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_diff_regoff_llvm_mc(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in reg_edge(),
+            rm in reg_edge(),
+            ext_kind in 0u32..=3,
+            amount_bit in 0u32..=1,
+        ) {
+            let amount: u8 = if size == 0 { 0 } else if amount_bit == 1 { 1 } else { 0 };
+            let (extend, index, option, s_bit) = match ext_kind {
+                0 => ("lsl", rm_x(rm), 0b011u32, if amount > 0 { 1u32 } else { 0 }),
+                1 => ("sxtx", rm_x(rm), 0b111u32, if amount > 0 { 1u32 } else { 0 }),
+                2 => ("uxtw", rm_w(rm), 0b010u32, if amount > 0 { 1u32 } else { 0 }),
+                _ => ("sxtw", rm_w(rm), 0b110u32, if amount > 0 { 1u32 } else { 0 }),
+            };
+            let rt_n = rt_name(rt, is_64);
+            let rn_n = rn_name(rn);
+            let mnem = mnemonic(size);
+            let asm = if amount == 0 {
+                if extend == "lsl" {
+                    format!("{} {}, [{}, {}]", mnem, rt_n, rn_n, index)
+                } else {
+                    format!("{} {}, [{}, {}, {}]", mnem, rt_n, rn_n, index, extend)
+                }
+            } else {
+                format!("{} {}, [{}, {}, {} #{}]", mnem, rt_n, rn_n, index, extend, amount)
+            };
+            let ops = [
+                Operand::Reg(rt_n.clone()),
+                Operand::MemRegOffset {
+                    base: rn_n,
+                    index: index.clone(),
+                    extend: Some(extend.into()),
+                    shift: Some(amount),
+                },
+            ];
+            let sut = sut_word(&ops, size)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+            let got_opt = (sut >> 13) & 0b111;
+            let got_s = (sut >> 12) & 1;
+            prop_assert_eq!(got_opt, option, "option field for {}", asm);
+            prop_assert_eq!(got_s, s_bit, "S bit for {}", asm);
+        }
+
+        // Oracle: algebraic.invariant
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_arm_fields(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in reg_edge(),
+            imm12 in imm12_edge(),
+            simm in simm9_in_range(),
+            rm in reg_edge(),
+        ) {
+            let opc_exp = if is_64 { 0b10u32 } else { 0b11 };
+            let offset = (imm12 as i64) * scale(size);
+            let wu = sut_word(&[
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset,
+                },
+            ], size)
+            .expect("unsigned LDRSB/LDRSH");
+            let (got_size, b2927, v, b2524, opc, bit21, b1110, got_rn, got_rt) = unpack_ldrs(wu);
+            prop_assert_eq!(got_size, size, "unsigned size word={:#010x}", wu);
+            prop_assert_eq!(b2927, 0b111, "unsigned [29:27] word={:#010x}", wu);
+            prop_assert_eq!(v, 0, "unsigned V word={:#010x}", wu);
+            prop_assert_eq!(b2524, 0b01, "unsigned [25:24] word={:#010x}", wu);
+            prop_assert_eq!(opc, opc_exp, "unsigned opc word={:#010x}", wu);
+            prop_assert_eq!(unpack_imm12(wu), imm12, "unsigned imm12 word={:#010x}", wu);
+            prop_assert_eq!(got_rn, rn, "unsigned Rn word={:#010x}", wu);
+            prop_assert_eq!(got_rt, rt, "unsigned Rt word={:#010x}", wu);
+            let _ = (bit21, b1110);
+
+            // Force the unscaled path: negative, or (halfword and odd).
+            let simm_u = if size == 0 {
+                if simm >= 0 { -1 - (simm % 256) } else { simm }
+            } else if simm >= 0 && simm % 2 == 0 {
+                if simm == 0 { 1 } else { simm - 1 }
+            } else {
+                simm
+            };
+            prop_assume!(simm_u >= SIMM_MIN && simm_u <= SIMM_MAX);
+            prop_assume!(!is_unsigned_pimm(simm_u, size));
+
+            let wn = sut_word(&[
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: simm_u,
+                },
+            ], size)
+            .expect("unscaled LDRSB/LDRSH");
+            let (got_size, b2927, v, b2524, opc, bit21, b1110, got_rn, got_rt) = unpack_ldrs(wn);
+            prop_assert_eq!(got_size, size, "unscaled size word={:#010x}", wn);
+            prop_assert_eq!(b2927, 0b111, "unscaled [29:27] word={:#010x}", wn);
+            prop_assert_eq!(v, 0, "unscaled V word={:#010x}", wn);
+            prop_assert_eq!(b2524, 0b00, "unscaled [25:24] word={:#010x}", wn);
+            prop_assert_eq!(opc, opc_exp, "unscaled opc word={:#010x}", wn);
+            prop_assert_eq!(bit21, 0, "unscaled bit21 word={:#010x}", wn);
+            prop_assert_eq!(b1110, 0b00, "unscaled [11:10] word={:#010x}", wn);
+            prop_assert_eq!(unpack_imm9(wn), simm_u, "unscaled imm9 word={:#010x}", wn);
+            prop_assert_eq!(got_rn, rn, "unscaled Rn word={:#010x}", wn);
+            prop_assert_eq!(got_rt, rt, "unscaled Rt word={:#010x}", wn);
+
+            let wp = sut_word(&[
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemPreIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ], size)
+            .expect("pre LDRSB/LDRSH");
+            let (_, _, _, b2524, _, bit21, b1110, _, _) = unpack_ldrs(wp);
+            prop_assert_eq!(b2524, 0b00, "pre [25:24] word={:#010x}", wp);
+            prop_assert_eq!(bit21, 0, "pre bit21 word={:#010x}", wp);
+            prop_assert_eq!(b1110, 0b11, "pre [11:10] word={:#010x}", wp);
+            prop_assert_eq!(unpack_imm9(wp), simm, "pre imm9 word={:#010x}", wp);
+
+            let wo = sut_word(&[
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemPostIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ], size)
+            .expect("post LDRSB/LDRSH");
+            let (_, _, _, _, _, _, b1110, _, _) = unpack_ldrs(wo);
+            prop_assert_eq!(b1110, 0b01, "post [11:10] word={:#010x}", wo);
+            prop_assert_eq!(unpack_imm9(wo), simm, "post imm9 word={:#010x}", wo);
+
+            let wr = sut_word(&[
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("lsl".into()),
+                    shift: Some(size as u8),
+                },
+            ], size)
+            .expect("regoff LDRSB/LDRSH");
+            let (got_size, b2927, v, b2524, opc, bit21, b1110, got_rn, got_rt) = unpack_ldrs(wr);
+            prop_assert_eq!(got_size, size);
+            prop_assert_eq!(b2927, 0b111);
+            prop_assert_eq!(v, 0);
+            prop_assert_eq!(b2524, 0b00);
+            prop_assert_eq!(opc, opc_exp);
+            prop_assert_eq!(bit21, 1, "regoff bit21 word={:#010x}", wr);
+            prop_assert_eq!(b1110, 0b10, "regoff [11:10] word={:#010x}", wr);
+            prop_assert_eq!((wr >> 16) & 0x1f, rm, "regoff Rm word={:#010x}", wr);
+            prop_assert_eq!((wr >> 13) & 0b111, 0b011, "regoff option LSL");
+            prop_assert_eq!((wr >> 12) & 1, if size == 0 { 0 } else { 1 }, "regoff S");
+            prop_assert_eq!(got_rn, rn);
+            prop_assert_eq!(got_rt, rt);
+        }
+
+        // Oracle: algebraic.metamorphic
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_metamorphic_rt_rn_imm(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in 0u32..=30,
+            rn in 0u32..=30,
+            imm12 in 0u32..=4094,
+            simm in simm9_in_range(),
+        ) {
+            let enc = |rt: u32, rn: u32, imm12: u32, size: u32, is_64: bool| {
+                sut_word(&[
+                    Operand::Reg(rt_name(rt, is_64)),
+                    Operand::Mem {
+                        base: rn_name(rn),
+                        offset: (imm12 as i64) * scale(size),
+                    },
+                ], size)
+                .expect("unsigned")
+            };
+            let w = enc(rt, rn, imm12, size, is_64);
+            prop_assert_eq!(enc(rt + 1, rn, imm12, size, is_64).wrapping_sub(w), 1, "Rt+1 adds 1");
+            prop_assert_eq!(enc(rt, rn + 1, imm12, size, is_64).wrapping_sub(w), 32, "Rn+1 adds 32");
+            prop_assert_eq!(
+                enc(rt, rn, imm12 + 1, size, is_64).wrapping_sub(w),
+                1 << 10,
+                "imm12+1 adds 1<<10"
+            );
+
+            let pre = sut_word(&[
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemPreIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ], size)
+            .expect("pre");
+            let post = sut_word(&[
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemPostIndex {
+                    base: rn_name(rn),
+                    offset: simm,
+                },
+            ], size)
+            .expect("post");
+            prop_assert_eq!(pre ^ post, 0b10 << 10, "pre XOR post = 0b10<<10");
+
+            let w64 = enc(rt, rn, imm12, size, true);
+            let w32 = enc(rt, rn, imm12, size, false);
+            prop_assert_eq!(w64 ^ w32, 1 << 22, "Xt vs Wt flips only opc bit 22");
+
+            let wb = enc(rt, rn, imm12, 0, is_64);
+            let wh = enc(rt, rn, imm12, 1, is_64);
+            prop_assert_eq!(wb ^ wh, 1 << 30, "ldrsb vs ldrsh flips only size bit 30");
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_arity_kinds(
+            size in size_bit(),
+            rt in reg_edge(),
+            is_64 in any::<bool>(),
+            kind in bad_address_kind(),
+        ) {
+            prop_assert!(
+                encode_ldrs(&[], size).is_err(),
+                "zero operands must Err"
+            );
+            let one = [Operand::Reg(rt_name(rt, is_64))];
+            prop_assert!(
+                encode_ldrs(&one, size).is_err(),
+                "one operand must Err: {:?}",
+                encode_ldrs(&one, size)
+            );
+            let ops = [Operand::Reg(rt_name(rt, is_64)), kind.clone()];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "non-memory address operand must Err, got {:?} for {:?}",
+                encode_ldrs(&ops, size),
+                kind
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_invalid_regs(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in 0u32..=30,
+            simd in prop_oneof![Just('d'), Just('s'), Just('q'), Just('h'), Just('b')],
+        ) {
+            let mem_x = Operand::Mem {
+                base: rn_name(rn),
+                offset: 0,
+            };
+            let sp_dest = [Operand::Reg("sp".into()), mem_x.clone()];
+            prop_assert!(
+                encode_ldrs(&sp_dest, size).is_err(),
+                "SP dest must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrs(&sp_dest, size)
+            );
+            let wsp_dest = [Operand::Reg("wsp".into()), mem_x.clone()];
+            prop_assert!(
+                encode_ldrs(&wsp_dest, size).is_err(),
+                "WSP dest must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrs(&wsp_dest, size)
+            );
+            let fp_dest = [Operand::Reg(format!("{}{}", simd, rt.min(31))), mem_x.clone()];
+            prop_assert!(
+                encode_ldrs(&fp_dest, size).is_err(),
+                "SIMD dest must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrs(&fp_dest, size)
+            );
+            let w_base = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: wt_name(rn),
+                    offset: 0,
+                },
+            ];
+            prop_assert!(
+                encode_ldrs(&w_base, size).is_err(),
+                "W base must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrs(&w_base, size)
+            );
+            let xzr_base = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: "xzr".into(),
+                    offset: 0,
+                },
+            ];
+            prop_assert!(
+                encode_ldrs(&xzr_base, size).is_err(),
+                "XZR base must Err (llvm-mc: invalid operand); got {:?}",
+                encode_ldrs(&xzr_base, size)
+            );
+            let w_index = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: wt_name(rt),
+                    extend: None,
+                    shift: None,
+                },
+            ];
+            prop_assert!(
+                encode_ldrs(&w_index, size).is_err(),
+                "W index without uxtw/sxtw must Err; got {:?}",
+                encode_ldrs(&w_index, size)
+            );
+            if rt != 31 {
+                let overlap_pre = [
+                    Operand::Reg(rt_name(rt, is_64)),
+                    Operand::MemPreIndex {
+                        base: format!("x{}", rt),
+                        offset: 4,
+                    },
+                ];
+                prop_assert!(
+                    encode_ldrs(&overlap_pre, size).is_err(),
+                    "pre-index Rt==Rn must Err (llvm-mc: unpredictable); got {:?}",
+                    encode_ldrs(&overlap_pre, size)
+                );
+            }
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_offset_range_extra(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in reg_edge(),
+            off in offset_out_of_range(0),
+            extra in extra_operand(),
+            prepost in 0u32..=1,
+        ) {
+            // Re-draw a size-appropriate out-of-range offset: the strategy above is for byte;
+            // for halfword, 4096 is a valid unsigned pimm, so coerce those cases.
+            let off = if is_unsigned_pimm(off, size) || (off >= SIMM_MIN && off <= SIMM_MAX) {
+                if size == 0 { 4096 } else { 8192 }
+            } else {
+                off
+            };
+            prop_assert!(
+                !is_unsigned_pimm(off, size),
+                "generator produced a valid unsigned pimm {}",
+                off
+            );
+            prop_assert!(
+                off < SIMM_MIN || off > SIMM_MAX,
+                "generator produced in-range simm9 {}",
+                off
+            );
+            let mem = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: off,
+                },
+            ];
+            prop_assert!(
+                encode_ldrs(&mem, size).is_err(),
+                "out-of-range Mem offset {} must Err (llvm-mc range); got {:?}",
+                off,
+                encode_ldrs(&mem, size)
+            );
+            let three = vec![
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: 0,
+                },
+                extra.clone(),
+            ];
+            prop_assert!(
+                encode_ldrs(&three, size).is_err(),
+                "extra operand must Err; got {:?}",
+                encode_ldrs(&three, size)
+            );
+            let wb = if prepost == 0 {
+                vec![
+                    Operand::Reg(rt_name(rt, is_64)),
+                    Operand::MemPreIndex {
+                        base: rn_name(rn),
+                        offset: off,
+                    },
+                ]
+            } else {
+                vec![
+                    Operand::Reg(rt_name(rt, is_64)),
+                    Operand::MemPostIndex {
+                        base: rn_name(rn),
+                        offset: off,
+                    },
+                ]
+            };
+            prop_assert!(
+                encode_ldrs(&wb, size).is_err(),
+                "out-of-range pre/post offset {} must Err; got {:?}",
+                off,
+                encode_ldrs(&wb, size)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_extra(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in reg_edge(),
+            extra in extra_operand(),
+        ) {
+            let ops = vec![
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: rn_name(rn),
+                    offset: 0,
+                },
+                extra.clone(),
+            ];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "extra operand {:?} must Err (llvm-mc rejects a 3rd operand); got {:?}",
+                extra,
+                encode_ldrs(&ops, size)
+            );
+        }
+
+        // Oracle: differential (alt spellings x31 / uppercase / lr)
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_diff_alt_spellings(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in reg_edge(),
+            spelling in 0u32..=2,
+        ) {
+            let (rt_s, rn_s, asm_rt, asm_rn) = match spelling {
+                0 => {
+                    let rt_s = if is_64 {
+                        if rt == 31 { "x31".to_string() } else { format!("x{}", rt) }
+                    } else if rt == 31 {
+                        "w31".to_string()
+                    } else {
+                        format!("w{}", rt)
+                    };
+                    let rn_s = if rn == 31 { "sp".to_string() } else { format!("x{}", rn) };
+                    (rt_s.clone(), rn_s.clone(), rt_s, rn_s)
+                }
+                1 => {
+                    let rt_s = if is_64 {
+                        if rt == 31 { "XZR".to_string() } else { format!("X{}", rt) }
+                    } else if rt == 31 {
+                        "WZR".to_string()
+                    } else {
+                        format!("W{}", rt)
+                    };
+                    let rn_s = if rn == 31 { "SP".to_string() } else { format!("X{}", rn) };
+                    (rt_s.clone(), rn_s.clone(), rt_s, rn_s)
+                }
+                _ => {
+                    let rt_s = if is_64 {
+                        if rt == 30 {
+                            "lr".to_string()
+                        } else if rt == 31 {
+                            "xzr".to_string()
+                        } else {
+                            format!("x{}", rt)
+                        }
+                    } else if rt == 31 {
+                        "wzr".to_string()
+                    } else {
+                        format!("w{}", rt)
+                    };
+                    let rn_s = if rn == 31 { "sp".to_string() } else { format!("x{}", rn) };
+                    (rt_s.clone(), rn_s.clone(), rt_s, rn_s)
+                }
+            };
+            let ops = [
+                Operand::Reg(rt_s),
+                Operand::Mem {
+                    base: rn_s,
+                    offset: 0,
+                },
+            ];
+            let asm = format!("{} {}, [{}]", mnemonic(size), asm_rt, asm_rn);
+            let sut = sut_word(&ops, size)
+                .unwrap_or_else(|e| panic!("SUT rejected valid {}: {}", asm, e));
+            let mc = llvm_mc_word(&asm)
+                .unwrap_or_else(|e| panic!("llvm-mc rejected valid {}: {}", asm, e));
+            prop_assert_eq!(sut, mc, "SUT vs llvm-mc mismatch for {}", asm);
+        }
+
+        // Oracle: negative_error (unsupported extend/shift and bad base)
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_bad_extend_base(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in 0u32..=30,
+            rm in 0u32..=30,
+            kind in 0u32..=3,
+        ) {
+            let mem = match kind {
+                0 => Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("lsl".into()),
+                    shift: Some(if size == 0 { 1 } else { 2 }),
+                },
+                1 => Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("lsl".into()),
+                    shift: Some(3),
+                },
+                2 => Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: rm_x(rm),
+                    extend: Some("uxtx".into()),
+                    shift: Some(0),
+                },
+                _ => Operand::Mem {
+                    base: "foo".into(),
+                    offset: 0,
+                },
+            };
+            let ops = [Operand::Reg(rt_name(rt, is_64)), mem];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "unsupported extend/shift or invalid base must Err; got {:?}",
+                encode_ldrs(&ops, size)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_fp_dest(
+            size in size_bit(),
+            rt in 0u32..=31,
+            simd in prop_oneof![Just('d'), Just('s'), Just('q'), Just('h'), Just('b')],
+        ) {
+            let ops = [
+                Operand::Reg(format!("{}{}", simd, rt)),
+                Operand::Mem { base: "x1".into(), offset: 0 },
+            ];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "SIMD dest must Err; got {:?}",
+                encode_ldrs(&ops, size)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_w_base(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in 0u32..=30,
+        ) {
+            let ops = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem { base: wt_name(rn), offset: 0 },
+            ];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "W base must Err; got {:?}",
+                encode_ldrs(&ops, size)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_xzr_base(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+        ) {
+            let ops = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem { base: "xzr".into(), offset: 0 },
+            ];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "XZR base must Err; got {:?}",
+                encode_ldrs(&ops, size)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_w_index(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            rn in 0u32..=30,
+            rm in 0u32..=31,
+        ) {
+            let ops = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemRegOffset {
+                    base: rn_name(rn),
+                    index: wt_name(rm),
+                    extend: None,
+                    shift: None,
+                },
+            ];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "W index without extend must Err; got {:?}",
+                encode_ldrs(&ops, size)
+            );
+        }
+
+        // Oracle: negative_error
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_writeback_overlap(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in 0u32..=30,
+        ) {
+            let ops = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::MemPreIndex {
+                    base: format!("x{}", rt),
+                    offset: 4,
+                },
+            ];
+            prop_assert!(
+                encode_ldrs(&ops, size).is_err(),
+                "pre-index Rt==Rn must Err; got {:?}",
+                encode_ldrs(&ops, size)
+            );
+        }
+
+        // Oracle: negative_error (coverage-gaps sweep: invalid names / bad base)
+        // Target: encoder.load_store.encode_ldrs
+        #[test]
+        fn encode_ldrs_neg_invalid_name(
+            size in size_bit(),
+            is_64 in any::<bool>(),
+            rt in reg_edge(),
+            bad in prop_oneof![
+                Just("foo".to_string()),
+                Just("x32".to_string()),
+                Just("w32".to_string()),
+                Just("".to_string()),
+                Just("r0".to_string()),
+                Just("x".to_string()),
+            ],
+        ) {
+            let mem_ok = Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            };
+            let dest_bad = [Operand::Reg(bad.clone()), mem_ok];
+            prop_assert!(
+                encode_ldrs(&dest_bad, size).is_err(),
+                "invalid dest name {:?} must Err; got {:?}",
+                bad,
+                encode_ldrs(&dest_bad, size)
+            );
+            let base_bad = [
+                Operand::Reg(rt_name(rt, is_64)),
+                Operand::Mem {
+                    base: bad.clone(),
+                    offset: 0,
+                },
+            ];
+            prop_assert!(
+                encode_ldrs(&base_bad, size).is_err(),
+                "invalid base name {:?} must Err; got {:?}",
+                bad,
+                encode_ldrs(&base_bad, size)
+            );
+        }
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_sp_dest() {
+        let ops = [
+            Operand::Reg("sp".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb sp, [x1] must Err; llvm-mc: invalid operand (dest is Wt|Xt, 31=ZR)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_wsp_dest() {
+        let ops = [
+            Operand::Reg("wsp".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb wsp, [x1] must Err; llvm-mc: invalid operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_fp_dest() {
+        let ops = [
+            Operand::Reg("d0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb d0, [x1] must Err; llvm-mc: invalid operand (dest is Wt|Xt)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_w_base() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "w1".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [w1] must Err; llvm-mc: invalid operand (base is Xn|SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_xzr_base() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "xzr".into(),
+                offset: 0,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [xzr] must Err; llvm-mc: invalid operand (base is Xn|SP)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_w_index_no_extend() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::MemRegOffset {
+                base: "x1".into(),
+                index: "w2".into(),
+                extend: None,
+                shift: None,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [x1, w2] must Err; llvm-mc requires uxtw/sxtw on Wm"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_writeback_rt_eq_rn() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::MemPreIndex {
+                base: "x0".into(),
+                offset: 4,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [x0, #4]! must Err; llvm-mc: unpredictable writeback base is also a source"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_imm9_range() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: -257,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [x1, #-257] must Err; llvm-mc requires simm9 in [-256, 255] when not a valid pimm"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_pimm_overflow() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 4096,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [x1, #4096] must Err; unsigned imm12 max is 4095 (byte)"
+        );
+        let ops_h = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 8192,
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops_h, 1).is_err(),
+            "ldrsh x0, [x1, #8192] must Err; unsigned imm12 max is 4095 (offset 8190)"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_extra_operand() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::Mem {
+                base: "x1".into(),
+                offset: 0,
+            },
+            Operand::Reg("x2".into()),
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [x1], x2 as 3 operands must Err; llvm-mc rejects a 3rd operand"
+        );
+    }
+
+    #[test]
+    fn test_encode_ldrs_regression_bad_shift() {
+        let ops = [
+            Operand::Reg("x0".into()),
+            Operand::MemRegOffset {
+                base: "x1".into(),
+                index: "x2".into(),
+                extend: Some("lsl".into()),
+                shift: Some(1),
+            },
+        ];
+        assert!(
+            encode_ldrs(&ops, 0).is_err(),
+            "ldrsb x0, [x1, x2, lsl #1] must Err; llvm-mc: shift of #0 only for byte"
+        );
+    }
+}

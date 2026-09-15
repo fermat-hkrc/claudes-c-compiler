@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 100 | Excluded: 189
+> Total files: 10 | Total functions: 289 | PBT candidates: 101 | Excluded: 188
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -83,7 +83,7 @@
 | encode_ldur_stur | load_store.rs | 248 | function | yes | - |
 | encode_ldtr_sized | load_store.rs | 292 | function | yes | - |
 | encode_ldrsw | load_store.rs | 311 | function | yes | - |
-| encode_ldrs | load_store.rs | 382 | function | no | out of campaign scope |
+| encode_ldrs | load_store.rs | 382 | function | yes | - |
 | encode_ldp_stp | load_store.rs | 452 | function | no | out of campaign scope |
 | encode_ldnp_stnp | load_store.rs | 518 | function | no | out of campaign scope |
 | encode_ldxr_stxr | load_store.rs | 547 | function | yes | - |

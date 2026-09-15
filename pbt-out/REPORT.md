@@ -1,29 +1,33 @@
-# PBT Campaign Report: encode_neon_dup
+# PBT Campaign Report: encode_ldrs
 
 ## Summary
 
-**Date:** 2026-09-14
-**Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_dup
-**Tests:** 10 properties + 1 KAT + 5 regression witnesses
-**Result:** 6 passing, 4 failing (4 bugs)
-**Tier:** standard (1 contract-surface sweep round)
+**Date:** 2026-09-15
+**Repository:** claudes-c-compiler
+**Modules tested:** encode_ldrs
+**Tests:** 17 properties (plus 5 KAT + 11 regression witnesses)
+**Result:** 8 passing properties, 9 failing properties, 9 bugs
+**Effort tier:** standard (1 coverage-gaps sweep round; closed because the round was spent and the documented invalid-name/invalid-base surface was covered)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_dup | 10 properties (6 passing, 4 failing); 1 KAT passing; 5 regressions failing | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_ldrs | 17 properties (8 pass / 9 fail) | 9 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **Extra operand ignored.** Failing property `encode_neon_dup_neg_extra_operands`. Shrunk counterexample: rd=0, rn=0, t="8b", extra_kind=0 — `dup v0.8b, w0, w0` encodes as the 2-operand form instead of Err. Law: GNU-style DUP is 2-operand; llvm-mc rejects a 3rd operand. Serial reconfirmation with `PBT_TEST_JOBS=1`. Report: `pbt-out/bug_reports/encode_neon_dup_extra_operand.md`.
+1. **encode_ldrs_neg_invalid_regs** — SP dest accepted. Shrunk: size=0, is_64=false, rt=0, rn=0; `encode_ldrs([Reg("sp"), Mem{x0,0}], 0) = Ok(Word(0x3980001f))` (ldrsb xzr, [x0]). Expected Err. `pbt-out/bug_reports/encode_ldrs_sp_dest.md`
+2. **encode_ldrs_neg_fp_dest** — SIMD dest accepted. Shrunk: size=0, rt=0, simd='d'; `Ok(Word(0x39c00020))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_fp_dest.md`
+3. **encode_ldrs_neg_w_base** — W base accepted. Shrunk: size=0, is_64=false, rt=0, rn=0; `Ok(Word(0x39c00000))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_w_base.md`
+4. **encode_ldrs_neg_xzr_base** — XZR base accepted as SP. Shrunk: size=0, is_64=false, rt=0; `Ok(Word(0x39c003e0))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_xzr_base.md`
+5. **encode_ldrs_neg_w_index** — W index without extend accepted as uxtw. Shrunk: size=0, is_64=false, rt=0, rn=0, rm=0; `Ok(Word(0x38e04800))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_w_index.md`
+6. **encode_ldrs_neg_writeback_overlap** — pre-index Rt==Rn accepted. Shrunk: size=0, is_64=false, rt=0; `Ok(Word(0x38c04c00))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_writeback_overlap.md`
+7. **encode_ldrs_neg_offset_range_extra** — out-of-range offset truncated. Shrunk: size=0, is_64=false, rt=0, rn=0, off=-257; `Ok(Word(0x38cff000))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_offset_range.md`
+8. **encode_ldrs_neg_extra** — extra operand ignored. Shrunk: size=0, is_64=false, rt=0, rn=0, extra=Reg("x2"); `Ok(Word(0x39c00000))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_extra_operand.md`
+9. **encode_ldrs_neg_bad_extend_base** — illegal lsl #1 on LDRSB accepted. Shrunk: size=0, is_64=false, rt=0, rn=0, rm=0, kind=0; `Ok(Word(0x38e07800))`. Expected Err. `pbt-out/bug_reports/encode_ldrs_bad_shift.md`
 
-2. **Wrong-width GPR source accepted.** Failing property `encode_neon_dup_neg_gpr_width`. Shrunk counterexample: rd=0, t="8b", n=0, alias="sp" — `dup v0.8b, x0` encodes as `dup v0.8b, w0`. Law: ARM DUP (general) source is Wn for T≠2D and Xn for T=2D. Serial reconfirmation. Report: `pbt-out/bug_reports/encode_neon_dup_wrong_width_gpr.md`.
-
-3. **Out-of-range lane index masked.** Failing property `encode_neon_dup_neg_index_oor`. Shrunk counterexample: rd=0, rn=0, t="8b", i_extra=1 — `dup v0.8b, v0.b[16]` encodes as `dup v0.8b, v0.b[0]` via `index & 0xF`. Law: ARM DUP (element) b-index range is [0,15]; llvm-mc rejects 16. Serial reconfirmation. Report: `pbt-out/bug_reports/encode_neon_dup_index_oor.md`.
-
-4. **Dest T vs element-size mismatch encoded as a different instruction.** Failing property `encode_neon_dup_neg_size_mismatch`. Shrunk counterexample: rd=0, rn=0, t="8b", ts_other="h", i_mis=0 — `dup v0.8b, v0.h[0]` encodes as Q=0 halfword DUP (`dup v0.4h, v0.h[0]`). Law: dest T must match element size. Serial reconfirmation. Report: `pbt-out/bug_reports/encode_neon_dup_size_mismatch.md`.
+All nine reproduced serially with `PBT_TEST_JOBS=1 cargo test --lib <property> -- --test-threads=1`. Failing properties keep the evidenced llvm-mc/ARM contract (no oracle collapse).
 
 ## Design Caveats
 
@@ -33,30 +37,24 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_dup_pbt) | 10 properties + 1 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/load_store.rs (mod encode_ldrs_pbt) | 17 properties + 5 KAT + 11 regressions |
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
-- pbt-out/REPORT.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_dup_extra_operand.md
-- pbt-out/bug_reports/encode_neon_dup_wrong_width_gpr.md
-- pbt-out/bug_reports/encode_neon_dup_index_oor.md
-- pbt-out/bug_reports/encode_neon_dup_size_mismatch.md
-
-Sweep close-out: coverage_gaps had no LLVM profraw; manual arm audit of encode_neon_dup added encode_neon_dup_neg_elem_invalid (passing). Closed: tier round spent and documented surface covered.
+- pbt-out/PLAN.md — campaign checklist (Scan/Plan/Test/Review complete; sweep 1/1)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/FUNCTION_INDEX.md — encode_ldrs marked PBT candidate
+- pbt-out/COVERAGE.md — encode_ldrs row
+- pbt-out/INVARIANTS.md — encode_ldrs invariants prepended
+- pbt-out/REPORT.md — this file
+- pbt-out/bug_reports/encode_ldrs_*.md — 9 bug reports
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-14 23:44 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 100/289 total | PBT candidates: 100 | Tested: 100 (100%) | 0 pass, 100 fail
+> Last updated: 2026-09-15 00:09 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 101/289 total | PBT candidates: 101 | Tested: 101 (100%) | 0 pass, 101 fail
 
 ## Summary
 
@@ -65,10 +63,10 @@ Sweep close-out: coverage_gaps had no LLVM profraw; manual arm audit of encode_n
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 100 |
-| **Tested (of PBT candidates)** | **100 / 100 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 100 / 0 |
-| **Overall (tested / all functions)** | **100 / 289 (35%)** |
+| PBT candidates (from FUNCTION_INDEX) | 101 |
+| **Tested (of PBT candidates)** | **101 / 101 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 101 / 0 |
+| **Overall (tested / all functions)** | **101 / 289 (35%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -76,13 +74,13 @@ Sweep close-out: coverage_gaps had no LLVM profraw; manual arm audit of encode_n
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 100 | 100 | 0 | 100% |
+|  | 101 | 101 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 100 | 100 | 0 | 100% |
+| unknown | 101 | 101 | 0 | 100% |
 
 ## File Coverage
 
@@ -94,7 +92,7 @@ Sweep close-out: coverage_gaps had no LLVM profraw; manual arm audit of encode_n
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 10 | 10 | 100% | covered |
+| load_store.rs | 20 | 11 | 11 | 100% | covered |
 | neon.rs | 68 | 16 | 16 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -205,3 +203,4 @@ Sweep close-out: coverage_gaps had no LLVM profraw; manual arm audit of encode_n
 | encode_fneg | fp_scalar.rs |
 | encode_fsqrt | fp_scalar.rs |
 | encode_neon_dup | neon.rs |
+| encode_ldrs | load_store.rs |

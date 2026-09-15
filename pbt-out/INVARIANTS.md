@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_ldrs)
+
+- Valid unsigned LDRSB/LDRSH (Wt/Xt including wzr/xzr, Xn|SP base, imm12 in 0..4095, scale 1 or 2) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Valid unscaled / pre-index / post-index with simm9 in [-256,255] (excluding unpredictable Rt==Rn writeback) matches llvm-mc (1000 cases).
+- Valid register-offset (lsl/sxtx/uxtw/sxtw, amount 0 for byte and 0/1 for half) matches llvm-mc including option/S (1000 cases).
+- Alternate spellings x31/w31, uppercase, lr match llvm-mc (1000 cases).
+- Success-path word is ARM LDRSB/LDRSH: size 111 V=0 opc; unsigned [25:24]=01 imm12; unscaled [25:24]=00 bit21=0 [11:10]=00 imm9; pre [11:10]=11; post [11:10]=01; regoff bit21=1 [11:10]=10. opc=10 Xt / 11 Wt; size=00 byte / 01 half.
+- Metamorphic: Rt+1 adds 1; Rn+1 adds 32; imm12+1 adds 1<<10; pre XOR post = 0b10<<10; Xt vs Wt flips bit 22; ldrsb vs ldrsh flips bit 30 (1000 cases).
+- Fewer than 2 operands, non-memory 2nd operand, and invalid names (foo/x32/w32/empty/r0/x) always Err (1000 cases).
+- Known-answer: `ldrsb x0, [x1]` = 0x39800020; `ldrsb w0, [x1]` = 0x39c00020; `ldrsh x0, [x1]` = 0x79800020; `ldrsh w0, [x1]` = 0x79c00020; `ldrsb x0, [x1, #4095]` = 0x39bffc20; `ldrsh x0, [x1, #8190]` = 0x79bffc20; `ldrsb x0, [x1, #-1]` = 0x389ff020; `ldrsb x0, [x1, #4]!` = 0x38804c20; `ldrsb w0, [x1], #4` = 0x38c04420; `ldrsh x0, [x1, x2]` = 0x78a26820.
+- Extra operand, SP/WSP dest, SIMD dest, W base, XZR base, W index without extend, writeback Rt==Rn, out-of-range offset, and illegal shift currently encode instead of matching llvm-mc/gas (see bugs).
+
+## Environment (encode_ldrs)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM LDRSB/LDRSH unsigned: size 111 V=0 01 opc imm12 Rn Rt; unscaled LDURSB/LDURSH bits[25:24]=00 bits[11:10]=00 simm9 [-256,255]; pre 11, post 01; register offset bit21=1 option S bits[11:10]=10.
+- Dispatch: encoder/mod.rs:334-335 `ldrsb` => encode_ldrs(operands, 0b00); `ldrsh` => encode_ldrs(operands, 0b01).
+- Callers: encoder dispatch only.
+- Sibling encode_ldrsw / encode_ldr_str / encode_ldur_stur are different opcodes/jobs, not same-job differentials.
+- encode_ldrs checks only operands.len() < 2 (extra ignored); parse_reg_num accepts any x/w/d/s/q/v/h/b prefix and maps sp/xzr to 31; out-of-range offsets are masked to imm9; S bit is shift_amount > 0 with no scale check.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (invalid names).
+- Nine failing properties/regressions are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ldrs_*.md.
+
 # Confirmed invariants (encode_neon_dup)
 
 - Valid DUP GPR form (T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31, Wn including wzr for T≠2d, Xn including xzr for T=2d) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
