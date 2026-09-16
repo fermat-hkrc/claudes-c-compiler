@@ -283,16 +283,17 @@ GNU reference; reclassify as llvm-mc-compatibility enhancements.)
 
 ## 6. Tool Dimension (discovery vs verification are different jobs)
 
-| Tool | Role in this tracker | Issues discovered & filed | Issues verified (triage) |
-|---|---|---|---|
-| **Hoare-style reasoning (FM-Agent / pi-pbt PBT campaigns)** | bug **discovery** | 507 (99.6%) | — |
-| **Contract-Based Differential Validation (LLM agent, this session)** | bug **verification/triage** + side discovery | 2 (#509, #510, 0.4%) — incidental to verification | **100 sampled → 100% confirmed real, 0 false positives, 3 text amendments** |
+| Tool | Role in this tracker | Issues discovered & filed | Issues verified (triage) | Verification outcome |
+|---|---|---|---|---|
+| **Hoare-style reasoning (FM-Agent / pi-pbt PBT campaigns)** | bug **discovery** | 507 (99.6%) | — | of its 507: 504 real, 3 FP (#30 #119 #247, = 99.4% precision) |
+| **Contract-Based Differential Validation (LLM agent, this session)** | bug **verification/triage** + side discovery | 2 (#509, #510, 0.4%) — incidental | **all 509 live-verified** (100 sampled at unit level + full 509 at CLI level) | 506 real · 3 FP · 3 amendments + 2 reclassifications (#150 warning-class → confirmed; #509 conditional on absent sysroot) |
 
 The two rows are complementary, not competing: the FM-Agent campaigns *generated* the
-candidate defects (property-based testing over encoder contracts); the LLM-agent session
-*adjudicated* them (Hoare-triple probes arbitrated by gcc/clang/gas, 100/100 confirmed).
-Only 2 issues were filed by the verification session because discovery was not its
-objective — the 2 emerged as side-findings while establishing reproduction harnesses.
+candidate defects (property-based testing over encoder contracts) at **99.4% precision**;
+the LLM-agent session *adjudicated* all of them (Hoare-triple probes arbitrated by
+gcc/clang/gas with objdump encoding comparison). Only 2 issues were filed by the
+verification session because discovery was not its objective — both were confirmed real
+and are among the 506.
 
 ---
 
