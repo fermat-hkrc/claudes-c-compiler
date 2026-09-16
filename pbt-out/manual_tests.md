@@ -6674,7 +6674,7 @@ clang --target=aarch64-linux-gnu -c probe.s -o probe_cl.o 2>&1 | head -2   # cla
 aarch64-linux-gnu-objdump -d probe_c.o | grep -m1 -E '^[[:space:]]+[0-9a-f]+:'   # ccc encoding: 0x0d40d3e0
 cargo test --lib scratch_ldnr -- --nocapture                    # unit witness (expected FAIL pre-fix)
 ```
-**Verdict:** silent-accept
+**Verdict:** real — **upgraded (user retest)**: emitted word `0x0d40d3e0` decodes as `.inst undefined` (architecturally unallocated). Compare the legitimate SP form: `echo 'ld2r {v0.8b, v1.8b}, [sp]' > sp.s && aarch64-linux-gnu-gcc -c sp.s -o sp.o && aarch64-linux-gnu-objdump -d sp.o` → `0x0d60c3e0`. Not merely XZR→SP aliasing — a wrong, unallocated encoding.
 
 ## #508 — PUA encoding silently corrupts U+E080..U+E0FF literals (source-encoding)
 

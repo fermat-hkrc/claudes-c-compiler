@@ -511,7 +511,7 @@ x86 issues via host tools); 6 C-level/encoding issues verified individually (see
 | 504 | `ld2r {v0.8b, v1.8b}, [x1], x2` | ACCEPT → 0x0d40d020 | ACCEPT → 0x0de2c020 | ACCEPT → 0x0de2c020 | differential |
 | 505 | `ld2r {v0.8b, v1.8b}, [x1]` | ACCEPT → 0x0d40d020 | ACCEPT → 0x0d60c020 | ACCEPT → 0x0d60c020 | differential |
 | 506 | `ld2r {v0.8b, v1.8b}, [w0]` | ACCEPT → 0x0d40d000 | ERR: expected a 64-bit base register at operand 2 | ERR: invalid operand for instruction | silent-accept |
-| 507 | `ld2r {v0.8b, v1.8b}, [xzr]` | ACCEPT → 0x0d40d3e0 | ERR: invalid base register at operand 2 | ERR: invalid operand for instruction | silent-accept |
+| 507 | `ld2r {v0.8b, v1.8b}, [xzr]` | ACCEPT → 0x0d40d3e0 | ERR: invalid base register at operand 2 | ERR: invalid operand for instruction | real — UPGRADED (user retest): word 0x0d40d3e0 is architecturally UNALLOCATED (objdump: .inst undefined; gcc valid [sp] form = 0x0d60c3e0) |
 | 508 | (source-encoding) PUA U+E080..E0FF collision | see manual_tests.md | see manual_tests.md | — | real — witness test; gcc keeps bytes verbatim |
 | 509 | (linker i686) -static: silent no-runtime when sysroot absent | see manual_tests.md | see manual_tests.md | — | real (conditional — repro requires absent /usr/i686-linux-gnu sysroot; filed as #509) |
 | 510 | (frontend C) invalid float↔ptr casts bitcast | see manual_tests.md | see manual_tests.md | — | real — gcc rejects at compile; ccc accepts (issue #510) |
