@@ -294,14 +294,6 @@ syntax, so ccc's behavior matches the GNU reference. They are reclassification c
 | **Contract-Based Differential Validation (LLM agent, this session)** | verification (+ side discovery) | 2 (#509 #510) | **509 (all: 100 unit-level + 509 CLI-level)** | 2 | 0 |
 | **Total** | | **509** | | **506** | **3** |
 
-**How to read this table**
-
-- **FM-Agent** discovered and filed 507 issues; the verification session adjudicated all
-  of them → 504 real, 3 false positives (**99.4% discovery precision**).
-- **The verification session** (Contract-Based Differential Validation) tested all 509
-  issues live (100 at unit level + the full 509 at assembler-CLI level) and additionally
-  discovered 2 new real bugs (#509, #510) as side-findings while building harnesses —
-  both confirmed real, 100% precision on its own filings.
 - The 3 false positives were *found by* the verification session but are *attributed to*
   FM-Agent's filings (single pattern: llvm-mc-only alias requests that gas 2.42 also
   rejects — reference ambiguity, not detection hallucination).
