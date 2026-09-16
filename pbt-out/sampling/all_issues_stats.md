@@ -270,7 +270,7 @@ non-existent defect. False-positive count remains 0.)
 | parser-masked (encoder defect proven at unit level; CLI parser rejects earlier) | 5 | 1.0% |
 | warn-accepts (ccc warns then accepts what references reject) | 5 | 1.0% |
 | **not-a-defect / false positive (user-confirmed)** | **3** | **0.6%** |
-| C-level/encoding specials (all real: #2 #3 #4 #508 #509 #510) | 6 | 1.2% |
+| C-level/encoding specials (all real: #2 #3 #4 #508 #509* #510) — *#509 conditional on absent i686 sysroot | 6 | 1.2% |
 | **Total** | **509** | **100%** |
 
 ---

@@ -1,6 +1,6 @@
 # Bug: ccc-i686 -static emits entry = main with no C runtime — every static i686 binary crashes at startup
 
-**Law:** A statically linked executable's ELF entry point must be the runtime start function (`_start`), which sets up the stack/ABI environment, calls `main(argc, argv, envp)`, and terminates via the exit syscall with `main`'s return value. Emitting `main` itself as the entry is never valid: at process entry the stack top holds argc/argv, so `main`'s epilogue `ret` pops argc as a return address.
+**Law (refined after retest):** with the i686 sysroot present (/usr/i686-linux-gnu/lib/crt1.o), ccc links correctly — the defect is the SILENT DEGRADATION when crt/libc are absent (no diagnostic, runtime-less ELF) instead of GCC's "cannot find -lc". Original law: a statically linked executable's ELF entry point must be the runtime start function (`_start`), which sets up the stack/ABI environment, calls `main(argc, argv, envp)`, and terminates via the exit syscall with `main`'s return value. Emitting `main` itself as the entry is never valid: at process entry the stack top holds argc/argv, so `main`'s epilogue `ret` pops argc as a return address.
 
 **Impact:** Every program compiled with `ccc -static` on the i686 backend segfaults immediately at startup, on any i686 environment (environment-independent — reproduced under qemu-i386 user-mode emulation). Exit status is 139 (SIGSEGV) instead of the program's return value. The x86-64 backend is unaffected (verified: `-static` links a proper `_start`); other backends untested.
 
