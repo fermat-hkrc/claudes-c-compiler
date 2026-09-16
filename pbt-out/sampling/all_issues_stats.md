@@ -217,38 +217,43 @@ full run found 3 false positives (#30 #119 #247), all outside this sample; see �
 
 ## 5. Full-Tracker Statistics (n = 509)
 
-### 5.1 Functionality/Property → CWE
+### 5.1 Functionality/Property → CWE (confirmed defects only; false positives listed separately)
 
-| Prop | Functionality / property violated | CWE | Count | Percentage | FP (full run) | Real (full run) | Verified in sample | Real (sample) |
-|---|---|---|---|---|---|---|---|---|
-| P1 | operand arity (extra operands; register-list cardinality) | CWE-628 | 91 | 17.9% | 0 | 91 | 23 | 23 |
-| P2 | register class/width validation | CWE-20 | 207 | 40.7% | 0 | 207 | 38 | 38 |
-| P3 | arrangement/dest-type consistency | CWE-20 | 35 | 6.9% | 0 | 35 | 4 | 4 |
-| P4 | register identity in slot 31 (SP↔ZR) | CWE-20 | 82 | 16.1% | 0 | 82 | 16 | 16 |
-| P5 | immediate/encoding selection (range, masking, differential) | CWE-190/681 | 52 | 10.2% | 0 | 52 | 12 | 12 |
-| P6 | shift kind/amount validity | CWE-478 | 22 | 4.3% | 0 | 22 | 3 | 3 |
-| P7 | relocation-modifier grammar | CWE-20 | 3 | 0.6% | 0 | 3 | 2 | 2 |
-| P8 | acceptance of valid syntax | CWE-1023 | 8 | 1.6% | 3 | 5 | 1 | 1 |
-| P9 | CU aliasing/writeback diagnostics | CWE-754 | 3 | 0.6% | 0 | 3 | 1 | 1 |
-| P— | non-assembler (C-level/IR, source encoding, meta) | — | 6 | 1.2% | 0 | 6 | 0 | 0 |
-| | **Total** | | **509** | **100%** | **3** | **506** | **100** | **100** |
+| Prop | Functionality / property violated | CWE | Real defects | Percentage (of 509) | Verified in sample |
+|---|---|---|---|---|---|
+| P1 | operand arity (extra operands; register-list cardinality) | CWE-628 | 91 | 17.9% | 23 |
+| P2 | register class/width validation | CWE-20 | 207 | 40.7% | 38 |
+| P3 | arrangement/dest-type consistency | CWE-20 | 35 | 6.9% | 4 |
+| P4 | register identity in slot 31 (SP↔ZR) | CWE-20 | 82 | 16.1% | 16 |
+| P5 | immediate/encoding selection (range, masking, differential) | CWE-190/681 | 52 | 10.2% | 12 |
+| P6 | shift kind/amount validity | CWE-478 | 22 | 4.3% | 3 |
+| P7 | relocation-modifier grammar | CWE-20 | 3 | 0.6% | 2 |
+| P8 | acceptance of valid syntax | CWE-1023 | 5 | 1.0% | 1 |
+| P9 | CU aliasing/writeback diagnostics | CWE-754 | 3 | 0.6% | 1 |
+| P— | non-assembler (C-level/IR, encoding) | — | 6 | 1.2% | 0 |
+| **Subtotal (real defects)** | | | **506** | **99.4%** | **100** |
+| FP | **false positives — no defect exists** (llvm-mc-only alias requests: #30 #119 #247; ccc matches gas 2.42) | reference ambiguity | **3** | **0.6%** | 0 |
+| **Total issues in tracker** | | | **509** | **100%** | **100** |
 
-### 5.2 CWE Roll-up (issue counts vs confirmed-real defects)
+The 3 false positives title-classify as P8 ("rejects the GNU alias") but are excluded from
+P8's count because no functionality was actually violated — gas 2.42 rejects the same
+syntax, so ccc's behavior matches the GNU reference. They are reclassification candidates
+(llvm-mc-compatibility enhancements), not defects.
 
-| CWE | Issues | Real (confirmed) | Percentage (of 506 real) |
-|---|---|---|---|
-| CWE-20 Improper Input Validation (P2+P3+P4+P7) | 327 | 327 | 64.6% |
-| CWE-628 Incorrectly Specified Arguments (P1) | 91 | 91 | 18.0% |
-| CWE-190/681 Integer Wraparound / Incorrect Conversion (P5) | 52 | 52 | 10.3% |
-| CWE-478 Unsafe Default Case (P6) | 22 | 22 | 4.3% |
-| CWE-1023 Incomplete Implementation (P8) | 8 | **5** | 1.0% |
-| CWE-754 Improper Check for Exceptional Conditions (P9) | 3 | 3 | 0.6% |
-| non-assembler (C-level/IR, encoding: #2 #3 #4 #508 #509 #510) | 6 | 6 | 1.2% |
-| **Total** | **509** | **506** | **100%** |
+### 5.2 CWE Roll-up (confirmed defects; false positives listed separately)
 
-(The 3-issue gap = false positives #30/#119/#247, all title-classified P8/CWE-1023
-— "rejects the GNU alias": gas 2.42 rejects as well, so no defect exists vs the
-GNU reference; reclassify as llvm-mc-compatibility enhancements.)
+| CWE | Real defects | Percentage (of 509) |
+|---|---|---|
+| CWE-20 Improper Input Validation (P2+P3+P4+P7) | 327 | 64.2% |
+| CWE-628 Incorrectly Specified Arguments (P1) | 91 | 17.9% |
+| CWE-190/681 Integer Wraparound / Incorrect Conversion (P5) | 52 | 10.2% |
+| CWE-478 Unsafe Default Case (P6) | 22 | 4.3% |
+| CWE-1023 Incomplete Implementation (P8) | 5 | 1.0% |
+| CWE-754 Improper Check for Exceptional Conditions (P9) | 3 | 0.6% |
+| non-assembler (C-level/IR, encoding: #2 #3 #4 #508 #509 #510) | 6 | 1.2% |
+| **Subtotal (real defects)** | **506** | **99.4%** |
+| false positives — no defect (reference ambiguity: #30 #119 #247) | **3** | **0.6%** |
+| **Total issues in tracker** | **509** | **100%** |
 
 ### 5.3 Tracker Accuracy (FULL verification — all 509 tested, no extrapolation)
 
@@ -283,19 +288,29 @@ GNU reference; reclassify as llvm-mc-compatibility enhancements.)
 
 ## 6. Tool Dimension (discovery vs verification are different jobs)
 
-| Tool | Role in this tracker | Issues discovered & filed | Issues verified (triage) | Verification outcome |
-|---|---|---|---|---|
-| **Hoare-style reasoning (FM-Agent / pi-pbt PBT campaigns)** | bug **discovery** | 507 (99.6%) | — | of its 507: 504 real, 3 FP (#30 #119 #247, = 99.4% precision) |
-| **Contract-Based Differential Validation (LLM agent, this session)** | bug **verification/triage** + side discovery | 2 (#509, #510, 0.4%) — incidental | **all 509 live-verified** (100 sampled at unit level + full 509 at CLI level) | 506 real · 3 FP · 3 amendments + 2 reclassifications (#150 warning-class → confirmed; #509 conditional on absent sysroot) |
+| Tool | Role | Issues filed | % of 509 | Issues adjudicated (verified live) | Own filings confirmed real | Own false positives | Precision (own filings) |
+|---|---|---|---|---|---|---|---|
+| **Hoare-style reasoning (FM-Agent / pi-pbt PBT campaigns)** | discovery | 507 | 99.6% | — (not a verification tool) | 504 | 3 (#30 #119 #247) | 99.4% |
+| **Contract-Based Differential Validation (LLM agent, this session)** | verification (+ side discovery) | 2 (#509 #510) | 0.4% | **509 (all: 100 unit-level + 509 CLI-level)** | 2 | 0 | 100% |
+| **Total** | | **509** | **100%** | | **506** | **3** | **99.4%** |
 
-The two rows are complementary, not competing: the FM-Agent campaigns *generated* the
-candidate defects (property-based testing over encoder contracts) at **99.4% precision**;
-the LLM-agent session *adjudicated* all of them (Hoare-triple probes arbitrated by
-gcc/clang/gas with objdump encoding comparison). Only 2 issues were filed by the
-verification session because discovery was not its objective — both were confirmed real
-and are among the 506.
+**How to read this table**
 
----
+- **FM-Agent** discovered and filed 507 issues; the verification session adjudicated all
+  of them → 504 real, 3 false positives (**99.4% discovery precision**).
+- **The verification session** (Contract-Based Differential Validation) tested all 509
+  issues live (100 at unit level + the full 509 at assembler-CLI level) and additionally
+  discovered 2 new real bugs (#509, #510) as side-findings while building harnesses —
+  both confirmed real, 100% precision on its own filings.
+- The 3 false positives were *found by* the verification session but are *attributed to*
+  FM-Agent's filings (single pattern: llvm-mc-only alias requests that gas 2.42 also
+  rejects — reference ambiguity, not detection hallucination).
+- Beyond verdicts, the session produced 3 text amendments (#17, #150, #497) and
+  2 reclassifications (#150 → warning-class, #509 → conditional on absent i686 sysroot).
+
+The two tools are complementary: FM-Agent generates candidate defects; CBDV adjudicates
+them against GNU/LLVM references. Only 2 issues came from the verification session
+because discovery was not its objective.
 
 ## 7. Key Findings & Recommendations
 
