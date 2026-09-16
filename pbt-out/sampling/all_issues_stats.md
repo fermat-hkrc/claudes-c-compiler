@@ -13,15 +13,16 @@
 | Headline | Result |
 |---|---|
 | Sample verified | **100/100** random issues (seed 42) |
-| **Defect realness** | **100% real — 0 false positives** (95% CI lower bound 97.0%) |
+| **Defect realness** | **FULL RUN (all 509 tested): 506 real (99.4%) · 3 false positives (0.6%, user-confirmed)** — sample had estimated 100% (CI ≥ 97.0%) |
 | Issue-text fidelity | **97% accurate as filed — 3 wording/severity amendments** (#17, #150, #497; defects stand) |
-| Full-tracker estimate | ~509 real defects (95% CI ≥ 493), extrapolated from sample |
+| Full-tracker verification | All 509 tested live: 503 via ccc-arm/gcc/clang CLI pipeline, 6 C-level individually (`full_verification_tracker.md`) |
 | Dominant root causes | 3 shared code patterns account for ~76% of all 509 issues (register class/width 40.7%, arity 17.9%, SP↔ZR slot-31 aliasing 16.1%) |
 | Most harmful class | **FP16 mis-encoding family** (#361/#414/#475/#481): valid `__fp16` code silently compiled as single-precision — wrong numerics, zero diagnostics |
-| Crashes | 3 assembler panics on malformed input (#234, #237, #379) + compiler panic family verified earlier (#2) |
+| Crashes | 9 assembler panics on malformed input (full run: #136 #234 #291 #379 #384 #436 #441 #456 #466) + compiler panic family verified earlier (#2); 5 more latent encoder panics CLI-masked |
 
-**Bottom line:** the FM-Agent (PBT campaign) issue tracker is highly trustworthy — every sampled
-report corresponds to a reproducible defect cross-confirmed against GNU and LLVM toolchains.
+**Bottom line:** the FM-Agent (PBT campaign) issue tracker is highly trustworthy — 506 of 509
+filed reports correspond to reproducible defects cross-confirmed against GNU and LLVM toolchains
+(the 3 exceptions are llvm-mc-only alias requests, user-confirmed).
 The five root-cause families are mechanically fixable; two shared helpers (`get_gpr_checked`,
 `check_arity`) would prevent ~60 of the 509 issues.
 
@@ -47,7 +48,7 @@ Every verdict is backed by a reproducible witness; nothing is judged by inspecti
 
 ### 3.1 Verdict Classes
 
-| Class | Count | Pct |
+| Class | Count | Percentage |
 |---|---|---|
 | silent-accept (gcc rejects, ccc Ok) | 89 | 89% |
 | differential (valid input, wrong encoding: #15 #361 #414 #475 #481) | 5 | 5% |
@@ -217,7 +218,7 @@ non-existent defect. False-positive count remains 0.)
 
 ### 5.1 Functionality/Property → CWE
 
-| Prop | Functionality / property violated | CWE | Count | Pct | Verified in sample | Real |
+| Prop | Functionality / property violated | CWE | Count | Percentage | Verified in sample | Real |
 |---|---|---|---|---|---|---|
 | P1 | operand arity (extra operands; register-list cardinality) | CWE-628 | 91 | 17.9% | 23 | 23 |
 | P2 | register class/width validation | CWE-20 | 207 | 40.7% | 38 | 38 |
@@ -233,7 +234,7 @@ non-existent defect. False-positive count remains 0.)
 
 ### 5.2 CWE Roll-up
 
-| CWE | Count | Pct |
+| CWE | Count | Percentage |
 |---|---|---|
 | CWE-20 Improper Input Validation (P2+P3+P4+P7) | 327 | 64.2% |
 | CWE-628 Incorrectly Specified Arguments (P1) | 91 | 17.9% |
@@ -243,23 +244,34 @@ non-existent defect. False-positive count remains 0.)
 | CWE-754 Improper Check for Exceptional Conditions (P9) | 3 | 0.6% |
 | non-assembler/unclassified (#2 #3 #4 #508 #509 #510) | 6 | 1.2% |
 
-### 5.3 Tracker Accuracy (sample-estimated)
+### 5.3 Tracker Accuracy (FULL verification — all 509 tested, no extrapolation)
 
-- Random sample (seed=42): **100/100 real, 0 false positives** → point estimate **100%**
-- 95% confidence lower bound (rule of three, 0 failures in 100): **97.0%**
-- Extrapolated real issues in the 509-issue tracker: **~509 (95% CI ≥ 493)**
-- Fidelity (dimension 2): 97/100 as-filed accurate; 3 amendments (#17 wrap-target detail,
-  #150 gas-claim + severity, #497 severity) — all wording/severity-level, defects stand.
+- **Full run: 506/509 real (99.4%) · 3 false positives (0.6%)** — every issue tested live
+  (503 ARM via the assembler-CLI pipeline ccc-arm/gcc/clang with objdump encoding
+  comparison; 6 C-level/encoding issues individually; see `pbt-out/full_verification_tracker.md`)
+- The 3 false positives (#30, #119, #247 — BICS/EON/ORN "GNU immediate alias") are
+  **user-confirmed**: ccc *and* gas 2.42 both reject; only llvm-mc accepts. The issues'
+  "GNU alias" premise is invalid → reclassify as llvm-mc-compatibility enhancements.
+- Random sample (seed=42, n=100) had estimated 100% (95% CI ≥ 97.0%) — the full run
+  confirms 99.4%, and all 3 FP fall outside the sample (illustrating both the power and
+  the limit of sampling).
+- Fidelity (dimension 2): 97/100 sampled issues accurate as filed; 3 amendments
+  (#17 wrap-target detail, #150 gas-claim + severity, #497 severity) — defects stand.
 
-### 5.4 Verdict-Class Extrapolation (sample proportions × 509)
+### 5.4 Verdict-Class Distribution (full run — actual counts, all 509)
 
-| Class | Sample | Est. count |
+| Class | Count | Percentage |
 |---|---|---|
-| silent-accept (gcc rejects, ccc Ok) | 89% | ~453 |
-| differential (valid input, wrong encoding) | 5% | ~25 |
-| panic on invalid input | 3% | ~15 |
-| warning-class CU | 2% | ~10 |
-| reverse (valid input rejected) | 1% | ~5 |
+| silent-accept (gcc rejects, ccc accepts) | 453 | 88.8% |
+| differential (valid input, wrong encoding — incl. x86 #264 FS-segment, FP16 family) | 17 | 3.3% |
+| panic on invalid input | 9 | 1.8% |
+| reverse (valid input rejected) | 5 | 1.0% |
+| warning-class CU (gas warns, ccc silent) | 6 | 1.2% |
+| parser-masked (encoder defect proven at unit level; CLI parser rejects earlier) | 5 | 1.0% |
+| warn-accepts (ccc warns then accepts what references reject) | 5 | 1.0% |
+| **not-a-defect / false positive (user-confirmed)** | **3** | **0.6%** |
+| C-level/encoding specials (all real: #2 #3 #4 #508 #509 #510) | 6 | 1.2% |
+| **Total** | **509** | **100%** |
 
 ---
 
