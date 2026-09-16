@@ -83,7 +83,7 @@ Verifying tracker issues one-by-one (user reproduces manually, then confirmed):
 | #14 | encode_add_sub | real — ROR/oob-amount/extend-imm3/unknown-kind all silently accepted (unit) |
 
 Side-findings filed: #509 (i686 -static entry=main), #510 (invalid float↔ptr casts bitcast).
-Random sample of 100 drawn (seed=42) → `pbt-out/sampling/sample_100_tracker.md` — **completed: 100/100 verified, 100% real, 0 false positives** (3 wording/severity amendments: #17 wrap detail, #150/#497 warning-class). Full presentation report: `pbt-out/sampling/all_issues_stats.md`; per-issue evidence: 43 reports in `pbt-out/verified_bug/`; issue comments posted: #2, #4 (+#509, #510 filed, #511 dupe closed).
+Random sample of 100 drawn (seed=42) → `pbt-out/sampling/sample_100_tracker.md` — **completed: 100/100 verified, 100% real** (3 wording/severity amendments: #17 wrap detail, #150/#497 warning-class). **Followed by FULL verification of all 509 issues** (assembler-CLI pipeline ccc-arm/gcc/clang + 6 C-level individually): **506 real (99.4%) · 3 false positives** (#30/#119/#247, user-confirmed — llvm-mc-only aliases, gas-parity). Artifacts: `pbt-out/full_verification_tracker.md` (509-row cross-check), `pbt-out/manual_tests.md` (per-issue test commands), `pbt-out/sampling/all_issues_stats.md` (presentation report); per-issue evidence: 43 reports in `pbt-out/verified_bug/`; issue comments posted: #2, #4 (+#509, #510 filed, #511 dupe closed).
 
 ### Sweep round (this session, 1 round)
 

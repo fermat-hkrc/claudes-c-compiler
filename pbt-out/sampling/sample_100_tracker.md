@@ -106,3 +106,5 @@ Status values: real / not-a-bug / cannot-reproduce / pending
 | 507 | Bug: XZR and x31 are accepted as ldNr base (encoded as SP) | assembler-encoder-validation | neon | real (agent-run + gcc cross-check) |
 
 Progress: **100/100 verified — 100 real, 0 false positives, 0 not-reproducible**
+
+> **Superseded by the full run:** all 509 issues later verified live → [full_verification_tracker.md](../full_verification_tracker.md) — 506 real (99.4%), 3 false positives (#30/#119/#247, outside this sample).
