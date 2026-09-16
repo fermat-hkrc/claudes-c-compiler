@@ -1,6 +1,6 @@
 # Bug: ccc-i686 -static emits entry = main with no C runtime — every static i686 binary crashes at startup
 
-**Law (refined after retest):** with the i686 sysroot present (/usr/i686-linux-gnu/lib/crt1.o), ccc links correctly — the defect is the SILENT DEGRADATION when crt/libc are absent (no diagnostic, runtime-less ELF) instead of GCC's "cannot find -lc". Original law: a statically linked executable's ELF entry point must be the runtime start function (`_start`), which sets up the stack/ABI environment, calls `main(argc, argv, envp)`, and terminates via the exit syscall with `main`'s return value. Emitting `main` itself as the entry is never valid: at process entry the stack top holds argc/argv, so `main`'s epilogue `ret` pops argc as a return address.
+**Law:** A statically linked executable's ELF entry point must be the runtime start function (`_start`), which sets up the stack/ABI environment, calls `main(argc, argv, envp)`, and terminates via the exit syscall with `main`'s return value. Emitting `main` itself as the entry is never valid: at process entry the stack top holds argc/argv, so `main`'s epilogue `ret` pops argc as a return address.
 
 **Impact:** Every program compiled with `ccc -static` on the i686 backend segfaults immediately at startup, on any i686 environment (environment-independent — reproduced under qemu-i386 user-mode emulation). Exit status is 139 (SIGSEGV) instead of the program's return value. The x86-64 backend is unaffected (verified: `-static` links a proper `_start`); other backends untested.
 
@@ -48,6 +48,14 @@ No `_start`, no crt0, no exit syscall; the RW LOAD segment has FileSiz 0 (no dat
 **Regression test / verification harness:** a runtime probe can avoid both this bug and libc entirely by exiting via `int $0x80` inline asm (entry still lands on `main`, which then never returns) — that pattern is how issue #4's runtime verification was performed (`/tmp/i4_syscall.c` in the issue #4 verification record: `pbt-out/verified_bug/issue#4_Ptr_not_treated_as_unsigned_for_float_casts.md`).
 
 **Related:** issue #4 (discovered during its verification). Environment note for reproducers: on hosts without 32-bit libc, *dynamic* ccc-i686 binaries also fail (missing loader deps) — use `qemu-i386-static`, which reproduces this bug in isolation.
+
+## Refinement after re-verification (conditional defect — see issue comment)
+
+- With the i686 sysroot **present** (`gcc-i686-linux-gnu` installed → `/usr/i686-linux-gnu/lib/crt1.o`+`libc.a`), `ccc-i686 -static` links **correctly** (proper `_start` + glibc, exit 7). Verified: the compiler binary was unchanged; only sysroot presence flipped the behavior.
+- The defect is therefore **silent degradation on missing dependencies**: with sysroot absent, the internal static linker emits a runtime-less ELF (entry = `main`, 0x10-byte text) with **compiler exit 0 and no diagnostic** — GCC hard-errors (`cannot find -lc`) in the identical situation.
+- **Class:** CWE-754 (missing diagnostic on missing dependency) — linker-layer sibling of the 453 silent-accept encoder defects.
+- **Severity:** medium-high (was high): trigger surface = systems lacking the 32-bit sysroot; on those, every `-static` build silently produces a crashing binary.
+- **Repro on a populated machine:** temporarily `sudo mv /usr/i686-linux-gnu /usr/i686-linux-gnu.bak`, rebuild, run (SIGSEGV), restore.
 
 ## Found by
 
