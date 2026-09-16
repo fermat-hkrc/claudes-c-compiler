@@ -259,3 +259,43 @@ pub fn f128_const_halves(op: &Operand) -> Option<(u64, u64)> {
         None
     }
 }
+
+#[cfg(test)]
+mod scratch {
+    use super::*;
+    use crate::common::types::{set_target_ptr_size, target_ptr_size};
+    use crate::common::types::IrType;
+
+    /// Issue #4: Ptr must classify as U64/U32 for float & F128 casts.
+    /// Contract: "Ptr is equivalent to U64 on LP64 targets, U32 on ILP32 targets" (cast.rs:86)
+    #[test]
+    fn manual_ptr_float_classification() {
+        let saved = target_ptr_size();
+
+        // ---- i686 / ILP32 (pointer = 4 bytes): print ALL claims first ----
+        set_target_ptr_size(4);
+
+        let k1 = classify_cast_with_f128(IrType::Ptr, IrType::F32, true);
+        let e1 = classify_cast_with_f128(IrType::U32, IrType::F32, true);
+        let k2 = classify_cast_with_f128(IrType::Ptr, IrType::F128, true);
+        let e2 = classify_cast_with_f128(IrType::U32, IrType::F128, true);
+        let k3 = classify_cast_with_f128(IrType::F32, IrType::Ptr, true);
+        let e3 = classify_cast_with_f128(IrType::F32, IrType::U32, true);
+        println!("i686  Ptr->F32  = {:?}   (expected {:?})", k1, e1);
+        println!("i686  Ptr->F128 = {:?}   (expected {:?})", k2, e2);
+        println!("i686  F32->Ptr  = {:?}   (expected {:?})", k3, e3);
+
+        // ---- LP64 (pointer = 8 bytes), for contrast ----
+        set_target_ptr_size(8);
+        println!("LP64  Ptr->F64  = {:?}", classify_cast_with_f128(IrType::Ptr, IrType::F64, true));
+        println!("LP64  F64->Ptr  = {:?}", classify_cast_with_f128(IrType::F64, IrType::Ptr, true));
+
+        // ---- assertions (after all printing) ----
+        set_target_ptr_size(4);
+        assert_eq!(k1, e1, "ILP32: Ptr->F32 must classify like U32->F32 (unsigned)");
+        assert_eq!(k2, e2, "ILP32: Ptr->F128 must classify like U32->F128 (unsigned)");
+        assert_eq!(k3, e3, "ILP32: F32->Ptr must classify like F32->U32 (to_u64 = false)");
+
+        set_target_ptr_size(saved);
+    }
+}

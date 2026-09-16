@@ -1065,3 +1065,363 @@ pub(crate) fn encode_bic(operands: &[Operand]) -> Result<EncodeResult, String> {
 
     Err("unsupported bic operands".to_string())
 }
+
+#[cfg(test)]
+mod scratch {
+    use super::*;
+
+    /// Issue #5: ADC has no shifted-register form (imm6 bits 15:10 fixed 0);
+    /// a trailing Shift operand must be rejected (llvm-mc / GNU as reject it).
+    #[test]
+    fn manual_adc_extra_shift() {
+        let ops = vec![
+            Operand::Reg("w0".to_string()),
+            Operand::Reg("w0".to_string()),
+            Operand::Reg("w0".to_string()),
+            Operand::Shift { kind: "lsl".to_string(), amount: 0 },
+        ];
+        let r = encode_adc(&ops, false);
+        println!("adc w0,w0,w0,lsl #0  -> {:?}", r);
+        assert!(r.is_err(), "trailing shift must be Err: ADC has no shift field");
+
+        // control: the valid 3-register form must stay Ok and equal 0x1a000000
+        let ok = encode_adc(&ops[..3], false);
+        println!("adc w0,w0,w0          -> {:?}", ok);
+        assert!(matches!(ok, Ok(EncodeResult::Word(0x1a000000))));
+    }
+
+    /// Issue #14: ADD/SUB shifted-register allows only LSL/LSR/ASR (0..31 for w regs);
+    /// ROR and out-of-range amounts must be Err (llvm-mc / GNU as reject them).
+    #[test]
+    fn manual_add_sub_invalid_shift() {
+        let ror = vec![
+            Operand::Reg("w0".to_string()), Operand::Reg("w1".to_string()),
+            Operand::Reg("w2".to_string()),
+            Operand::Shift { kind: "ror".to_string(), amount: 0 },
+        ];
+        let r = encode_add_sub(&ror, false, false);
+
+        let oob = vec![
+            Operand::Reg("w0".to_string()), Operand::Reg("w1".to_string()),
+            Operand::Reg("w2".to_string()),
+            Operand::Shift { kind: "lsl".to_string(), amount: 64 },
+        ];
+        let r2 = encode_add_sub(&oob, false, false);
+
+        let ok = encode_add_sub(&[
+            Operand::Reg("w0".to_string()), Operand::Reg("w1".to_string()),
+            Operand::Reg("w2".to_string()),
+            Operand::Shift { kind: "lsl".to_string(), amount: 2 },
+        ], false, false);
+
+        // sweep round: extend-register arm (issue #14 law: "imm3 > 4 is UNALLOCATED")
+        let r3 = encode_add_sub(&[
+            Operand::Reg("x0".to_string()), Operand::Reg("x1".to_string()),
+            Operand::Reg("w2".to_string()),
+            Operand::Extend { kind: "sxtw".to_string(), amount: 8 },
+        ], false, false);
+        let r4 = encode_add_sub(&[
+            Operand::Reg("x0".to_string()), Operand::Reg("x1".to_string()),
+            Operand::Reg("w2".to_string()),
+            Operand::Extend { kind: "foo".to_string(), amount: 0 },
+        ], false, false);
+
+        println!("add w0,w1,w2,ror #0  -> {:?}  (should be Err)", r);
+        println!("add w0,w1,w2,lsl #64 -> {:?}  (should be Err)", r2);
+        println!("add w0,w1,w2,lsl #2  -> {:?}  (control, Ok)", ok);
+        println!("add x0,x1,w2,sxtw #8 -> {:?}  (imm3 = 8 & 0x7 = 0 — silent truncation)", r3);
+        println!("add x0,x1,w2,foo #0  -> {:?}  (option = _ => 0b011 UXTX — silent default)", r4);
+
+        assert!(r.is_err(), "ROR is not a valid ADD/SUB shift; must be Err");
+        assert!(r2.is_err(), "shift amount 64 out of range for 32-bit regs; must be Err");
+        assert!(ok.is_ok());
+        assert!(r3.is_err(), "extend amount 8 → imm3 out of range; UNALLOCATED per issue #14 law; must be Err");
+        assert!(r4.is_err(), "unknown extend kind must be Err, not defaulted to UXTX");
+    }
+
+    /// Issue #15: Rd/Rn = SP/WSP with `lsl #N` (N in 0..=4) must use the
+    /// extended-register form (bit 21 = 1) so reg 31 means SP.
+    /// llvm-mc: `add w0, wsp, w0, lsl #1` → 0x0b2047e0 (UXTW #1).
+    #[test]
+    fn manual_add_sub_sp_lsl() {
+        let ops = vec![
+            Operand::Reg("w0".to_string()), Operand::Reg("wsp".to_string()),
+            Operand::Reg("w0".to_string()),
+            Operand::Shift { kind: "lsl".to_string(), amount: 1 },
+        ];
+        let r = encode_add_sub(&ops, false, false);
+        match r {
+            Ok(EncodeResult::Word(w)) => {
+                println!("add w0,wsp,w0,lsl #1 -> 0x{:08x} (expected 0x0b2047e0)", w);
+                assert_eq!(w, 0x0b2047e0,
+                    "SP operand requires extended-register form (llvm-mc reference)");
+            }
+            other => panic!("expected Ok(Word), got {:?}", other),
+        }
+    }
+
+    /// Issue #24: BIC operands must be uniform width; `bic w0, w0, x0` must be Err.
+    /// clang --target=aarch64: "error: expected compatible register or logical immediate"
+    #[test]
+    fn manual_bic_mixed_width() {
+        let r = encode_bic(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                             Operand::Reg("x0".to_string())]);
+        match r {
+            Ok(EncodeResult::Word(w)) => {
+                println!("bic w0,w0,x0 -> 0x{:08x}  (should be Err; sf taken from Rd only)", w);
+                panic!("mixed-width operands must be Err, got Ok(0x{:08x})", w);
+            }
+            other => println!("bic w0,w0,x0 -> {:?}  (Err = correct)", other),
+        }
+        let ok = encode_bic(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                              Operand::Reg("w0".to_string())]);
+        println!("bic w0,w0,w0 -> {:?}  (control: uniform width, Ok)", ok);
+        assert!(ok.is_ok());
+    }
+
+    /// Issue #25: BIC W-form shift amount must be in [0,31]; `lsl #32` is UNALLOCATED.
+    /// clang: "expected 'lsl', 'lsr' or 'asr' with optional integer in range [0, 31]"
+    #[test]
+    fn manual_bic_shift_range() {
+        let r = encode_bic(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                             Operand::Reg("w0".to_string()),
+                             Operand::Shift { kind: "lsl".to_string(), amount: 32 }]);
+        match r {
+            Ok(EncodeResult::Word(w)) => {
+                println!("bic w0,w0,w0,lsl #32 -> 0x{:08x}  (should be Err; imm6=32 UNALLOCATED for W-form)", w);
+                panic!("shift amount 32 out of range for W-form must be Err, got Ok(0x{:08x})", w);
+            }
+            other => println!("bic w0,w0,w0,lsl #32 -> {:?}  (Err = correct)", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod scratch_div {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #113: SDIV takes 3 operands; a 4th must be Err.
+    /// #114: SDIV operands are GPRs; FP/SIMD names must be Err.
+    #[test]
+    fn manual_div_defects() {
+        let r113 = encode_div(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                                 Operand::Reg("w0".to_string()), Operand::Reg("x0".to_string())], false);
+        let r114 = encode_div(&[Operand::Reg("d0".to_string()), Operand::Reg("x1".to_string()),
+                                 Operand::Reg("x2".to_string())], false);
+        let r116 = encode_div(&[Operand::Reg("wsp".to_string()), Operand::Reg("w0".to_string()),
+                                 Operand::Reg("w0".to_string())], false);
+        println!("sdiv w0,w0,w0,x0 -> {:?}  [#113]", r113);
+        println!("sdiv d0,x1,x2    -> {:?}  [#114]", r114);
+        println!("sdiv wsp,w0,w0   -> {:?}  [#116]", r116);
+        assert!(r113.is_err(), "#113: fourth operand must be Err for sdiv");
+        assert!(r114.is_err(), "#114: FP/SIMD register must be Err for sdiv");
+        assert!(r116.is_err(), "#116: SP/WSP must be Err for sdiv (reg 31 = WZR here)");
+    }
+}
+
+#[cfg(test)]
+mod scratch_eon {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #118: EON operands are GPRs; FP/SIMD names must be Err.
+    /// #121: EON W-form shift amount must be in [0,31]; `lsl #32` must be Err.
+    #[test]
+    fn manual_eon_defects() {
+        let r118 = encode_eon(&[Operand::Reg("d0".to_string()), Operand::Reg("x1".to_string()),
+                                 Operand::Reg("x2".to_string())]);
+        let r121 = encode_eon(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                                 Operand::Reg("w0".to_string()),
+                                 Operand::Shift { kind: "lsl".to_string(), amount: 32 }]);
+        println!("eon d0,x1,x2       -> {:?}  [#118]", r118);
+        println!("eon w0,w0,w0,lsl #32 -> {:?}  [#121]", r121);
+        assert!(r118.is_err(), "#118: FP/SIMD register must be Err for eon");
+        assert!(r121.is_err(), "#121: shift amount 32 out of W-form range must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_more {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #174: logical shifted-register Rd/Rn are GPRs (31=ZR); SP must be Err.
+    /// #176: MADD takes 4 operands; a 5th must be Err.
+    #[test]
+    fn manual_more_defects() {
+        let r174 = encode_logical(&[Operand::Reg("wsp".to_string()), Operand::Reg("w0".to_string()),
+                                     Operand::Reg("w0".to_string())], 0);
+        let r176 = encode_madd(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                                  Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                                  Operand::Reg("x0".to_string())]);
+        println!("and wsp,w0,w0    -> {:?}  [#174]", r174);
+        println!("madd w0,w0,w0,w0,x0 -> {:?}  [#176]", r176);
+        assert!(r174.is_err(), "#174: SP must be Err in logical shifted-register form");
+        assert!(r176.is_err(), "#176: fifth operand must be Err for madd");
+    }
+}
+
+#[cfg(test)]
+mod scratch_more2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #178: MADD all four GPRs same width; mixed x/w must be Err.
+    /// #183: MOVK shift must be lsl #0|#16; other kinds must be Err.
+    /// #185: MOVN third operand is Shift only; extra Reg must be Err.
+    #[test]
+    fn manual_more2_defects() {
+        let r178 = encode_madd(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+                                  Operand::Reg("w0".to_string()), Operand::Reg("x0".to_string())]);
+        let r183 = encode_movk(&[Operand::Reg("w0".to_string()), Operand::Imm(0),
+                                  Operand::Shift { kind: "lsr".to_string(), amount: 0 }]);
+        let r185 = encode_movn(&[Operand::Reg("x0".to_string()), Operand::Imm(0),
+                                  Operand::Reg("x0".to_string())]);
+        println!("madd w0,w0,w0,x0 -> {:?}  [#178]", r178);
+        println!("movk w0,#0,lsr #0 -> {:?}  [#183]", r183);
+        println!("movn x0,#0,x0     -> {:?}  [#185]", r185);
+        assert!(r178.is_err(), "#178: mixed x/w must be Err for madd");
+        assert!(r183.is_err(), "#183: non-lsl shift must be Err for movk");
+        assert!(r185.is_err(), "#185: extra operand must be Err for movn");
+    }
+}
+
+#[cfg(test)]
+mod scratch_mov {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #187: MOVN imm16 ∈ [0, 65535]; #-1 must be Err (not masked to 0xFFFF).
+    /// #188: MOVN shift must be lsl 0|16; other kinds must be Err.
+    /// #191: MOVZ Rd is a GPR; FP/SIMD names must be Err.
+    #[test]
+    fn manual_mov_defects() {
+        let r187 = encode_movn(&[Operand::Reg("w0".to_string()), Operand::Imm(-1)]);
+        let r188 = encode_movn(&[Operand::Reg("w0".to_string()), Operand::Imm(0),
+                                  Operand::Shift { kind: "lsr".to_string(), amount: 0 }]);
+        let r191 = encode_movz(&[Operand::Reg("d0".to_string()), Operand::Imm(0)]);
+        println!("movn w0,#-1     -> {:?}  [#187]", r187);
+        println!("movn w0,#0,lsr #0 -> {:?}  [#188]", r188);
+        println!("movz d0,#0      -> {:?}  [#191]", r191);
+        assert!(r187.is_err(), "#187: imm -1 out of [0,65535] must be Err");
+        assert!(r188.is_err(), "#188: non-lsl shift must be Err for movn");
+        assert!(r191.is_err(), "#191: FP/SIMD register must be Err for movz");
+    }
+}
+
+#[cfg(test)]
+mod scratch_mvn {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #216: MVN vector form allows only 8b/16b arrangements.
+    #[test]
+    fn manual_mvn_arrangement() {
+        let r = encode_mvn(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "4h".into() },
+                              Operand::RegArrangement { reg: "v0".into(), arrangement: "4h".into() }]);
+        let r218 = encode_mvn(&[Operand::Reg("wsp".to_string()), Operand::Reg("w0".to_string())]);
+        println!("mvn v0.4h, v0.4h -> {:?}  [#216]", r);
+        println!("mvn wsp, w0     -> {:?}  [#218]", r218);
+        assert!(r.is_err(), "#216: 4h arrangement must be Err for mvn (only 8b/16b)");
+        assert!(r218.is_err(), "#218: SP must be Err for mvn scalar (31=ZR there)");
+    }
+}
+
+#[cfg(test)]
+mod scratch_sbc_smull {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #260: SBC operands are GPRs; FP/SIMD names must be Err.
+    /// #276: SMULL takes 3 operands; a 4th must be Err.
+    #[test]
+    fn manual_sbc_smull_defects() {
+        let r260 = encode_sbc(&[Operand::Reg("d0".to_string()), Operand::Reg("x1".to_string()),
+                                 Operand::Reg("x2".to_string())], false);
+        let r276 = encode_smull(&[Operand::Reg("x0".to_string()), Operand::Reg("w0".to_string()),
+                                   Operand::Reg("w0".to_string()), Operand::Reg("x0".to_string())]);
+        println!("sbc d0,x1,x2    -> {:?}  [#260]", r260);
+        println!("smull x0,w0,w0,x0 -> {:?}  [#276]", r276);
+        assert!(r260.is_err(), "#260: FP/SIMD register must be Err for sbc");
+        assert!(r276.is_err(), "#276: fourth operand must be Err for smull");
+    }
+}
+
+#[cfg(test)]
+mod scratch_extend {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #281: SXTH operands are GPRs; FP/SIMD names must be Err.
+    /// #284: SXTW takes 2 operands; a 3rd must be Err.
+    #[test]
+    fn manual_extend_defects() {
+        let r281 = encode_sxth(&[Operand::Reg("d0".to_string()), Operand::Reg("w1".to_string())]);
+        let r284 = encode_sxtw(&[Operand::Reg("x0".to_string()), Operand::Reg("w0".to_string()),
+                                  Operand::Reg("x0".to_string())]);
+        println!("sxth d0,w1   -> {:?}  [#281]", r281);
+        println!("sxtw x0,w0,x0 -> {:?}  [#284]", r284);
+        assert!(r281.is_err(), "#281: FP/SIMD register must be Err for sxth");
+        assert!(r284.is_err(), "#284: third operand must be Err for sxtw");
+    }
+}
+
+#[cfg(test)]
+mod scratch_batch5 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #297: UMULH takes 3 operands; a 4th must be Err.
+    /// #310: UXTW takes 2 operands; a 3rd must be Err.
+    /// #311: UXTW operands are GPRs; FP/SIMD names must be Err.
+    #[test]
+    fn manual_batch5_dp() {
+        let r297 = encode_umulh(&[Operand::Reg("x0".into()), Operand::Reg("x0".into()),
+                                   Operand::Reg("x0".into()), Operand::Reg("x0".into())]);
+        let r310 = encode_uxtw(&[Operand::Reg("x0".into()), Operand::Reg("w0".into()),
+                                  Operand::Reg("x0".into())]);
+        let r311 = encode_uxtw(&[Operand::Reg("d0".into()), Operand::Reg("w1".into())]);
+        println!("umulh x0,x0,x0,x0 -> {:?}  [#297]", r297);
+        println!("uxtw x0,w0,x0     -> {:?}  [#310]", r310);
+        println!("uxtw d0,w1        -> {:?}  [#311]", r311);
+        assert!(r297.is_err(), "#297: 4th operand must be Err");
+        assert!(r310.is_err(), "#310: 3rd operand must be Err");
+        assert!(r311.is_err(), "#311: FP name must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_smulh {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #348: SMULH takes 3 operands; a 4th must be Err.
+    /// #351: SMULH requires X registers (64-bit only); W form must be Err.
+    #[test]
+    fn manual_smulh_defects() {
+        let r348 = encode_smulh(&[Operand::Reg("x0".into()), Operand::Reg("x0".into()),
+                                   Operand::Reg("x0".into()), Operand::Reg("x0".into())]);
+        let r351 = encode_smulh(&[Operand::Reg("w0".into()), Operand::Reg("w0".into()),
+                                   Operand::Reg("w0".into())]);
+        println!("smulh x0,x0,x0,x0 -> {:?}  [#348]", r348);
+        println!("smulh w0,w0,w0    -> {:?}  [#351]", r351);
+        assert!(r348.is_err(), "#348: 4th operand must be Err");
+        assert!(r351.is_err(), "#351: W registers must be Err for smulh (X-only)");
+    }
+}
+
+
+#[cfg(test)]
+mod scratch_rbit_gpr {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #416: RBIT takes 2 operands; a 3rd must be Err.
+    #[test]
+    fn manual_rbit_extra() {
+        let r = encode_rbit(&[Operand::Reg("w0".into()), Operand::Reg("w0".into()), Operand::Reg("x0".into())]);
+        println!("rbit w0,w0,x0 -> {:?}  [#416]", r);
+        assert!(r.is_err(), "#416: third operand must be Err for rbit");
+    }
+}

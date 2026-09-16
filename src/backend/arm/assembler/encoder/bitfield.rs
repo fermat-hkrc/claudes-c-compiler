@@ -244,3 +244,87 @@ pub(crate) fn encode_crc32(mnemonic: &str, operands: &[Operand]) -> Result<Encod
         | (c_bit << 12) | (sz << 10) | (rn << 5) | rd;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod scratch_bfi {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #379: BFI #width must be in [1, reg_width]; #0 must be Err, not panic.
+    /// #381: BFI Rd/Rn are GPRs (31=ZR); SP/WSP must be Err.
+    #[test]
+    fn manual_bfi_defects() {
+        let r379 = std::panic::catch_unwind(|| encode_bfi(&[Operand::Reg("w0".into()),
+            Operand::Reg("w0".into()), Operand::Imm(0), Operand::Imm(0)]));
+        let is_err = matches!(&r379, Ok(r) if r.is_err());
+        println!("bfi w0,w0,#0,#0  -> caught_panic={} returned_Err={}  [#379]", r379.is_err(), is_err);
+        let r381 = encode_bfi(&[Operand::Reg("wsp".into()), Operand::Reg("w0".into()),
+            Operand::Imm(0), Operand::Imm(1)]);
+        println!("bfi wsp,w0,#0,#1 -> {:?}  [#381]", r381);
+        assert!(matches!(&r379, Ok(r) if r.is_err()), "#379: width 0 must be Err (panic = bug)");
+        assert!(r381.is_err(), "#381: SP must be Err for bfi");
+    }
+}
+
+#[cfg(test)]
+mod scratch_cls {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #397: CLS Rd/Rn must be same width; mixed must be Err.
+    #[test]
+    fn manual_cls_mixed() {
+        let r = encode_cls(&[Operand::Reg("x0".into()), Operand::Reg("w0".into())]);
+        println!("cls x0,w0 -> {:?}  [#397]", r);
+        assert!(r.is_err(), "#397: mixed width must be Err for cls");
+    }
+}
+
+#[cfg(test)]
+mod scratch_rev32_sbfiz {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #426: REV32 Rd/Rn same width; mixed must be Err.
+    /// #435: SBFIZ operands are GPRs; FP names must be Err.
+    #[test]
+    fn manual_rev32_sbfiz() {
+        let r426 = encode_rev32(&[Operand::Reg("x0".into()), Operand::Reg("w0".into())]);
+        let r435 = encode_sbfiz(&[Operand::Reg("d0".into()), Operand::Reg("x1".into()),
+                                   Operand::Imm(0), Operand::Imm(1)]);
+        println!("rev32 x0,w0   -> {:?}  [#426]", r426);
+        println!("sbfiz d0,x1,#0,#1 -> {:?}  [#435]", r435);
+        assert!(r426.is_err(), "#426: mixed width must be Err for rev32");
+        assert!(r435.is_err(), "#435: FP register must be Err for sbfiz");
+    }
+}
+
+#[cfg(test)]
+mod scratch_bfm_family {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #444: BFM takes 4 operands; a 5th must be Err.
+    /// #447: BFM Rd/Rn same width; mixed must be Err.
+    /// #458: SBFX SP/WSP must be Err (31=ZR).
+    /// #465: UBFX operands are GPRs; FP names must be Err.
+    #[test]
+    fn manual_bfm_family() {
+        let r444 = encode_bfm(&[Operand::Reg("w0".into()), Operand::Reg("w0".into()),
+            Operand::Imm(0), Operand::Imm(0), Operand::Reg("x0".into())]);
+        let r447 = encode_bfm(&[Operand::Reg("x0".into()), Operand::Reg("w0".into()),
+            Operand::Imm(0), Operand::Imm(0)]);
+        let r458 = encode_sbfx(&[Operand::Reg("wsp".into()), Operand::Reg("w0".into()),
+            Operand::Imm(0), Operand::Imm(1)]);
+        let r465 = encode_ubfx(&[Operand::Reg("d0".into()), Operand::Reg("x1".into()),
+            Operand::Imm(0), Operand::Imm(1)]);
+        println!("bfm w0,w0,#0,#0,x0 -> {:?}  [#444]", r444);
+        println!("bfm x0,w0,#0,#0    -> {:?}  [#447]", r447);
+        println!("sbfx wsp,w0,#0,#1  -> {:?}  [#458]", r458);
+        println!("ubfx d0,x1,#0,#1   -> {:?}  [#465]", r465);
+        assert!(r444.is_err(), "#444: 5th operand must be Err");
+        assert!(r447.is_err(), "#447: mixed W/X must be Err");
+        assert!(r458.is_err(), "#458: SP must be Err");
+        assert!(r465.is_err(), "#465: FP register must be Err");
+    }
+}

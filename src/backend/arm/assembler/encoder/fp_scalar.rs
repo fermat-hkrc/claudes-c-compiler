@@ -269,3 +269,99 @@ pub(crate) fn encode_fcvt_precision(operands: &[Operand]) -> Result<EncodeResult
         | (opc << 15) | (0b10000 << 10) | (rn << 5) | rd;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod scratch_fp {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #359: FP 1-src dest/source must agree on S/D (and be FP regs).
+    /// #361: SCVTF/UCVTF H dest must use ftype=11 — differential vs gcc encoding.
+    /// #362: SP/WSP source must be Err (31=ZR in this class).
+    #[test]
+    fn manual_fp_defects() {
+        let r359 = encode_fp_1src(&[Operand::Reg("s0".into()), Operand::Reg("d0".into())], 0b001000);
+        let r361 = encode_int_to_float(&[Operand::Reg("h0".into()), Operand::Reg("w0".into())], false);
+        let r362 = encode_int_to_float(&[Operand::Reg("s0".into()), Operand::Reg("wsp".into())], true);
+        match &r361 {
+            Ok(EncodeResult::Word(w)) => println!("ucvtf h0,w0 -> 0x{:08x}  [#361: expected 0x1ee30000]", w),
+            o => println!("ucvtf h0,w0 -> {:?}  [#361]", o),
+        }
+        println!("fp1src s0,d0  -> {:?}  [#359]", r359);
+        println!("scvtf s0,wsp  -> {:?}  [#362]", r362);
+        assert!(r359.is_err(), "#359: mixed S/D must be Err");
+        assert!(matches!(&r361, Ok(EncodeResult::Word(0x1ee30000))), "#361: ftype must be 11 for H dest");
+        assert!(r362.is_err(), "#362: SP source must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_fcvt {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #368: FCVT precision form takes 2 operands; a 3rd must be Err.
+    #[test]
+    fn manual_fcvt_extra() {
+        let r = encode_fcvt_precision(&[Operand::Reg("s0".into()), Operand::Reg("d0".into()),
+                                         Operand::Reg("s0".into())]);
+        println!("fcvt s0, d0, s0 -> {:?}  [#368]", r);
+        assert!(r.is_err(), "#368: third operand must be Err for fcvt");
+    }
+}
+
+#[cfg(test)]
+mod scratch_farith {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #414: FP arith on H regs must use ftype=11 — differential vs gcc.
+    #[test]
+    fn manual_fmul_h() {
+        let r = encode_fp_arith(&[Operand::Reg("h0".into()), Operand::Reg("h0".into()),
+                                   Operand::Reg("h0".into())], 0b0000);
+        match &r {
+            Ok(EncodeResult::Word(w)) => println!("fmul h0,h0,h0 -> 0x{:08x}  [#414: expected 0x1ee00800]", w),
+            o => println!("fmul h0,h0,h0 -> {:?}  [#414]", o),
+        }
+        assert!(matches!(&r, Ok(EncodeResult::Word(0x1ee00800))), "#414: ftype must be 11 for H regs");
+    }
+}
+
+#[cfg(test)]
+mod scratch_farith2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #415: FP arith regs must agree on S/D; mixed/GPR/SP must be Err.
+    #[test]
+    fn manual_fp_mixed() {
+        let r = encode_fp_arith(&[Operand::Reg("d0".into()), Operand::Reg("s0".into()),
+                                   Operand::Reg("s0".into())], 0b0010);
+        println!("fsub d0,s0,s0 -> {:?}  [#415]", r);
+        assert!(r.is_err(), "#415: mixed S/D must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_h_ftype {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #475: FABS H must use ftype=11 — differential.
+    /// #481: FNEG H must use ftype=11 — differential.
+    #[test]
+    fn manual_h_ftype() {
+        let r475 = encode_fabs(&[Operand::Reg("h0".into()), Operand::Reg("h0".into())]);
+        let r481 = encode_fneg(&[Operand::Reg("h0".into()), Operand::Reg("h0".into())]);
+        match (&r475, &r481) {
+            (Ok(EncodeResult::Word(a)), Ok(EncodeResult::Word(b))) => {
+                println!("fabs h0,h0 -> 0x{:08x}  [#475: expected 0x1ee0c000]", a);
+                println!("fneg h0,h0 -> 0x{:08x}  [#481: expected 0x1ee14000]", b);
+            }
+            _ => println!("unexpected: {:?} {:?}", r475, r481),
+        }
+        assert!(matches!(&r475, Ok(EncodeResult::Word(0x1ee0c000))), "#475: ftype=11 required");
+        assert!(matches!(&r481, Ok(EncodeResult::Word(0x1ee14000))), "#481: ftype=11 required");
+    }
+}

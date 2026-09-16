@@ -642,3 +642,42 @@ impl IrConst {
         }
     }
 }
+
+#[cfg(test)]
+mod scratch {
+    use super::*;
+
+    #[test]
+    fn manual_f128_subnormal() {
+        // subnormal: biased_exp == 0, mantissa != 0
+        let fv = f64::from_bits(1);                       // smallest positive subnormal
+        let neg = f64::from_bits(1u64 << 63 | 1);         // 0x8000000000000001 (issue's minimal input)
+        println!("pos = {:?}", IrConst::cast_float_to_target(fv, IrType::F128));
+        println!("neg = {:?}", IrConst::cast_float_to_target(neg, IrType::F128));
+    }
+
+    #[test]
+    fn manual_u8_u16_sign() {
+        // Issue #3: float -> unsigned narrow casts stored as signed I8/I16
+        // Contract (docstring constants.rs:274 "200.0 as u8 = 200"; from_i64 constants.rs:455-461):
+        // unsigned values must read back zero-extended via to_i64().
+        let c = IrConst::cast_float_to_target(128.0, IrType::U8).unwrap();
+        assert_eq!(c.to_i64(), IrConst::from_i64(128, IrType::U8).to_i64(), "U8: same construct, two paths must agree");
+        assert_eq!(c.to_i64(), Some(128), "U8: docstring says 200.0 as u8 = 200 (no sign flip)");
+
+        let c2 = IrConst::cast_float_to_target(40000.0, IrType::U16).unwrap();
+        assert_eq!(c2.to_i64(), IrConst::from_i64(40000, IrType::U16).to_i64(), "U16: same construct, two paths must agree");
+        assert_eq!(c2.to_i64(), Some(40000), "U16 must not sign-extend");
+
+        let c3 = IrConst::cast_float_to_target(200.0, IrType::U8).unwrap();
+        assert_eq!(c3.to_i64(), Some(200), "U8: docstring example verbatim");
+
+        // from_i64 path: the documented reference behavior (must hold)
+        assert_eq!(IrConst::from_i64(128, IrType::U8).to_i64(), Some(128));
+        assert_eq!(IrConst::from_i64(40000, IrType::U16).to_i64(), Some(40000));
+
+        // U32 already consistent (must hold)
+        assert_eq!(IrConst::cast_float_to_target(4294967295.0, IrType::U32).unwrap().to_i64(), Some(4294967295));
+    }
+}
+

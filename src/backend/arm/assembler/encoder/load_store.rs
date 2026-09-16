@@ -964,3 +964,227 @@ pub(crate) fn encode_stop(mnemonic: &str, operands: &[Operand]) -> Result<Encode
         | (rs << 16) | (opc << 12) | (rn << 5) | rt;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod scratch {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #17: ADR immediate is 21-bit signed [-1048576, 1048575];
+    /// out-of-range must be Err (llvm-mc rejects). TODO at load_store.rs:697 admits the gap.
+    #[test]
+    fn manual_adr_imm_range() {
+        let r = encode_adr(&[Operand::Reg("x0".to_string()), Operand::Imm(-1048577)]);
+        match r {
+            Ok(EncodeResult::Word(w)) => {
+                println!("adr x0, #-1048577 -> 0x{:08x}  (should be Err; wraps to #-1)", w);
+                panic!("out-of-range immediate must be Err, got Ok(0x{:08x})", w);
+            }
+            other => println!("adr x0, #-1048577 -> {:?}  (Err = correct)", other),
+        }
+        let r2 = encode_adr(&[Operand::Reg("x0".to_string()), Operand::Imm(1048576)]);
+        match r2 {
+            Ok(EncodeResult::Word(w)) => {
+                println!("adr x0, #1048576  -> 0x{:08x}  (should be Err)", w);
+                panic!("out-of-range immediate must be Err, got Ok(0x{:08x})", w);
+            }
+            other => println!("adr x0, #1048576  -> {:?}  (Err = correct)", other),
+        }
+        // control: in-range boundary stays Ok
+        let ok = encode_adr(&[Operand::Reg("x0".to_string()), Operand::Imm(-1048576)]);
+        println!("adr x0, #-1048576 -> {:?}  (control: in-range, Ok)", ok);
+        assert!(ok.is_ok());
+    }
+
+    /// Issue #18: ADR takes no :lo12:/:got: modifiers (llvm-mc rejects);
+    /// get_symbol() accepts any Modifier kind and drops it.
+    #[test]
+    fn manual_adr_modifier() {
+        let r = encode_adr(&[Operand::Reg("x0".to_string()),
+                             Operand::Modifier { kind: "lo12".to_string(), symbol: "foo".to_string() }]);
+        match r {
+            Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                println!("adr x0, :lo12:foo -> WordWithReloc {{ word: 0x{:08x}, {:?} }}  (should be Err)", word, reloc.reloc_type);
+                panic!(":lo12: modifier must be Err for adr, got WordWithReloc (AdrPrelLo21 applied to illegal modifier)");
+            }
+            other => println!("adr x0, :lo12:foo -> {:?}  (non-reloc result)", other),
+        }
+        let r2 = encode_adr(&[Operand::Reg("x0".to_string()),
+                              Operand::ModifierOffset { kind: "lo12".to_string(), symbol: "foo".to_string(), offset: 0 }]);
+        match r2 {
+            Ok(EncodeResult::WordWithReloc { .. }) => panic!(":lo12: ModifierOffset must be Err for adr"),
+            other => println!("adr x0, :lo12:foo+0 -> {:?}  (Err = correct)", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod scratch_ldur {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #137: extra operand after the Mem must be Err.
+    /// #138: simm9 must be in [-256, 255]; #-257 must be Err (not wrapped to #255).
+    #[test]
+    fn manual_ldur_defects() {
+        let mem = Operand::Mem { base: "x0".to_string(), offset: -256 };
+        let r137 = encode_ldur_stur(&[Operand::Reg("w0".to_string()), mem.clone(),
+                                       Operand::Reg("x2".to_string())], false, 0b00);
+        let mem2 = Operand::Mem { base: "x0".to_string(), offset: -257 };
+        let r138 = encode_ldur_stur(&[Operand::Reg("w0".to_string()), mem2], false, 0b00);
+        println!("stur w0,[x0,#-256],x2 -> {:?}  [#137]", r137);
+        println!("stur w0,[x0,#-257]    -> {:?}  [#138]", r138);
+        assert!(r137.is_err(), "#137: trailing operand must be Err for stur");
+        assert!(r138.is_err(), "#138: simm9 -257 out of range must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_ldxp {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #142: bare V-register Rt (no arrangement) must be Err for ldur, not encoded as d0.
+    /// #144: trailing operand after the Mem must be Err for stxp.
+    /// #150: STXP Ws aliasing Rt/Rt2 is constrained-unpredictable and must be Err.
+    #[test]
+    fn manual_ldxp_defects() {
+        let r142 = encode_ldur_stur(&[Operand::Reg("v0".to_string()),
+            Operand::Mem { base: "x0".to_string(), offset: 0 }], true, 0b00);
+        let mem = Operand::Mem { base: "x0".to_string(), offset: 0 };
+        let r144 = encode_ldxp_stxp(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+            Operand::Reg("w0".to_string()), mem.clone(), Operand::Reg("x2".to_string())], false, false);
+        let r150 = encode_ldxp_stxp(&[Operand::Reg("w0".to_string()), Operand::Reg("w0".to_string()),
+            Operand::Reg("w0".to_string()), mem], false, false);
+        println!("ldur v0,[x0]            -> {:?}  [#142]", r142);
+        println!("stxp w0,w0,w0,[x0],x2   -> {:?}  [#144]", r144);
+        println!("stxp w0,w0,w0,[x0]      -> {:?}  [#150]", r150);
+        assert!(r142.is_err(), "#142: bare V-register Rt must be Err for ldur");
+        assert!(r144.is_err(), "#144: trailing operand must be Err for stxp");
+        assert!(r150.is_err(), "#150: Ws aliasing a source register must be Err for stxp");
+    }
+}
+
+#[cfg(test)]
+mod scratch_ldxp2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #152: XZR/WZR as exclusive-pair base must be Err
+    /// (reg 31 in Rn slot means SP — ZR would silently become SP).
+    #[test]
+    fn manual_ldxp_zr_base() {
+        let r = encode_ldxp_stxp(&[Operand::Reg("x0".to_string()), Operand::Reg("x1".to_string()),
+            Operand::Mem { base: "xzr".to_string(), offset: 0 }], true, false);
+        println!("ldxp x0,x1,[xzr] -> {:?}  [#152]", r);
+        assert!(r.is_err(), "#152: XZR base must be Err (would encode as SP)");
+    }
+}
+
+#[cfg(test)]
+mod scratch_exclusive2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #318: exclusive-load Rt is GPR (31=ZR); SP must be Err.
+    /// #323: exclusive base is Xn|SP; XZR must be Err (31 would mean SP).
+    /// #327: LDRSW imm9 ∈ [-256,255]; out-of-range must be Err (not masked).
+    /// #329: LDRSW base is Xn; W base must be Err.
+    #[test]
+    fn manual_exclusive2_defects() {
+        let r318 = encode_ldaxr_stlxr(&[Operand::Reg("sp".into()),
+            Operand::Mem { base: "x0".into(), offset: 0 }], true, None);
+        let r323 = encode_ldaxr_stlxr(&[Operand::Reg("x0".into()),
+            Operand::Mem { base: "xzr".into(), offset: 0 }], true, None);
+        let r327 = encode_ldrsw(&[Operand::Reg("x0".into()),
+            Operand::Mem { base: "x1".into(), offset: -257 }]);
+        let r329 = encode_ldrsw(&[Operand::Reg("x0".into()),
+            Operand::Mem { base: "w1".into(), offset: 0 }]);
+        println!("ldaxr sp,[x0]     -> {:?}  [#318]", r318);
+        println!("ldaxr x0,[xzr]    -> {:?}  [#323]", r323);
+        println!("ldrsw x0,[x1,#-257] -> {:?}  [#327]", r327);
+        println!("ldrsw x0,[w1]     -> {:?}  [#329]", r329);
+        // batch 2: #333 #334 #340 #345
+        let r333 = encode_ldrsw(&[Operand::Reg("x0".into()),
+            Operand::Mem { base: "xzr".into(), offset: 0 }]);
+        let r334 = encode_ldtr_sized(&[Operand::Reg("w0".into()),
+            Operand::Mem { base: "x0".into(), offset: -256 }, Operand::Reg("x2".into())], false, 0);
+        let r340 = encode_ldtr_sized(&[Operand::Reg("w0".into()),
+            Operand::Mem { base: "xzr".into(), offset: 0 }], true, 0);
+        let r345 = encode_prfm(&[Operand::Imm(0),
+            Operand::Mem { base: "w0".into(), offset: 0 }]);
+        println!("ldrsw x0,[xzr]      -> {:?}  [#333]", r333);
+        println!("sttrb w0,[x0,#-256],x2 -> {:?}  [#334]", r334);
+        println!("ldtrb w0,[xzr]      -> {:?}  [#340]", r340);
+        println!("prfm #0,[w0]        -> {:?}  [#345]", r345);
+        assert!(r333.is_err(), "#333: XZR base must be Err (31=SP)");
+        assert!(r334.is_err(), "#334: trailing operand must be Err");
+        assert!(r340.is_err(), "#340: XZR base must be Err");
+        assert!(r345.is_err(), "#345: W base must be Err for prfm");
+        assert!(r318.is_err(), "#318: SP as Rt must be Err (31=ZR)");
+        assert!(r323.is_err(), "#323: XZR base must be Err (31=SP)");
+        assert!(r327.is_err(), "#327: imm9 -257 out of range must be Err");
+        assert!(r329.is_err(), "#329: W base must be Err for ldrsw");
+    }
+}
+
+#[cfg(test)]
+mod scratch_cas {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #390: CAS Rs/Rt must match width; mixed must be Err.
+    /// #392: CAS Rs/Rt are GPRs (31=ZR); SP must be Err.
+    #[test]
+    fn manual_cas_defects() {
+        let r390 = encode_cas("cas", &[Operand::Reg("x0".into()), Operand::Reg("w0".into()),
+            Operand::Mem { base: "x1".into(), offset: 0 }]);
+        let r392 = encode_cas("cas", &[Operand::Reg("sp".into()), Operand::Reg("w1".into()),
+            Operand::Mem { base: "x2".into(), offset: 0 }]);
+        println!("cas x0,w0,[x1] -> {:?}  [#390]", r390);
+        println!("cas sp,w1,[x2] -> {:?}  [#392]", r392);
+        assert!(r390.is_err(), "#390: mixed W/X must be Err for cas");
+        assert!(r392.is_err(), "#392: SP must be Err for cas");
+    }
+}
+
+#[cfg(test)]
+mod scratch_ldrs2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #491: LDRS takes 2 operands; a 3rd must be Err.
+    /// #494: LDRS dest is a GPR (31=ZR); SP must be Err.
+    #[test]
+    fn manual_ldrs_defects() {
+        let r491 = encode_ldrs(&[Operand::Reg("w0".into()),
+            Operand::Mem { base: "x0".into(), offset: 0 }, Operand::Reg("x2".into())], 0);
+        let r494 = encode_ldrs(&[Operand::Reg("sp".into()),
+            Operand::Mem { base: "x0".into(), offset: 0 }], 0);
+        println!("strb w0,[x0],x2 -> {:?}  [#491]", r491);
+        println!("ldrb sp,[x0]    -> {:?}  [#494]", r494);
+        assert!(r491.is_err(), "#491: third operand must be Err");
+        assert!(r494.is_err(), "#494: SP dest must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_ldrs3 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #497: Rt==Rn with pre-index writeback — check reference stance.
+    /// #498: XZR base must be Err (31=SP in Rn).
+    #[test]
+    fn manual_ldrs3() {
+        let r497 = encode_ldrs(&[Operand::Reg("w0".into()),
+            Operand::MemPreIndex { base: "x0".into(), offset: 4 }], 0);
+        let r498 = encode_ldrs(&[Operand::Reg("w0".into()),
+            Operand::Mem { base: "xzr".into(), offset: 0 }], 0);
+        println!("ldr w0,[x0,#4]! -> {:?}  [#497]", r497);
+        println!("strb w0,[xzr]   -> {:?}  [#498]", r498);
+        assert!(r498.is_err(), "#498: XZR base must be Err (31=SP)");
+        // #497 verdict depends on reference stance — record both
+        match r497 { Ok(EncodeResult::Word(w)) => println!("  #497 encoded Ok(0x{:08x})", w), o => println!("  #497 {:?}", o) }
+    }
+}

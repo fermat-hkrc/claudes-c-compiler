@@ -1852,3 +1852,211 @@ pub(crate) fn encode_neon_scalar_qshrn(operands: &[Operand], u_bit: u32, is_roun
 }
 
 // ── NEON addp (integer pairwise add) — already handled in three-same as addp ──
+
+#[cfg(test)]
+mod scratch {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    fn varr(reg: &str, arrangement: &str) -> Operand {
+        Operand::RegArrangement { reg: reg.to_string(), arrangement: arrangement.to_string() }
+    }
+
+    /// Issue #38: ADDHN/SUBHN are three-register form; a 4th operand must be Err.
+    /// clang/llvm-mc: "invalid operand for instruction".
+    #[test]
+    fn manual_addhn_four_operands() {
+        let ops = vec![varr("v0", "8b"), varr("v0", "8h"), varr("v0", "8h"), varr("v1", "8h")];
+        let r = encode_neon_three_diff_narrow(&ops, 0, 0b0100, false);
+        match r {
+            Ok(EncodeResult::Word(w)) => {
+                println!("addhn v0.8b,v0.8h,v0.8h,v1.8h -> 0x{:08x}  (should be Err; 4th operand dropped)", w);
+                panic!("fourth operand must be Err, got Ok(0x{:08x}) — assembled as 3-register addhn", w);
+            }
+            other => println!("addhn v0.8b,v0.8h,v0.8h,v1.8h -> {:?}  (Err = correct)", other),
+        }
+        let ok = encode_neon_three_diff_narrow(&ops[..3], 0, 0b0100, false);
+        println!("addhn v0.8b,v0.8h,v0.8h        -> {:?}  (control: 3 operands, Ok)", ok);
+        assert!(ok.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod scratch_saddlv {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #127: SADDLV dest type must match source arrangement (h0 for .8b);
+    /// `saddlv b0, v0.8b` must be Err.
+    #[test]
+    fn manual_saddlv_dest_type() {
+        let r = encode_neon_across_long(&[Operand::Reg("b0".to_string()),
+            Operand::RegArrangement { reg: "v0".to_string(), arrangement: "8b".to_string() }], 0, 0b00011);
+        println!("saddlv b0, v0.8b -> {:?}  [#127]", r);
+        assert!(r.is_err(), "#127: dest must be h0-class for 8b source, b0 must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_qshrn {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #195: SQSHRN takes 3 operands; a 4th must be Err.
+    /// #196: SQSHRN dest is a Vd; GPR/FP dest must be Err.
+    #[test]
+    fn manual_qshrn_defects() {
+        let r195 = encode_neon_qshrn(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8h".into() }, Operand::Imm(1),
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() }], 0, false, false);
+        let r196 = encode_neon_qshrn(&[Operand::Reg("x0".into()),
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8h".into() }, Operand::Imm(1)], 0, false, false);
+        println!("sqshrn v0.8b,v0.8h,#1,v0.8b -> {:?}  [#195]", r195);
+        println!("sqshrn x0,v0.8h,#1          -> {:?}  [#196]", r196);
+        assert!(r195.is_err(), "#195: fourth operand must be Err for sqshrn");
+        assert!(r196.is_err(), "#196: GPR dest must be Err for sqshrn");
+    }
+}
+
+#[cfg(test)]
+mod scratch_shiftimm {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #231: USHR source arrangement must match dest (8b vs 16b).
+    /// #234: USHR shift must be in [1, elem_bits]; #-1/#0/#9 must be Err (not panic/mask).
+    #[test]
+    fn manual_ushr_defects() {
+        let r231 = encode_neon_shift_imm(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "16b".into() }, Operand::Imm(1)], true);
+        let r234b = std::panic::catch_unwind(|| encode_neon_shift_imm(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() }, Operand::Imm(-1)], true));
+        println!("ushr v0.8b, v0.16b, #1  -> {:?}  [#231]", r231);
+        let is_err = matches!(&r234b, Ok(r) if r.is_err());
+        println!("ushr v0.8b, v0.8b, #-1  -> caught_panic={} returned_Err={}  [#234]", r234b.is_err(), is_err);
+        assert!(r231.is_err(), "#231: mismatched source arrangement must be Err");
+        assert!(matches!(&r234b, Ok(r) if r.is_err()), "#234: shift -1 must be Err (panic counts as bug)");
+    }
+}
+
+#[cfg(test)]
+mod scratch_tbl {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #237: TBL with an empty register list must be Err, not panic at regs[0].
+    #[test]
+    fn manual_tbl_empty_list() {
+        let r = std::panic::catch_unwind(|| encode_neon_tbl(&[
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::RegList(vec![]),
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() }]));
+        let is_err = matches!(&r, Ok(res) if res.is_err());
+        println!("tbl v0.8b, {}, v0.8b (empty list) -> caught_panic={} returned_Err={}  [#237]", "{}", r.is_err(), is_err);
+        assert!(matches!(&r, Ok(res) if res.is_err()), "#237: empty RegList must be Err (panic = bug)");
+    }
+}
+
+#[cfg(test)]
+mod scratch_shl {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #289: SQSHL takes 3 operands; a 4th must be Err.
+    #[test]
+    fn manual_sqshl_extra() {
+        let r = encode_neon_shift_left_imm(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() }, Operand::Imm(0),
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() }], 0, 0b01110);
+        println!("sqshl v0.8b,v0.8b,#0,v0.8b -> {:?}  [#289]", r);
+        assert!(r.is_err(), "#289: fourth operand must be Err for sqshl");
+    }
+}
+
+#[cfg(test)]
+mod scratch_rbit {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #303: RBIT source arrangement must match dest.
+    /// #304: RBIT registers must be V registers.
+    #[test]
+    fn manual_rbit_defects() {
+        let r303 = encode_neon_rbit(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "16b".into() }]);
+        let r304 = encode_neon_rbit(&[Operand::RegArrangement { reg: "x0".into(), arrangement: "8b".into() },
+            Operand::RegArrangement { reg: "x0".into(), arrangement: "8b".into() }]);
+        println!("rbit v0.8b, v0.16b -> {:?}  [#303]", r303);
+        println!("rbit x0.8b, x0.8b  -> {:?}  [#304]", r304);
+        assert!(r303.is_err(), "#303: mismatched source arrangement must be Err");
+        assert!(r304.is_err(), "#304: GPR prefix must be Err for rbit");
+    }
+}
+
+#[cfg(test)]
+mod scratch_aes {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #375: AES ops take V registers; GPR prefixes must be Err.
+    #[test]
+    fn manual_aes_prefix() {
+        let r = encode_neon_aes(&[Operand::RegArrangement { reg: "x0".into(), arrangement: "16b".into() },
+            Operand::RegArrangement { reg: "x0".into(), arrangement: "16b".into() }], 4);
+        println!("aese x0.16b, x0.16b -> {:?}  [#375]", r);
+        assert!(r.is_err(), "#375: GPR prefix must be Err for aese");
+    }
+}
+
+#[cfg(test)]
+mod scratch_dup {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #489: DUP source register class/width must match T.
+    #[test]
+    fn manual_dup_source() {
+        let r = encode_neon_dup(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::Reg("x0".into())]);
+        println!("dup v0.8b, x0 -> {:?}  [#489]", r);
+        assert!(r.is_err(), "#489: wrong-width source must be Err for dup");
+    }
+}
+
+#[cfg(test)]
+mod scratch_ldnr {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #501: ldNr base must be a GPR; FP/SIMD names must be Err.
+    /// #507: XZR/x31 as base must be Err (31=SP).
+    #[test]
+    fn manual_ldnr_base() {
+        let ops = |base: &str| vec![Operand::RegList(vec![
+                Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+                Operand::RegArrangement { reg: "v1".into(), arrangement: "8b".into() }]),
+            Operand::Mem { base: base.into(), offset: 0 }];
+        let r501 = encode_neon_ldnr(&ops("d0"), 2);
+        let r507 = encode_neon_ldnr(&ops("xzr"), 2);
+        println!("ld2r {{v0.8b,v1.8b}},[d0]  -> {:?}  [#501]", r501);
+        println!("ld2r {{v0.8b,v1.8b}},[xzr] -> {:?}  [#507]", r507);
+        assert!(r501.is_err(), "#501: FP base must be Err");
+        assert!(r507.is_err(), "#507: XZR base must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_qshrn_i64 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #198: SQSHRN shift immediate must fit the element-width range;
+    /// Imm(4294967297) (= 2^32+1) must be Err, not truncated via `as u32`.
+    #[test]
+    fn manual_qshrn_i64_imm() {
+        let r = encode_neon_qshrn(&[Operand::RegArrangement { reg: "v0".into(), arrangement: "8b".into() },
+            Operand::RegArrangement { reg: "v0".into(), arrangement: "8h".into() }, Operand::Imm(4294967297)], 0, false, false);
+        println!("sqshrn v0.8b, v0.8h, #4294967297 -> {:?}  [#198]", r);
+        assert!(r.is_err(), "#198: i64 shift imm out of range must be Err, not truncated");
+    }
+}

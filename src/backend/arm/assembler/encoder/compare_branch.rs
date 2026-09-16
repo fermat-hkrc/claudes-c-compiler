@@ -320,3 +320,213 @@ pub(crate) fn encode_cinv(operands: &[Operand]) -> Result<EncodeResult, String> 
         | (inv_cond << 12) | (rn << 5) | rd;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod scratch {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #37: BL operand is a label or encodable offset; `bl :lo12:foo` must be Err.
+    /// clang: llvm-mc rejects modifiers on BL.
+    #[test]
+    fn manual_bl_modifier() {
+        let r = encode_bl(&[Operand::Modifier { kind: "lo12".to_string(), symbol: "foo".to_string() }]);
+        match r {
+            Ok(EncodeResult::WordWithReloc { word, reloc }) => {
+                println!("bl :lo12:foo -> WordWithReloc {{ 0x{:08x}, {:?} }}  (should be Err)", word, reloc.reloc_type);
+                panic!("modifier must be Err for bl, got WordWithReloc (Call26 applied to illegal modifier)");
+            }
+            other => println!("bl :lo12:foo -> {:?}  (Err = correct)", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod scratch_blr {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #42: BLR takes a single Xn; `blr x0, x1` must be Err.
+    #[test]
+    fn manual_blr_extra_operand() {
+        let r = encode_blr(&[Operand::Reg("x0".to_string()), Operand::Reg("x1".to_string())]);
+        match r {
+            Ok(EncodeResult::Word(w)) => {
+                println!("blr x0,x1 -> 0x{:08x}  (should be Err; extra operand dropped)", w);
+                panic!("extra operand must be Err for blr, got Ok(0x{:08x})", w);
+            }
+            other => println!("blr x0,x1 -> {:?}  (Err = correct)", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod scratch_br {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #46: BR takes a single Xn; `br x0, x1` must be Err.
+    /// Issue #49: BR takes Xn only; `br w0` must be Err (not silently br x0).
+    #[test]
+    fn manual_br_two_defects() {
+        let r  = encode_br(&[Operand::Reg("x0".to_string()), Operand::Reg("x1".to_string())]);
+        let r2 = encode_br(&[Operand::Reg("w0".to_string())]);
+        println!("br x0,x1 -> {:?}  [#46]", r);
+        println!("br w0    -> {:?}  [#49]", r2);
+        assert!(r.is_err(), "#46: extra operand must be Err for br");
+        assert!(r2.is_err(), "#49: W register must be Err for br (not silently br x0)");
+    }
+
+    /// Issue #51: `b #imm` (explicit PC offset) is valid gas syntax — llvm-mc emits
+    /// 0x14000000 for `b #0`; encode_branch must accept the immediate form.
+    #[test]
+    fn manual_branch_imm() {
+        let r = encode_branch(&[Operand::Imm(0)]);
+        match r {
+            Ok(EncodeResult::Word(w)) => {
+                println!("b #0 -> 0x{:08x}  (llvm-mc: 0x14000000)", w);
+                assert_eq!(w, 0x14000000);
+            }
+            Err(e) => {
+                println!("b #0 -> Err({:?})  (llvm-mc assembles it as 0x14000000)", e);
+                panic!("immediate PC-offset form must be accepted (llvm-mc differential)");
+            }
+            other => panic!("expected Word, got {:?}", other),
+        }
+    }
+
+}
+
+#[cfg(test)]
+mod scratch_cbz {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #53: CBZ takes (reg, target); `cbz x0, L, x1` must be Err.
+    /// Issue #54: CBZ Rt is a GPR; `cbz d0, L` must be Err (not silently w0).
+    #[test]
+    fn manual_cbz_two_defects() {
+        let r  = encode_cbz(&[Operand::Reg("x0".to_string()), Operand::Symbol("L".to_string()),
+                              Operand::Reg("x1".to_string())], false);
+        let r2 = encode_cbz(&[Operand::Reg("d0".to_string()), Operand::Symbol("L".to_string())], false);
+        println!("cbz x0, L, x1 -> {:?}  [#53]", r);
+        println!("cbz d0, L      -> {:?}  [#54]", r2);
+        assert!(r.is_err(), "#53: third operand must be Err for cbz");
+        assert!(r2.is_err(), "#54: FP/SIMD register must be Err for cbz (not silently w0)");
+    }
+}
+
+#[cfg(test)]
+mod scratch_ccmp {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #59: imm5 ∈ [0,31], nzcv ∈ [0,15]; out-of-range must be Err, not masked.
+    #[test]
+    fn manual_ccmp_imm_ranges() {
+        let r  = encode_ccmp_ccmn(&[Operand::Reg("x0".to_string()), Operand::Imm(-1),
+                                     Operand::Imm(0), Operand::Cond("eq".to_string())], false);
+        let r2 = encode_ccmp_ccmn(&[Operand::Reg("x0".to_string()), Operand::Imm(0),
+                                     Operand::Imm(16), Operand::Cond("eq".to_string())], true);
+        println!("ccmn x0,#-1,#0,eq -> {:?}  (imm5 -1 & 0x1F = 31, silent)  [#59]", r);
+        println!("ccmp x0,#0,#16,eq -> {:?}  (nzcv 16 & 0xF  = 0,  silent)  [#59]", r2);
+        assert!(r.is_err(), "#59: imm5 = -1 must be Err");
+        assert!(r2.is_err(), "#59: nzcv = 16 must be Err");
+    }
+}
+
+#[cfg(test)]
+mod scratch_width {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #65: cinc x0, w0, eq — mixed width must be Err.
+    /// #73: cmn d0, #0 — FP/SIMD as GPR must be Err.
+    /// #81: cmp x0, w0 — mixed width without extend must be Err.
+    #[test]
+    fn manual_width_defects() {
+        let r65 = encode_cinc(&[Operand::Reg("x0".to_string()), Operand::Reg("w0".to_string()),
+                                 Operand::Cond("eq".to_string())]);
+        let r73 = encode_cmn(&[Operand::Reg("d0".to_string()), Operand::Imm(0)]);
+        let r81 = encode_cmp(&[Operand::Reg("x0".to_string()), Operand::Reg("w0".to_string())]);
+        println!("cinc x0,w0,eq -> {:?}  [#65]", r65);
+        println!("cmn d0,#0     -> {:?}  [#73]", r73);
+        println!("cmp x0,w0     -> {:?}  [#81]", r81);
+        assert!(r65.is_err(), "#65: mixed x/w must be Err for cinc");
+        assert!(r73.is_err(), "#73: FP/SIMD register must be Err for cmn");
+        assert!(r81.is_err(), "#81: mixed x/w without extend must be Err for cmp");
+    }
+}
+
+#[cfg(test)]
+mod scratch_cmp_zr {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #83: CMP immediate-form Rn is Xn|SP; XZR/WZR must be Err
+    /// (reg 31 in that form means SP, so `cmp xzr,#0` would silently become `cmp sp,#0`).
+    #[test]
+    fn manual_cmp_zr_imm() {
+        let r  = encode_cmp(&[Operand::Reg("xzr".to_string()), Operand::Imm(0)]);
+        let r2 = encode_cmp(&[Operand::Reg("wzr".to_string()), Operand::Imm(0)]);
+        println!("cmp xzr,#0 -> {:?}  [#83]", r);
+        println!("cmp wzr,#0 -> {:?}  [#83]", r2);
+        assert!(r.is_err(), "#83: xzr must be Err in cmp immediate form");
+        assert!(r2.is_err(), "#83: wzr must be Err in cmp immediate form");
+    }
+}
+
+#[cfg(test)]
+mod scratch_cneg {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #85: CNEG takes (Rd, Rn, cond); a 4th operand must be Err.
+    #[test]
+    fn manual_cneg_extra_operand() {
+        let r = encode_cneg(&[Operand::Reg("x0".to_string()), Operand::Reg("x0".to_string()),
+                               Operand::Cond("eq".to_string()), Operand::Reg("x2".to_string())]);
+        println!("cneg x0,x0,eq,x2 -> {:?}  [#85]", r);
+        assert!(r.is_err(), "#85: fourth operand must be Err for cneg");
+    }
+}
+
+#[cfg(test)]
+mod scratch_cond_ops {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// #100: CSETM Rd is never SP; `csetm sp, eq` must be Err (not silently xzr).
+    /// #103: CSINC all GPRs same width; `csinc x0, w1, x2, eq` must be Err.
+    /// #109: CSNEG takes 4 operands; a 5th must be Err.
+    #[test]
+    fn manual_cond_ops_defects() {
+        let r100 = encode_csetm(&[Operand::Reg("sp".to_string()), Operand::Cond("eq".to_string())]);
+        let r103 = encode_csinc(&[Operand::Reg("x0".to_string()), Operand::Reg("w1".to_string()),
+                                   Operand::Reg("x2".to_string()), Operand::Cond("eq".to_string())]);
+        let r109 = encode_csneg(&[Operand::Reg("x0".to_string()), Operand::Reg("x0".to_string()),
+                                   Operand::Reg("x0".to_string()), Operand::Cond("eq".to_string()),
+                                   Operand::Reg("x3".to_string())]);
+        println!("csetm sp,eq        -> {:?}  [#100]", r100);
+        println!("csinc x0,w1,x2,eq  -> {:?}  [#103]", r103);
+        println!("csneg x0,x0,x0,eq,x3 -> {:?}  [#109]", r109);
+        assert!(r100.is_err(), "#100: SP must be Err for csetm (reg 31 = XZR here)");
+        assert!(r103.is_err(), "#103: mixed x/w must be Err for csinc");
+        assert!(r109.is_err(), "#109: fifth operand must be Err for csneg");
+    }
+}
+
+#[cfg(test)]
+mod scratch_csneg_sp {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// Issue #112: CSNEG register 31 is XZR/WZR; SP as Rd must be Err.
+    #[test]
+    fn manual_csneg_sp() {
+        let r = encode_csneg(&[Operand::Reg("sp".to_string()), Operand::Reg("x0".to_string()),
+                                Operand::Reg("x0".to_string()), Operand::Cond("eq".to_string())]);
+        println!("csneg sp,x0,x0,eq -> {:?}  [#112]", r);
+        assert!(r.is_err(), "#112: SP must be Err for csneg (reg 31 = XZR here)");
+    }
+}
