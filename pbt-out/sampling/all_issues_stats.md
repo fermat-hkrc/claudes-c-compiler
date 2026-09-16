@@ -288,11 +288,11 @@ syntax, so ccc's behavior matches the GNU reference. They are reclassification c
 
 ## 6. Tool Dimension (discovery vs verification are different jobs)
 
-| Tool | Role | Issues filed | % of 509 | Issues adjudicated (verified live) | Own filings confirmed real | Own false positives | Precision (own filings) |
-|---|---|---|---|---|---|---|---|
-| **Hoare-style reasoning (FM-Agent / pi-pbt PBT campaigns)** | discovery | 507 | 99.6% | — (not a verification tool) | 504 | 3 (#30 #119 #247) | 99.4% |
-| **Contract-Based Differential Validation (LLM agent, this session)** | verification (+ side discovery) | 2 (#509 #510) | 0.4% | **509 (all: 100 unit-level + 509 CLI-level)** | 2 | 0 | 100% |
-| **Total** | | **509** | **100%** | | **506** | **3** | **99.4%** |
+| Tool | Role | Issues filed | Issues adjudicated (verified live) | Own filings confirmed real | Own false positives |
+|---|---|---|---|---|---|
+| **Hoare-style reasoning (FM-Agent / pi-pbt PBT campaigns)** | discovery | 507 | — (not a verification tool) | 504 | 3 (#30 #119 #247) |
+| **Contract-Based Differential Validation (LLM agent, this session)** | verification (+ side discovery) | 2 (#509 #510) | **509 (all: 100 unit-level + 509 CLI-level)** | 2 | 0 |
+| **Total** | | **509** | | **506** | **3** |
 
 **How to read this table**
 
