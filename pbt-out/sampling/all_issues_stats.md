@@ -230,20 +230,25 @@ full run found 3 false positives (#30 #119 #247), all outside this sample; see �
 | P7 | relocation-modifier grammar | CWE-20 | 3 | 0.6% | 0 | 3 | 2 | 2 |
 | P8 | acceptance of valid syntax | CWE-1023 | 8 | 1.6% | 3 | 5 | 1 | 1 |
 | P9 | CU aliasing/writeback diagnostics | CWE-754 | 3 | 0.6% | 0 | 3 | 1 | 1 |
-| P— | non-assembler (C-level/IR, source encoding, meta) | — | 6 | 1.2% | 0 | 6 | 0 | 0 | 0 |
+| P— | non-assembler (C-level/IR, source encoding, meta) | — | 6 | 1.2% | 0 | 6 | 0 | 0 |
 | | **Total** | | **509** | **100%** | **3** | **506** | **100** | **100** |
 
-### 5.2 CWE Roll-up
+### 5.2 CWE Roll-up (issue counts vs confirmed-real defects)
 
-| CWE | Count | Percentage |
-|---|---|---|
-| CWE-20 Improper Input Validation (P2+P3+P4+P7) | 327 | 64.2% |
-| CWE-628 Incorrectly Specified Arguments (P1) | 91 | 17.9% |
-| CWE-190/681 Integer Wraparound / Incorrect Conversion (P5) | 52 | 10.2% |
-| CWE-478 Unsafe Default Case (P6) | 22 | 4.3% |
-| CWE-1023 Incomplete Implementation (P8) | 8 | 1.6% | — of which **3 are false positives** (#30 #119 #247: "rejects GNU alias" — gas 2.42 rejects too; real P8 defects = 5) |
-| CWE-754 Improper Check for Exceptional Conditions (P9) | 3 | 0.6% |
-| non-assembler/unclassified (#2 #3 #4 #508 #509 #510) | 6 | 1.2% |
+| CWE | Issues | Real (confirmed) | Percentage (of 506 real) |
+|---|---|---|---|
+| CWE-20 Improper Input Validation (P2+P3+P4+P7) | 327 | 327 | 64.6% |
+| CWE-628 Incorrectly Specified Arguments (P1) | 91 | 91 | 18.0% |
+| CWE-190/681 Integer Wraparound / Incorrect Conversion (P5) | 52 | 52 | 10.3% |
+| CWE-478 Unsafe Default Case (P6) | 22 | 22 | 4.3% |
+| CWE-1023 Incomplete Implementation (P8) | 8 | **5** | 1.0% |
+| CWE-754 Improper Check for Exceptional Conditions (P9) | 3 | 3 | 0.6% |
+| non-assembler (C-level/IR, encoding: #2 #3 #4 #508 #509 #510) | 6 | 6 | 1.2% |
+| **Total** | **509** | **506** | **100%** |
+
+(The 3-issue gap = false positives #30/#119/#247, all title-classified P8/CWE-1023
+— "rejects the GNU alias": gas 2.42 rejects as well, so no defect exists vs the
+GNU reference; reclassify as llvm-mc-compatibility enhancements.)
 
 ### 5.3 Tracker Accuracy (FULL verification — all 509 tested, no extrapolation)
 
