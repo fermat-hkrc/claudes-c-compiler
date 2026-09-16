@@ -68,6 +68,34 @@
 
 `coverage_gaps` 工具返回 "No instrumented coverage data yet"(环境未注入覆盖率插桩)。替代动作:强化轮 P1s(边界偏斜 + 深度提升)已执行并通过;PUA 碰撞作为 P6 域外反例被人工三角验证(代码路径推导 + 既有单测交叉核对 `test_roundtrip_all_bytes`)。
 
+---
+
+## Post-campaign session: manual issue verification (2026-09-15, later)
+
+Verifying tracker issues one-by-one (user reproduces manually, then confirmed):
+
+| Issue | Function | Verdict |
+|---|---|---|
+| #2 | IrConst::cast_float_to_target (F128) | real — panic + silent miscompile (E2E vs gcc) |
+| #3 | IrConst::cast_float_to_target (U8/U16) | real (latent) — contract violation, no E2E miscompile |
+| #4 | classify_cast_with_f128 | real — unit + asm (fildl vs fildq) + qemu runtime; f2p mechanism shielded |
+| #5 | encode_adc | real — trailing shift silently ignored (unit, failing assert) |
+| #14 | encode_add_sub | real — ROR/oob-amount/extend-imm3/unknown-kind all silently accepted (unit) |
+
+Side-findings filed: #509 (i686 -static entry=main), #510 (invalid float↔ptr casts bitcast).
+Random sample of 100 drawn (seed=42) → `pbt-out/sampling/sample_100_tracker.md` — **completed: 100/100 verified, 100% real, 0 false positives** (3 wording/severity amendments: #17 wrap detail, #150/#497 warning-class). Full presentation report: `pbt-out/sampling/all_issues_stats.md`; per-issue evidence: 43 reports in `pbt-out/verified_bug/`; issue comments posted: #2, #4 (+#509, #510 filed, #511 dupe closed).
+
+### Sweep round (this session, 1 round)
+
+`coverage_gaps`: "No instrumented coverage data yet" (no llvm-profdata/cov, RUSTFLAGS empty, no
+.profraw — same environmental limit as the main campaign). Substitute: code-reading-driven gap
+analysis of the tests written this session. Found and covered: issue #14's extend-register arm
+(documented in the issue's law: "imm3 > 4 is UNALLOCATED"; code: `_ => 0b011` default +
+`imm3 = *amount & 0x7` mask) was untested by the first #14 probe. Added two targeted probes
+(`sxtw #8` → silent truncation to imm3=0; unknown kind `foo` → silent UXTX default). Evidence:
+`ror #0` and `lsl #64` encode to the identical word 0x0B020000 (amount masked & 0x3F). All
+four invalid inputs return Ok — sweep strengthened the #14 witness from 2 to 4 failing probes.
+
 ## 备注
 
 - 测试开发期暴露并修复的 6 个测试侧问题(非 SUT bug):i128 区间计算溢出 panic、int 传 `%lu` 的 UB、位域取地址非法 C、union 未初始化字节转储 UB、实参求值顺序依赖、程序返回值与 `timeout` 退出码 124 碰撞、数组字段越界索引 —— 全部为生成器/harness 缺陷,修复后 0 失败。这些调试经历本身即验证了差分 oracle 的灵敏度(gcc/ccc 行为分歧均被捕获并正确归类)。
