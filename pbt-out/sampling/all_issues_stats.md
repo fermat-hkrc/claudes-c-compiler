@@ -210,7 +210,8 @@ witness and arbitrated by reference toolchains. None of the amendments below cha
 | #497 | Severity high → **warning-class** (same class as #150) | gas warns "unpredictable transfer with writeback" and still encodes; ccc encodes silently — missing warning is real |
 
 (Amendments are wording/severity-level; no sampled issue was found to describe a
-non-existent defect. False-positive count remains 0.)
+non-existent defect. False-positive count in the SAMPLE remains 0 — the subsequent
+full run found 3 false positives (#30 #119 #247), all outside this sample; see §5.3.)
 
 ---
 
@@ -218,19 +219,19 @@ non-existent defect. False-positive count remains 0.)
 
 ### 5.1 Functionality/Property → CWE
 
-| Prop | Functionality / property violated | CWE | Count | Percentage | Verified in sample | Real |
-|---|---|---|---|---|---|---|
-| P1 | operand arity (extra operands; register-list cardinality) | CWE-628 | 91 | 17.9% | 23 | 23 |
-| P2 | register class/width validation | CWE-20 | 207 | 40.7% | 38 | 38 |
-| P3 | arrangement/dest-type consistency | CWE-20 | 35 | 6.9% | 4 | 4 |
-| P4 | register identity in slot 31 (SP↔ZR) | CWE-20 | 82 | 16.1% | 16 | 16 |
-| P5 | immediate/encoding selection (range, masking, differential) | CWE-190/681 | 52 | 10.2% | 12 | 12 |
-| P6 | shift kind/amount validity | CWE-478 | 22 | 4.3% | 3 | 3 |
-| P7 | relocation-modifier grammar | CWE-20 | 3 | 0.6% | 2 | 2 |
-| P8 | acceptance of valid syntax | CWE-1023 | 8 | 1.6% | 1 | 1 |
-| P9 | CU aliasing/writeback diagnostics | CWE-754 | 3 | 0.6% | 1 | 1 |
-| P— | non-assembler (C-level/IR, source encoding, meta) | — | 6 | 1.2% | 0 | 0 |
-| | **Total** | | **509** | **100%** | **100** | **100** |
+| Prop | Functionality / property violated | CWE | Count | Percentage | FP (full run) | Real (full run) | Verified in sample | Real (sample) |
+|---|---|---|---|---|---|---|---|---|
+| P1 | operand arity (extra operands; register-list cardinality) | CWE-628 | 91 | 17.9% | 0 | 91 | 23 | 23 |
+| P2 | register class/width validation | CWE-20 | 207 | 40.7% | 0 | 207 | 38 | 38 |
+| P3 | arrangement/dest-type consistency | CWE-20 | 35 | 6.9% | 0 | 35 | 4 | 4 |
+| P4 | register identity in slot 31 (SP↔ZR) | CWE-20 | 82 | 16.1% | 0 | 82 | 16 | 16 |
+| P5 | immediate/encoding selection (range, masking, differential) | CWE-190/681 | 52 | 10.2% | 0 | 52 | 12 | 12 |
+| P6 | shift kind/amount validity | CWE-478 | 22 | 4.3% | 0 | 22 | 3 | 3 |
+| P7 | relocation-modifier grammar | CWE-20 | 3 | 0.6% | 0 | 3 | 2 | 2 |
+| P8 | acceptance of valid syntax | CWE-1023 | 8 | 1.6% | 3 | 5 | 1 | 1 |
+| P9 | CU aliasing/writeback diagnostics | CWE-754 | 3 | 0.6% | 0 | 3 | 1 | 1 |
+| P— | non-assembler (C-level/IR, source encoding, meta) | — | 6 | 1.2% | 0 | 6 | 0 | 0 | 0 |
+| | **Total** | | **509** | **100%** | **3** | **506** | **100** | **100** |
 
 ### 5.2 CWE Roll-up
 
@@ -240,7 +241,7 @@ non-existent defect. False-positive count remains 0.)
 | CWE-628 Incorrectly Specified Arguments (P1) | 91 | 17.9% |
 | CWE-190/681 Integer Wraparound / Incorrect Conversion (P5) | 52 | 10.2% |
 | CWE-478 Unsafe Default Case (P6) | 22 | 4.3% |
-| CWE-1023 Incomplete Implementation (P8) | 8 | 1.6% |
+| CWE-1023 Incomplete Implementation (P8) | 8 | 1.6% | — of which **3 are false positives** (#30 #119 #247: "rejects GNU alias" — gas 2.42 rejects too; real P8 defects = 5) |
 | CWE-754 Improper Check for Exceptional Conditions (P9) | 3 | 0.6% |
 | non-assembler/unclassified (#2 #3 #4 #508 #509 #510) | 6 | 1.2% |
 
