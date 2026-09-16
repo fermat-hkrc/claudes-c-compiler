@@ -6684,19 +6684,30 @@ cargo test --lib pbt_tests -- --nocapture | grep -i pua
 ```
 **Verdict:** real — no gcc equivalent (gcc keeps bytes verbatim); see pbt-out/bug_reports/encoding_pua_collision.md
 
-## #509 — ccc-i686 -static emits entry = main, no C runtime (linker, i686)
+## #509 — ccc-i686 -static silently omits the C runtime when the 32-bit sysroot is absent (linker, i686)
 
 **Input:** `int main(void){return 7;}`
 
-```bash
-./target/debug/ccc-i686 -static /tmp/t7.c -o /tmp/t7
-qemu-i386-static /tmp/t7; echo $?            # expected: SIGSEGV (139) — ret jumps to argc
-readelf -h /tmp/t7 | grep Entry              # expected: entry = main (0x8049000), text = 0x10 bytes
+**Precondition (important):** the defect manifests only when the system lacks the i686
+sysroot (`/usr/i686-linux-gnu/lib/{crt1.o,libc.a}`). On machines with `gcc-i686-linux-gnu`
+installed, ccc links correctly (exit 7) — verified: the apt install of the cross-gcc pulls
+in `libc6-dev-i386-cross`, which changed the behavior mid-verification. To reproduce with
+the sysroot present, hide it temporarily (`sudo mv /usr/i686-linux-gnu /usr/i686-linux-gnu.bak`)
+or use a clean container.
 
-i686-linux-gnu-gcc -static /tmp/t7.c -o /tmp/t7_gnu
-qemu-i386-static /tmp/t7_gnu; echo $?        # expected: 7 — proper _start (0x80496f0)
+```bash
+# with sysroot ABSENT:
+./target/debug/ccc-i686 -static /tmp/t7.c -o /tmp/t7
+qemu-i386-static /tmp/t7; echo $?            # expected: SIGSEGV (139) — main's ret jumps to argc
+readelf -h /tmp/t7 | grep Entry              # expected: entry == main's address; R E segment ≈ 0x10 bytes
+
+i686-linux-gnu-gcc -static /tmp/t7.c -o /tmp/t7_gnu   # reference: links fine on same machine
+qemu-i386-static /tmp/t7_gnu; echo $?        # expected: 7 — proper _start + glibc crt
 ```
-**Verdict:** real — environment-independent (filed as issue #509)
+**Verdict:** real — conditional (missing-sysroot silent degradation instead of a
+"cannot find -lc" diagnostic; GCC hard-errors in the same situation). Filed as issue #509;
+exact entry addresses vary by build — check entry==main and the 0x10-byte text segment,
+not the absolute address.
 
 ## #510 — invalid float↔pointer casts silently accepted; float→ptr = bitcast (frontend, C)
 
