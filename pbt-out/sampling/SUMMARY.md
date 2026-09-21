@@ -17,6 +17,7 @@
 | Coverage | **509/509 issues verified live** (503 ARM issues via the ccc-arm / gcc / clang command-line pipeline with `objdump` encoding comparison; 6 C-level and encoding issues verified individually) |
 | **Defect realness** | **506 real (99.4%) · 3 false positives (0.6%, user-confirmed)** |
 | Issue-text fidelity | 3 wording/severity amendments (#17, #150, #497); defects stand |
+| One functional-logic category | **Instruction-encoding contract not enforced** — 506/506 real defects. ccc does not check the architectural / language contract that gcc/clang enforce. C1–C8 below are the eight compiler-layer slices of this one defect, not eight independent diseases. |
 | Dominant compiler failure | Severity class S2 "invalid input silently accepted and encoded": 459/509 (90.2%) — invalid input is turned into machine code with zero diagnostics |
 | Most harmful class | Severity class S1 "silent wrong code on valid input" (20 issues) — including the half-precision (`__fp16`) encoding family |
 | Crash exposure | **15 crash-capable paths**: 9 panics reachable through the command-line interface + 6 latent encoder panics that an earlier parser stage or warning path hides |
@@ -49,16 +50,17 @@ Every verdict is backed by a reproducible witness; nothing is judged by inspecti
 
 ## 3. Full-Tracker Statistics (n = 509)
 
-### 3.1 Classification by ccc subsystem (where in the compiler the defect lives)
+### 3.1 One functional-logic category, eight compiler-layer slices
 
-Taxonomy is **compiler-internal**: each real defect is attributed to the ccc layer whose missing
-check or wrong bit-packing produces it (paths under `src/`). Counts are **re-derived from the 509-row
-tracker by deterministic rules** (gcc/gas diagnostic text + input features + verdict class); the complete
-per-issue assignment is in `classification_per_issue.tsv`, so every count below is traceable to individual
-rows. These 8 categories supersede the earlier 10-layer (L1–L10) aggregate table; both taxonomies total 506.
-CWE labels are dropped — see 3.2.
+All **506 real defects** are one functional-logic failure of ccc:
 
-| Category | Missing / wrong mechanism in ccc | ccc code location | Real defects | % of 509 |
+| Big category | Definition | Real defects |
+|---|---|---|
+| **Instruction-encoding contract not enforced** | ccc does not enforce the architectural / language contract that gcc/clang enforce. The assembler encoder (C1–C6, 486) trusts its operands and emits a machine word anyway; the parser / diagnostics layer (C7, 14) does not enforce grammar or CONSTRAINED UNPREDICTABLE warnings; the remaining 6 (C8) are the same contract failure outside the assembler (C frontend, source decoding, linker). | **506** |
+
+C1–C8 are **slices of that one category** — where in the compiler the missing check lives (`src/` paths). Counts are re-derived from the 509-row tracker by deterministic rules; the complete per-issue assignment is in `classification_per_issue.tsv`. CWE labels are dropped — see 3.2.
+
+| Slice | Missing / wrong mechanism in ccc | ccc code location | Real defects | % of 509 |
 |---|---|---|---|---|
 | C1 Operand-arity and addressing-mode acceptance | trailing extra operands, invalid register lists, invalid writeback/post-index forms silently consumed | per-mnemonic handlers, `src/backend/arm/assembler/encoder/*.rs`, `encoder/load_store.rs` | 108 | 21.2% |
 | C2 Register-kind validation | floating-point/SIMD register accepted in an integer-register slot (or the reverse) | `encoder/data_processing.rs` and others | 91 | 17.9% |
@@ -228,6 +230,7 @@ Full 509-row cross-check: `pbt-out/full_verification_tracker.md`. Per-issue cate
 | 覆盖 | **509/509 条问题全部实测**（503 条 ARM 问题经 ccc-arm / gcc / clang 命令行管线并逐字比较 `objdump` 编码；6 条 C 层/编码问题逐条单独验证） |
 | **缺陷真实性** | **506 条真实（99.4%）· 3 条误报（0.6%，经用户确认）** |
 | 问题文本保真度 | 3 处措辞/严重度修正（#17、#150、#497）；缺陷本身成立 |
+| 一个功能逻辑大类 | **指令编码契约未强制执行** —— 506/506 条真实缺陷。ccc 不检查 gcc/clang 所强制的架构/语言契约。下文 C1–C8 是这一缺陷在编译器各层的八个切片，不是八种独立疾病。 |
 | 主导性编译器失效 | 严重度等级 S2"非法输入被静默接受并编码"：459/509（90.2%）——非法输入在零诊断的情况下被转成机器码 |
 | 危害最大的类别 | 严重度等级 S1"合法输入被静默错误编码"（20 条）——含半精度（`__fp16`）编码家族 |
 | 崩溃暴露面 | **15 条可崩溃路径**：9 条可经命令行界面触发的 panic + 6 条被更早的解析阶段或告警路径遮蔽的潜在编码器 panic |
@@ -253,11 +256,17 @@ Full 509-row cross-check: `pbt-out/full_verification_tracker.md`. Per-issue cate
 
 ## 3. 全量统计（n = 509）
 
-### 3.1 按 ccc 子系统分类（缺陷位于编译器何处）
+### 3.1 一个功能逻辑大类，八个编译器层切片
 
-分类为**编译器内部视角**：每条真实缺陷归入"缺失的检查或错误的位打包"所在的 ccc 层（`src/` 下的路径）。计数由**确定性规则从 509 行 tracker 重新推导**（gcc/gas 诊断文本 + 输入特征 + 判定类别）；逐条分配完整保存在 `classification_per_issue.tsv`，下表每个数字都可回溯到具体行。这 8 类取代先前 L1–L10 聚合表；两种分类合计均为 506。CWE 标签弃用——见 3.2。
+全部 **506 条真实缺陷**是 ccc 的同一种功能逻辑失效：
 
-| 类别 | ccc 中缺失/出错的机制 | ccc 代码位置 | 真实缺陷 | 占 509 |
+| 大类 | 定义 | 真实缺陷 |
+|---|---|---|
+| **指令编码契约未强制执行** | ccc 不强制执行 gcc/clang 所强制的架构/语言契约。汇编编码器（C1–C6，486 条）信任其操作数并照样产出机器字；解析器/诊断层（C7，14 条）不强制语法或 CONSTRAINED UNPREDICTABLE 告警；其余 6 条（C8）是汇编器之外同一契约失效（C 前端、源码解码、链接器）。 | **506** |
+
+C1–C8 是**该大类的切片**——缺失的检查位于编译器何处（`src/` 路径）。计数由确定性规则从 509 行 tracker 重新推导；逐条分配见 `classification_per_issue.tsv`。CWE 标签弃用——见 3.2。
+
+| 切片 | ccc 中缺失/出错的机制 | ccc 代码位置 | 真实缺陷 | 占 509 |
 |---|---|---|---|---|
 | C1 操作数个数与寻址模式检查缺失 | 尾随多余操作数、非法寄存器列表、非法写回/后递增形式被静默消费 | 各助记符处理，`src/backend/arm/assembler/encoder/*.rs`、`encoder/load_store.rs` | 108 | 21.2% |
 | C2 寄存器种类校验 | 浮点/SIMD 寄存器被接受于整数寄存器槽（或反向） | `encoder/data_processing.rs` 等 | 91 | 17.9% |
