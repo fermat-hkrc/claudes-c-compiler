@@ -1,0 +1,510 @@
+issue	verdict_class	severity	category	rule
+2	C-level	S1	C8	C-level/linker/source special
+3	C-level	S2	C8	C-level/linker/source special
+4	C-level	S1	C8	C-level/linker/source special
+5	silent-accept	S2	C1	arity/list/addressing
+6	silent-accept	S2	C2	register kind
+7	silent-accept	S2	C3	width/arrangement mismatch
+8	silent-accept	S2	C4	sp/zr operand + register-slot error
+9	silent-accept	S2	C4	sp/zr operand + register-slot error
+10	silent-accept	S2	C2	register kind
+11	silent-accept	S2	C5	immediate range
+12	silent-accept	S2	C6	shift/extend validity
+13	silent-accept	S2	C3	width/arrangement mismatch
+14	silent-accept	S2	C6	shift/extend validity
+15	differential	S1	C4	differential: valid input, wrong word (category by root cause)
+16	silent-accept	S2	C2	register kind
+17	silent-accept	S2	C5	immediate range
+18	silent-accept	S2	C7	relocation-modifier grammar
+19	silent-accept	S2	C4	sp/zr operand + register-slot error
+20	silent-accept	S2	C3	width/arrangement mismatch
+21	silent-accept	S2	C2	register kind
+22	silent-accept	S2	C4	sp/zr operand + register-slot error
+23	silent-accept	S2	C3	width/arrangement mismatch
+24	silent-accept	S2	C3	width/arrangement mismatch
+25	silent-accept	S2	C6	shift/extend validity
+26	silent-accept	S2	C4	sp/zr operand + register-slot error
+27	silent-accept	S2	C6	invalid shift operator token
+28	silent-accept	S2	C6	shift/extend validity
+29	silent-accept	S2	C2	register kind
+30	false-positive	FP	FP	false positive (excluded)
+31	silent-accept	S2	C3	width/arrangement mismatch
+32	silent-accept	S2	C6	shift/extend validity
+33	silent-accept	S2	C4	sp/zr operand + register-slot error
+34	silent-accept	S2	C6	shift/extend validity
+35	silent-accept	S2	C1	arity/list/addressing
+36	reverse	S5	C7	rejects valid syntax
+37	parser-masked	S2	C7	relocation-modifier grammar
+38	silent-accept	S2	C1	arity/list/addressing
+39	silent-accept	S2	C2	register kind
+40	silent-accept	S2	C3	width/arrangement mismatch
+41	silent-accept	S2	C3	width/arrangement mismatch
+42	silent-accept	S2	C1	arity/list/addressing
+43	silent-accept	S2	C2	register kind
+44	silent-accept	S2	C4	sp/zr operand + register-slot error
+45	silent-accept	S2	C3	width/arrangement mismatch
+46	silent-accept	S2	C1	arity/list/addressing
+47	silent-accept	S2	C2	register kind
+48	silent-accept	S2	C4	sp/zr operand + register-slot error
+49	silent-accept	S2	C3	width/arrangement mismatch
+50	silent-accept	S2	C1	arity/list/addressing
+51	reverse	S5	C7	rejects valid syntax
+52	parser-masked	S2	C7	relocation-modifier grammar
+53	silent-accept	S2	C1	arity/list/addressing
+54	silent-accept	S2	C2	register kind
+55	reverse	S5	C7	rejects valid syntax
+56	silent-accept	S2	C4	sp/zr operand + register-slot error
+57	silent-accept	S2	C1	arity/list/addressing
+58	silent-accept	S2	C2	register kind
+59	silent-accept	S2	C5	immediate range
+60	silent-accept	S2	C3	width/arrangement mismatch
+61	silent-accept	S2	C4	sp/zr operand + register-slot error
+62	silent-accept	S2	C5	condition-code domain (AL/NV)
+63	silent-accept	S2	C1	arity/list/addressing
+64	silent-accept	S2	C2	register kind
+65	silent-accept	S2	C3	width/arrangement mismatch
+66	silent-accept	S2	C4	sp/zr operand + register-slot error
+67	silent-accept	S2	C5	condition-code domain (AL/NV)
+68	silent-accept	S2	C1	arity/list/addressing
+69	silent-accept	S2	C2	register kind
+70	silent-accept	S2	C3	width/arrangement mismatch
+71	silent-accept	S2	C4	sp/zr operand + register-slot error
+72	silent-accept	S2	C1	register where immediate/shift-form required
+73	silent-accept	S2	C2	register kind
+74	warn-accepts	S4	C1	arity/list/addressing
+75	silent-accept	S2	C6	shift/extend validity
+76	silent-accept	S2	C4	sp/zr operand + register-slot error
+77	silent-accept	S2	C4	sp/zr operand + register-slot error
+78	silent-accept	S2	C1	register where immediate/shift-form required
+79	silent-accept	S2	C2	register kind
+80	warn-accepts	S4	C1	arity/list/addressing
+81	silent-accept	S2	C6	shift/extend validity
+82	silent-accept	S2	C4	sp/zr operand + register-slot error
+83	silent-accept	S2	C4	sp/zr operand + register-slot error
+84	silent-accept	S2	C5	condition-code domain (AL/NV)
+85	silent-accept	S2	C1	arity/list/addressing
+86	silent-accept	S2	C2	register kind
+87	silent-accept	S2	C3	width/arrangement mismatch
+88	silent-accept	S2	C4	sp/zr operand + register-slot error
+89	silent-accept	S2	C1	arity/list/addressing
+90	silent-accept	S2	C2	register kind
+91	silent-accept	S2	C3	width/arrangement mismatch
+92	silent-accept	S2	C4	sp/zr operand + register-slot error
+93	silent-accept	S2	C5	condition-code domain (AL/NV)
+94	silent-accept	S2	C1	arity/list/addressing
+95	silent-accept	S2	C2	register kind
+96	silent-accept	S2	C4	sp/zr operand + register-slot error
+97	silent-accept	S2	C5	condition-code domain (AL/NV)
+98	silent-accept	S2	C1	arity/list/addressing
+99	silent-accept	S2	C2	register kind
+100	silent-accept	S2	C4	sp/zr operand + register-slot error
+101	silent-accept	S2	C1	arity/list/addressing
+102	silent-accept	S2	C2	register kind
+103	silent-accept	S2	C3	width/arrangement mismatch
+104	silent-accept	S2	C4	sp/zr operand + register-slot error
+105	silent-accept	S2	C1	arity/list/addressing
+106	silent-accept	S2	C2	register kind
+107	silent-accept	S2	C3	width/arrangement mismatch
+108	silent-accept	S2	C4	sp/zr operand + register-slot error
+109	silent-accept	S2	C1	arity/list/addressing
+110	silent-accept	S2	C2	register kind
+111	silent-accept	S2	C3	width/arrangement mismatch
+112	silent-accept	S2	C4	sp/zr operand + register-slot error
+113	silent-accept	S2	C1	arity/list/addressing
+114	silent-accept	S2	C2	register kind
+115	silent-accept	S2	C3	width/arrangement mismatch
+116	silent-accept	S2	C4	sp/zr operand + register-slot error
+117	silent-accept	S2	C6	shift/extend validity
+118	silent-accept	S2	C2	register kind
+119	false-positive	FP	FP	false positive (excluded)
+120	silent-accept	S2	C3	width/arrangement mismatch
+121	silent-accept	S2	C6	shift/extend validity
+122	silent-accept	S2	C4	sp/zr operand + register-slot error
+123	silent-accept	S2	C6	shift/extend validity
+124	silent-accept	S2	C1	arity/list/addressing
+125	silent-accept	S2	C4	sp/zr operand + register-slot error
+126	silent-accept	S2	C3	width/arrangement mismatch
+127	silent-accept	S2	C3	width/arrangement mismatch
+128	silent-accept	S2	C1	arity/list/addressing
+129	silent-accept	S2	C3	width/arrangement mismatch
+130	warn-accepts	S4	C3	width/arrangement mismatch
+131	warn-accepts	S4	C1	arity/list/addressing
+132	warn-accepts	S4	C2	register kind
+133	silent-accept	S2	C3	width/arrangement mismatch
+134	silent-accept	S2	C1	arity/list/addressing
+135	silent-accept	S2	C2	register kind
+136	panic-on-invalid	S3	C5	immediate range
+137	silent-accept	S2	C1	arity/list/addressing
+138	silent-accept	S2	C5	immediate range
+139	differential	S1	C3	differential: valid input, wrong word (category by root cause)
+140	silent-accept	S2	C2	register kind
+141	silent-accept	S2	C4	sp/zr operand + register-slot error
+142	silent-accept	S2	C2	register kind
+143	silent-accept	S2	C3	width/arrangement mismatch
+144	silent-accept	S2	C1	arity/list/addressing
+145	silent-accept	S2	C2	register kind
+146	silent-accept	S2	C3	width/arrangement mismatch
+147	silent-accept	S2	C1	arity/list/addressing
+148	silent-accept	S2	C4	sp/zr operand + register-slot error
+149	silent-accept	S2	C3	width/arrangement mismatch
+150	warning-class-CU	S4	C7	missing CU warning
+151	silent-accept	S2	C3	width/arrangement mismatch
+152	silent-accept	S2	C4	sp/zr operand + register-slot error
+153	silent-accept	S2	C3	width/arrangement mismatch
+154	silent-accept	S2	C1	arity/list/addressing
+155	silent-accept	S2	C2	register kind
+156	silent-accept	S2	C2	register kind
+157	silent-accept	S2	C3	width/arrangement mismatch
+158	silent-accept	S2	C1	arity/list/addressing
+159	silent-accept	S2	C2	register kind
+160	silent-accept	S2	C1	arity/list/addressing
+161	silent-accept	S2	C4	sp/zr operand + register-slot error
+162	silent-accept	S2	C3	width/arrangement mismatch
+163	warning-class-CU	S4	C7	missing CU warning
+164	silent-accept	S2	C3	width/arrangement mismatch
+165	silent-accept	S2	C3	width/arrangement mismatch
+166	silent-accept	S2	C4	sp/zr operand + register-slot error
+167	silent-accept	S2	C2	register kind
+168	silent-accept	S2	C1	register where immediate/shift-form required
+169	silent-accept	S2	C2	register kind
+170	silent-accept	S2	C3	width/arrangement mismatch
+171	silent-accept	S2	C3	width/arrangement mismatch
+172	silent-accept	S2	C3	width/arrangement mismatch
+173	silent-accept	S2	C6	shift/extend validity
+174	silent-accept	S2	C4	sp/zr operand + register-slot error
+175	silent-accept	S2	C6	invalid shift operator token
+176	silent-accept	S2	C1	arity/list/addressing
+177	silent-accept	S2	C2	register kind
+178	silent-accept	S2	C3	width/arrangement mismatch
+179	silent-accept	S2	C4	sp/zr operand + register-slot error
+180	silent-accept	S2	C6	shift/extend validity
+181	silent-accept	S2	C2	register kind
+182	silent-accept	S2	C5	immediate range
+183	silent-accept	S2	C6	shift/extend validity
+184	silent-accept	S2	C4	sp/zr operand + register-slot error
+185	silent-accept	S2	C6	shift/extend validity
+186	silent-accept	S2	C2	register kind
+187	silent-accept	S2	C5	immediate range
+188	silent-accept	S2	C6	shift/extend validity
+189	silent-accept	S2	C4	sp/zr operand + register-slot error
+190	silent-accept	S2	C6	shift/extend validity
+191	silent-accept	S2	C2	register kind
+192	silent-accept	S2	C5	immediate range
+193	silent-accept	S2	C6	shift/extend validity
+194	silent-accept	S2	C4	sp/zr operand + register-slot error
+195	silent-accept	S2	C1	arity/list/addressing
+196	parser-masked	S2	C2	register kind
+197	silent-accept	S2	C3	width/arrangement mismatch
+198	parser-masked	S2	C5	immediate range
+199	silent-accept	S2	C5	immediate range
+200	silent-accept	S2	C1	arity/list/addressing
+201	silent-accept	S2	C2	register kind
+202	silent-accept	S2	C3	width/arrangement mismatch
+203	silent-accept	S2	C4	sp/zr operand + register-slot error
+204	silent-accept	S2	C1	arity/list/addressing
+205	silent-accept	S2	C2	register kind
+206	silent-accept	S2	C3	width/arrangement mismatch
+207	silent-accept	S2	C3	width/arrangement mismatch
+208	silent-accept	S2	C3	width/arrangement mismatch
+209	silent-accept	S2	C4	sp/zr operand + register-slot error
+210	silent-accept	S2	C6	shift/extend validity
+211	silent-accept	S2	C6	shift/extend validity
+212	silent-accept	S2	C2	register kind
+213	silent-accept	S2	C3	width/arrangement mismatch
+214	silent-accept	S2	C1	arity/list/addressing
+215	silent-accept	S2	C3	width/arrangement mismatch
+216	silent-accept	S2	C3	width/arrangement mismatch
+217	silent-accept	S2	C6	shift/extend validity
+218	silent-accept	S2	C4	sp/zr operand + register-slot error
+219	silent-accept	S2	C1	arity/list/addressing
+220	silent-accept	S2	C3	width/arrangement mismatch
+221	silent-accept	S2	C2	register kind
+222	silent-accept	S2	C5	immediate range
+223	silent-accept	S2	C6	shift/extend validity
+224	silent-accept	S2	C6	shift/extend validity
+225	silent-accept	S2	C6	shift/extend validity
+226	silent-accept	S2	C2	register kind
+227	silent-accept	S2	C3	width/arrangement mismatch
+228	silent-accept	S2	C6	shift/extend validity
+229	silent-accept	S2	C4	sp/zr operand + register-slot error
+230	silent-accept	S2	C1	arity/list/addressing
+231	silent-accept	S2	C3	width/arrangement mismatch
+232	silent-accept	S2	C2	register kind
+233	silent-accept	S2	C5	immediate range
+234	panic-on-invalid	S3	C5	immediate range
+235	silent-accept	S2	C2	register kind
+236	silent-accept	S2	C2	register kind
+237	parser-masked	S3	C1	arity/list/addressing
+238	silent-accept	S2	C1	arity/list/addressing
+239	silent-accept	S2	C1	arity/list/addressing
+240	silent-accept	S2	C2	register kind
+241	silent-accept	S2	C3	width/arrangement mismatch
+242	silent-accept	S2	C3	width/arrangement mismatch
+243	silent-accept	S2	C1	arity/list/addressing
+244	silent-accept	S2	C3	width/arrangement mismatch
+245	silent-accept	S2	C6	shift/extend validity
+246	silent-accept	S2	C2	register kind
+247	false-positive	FP	FP	false positive (excluded)
+248	silent-accept	S2	C3	width/arrangement mismatch
+249	silent-accept	S2	C3	width/arrangement mismatch
+250	silent-accept	S2	C3	width/arrangement mismatch
+251	silent-accept	S2	C6	shift/extend validity
+252	silent-accept	S2	C4	sp/zr operand + register-slot error
+253	silent-accept	S2	C1	arity/list/addressing
+254	silent-accept	S2	C6	shift/extend validity
+255	silent-accept	S2	C1	arity/list/addressing
+256	silent-accept	S2	C2	register kind
+257	silent-accept	S2	C4	sp/zr operand + register-slot error
+258	silent-accept	S2	C3	width/arrangement mismatch
+259	silent-accept	S2	C1	arity/list/addressing
+260	silent-accept	S2	C2	register kind
+261	silent-accept	S2	C3	width/arrangement mismatch
+262	silent-accept	S2	C4	sp/zr operand + register-slot error
+263	silent-accept	S2	C3	x86 operand-size mismatch
+264	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+265	warning-class-CU	S4	C7	missing CU warning
+266	silent-accept	S2	C1	arity/list/addressing
+267	silent-accept	S2	C2	register kind
+268	silent-accept	S2	C3	width/arrangement mismatch
+269	silent-accept	S2	C5	immediate range
+270	silent-accept	S2	C3	width/arrangement mismatch
+271	silent-accept	S2	C1	arity/list/addressing
+272	silent-accept	S2	C2	register kind
+273	silent-accept	S2	C3	width/arrangement mismatch
+274	silent-accept	S2	C5	immediate range
+275	silent-accept	S2	C5	immediate range
+276	silent-accept	S2	C1	arity/list/addressing
+277	silent-accept	S2	C2	register kind
+278	silent-accept	S2	C4	sp/zr operand + register-slot error
+279	silent-accept	S2	C3	width/arrangement mismatch
+280	silent-accept	S2	C1	arity/list/addressing
+281	silent-accept	S2	C2	register kind
+282	silent-accept	S2	C1	arity/list/addressing
+283	silent-accept	S2	C3	width/arrangement mismatch
+284	silent-accept	S2	C1	arity/list/addressing
+285	silent-accept	S2	C1	arity/list/addressing
+286	silent-accept	S2	C1	arity/list/addressing
+287	silent-accept	S2	C3	width/arrangement mismatch
+288	silent-accept	S2	C3	width/arrangement mismatch
+289	silent-accept	S2	C1	arity/list/addressing
+290	silent-accept	S2	C2	register kind
+291	panic-on-invalid	S3	C5	immediate range
+292	silent-accept	S2	C2	register kind
+293	silent-accept	S2	C1	arity/list/addressing
+294	silent-accept	S2	C2	register kind
+295	silent-accept	S2	C4	sp/zr operand + register-slot error
+296	silent-accept	S2	C3	width/arrangement mismatch
+297	silent-accept	S2	C1	arity/list/addressing
+298	silent-accept	S2	C2	register kind
+299	silent-accept	S2	C4	sp/zr operand + register-slot error
+300	silent-accept	S2	C3	width/arrangement mismatch
+301	silent-accept	S2	C2	register kind
+302	silent-accept	S2	C1	arity/list/addressing
+303	silent-accept	S2	C3	width/arrangement mismatch
+304	silent-accept	S2	C1	arity/list/addressing
+305	silent-accept	S2	C4	sp/zr operand + register-slot error
+306	silent-accept	S2	C1	arity/list/addressing
+307	silent-accept	S2	C2	register kind
+308	silent-accept	S2	C4	sp/zr operand + register-slot error
+309	silent-accept	S2	C3	width/arrangement mismatch
+310	silent-accept	S2	C1	arity/list/addressing
+311	silent-accept	S2	C2	register kind
+312	silent-accept	S2	C1	arity/list/addressing
+313	silent-accept	S2	C1	arity/list/addressing
+314	silent-accept	S2	C2	register kind
+315	silent-accept	S2	C1	arity/list/addressing
+316	silent-accept	S2	C2	register kind
+317	silent-accept	S2	C1	arity/list/addressing
+318	silent-accept	S2	C4	sp/zr operand + register-slot error
+319	silent-accept	S2	C3	width/arrangement mismatch
+320	warning-class-CU	S4	C7	missing CU warning
+321	silent-accept	S2	C3	width/arrangement mismatch
+322	silent-accept	S2	C3	width/arrangement mismatch
+323	silent-accept	S2	C4	sp/zr operand + register-slot error
+324	silent-accept	S2	C1	arity/list/addressing
+325	silent-accept	S2	C2	register kind
+326	reverse	S5	C7	rejects valid syntax
+327	silent-accept	S2	C5	immediate range
+328	silent-accept	S2	C4	sp/zr operand + register-slot error
+329	silent-accept	S2	C3	width/arrangement mismatch
+330	silent-accept	S2	C3	width/arrangement mismatch
+331	silent-accept	S2	C6	shift/extend validity
+332	warning-class-CU	S4	C7	missing CU warning
+333	silent-accept	S2	C4	sp/zr operand + register-slot error
+334	silent-accept	S2	C1	arity/list/addressing
+335	silent-accept	S2	C2	register kind
+336	silent-accept	S2	C5	immediate range
+337	silent-accept	S2	C4	sp/zr operand + register-slot error
+338	silent-accept	S2	C3	width/arrangement mismatch
+339	silent-accept	S2	C3	width/arrangement mismatch
+340	silent-accept	S2	C4	sp/zr operand + register-slot error
+341	silent-accept	S2	C6	shift/extend validity
+342	silent-accept	S2	C1	arity/list/addressing
+343	silent-accept	S2	C2	register kind
+344	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+345	silent-accept	S2	C3	width/arrangement mismatch
+346	silent-accept	S2	C6	shift/extend validity
+347	silent-accept	S2	C4	sp/zr operand + register-slot error
+348	silent-accept	S2	C1	arity/list/addressing
+349	silent-accept	S2	C2	register kind
+350	silent-accept	S2	C4	sp/zr operand + register-slot error
+351	silent-accept	S2	C3	width/arrangement mismatch
+352	silent-accept	S2	C4	sp/zr operand + register-slot error
+353	silent-accept	S2	C5	immediate range
+354	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+355	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+356	silent-accept	S2	C4	sp/zr operand + register-slot error
+357	silent-accept	S2	C1	arity/list/addressing
+358	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+359	silent-accept	S2	C3	width/arrangement mismatch
+360	silent-accept	S2	C5	immediate range
+361	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+362	silent-accept	S2	C4	sp/zr operand + register-slot error
+363	silent-accept	S2	C2	register kind
+364	silent-accept	S2	C1	arity/list/addressing
+365	silent-accept	S2	C1	arity/list/addressing
+366	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+367	silent-accept	S2	C3	width/arrangement mismatch
+368	silent-accept	S2	C1	arity/list/addressing
+369	silent-accept	S2	C3	width/arrangement mismatch
+370	silent-accept	S2	C4	sp/zr operand + register-slot error
+371	silent-accept	S2	C3	width/arrangement mismatch
+372	silent-accept	S2	C2	register kind
+373	silent-accept	S2	C1	arity/list/addressing
+374	silent-accept	S2	C3	width/arrangement mismatch
+375	silent-accept	S2	C2	register kind
+376	silent-accept	S2	C4	sp/zr operand + register-slot error
+377	silent-accept	S2	C1	arity/list/addressing
+378	silent-accept	S2	C2	register kind
+379	panic-on-invalid	S3	C5	immediate range
+380	silent-accept	S2	C3	width/arrangement mismatch
+381	silent-accept	S2	C4	sp/zr operand + register-slot error
+382	silent-accept	S2	C1	arity/list/addressing
+383	silent-accept	S2	C2	register kind
+384	panic-on-invalid	S3	C5	immediate range
+385	silent-accept	S2	C3	width/arrangement mismatch
+386	silent-accept	S2	C4	sp/zr operand + register-slot error
+387	silent-accept	S2	C3	width/arrangement mismatch
+388	silent-accept	S2	C1	arity/list/addressing
+389	silent-accept	S2	C2	register kind
+390	silent-accept	S2	C3	width/arrangement mismatch
+391	silent-accept	S2	C1	arity/list/addressing
+392	silent-accept	S2	C4	sp/zr operand + register-slot error
+393	silent-accept	S2	C3	width/arrangement mismatch
+394	silent-accept	S2	C4	sp/zr operand + register-slot error
+395	silent-accept	S2	C1	arity/list/addressing
+396	silent-accept	S2	C2	register kind
+397	silent-accept	S2	C3	width/arrangement mismatch
+398	silent-accept	S2	C4	sp/zr operand + register-slot error
+399	silent-accept	S2	C1	arity/list/addressing
+400	silent-accept	S2	C2	register kind
+401	silent-accept	S2	C3	width/arrangement mismatch
+402	silent-accept	S2	C4	sp/zr operand + register-slot error
+403	silent-accept	S2	C1	arity/list/addressing
+404	silent-accept	S2	C2	register kind
+405	silent-accept	S2	C5	immediate range
+406	silent-accept	S2	C3	width/arrangement mismatch
+407	silent-accept	S2	C4	sp/zr operand + register-slot error
+408	silent-accept	S2	C1	arity/list/addressing
+409	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+410	silent-accept	S2	C4	sp/zr operand + register-slot error
+411	reverse	S5	C7	rejects valid syntax
+412	silent-accept	S2	C3	width/arrangement mismatch
+413	silent-accept	S2	C1	arity/list/addressing
+414	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+415	silent-accept	S2	C3	width/arrangement mismatch
+416	silent-accept	S2	C1	arity/list/addressing
+417	silent-accept	S2	C2	register kind
+418	silent-accept	S2	C3	width/arrangement mismatch
+419	silent-accept	S2	C4	sp/zr operand + register-slot error
+420	silent-accept	S2	C1	arity/list/addressing
+421	silent-accept	S2	C2	register kind
+422	silent-accept	S2	C3	width/arrangement mismatch
+423	silent-accept	S2	C4	sp/zr operand + register-slot error
+424	silent-accept	S2	C1	arity/list/addressing
+425	silent-accept	S2	C2	register kind
+426	silent-accept	S2	C3	width/arrangement mismatch
+427	silent-accept	S2	C3	width/arrangement mismatch
+428	silent-accept	S2	C4	sp/zr operand + register-slot error
+429	silent-accept	S2	C3	width/arrangement mismatch
+430	silent-accept	S2	C1	arity/list/addressing
+431	silent-accept	S2	C2	register kind
+432	silent-accept	S2	C3	width/arrangement mismatch
+433	silent-accept	S2	C4	sp/zr operand + register-slot error
+434	silent-accept	S2	C1	arity/list/addressing
+435	silent-accept	S2	C2	register kind
+436	panic-on-invalid	S3	C5	immediate range
+437	silent-accept	S2	C3	width/arrangement mismatch
+438	silent-accept	S2	C4	sp/zr operand + register-slot error
+439	silent-accept	S2	C1	arity/list/addressing
+440	silent-accept	S2	C2	register kind
+441	panic-on-invalid	S3	C5	immediate range
+442	silent-accept	S2	C3	width/arrangement mismatch
+443	silent-accept	S2	C4	sp/zr operand + register-slot error
+444	silent-accept	S2	C1	arity/list/addressing
+445	silent-accept	S2	C2	register kind
+446	silent-accept	S2	C5	immediate range
+447	silent-accept	S2	C3	width/arrangement mismatch
+448	silent-accept	S2	C4	sp/zr operand + register-slot error
+449	silent-accept	S2	C1	arity/list/addressing
+450	silent-accept	S2	C2	register kind
+451	silent-accept	S2	C5	immediate range
+452	silent-accept	S2	C3	width/arrangement mismatch
+453	silent-accept	S2	C4	sp/zr operand + register-slot error
+454	silent-accept	S2	C1	arity/list/addressing
+455	silent-accept	S2	C2	register kind
+456	panic-on-invalid	S3	C5	immediate range
+457	silent-accept	S2	C3	width/arrangement mismatch
+458	silent-accept	S2	C4	sp/zr operand + register-slot error
+459	silent-accept	S2	C1	arity/list/addressing
+460	silent-accept	S2	C2	register kind
+461	silent-accept	S2	C5	immediate range
+462	silent-accept	S2	C3	width/arrangement mismatch
+463	silent-accept	S2	C4	sp/zr operand + register-slot error
+464	silent-accept	S2	C1	arity/list/addressing
+465	silent-accept	S2	C2	register kind
+466	panic-on-invalid	S3	C5	immediate range
+467	silent-accept	S2	C3	width/arrangement mismatch
+468	silent-accept	S2	C4	sp/zr operand + register-slot error
+469	silent-accept	S2	C3	width/arrangement mismatch
+470	silent-accept	S2	C2	register kind
+471	silent-accept	S2	C1	arity/list/addressing
+472	silent-accept	S2	C2	register kind
+473	silent-accept	S2	C4	sp/zr operand + register-slot error
+474	silent-accept	S2	C1	arity/list/addressing
+475	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+476	silent-accept	S2	C3	width/arrangement mismatch
+477	silent-accept	S2	C1	arity/list/addressing
+478	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+479	silent-accept	S2	C3	width/arrangement mismatch
+480	silent-accept	S2	C1	arity/list/addressing
+481	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+482	silent-accept	S2	C3	width/arrangement mismatch
+483	silent-accept	S2	C1	arity/list/addressing
+484	differential	S1	C5	differential: valid input, wrong word (category by root cause)
+485	silent-accept	S2	C3	width/arrangement mismatch
+486	silent-accept	S2	C1	arity/list/addressing
+487	silent-accept	S2	C5	immediate range
+488	silent-accept	S2	C3	width/arrangement mismatch
+489	silent-accept	S2	C3	width/arrangement mismatch
+490	silent-accept	S2	C6	shift/extend validity
+491	silent-accept	S2	C1	arity/list/addressing
+492	silent-accept	S2	C2	register kind
+493	silent-accept	S2	C5	immediate range
+494	silent-accept	S2	C4	sp/zr operand + register-slot error
+495	silent-accept	S2	C3	width/arrangement mismatch
+496	silent-accept	S2	C6	shift/extend validity
+497	warning-class-CU	S4	C7	missing CU warning
+498	silent-accept	S2	C4	sp/zr operand + register-slot error
+499	silent-accept	S2	C1	arity/list/addressing
+500	silent-accept	S2	C1	arity/list/addressing
+501	silent-accept	S2	C2	register kind
+502	silent-accept	S2	C1	arity/list/addressing
+503	silent-accept	S2	C1	arity/list/addressing
+504	differential	S1	C1	differential: valid input, wrong word (category by root cause)
+505	differential	S1	C1	differential: valid input, wrong word (category by root cause)
+506	silent-accept	S2	C3	width/arrangement mismatch
+507	silent-accept(upgraded)	S2	C4	sp/zr operand + register-slot error
+508	C-level	S1	C8	C-level/linker/source special
+509	C-level	S4	C8	C-level/linker/source special
+510	C-level	S2	C8	C-level/linker/source special
