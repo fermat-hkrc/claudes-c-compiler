@@ -20,7 +20,7 @@
 | Dominant compiler failure | Severity class S2 "invalid input silently accepted and encoded": 459/509 (90.2%) — invalid input is turned into machine code with zero diagnostics |
 | Most harmful class | Severity class S1 "silent wrong code on valid input" (20 issues) — including the half-precision (`__fp16`) encoding family |
 | Crash exposure | **15 crash-capable paths**: 9 panics reachable through the command-line interface + 6 latent encoder panics that an earlier parser stage or warning path hides |
-| Fix leverage | A single trailing-operand check eliminates 80 defects (C1a); a shared register-slot checker addresses the 292-defect register family (C2–C4); one line fixes the 9-issue verified half-precision family |
+| Fix leverage | A single trailing-operand check eliminates 80 defects; a shared register-slot checker addresses the 292-defect register family (C2–C4); one line fixes the 9-issue verified half-precision family |
 
 **Bottom line:** the FM-Agent (property-based testing campaign) issue tracker is highly trustworthy — 506 of 509
 filed reports correspond to reproducible defects cross-confirmed against the GNU and LLVM toolchains
@@ -77,30 +77,6 @@ CWE labels are dropped — see 3.2.
 One deterministic classifier, each of the 506 real issues counted exactly once. Under these rules the
 6 missing-warning issues are counted in C7 (diagnostics); the 5 warn-then-accept issues fall into C1/C2/C3
 by their operand-level defect. A category × severity cross-check reproduces the 3.2 ladder exactly (20/459/10/12/5).
-
-**Deep derivation of the register-validation family** (the single largest disease, formerly aggregated as
-one "register class/width" layer of 207 + arrangement 35 + slot-31 82): the re-derivation splits it into
-C2 + C3 + C4 = **292 issues (57.4% of 509)**, with the following script-measured sub-buckets:
-
-| Sub-bucket | Count | Issues (examples) |
-|---|---|---|
-| C2a floating-point/SIMD register in an integer-register slot | 61 | #6 #16 #29 #43 #47 … |
-| C2b integer register in a floating-point/vector slot | 3 | #10 #240 #375 |
-| C2c other wrong register kind (register type / base-register kind) | 27 | #21 #39 #73 #79 … |
-| C3a W/X width mismatch ("operand mismatch") | 69 | #7 #13 #20 #24 #31 … |
-| C3b NEON arrangement mismatch | 33 | #23 #40 #41 #127 … |
-| C3c 32-bit register used as 64-bit base | 11 | #126 #143 #149 #162 … |
-| C3d other width mismatch (x86 operand-size #157 #263; ARM 64-bit store form #139) | 3 | #139 #157 #263 |
-| C4 stack-pointer/zero-register slot-31 identity | 85 | #8 #9 #15 #19 #22 … |
-| **Register family total (C2+C3+C4)** | **292** | |
-
-Sub-buckets of the other large categories (script-measured):
-
-| Category | Sub-buckets (count) |
-|---|---|
-| C1 (108) | trailing extra operands (80) · addressing-mode/writeback forms (17) · register-list validity (4: #237 #239 #243 #503) · register given where immediate/shift-form required (3: #72 #78 #168) · other (4: missing comma between operands #304 #364; ld2r addressing-form differentials #504 #505) |
-| C5 (51) | out-of-range immediate silently masked (24) · condition-code AL/NV accepted (5) · panic on out-of-range immediate (9) · wrong encoding form selected, valid input (13) |
-| C7 (14) | relocation-modifier grammar (3: #18 #37 #52) · valid syntax rejected (5: #36 #51 #55 #326 #411) · missing CONSTRAINED UNPREDICTABLE warnings (6: #150 #163 #265 #320 #332 #497) |
 
 **Reconciliation with the earlier aggregates (why 292, not 207):** the earlier taxonomy split register validation into three layers — L2 register class/width (207) + L3 arrangement (35) + L4 slot-31 (82) = **324 rows**; 207 was one slice of the family, never its total. The re-derivation draws the boundary by *the missing check*: every row whose missing check is a register-slot, width, arrangement, or slot-31 check lands in C2–C4 (292); rows in which a register merely appears but the missing check lies elsewhere leave the family — the 13 encoding-form-selection differentials sit in C5 (root cause the `fp_scalar.rs` type-field selection, not a register-slot check), extend-on-memory-operand checks in C6, writeback/addressing/operand-form checks in C1, missing CONSTRAINED UNPREDICTABLE warnings in C7. The earlier session published only layer aggregates, not per-issue assignments, so a row-by-row bridge to 207/35/82 cannot be reconstructed; the new assignment of all 506 real issues is fully published in `classification_per_issue.tsv`. Both taxonomies total 506.
 
@@ -208,8 +184,8 @@ because discovery was not its objective.
    **479 silent emission (S1+S2) + 15 crash-capable (all of S3 + 5 of S4) + 12 remainder (the other 7 S4
    diagnostics-only defects + the 5 S5 valid-input-rejected defects) = 506.**
 2. **C1–C6 (486/506, 96.0%) are one disease: the encoder trusts its operands.** A single trailing-operand
-   (arity) check eliminates the 80 C1a defects; a shared register-slot checker covers the 292-defect register
-   family (C2–C4); range checks before every masked immediate address the 33 remaining C5 silent/panic rows.
+   (arity) check eliminates 80 defects; a shared register-slot checker covers the 292-defect register
+   family (C2–C4); range checks before every masked immediate address the remaining C5 silent/panic rows.
 3. **The half-precision (`__fp16`) encoding family is the most user-harmful S1 class**: of the 13 encoding-form
    differentials in C5, 10 inputs use half-precision registers; the 9-issue verified subset
    (#358 #361 #366 #409 #414 #475 #478 #481 #484) shares a single root cause in
@@ -221,8 +197,8 @@ because discovery was not its objective.
 
 **Recommended actions (priority order):**
 1. Fix the half-precision floating-point type-field selection in `encoder/fp_scalar.rs` (closes the 9-issue verified S1 family)
-2. Introduce `get_gpr_checked` + `check_arity`: the arity check mechanically eliminates the 80 trailing-extra-operand defects (C1a); the register-slot checker addresses the largest share of the 292-defect register family (C2–C4)
-3. Add range checks before every bit-masked immediate — masking without prior validation causes 24 defects where out-of-range immediates silently wrap, plus 9 panic paths (C5)
+2. Introduce `get_gpr_checked` + `check_arity`: the arity check mechanically eliminates 80 trailing-extra-operand defects; the register-slot checker addresses the largest share of the 292-defect register family (C2–C4)
+3. Add range checks before every bit-masked immediate — masking without prior validation is the C5 silent-wrap / panic family
 4. Adopt gas-style warnings for the CONSTRAINED UNPREDICTABLE classes (STXP with status register also used as source; LDR with writeback where the transfer register equals the base register) for parity with both references
 5. Reclassify #30 #119 #247 in the tracker as llvm-mc compatibility enhancement requests, not defects
 
@@ -255,7 +231,7 @@ Full 509-row cross-check: `pbt-out/full_verification_tracker.md`. Per-issue cate
 | 主导性编译器失效 | 严重度等级 S2"非法输入被静默接受并编码"：459/509（90.2%）——非法输入在零诊断的情况下被转成机器码 |
 | 危害最大的类别 | 严重度等级 S1"合法输入被静默错误编码"（20 条）——含半精度（`__fp16`）编码家族 |
 | 崩溃暴露面 | **15 条可崩溃路径**：9 条可经命令行界面触发的 panic + 6 条被更早的解析阶段或告警路径遮蔽的潜在编码器 panic |
-| 修复杠杆 | 单一"尾随多余操作数"检查即可消除 80 条缺陷（C1a）；共享的寄存器槽校验器可覆盖 292 条寄存器族缺陷（C2–C4）；一行代码修复经核实的 9 条半精度家族 |
+| 修复杠杆 | 单一"尾随多余操作数"检查即可消除 80 条缺陷；共享的寄存器槽校验器可覆盖 292 条寄存器族缺陷（C2–C4）；一行代码修复经核实的 9 条半精度家族 |
 
 **结论：** FM-Agent（性质测试活动）的问题追踪器高度可信——509 条报告中 506 条对应可复现、并经 GNU 与 LLVM 工具链交叉证实的缺陷（3 条例外是仅 llvm-mc 接受的别名语法增强请求，已经用户确认）。ccc 的定义性弱点不是崩溃，而是**诊断静默**：506 条真实缺陷中 479 条（94.7%）在零诊断下产出机器码——459 条（S2）编码了参考工具链会拒绝的非法输入；20 条（S1）把合法输入编码错误，而参考工具能正确编码。
 
@@ -298,28 +274,6 @@ Full 509-row cross-check: `pbt-out/full_verification_tracker.md`. Per-issue cate
 † 百分比四舍五入到 0.1；列合计因舍入为 100.1%。
 
 单一确定性分类器，506 条真实缺陷每条恰好计一次。按此规则，6 条"缺告警"问题计入 C7（诊断）；5 条"告警后仍接受"问题按其操作数层缺陷落入 C1/C2/C3。类别×严重度交叉核对精确复现 3.2 的阶梯（20/459/10/12/5）。
-
-**寄存器校验族的深挖**（最大单一病根，先前聚合为一个 207 条的"寄存器类/宽度"层 + 35 条 arrangement + 82 条槽 31）：重新推导拆为 C2 + C3 + C4 = **292 条（占 509 的 57.4%）**，脚本实测子桶如下：
-
-| 子桶 | 数量 | 示例问题 |
-|---|---|---|
-| C2a 浮点/SIMD 寄存器出现在整数寄存器槽 | 61 | #6 #16 #29 #43 #47 … |
-| C2b 整数寄存器出现在浮点/向量槽 | 3 | #10 #240 #375 |
-| C2c 其他寄存器种类错误（寄存器类型/基址种类） | 27 | #21 #39 #73 #79 … |
-| C3a W/X 宽度不匹配（"operand mismatch"） | 69 | #7 #13 #20 #24 #31 … |
-| C3b NEON arrangement 不匹配 | 33 | #23 #40 #41 #127 … |
-| C3c 32 位寄存器用作 64 位基址 | 11 | #126 #143 #149 #162 … |
-| C3d 其他宽度不匹配（x86 操作数大小 #157 #263；ARM 64 位存储形式 #139） | 3 | #139 #157 #263 |
-| C4 栈指针/零寄存器槽 31 身份 | 85 | #8 #9 #15 #19 #22 … |
-| **寄存器族合计（C2+C3+C4）** | **292** | |
-
-其他大类的子桶（脚本实测）：
-
-| 类别 | 子桶（数量） |
-|---|---|
-| C1（108） | 尾随多余操作数（80）· 寻址模式/写回形式（17）· 寄存器列表合法性（4：#237 #239 #243 #503）· 需要立即数/移位形式处给了寄存器（3：#72 #78 #168）· 其他（4：操作数间缺失逗号 #304 #364；ld2r 寻址形式 differential #504 #505） |
-| C5（51） | 越界立即数被静默掩码（24）· 条件码 AL/NV 被接受（5）· 越界立即数引发 panic（9）· 合法输入编码形式选错（13） |
-| C7（14） | 重定位修饰符语法（3：#18 #37 #52）· 合法语法被拒（5：#36 #51 #55 #326 #411）· 缺失 CONSTRAINED UNPREDICTABLE 告警（6：#150 #163 #265 #320 #332 #497） |
 
 **与旧聚合数的对账（为何是 292 而非 207）：**旧分类把寄存器校验拆成三层——L2 寄存器类/宽度（207）+ L3 arrangement（35）+ L4 槽 31（82）= **324 条**；207 只是其中一片，从来不是寄存器族的全貌。重新推导以"缺失的检查"划界：凡缺失的是寄存器槽、宽度、arrangement 或槽 31 检查的行，都落入 C2–C4（292）；寄存器只是出现在输入中、而真正缺失的是其他检查的行则移出族外——13 条编码形式选择 differential 归 C5（根因是 `fp_scalar.rs` 类型字段选择，并非寄存器槽检查）、内存操作数扩展检查归 C6、写回/寻址/操作数形式检查归 C1、缺失 CONSTRAINED UNPREDICTABLE 告警归 C7。旧会话只发布了各层聚合数、未发布逐条分配，故与 207/35/82 的逐行对照无法重建；新的 506 条逐条分配已完整发布于 `classification_per_issue.tsv`。两种分类合计均为 506。
 
@@ -405,14 +359,14 @@ Full 509-row cross-check: `pbt-out/full_verification_tracker.md`. Per-issue cate
 1. **编译器的定义性缺陷是诊断静默，不是崩溃。** 静默产出（S1 + S2）= 479/506 真实缺陷（94.7%）：459 条 S2 编码了 gcc/clang 拒绝的非法输入；20 条 S1 把合法输入编码错误而参考工具编码正确——两种情况下字节都带着零诊断离开编译器。
    本条中的崩溃数字是**对比，不是加数**：506 条缺陷中仅 15 条可令编译器崩溃（S3 中 10 条 + S4 内 5 条潜在 panic 路径；见 3.2 崩溃族脚注）。该 15 为横切计数、与 S4 重叠，故永不与 479 相加。506 条真实缺陷的完整三分：
    **479 静默产出（S1+S2）+ 15 可崩溃（S3 全部 + S4 中 5 条）+ 12 其余（S4 其余 7 条纯诊断缺陷 + S5 的 5 条拒绝合法输入）= 506。**
-2. **C1–C6（486/506，96.0%）是同一种病：编码器无条件信任其操作数。** 单一"尾随操作数"（个数）检查消除 C1a 的 80 条；共享寄存器槽校验器覆盖 292 条寄存器族（C2–C4）；每个被掩码立即数前加范围检查可解决 C5 其余 33 条静默/panic 行。
+2. **C1–C6（486/506，96.0%）是同一种病：编码器无条件信任其操作数。** 单一"尾随操作数"（个数）检查消除 80 条；共享寄存器槽校验器覆盖 292 条寄存器族（C2–C4）；每个被掩码立即数前加范围检查可解决 C5 其余静默/panic 行。
 3. **半精度（`__fp16`）编码家族是危害最大的 S1 类**：C5 的 13 条编码形式 differential 中 10 条输入使用半精度寄存器；经核实的 9 条子集（#358 #361 #366 #409 #414 #475 #478 #481 #484）共享 `src/backend/arm/assembler/encoder/fp_scalar.rs` 中单一根因（浮点类型字段选择只检查寄存器名是否以 'd' 开头，半精度寄存器因此落入单精度编码）——数值错误、零诊断。
 4. **CONSTRAINED UNPREDICTABLE 处理分歧（#150 #163 #320 #332 #497）**：ccc 与 gas 的接受行为一致但不带其告警；llvm-mc 拒绝。建议采纳 gas 式告警。
 
 **建议行动（按优先级）：**
 1. 修复 `encoder/fp_scalar.rs` 中的半精度浮点类型字段选择（关闭经核实的 9 条 S1 家族）
-2. 引入 `get_gpr_checked` + `check_arity`：个数检查机械消除 80 条尾随多余操作数缺陷（C1a）；寄存器槽校验器覆盖 292 条寄存器族（C2–C4）的最大份额
-3. 每个位掩码立即数前加范围检查——无先验校验的掩码导致 24 条越界立即数静默回绕缺陷与 9 条 panic 路径（C5）
+2. 引入 `get_gpr_checked` + `check_arity`：个数检查机械消除 80 条尾随多余操作数缺陷；寄存器槽校验器覆盖 292 条寄存器族（C2–C4）的最大份额
+3. 每个位掩码立即数前加范围检查——无先验校验的掩码即 C5 的静默回绕 / panic 族
 4. 对 CONSTRAINED UNPREDICTABLE 类别采纳 gas 式告警（STXP 状态寄存器同时作源；LDR 写回且传输寄存器等于基址寄存器），与两个参考对齐
 5. 在追踪器中将 #30 #119 #247 重分类为 llvm-mc 兼容性增强请求，而非缺陷
 
