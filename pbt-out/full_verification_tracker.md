@@ -517,5 +517,3 @@ x86 issues via host tools); 6 C-level/encoding issues verified individually (see
 | 510 | (frontend C) invalid float↔ptr casts bitcast | see manual_tests.md | see manual_tests.md | — | real — gcc rejects at compile; ccc accepts (issue #510) |
 
 **TOTAL 509: real 506 (99.4%) · false positives 3 (#30 #119 #247 — user-confirmed: ccc AND gas both reject, only llvm-mc accepts; issues' "GNU alias" premise invalid on gas 2.42 → reclassify as llvm-mc-compat enhancement)**
-
-*Cross-check: random sample (seed 42, n=100) estimated 100% real, CI ≥ 97% — full run confirms 99.4%; the 3 FP are outside the sample.*
