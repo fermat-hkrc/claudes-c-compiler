@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_ext)
+
+- Valid EXT Vd.T, Vn.T, Vm.T, #i with T in {8b,16b}, matching arrangements, i in [0, imax(T)], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff T=16b, bits[29:24]=101110, bits[23:21]=000, Rm at [20:16], bit15=0, imm4 at [14:11], bit10=0, Rn at [9:5], Rd at [4:0].
+- Uppercase V/T spellings match llvm-mc (1000 cases).
+- Arity 0–3 returns Err (1000 cases).
+- Known-answer: `ext v0.16b, v1.16b, v2.16b, #3` = 0x6e021820; `ext v0.8b, v1.8b, v2.8b, #3` = 0x2e021820; `ext v0.8b, v1.8b, v2.8b, #0` = 0x2e020020; `ext v31.16b, v30.16b, v29.16b, #15` = 0x6e1d7bdf; `ext v31.8b, v0.8b, v31.8b, #7` = 0x2e1f381f; `ext v0.16b, v1.16b, v2.16b, #0` = 0x6e020020.
+- Extra operand, invalid T, out-of-range index, mismatched T, and GPR/bare-V dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_ext)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. Range/error contract: aarch64-linux-gnu-as (README claims gas). llvm-mc wraps OOR index (8B mod 8, 16B mod 16); gas rejects OOR.
+- ARM ARM Advanced SIMD extract (EXT): 0 Q 10 1110 00 0 Rm 0 imm4 0 Rn Rd. T in {8B,16B}. Q=1 iff T=16B. Index 0–7 (8B) / 0–15 (16B). Q=0 and imm4<3>!=0 is UNALLOCATED.
+- Dispatch: encoder/mod.rs:675 `"ext" => encode_neon_ext`.
+- Sibling encode_neon_tbl / encode_neon_tbx / encode_neon_zip_uzp are different opcodes, not same-job differentials.
+- encode_neon_ext checks operands.len() < 4; extra ignored; Q=1 iff arr_d=="16b"; source arrangements discarded; index as u32 then & 0xF; get_neon_reg accepts Operand::Reg; parse_reg_num accepts w/x/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement (parser.rs:1970) so uppercase T is not caller-reachable as a distinct token; register names keep original case and parse_reg_num lowercases.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. Co-generate (T, index) — independent 0..=15 with prop_assume vs imax(8b)=7 exhausts global rejects.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (mismatched T / GPR-or-bare dest).
+- Five failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_ext_*.md.
+
 # Confirmed invariants (encode_neon_umov)
 
 - Valid UMOV Wd, Vn.Ts[i] with Ts in {b,h,s}, i in [0, imax(Ts)], v0–v31, W0–W30/WZR and UMOV Xd, Vn.D[i] with i in [0,1], X0–X30/XZR matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

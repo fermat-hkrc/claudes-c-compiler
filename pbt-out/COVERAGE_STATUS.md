@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_umov)
-> Files: 10/10 scanned (100%) | Functions: 108/289 total | PBT candidates: 108 | Tested: 108 (100%) | 0 pass, 108 fail
+> Last updated: 2026-10-05 10:23 (campaign: encode_neon_ext)
+> Files: 10/10 scanned (100%) | Functions: 109/289 total | PBT candidates: 109 | Tested: 109 (100%) | 1 pass, 108 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 108 |
-| **Tested (of PBT candidates)** | **108 / 108 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 108 / 0 |
-| **Overall (tested / all functions)** | **108 / 289 (37%)** |
+| PBT candidates (from FUNCTION_INDEX) | 109 |
+| **Tested (of PBT candidates)** | **109 / 109 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 108 / 0 |
+| **Overall (tested / all functions)** | **109 / 289 (38%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,7 +21,7 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 108 | 108 | 0 | 100% |
+|  | 109 | 109 | 0 | 100% |
 
 ## Oracle Type Distribution
 
@@ -40,7 +40,7 @@
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 23 | 23 | 100% | covered |
+| neon.rs | 68 | 24 | 24 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -157,3 +157,4 @@
 | encode_neon_ld_st_multi | neon.rs |
 | encode_neon_tbx | neon.rs |
 | encode_neon_ins | neon.rs |
+| encode_neon_umov | neon.rs |

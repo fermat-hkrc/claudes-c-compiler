@@ -1,150 +1,175 @@
-# PBT Campaign Report: encode_neon_umov
+# PBT Campaign Report: encode_neon_ext
 
 ## Summary
 
-**Verdict:** 4 medium: encode_neon_umov silently encodes extra operands, out-of-range lanes, wrong dest width, and SP/WSP/FP dest names that llvm-mc rejects, so a GNU-style assembler typo becomes a different valid (or reserved) instruction instead of an error.
+**Verdict:** 5 medium: encode_neon_ext accepts invalid EXT assembly (extra operand, non-{8b,16b} T, out-of-range index, mismatched T, GPR/bare dest) and silently emits a 32-bit word, so a typo becomes the wrong or UNALLOCATED extract instead of an assembler error.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_umov
-**Tests:** 10 properties (+ 1 KAT + 6 regression witnesses)
-**Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function (encode_neon_umov), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit added unsupported-elem-size and non-lane-src (both passing).
+**Modules tested:** encode_neon_ext
+**Tests:** 10
+**Result:** 5 passing, 5 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit covered mismatched T and GPR/bare dest.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_umov | 10 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_ext | 10 | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_umov ignores a surplus third operand
+### B1: encode_neon_ext ignores a surplus fifth operand
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. llvm-mc("umov gpr, Vn.Ts[i], extra") = Err ⇒ encode_neon_umov([Reg, RegLane, extra]) = Err
-**Contract evidence:** documented neon.rs:463 "umov requires 2 operands"
-**Documentation conflict:** neon.rs:463 "umov requires 2 operands" states the arity IS 2; the code implements `len() < 2` (at least 2). The comment is the contract the code violates.
+**Formal:** ∀ valid 4-operand EXT ops, extra ∈ Operand. encode_neon_ext(ops ++ [extra]) = Err
+**Contract evidence:** inferred (README.md:12 gas compatibility; llvm-mc and gas reject a fifth operand; the arity string only guards too few)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_umov([w0, v0.b[0], w0])
-**Expected / Actual:** Err / Ok(Word(0x0e013c00))
-**Impact:** A typo or extra token silently produces a valid 2-operand UMOV instead of an assembler error.
-**Root cause:** neon.rs:462 `if operands.len() < 2` only rejects too few operands; extras past index 1 are never inspected.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:462`
+**Counterexample:** encode_neon_ext([v0.8b, v0.8b, v0.8b, #0, v0.8b]) then Ok(Word(0x2e000000))
+**Expected / Actual:** Err / Ok(Word(0x2e000000)) encoded as ext v0.8b, v0.8b, v0.8b, #0
+**Impact:** A typo or extra token silently produces a valid EXT instead of an assembler error.
+**Root cause:** neon.rs:406 `if operands.len() < 4` only rejects too few operands; extras past index 3 are never inspected.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:406`
 ```rust
-    if operands.len() < 2 {
-        return Err("umov requires 2 operands".to_string());
+    if operands.len() < 4 {
+        return Err("ext requires 4 operands".to_string());
     }
 ```
-**Suggested fix:** Require exactly two operands.
+**Suggested fix:** Require exactly four operands.
 ```rust
-    if operands.len() != 2 {
-        return Err("umov requires 2 operands".to_string());
+    if operands.len() != 4 {
+        return Err("ext requires 4 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_umov_extra_operand.md
-**Repro seed:** (none — deterministic regression)
+**Bug report:** bug_reports/encode_neon_ext_extra_operand.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, extra = 0, (t, i) = ("8b", 0)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:569:9:
-umov w0, v0.b[0], w0 must Err (llvm-mc rejects a third operand)
+thread 'backend::arm::assembler::encoder::encode_neon_ext_pbt::test_encode_neon_ext_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:533:5:
+ext v0.16b, v1.16b, v2.16b, #3, v3.16b must Err (gas/llvm-mc reject a fifth operand)
 ```
 
-### B2: encode_neon_umov masks an out-of-range lane index instead of rejecting it
+### B2: encode_neon_ext encodes invalid arrangements as 8B EXT
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ over ∈ {1..8}. let i = imax(ts)+over. llvm-mc("umov gpr, Vn.Ts[i]") = Err ⇒ encode_neon_umov(...) = Err
-**Contract evidence:** inferred (ARM Advanced SIMD copy lane ranges b[0-15] h[0-7] s[0-3] d[0-1]; llvm-mc/gas reject OOR; README gas-compatibility)
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∉ {8b,16b} among ARM arrangement tokens, i ∈ [0,15]. encode_neon_ext([Vd.T, Vn.T, Vm.T, #i]) = Err
+**Contract evidence:** inferred (ARM Advanced SIMD extract T ∈ {8B,16B}; gas/llvm-mc reject .8h/.4s/.2d; README.md:12 gas compatibility)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_umov([w0, v0.b[16]])
-**Expected / Actual:** Err / Ok(Word(0x0e013c00)) encoded as v0.b[0]
-**Impact:** An out-of-range lane silently wraps and produces a different valid instruction.
-**Root cause:** neon.rs:474-477 mask the index (`index & 0xF` etc.) instead of range-checking against imax(Ts).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:474`
+**Counterexample:** encode_neon_ext([v0.8h, v0.8h, v0.8h, #0])
+**Expected / Actual:** Err / Ok(Word(0x2e000000)) encoded as ext v0.8b, v0.8b, v0.8b, #0
+**Impact:** An illegal permute (.8h/.4s/.2d) silently becomes an 8B extract.
+**Root cause:** neon.rs:414 sets Q=1 only for arr_d=="16b" and otherwise Q=0 with no arrangement whitelist.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:414`
 ```rust
-                "b" => ((*index & 0xF) << 1) | 0b00001,
+    let q: u32 = if arr_d == "16b" { 1 } else { 0 };
 ```
-**Suggested fix:** Reject an index above the ARM maximum for that element size before encoding imm5.
+**Suggested fix:** Accept only 8b and 16b.
 ```rust
-            if *index > max_for(elem_size) {
-                return Err(format!("umov lane index {} out of range for .{}", index, elem_size));
-            }
-```
-**Bug report:** bug_reports/encode_neon_umov_index_oor.md
-**Repro seed:** (none — deterministic regression)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_index_oor' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:578:9:
-umov w0, v0.b[16] must Err (llvm-mc range for .b is [0, 15])
-```
-
-### B3: encode_neon_umov accepts the wrong GPR width for UMOV
-
-**Formal:** ∀ rd ∈ {0..30}, ∀ rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. llvm-mc("umov {wrong-width gpr}, Vn.Ts[i]") = Err ⇒ encode_neon_umov([Reg(wrong), RegLane]) = Err
-**Contract evidence:** inferred (ARM UMOV Wd+B/H/S and Xd+D; llvm-mc rejects the crossed pairing; README gas-compatibility)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_umov([x0, v0.b[0]])
-**Expected / Actual:** Err / Ok(Word(0x4e013c00)) with Q=1
-**Impact:** A width typo silently produces a reserved/invalid UMOV encoding llvm-mc and gas refuse to assemble.
-**Root cause:** neon.rs:471 sets Q from dest GPR width (`is_64`) and never checks that Wd pairs with B/H/S and Xd pairs with D.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:471`
-```rust
-            let q = if is_64 { 1u32 } else { 0 };
-```
-**Suggested fix:** Derive Q from the element size and reject a dest width that does not match.
-```rust
-            let q = match elem_size.as_str() {
-                "b" | "h" | "s" => {
-                    if is_64 { return Err("umov B/H/S requires a W register".into()); }
-                    0u32
-                }
-                "d" => {
-                    if !is_64 { return Err("umov D requires an X register".into()); }
-                    1u32
-                }
-                _ => return Err(format!("unsupported umov element size: {}", elem_size)),
-            };
-```
-**Bug report:** bug_reports/encode_neon_umov_wrong_width.md
-**Repro seed:** (none — deterministic regression)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_wrong_width' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:600:9:
-umov x0, v0.b[0] must Err (llvm-mc requires Wd for Ts=B)
-```
-
-### B4: encode_neon_umov encodes SP/WSP and FP names as the UMOV GPR dest
-
-**Formal:** ∀ n ∈ {0,1}, ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)], ∀ kind ∈ {arity, sp, wsp, fp, bad-name}. llvm-mc rejects the corresponding assembly ⇒ encode_neon_umov returns Err
-**Contract evidence:** inferred (ARM UMOV dest is Wd/Xd/WZR/XZR; llvm-mc rejects SP/WSP/FP; README gas-compatibility)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_umov([sp, v0.b[0]])
-**Expected / Actual:** Err / Ok(Word(0x4e013c1f)) for SP; also WSP → 0x0e013c1f, d0 → 0x0e013c00
-**Impact:** A mistyped dest silently becomes XZR/WZR/W0.
-**Root cause:** neon.rs:465 calls get_reg, which uses parse_reg_num (sp/wsp → 31; d/s/q/v/h/b prefixes accepted). encode_neon_umov never restricts dest to W/X/WZR/XZR.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:465`
-```rust
-    let (rd, is_64) = get_reg(operands, 0)?;
-```
-**Suggested fix:** After get_reg, reject SP/WSP and FP/SIMD dest names.
-```rust
-    let dest = match operands.get(0) {
-        Some(Operand::Reg(name)) => name,
-        _ => return Err("umov: expected GPR dest".into()),
+    let q: u32 = match arr_d.as_str() {
+        "16b" => 1,
+        "8b" => 0,
+        _ => return Err(format!("unsupported EXT arrangement: {}", arr_d)),
     };
-    let lower = dest.to_lowercase();
-    if lower == "sp" || lower == "wsp" || matches!(lower.chars().next(), Some('d' | 's' | 'q' | 'v' | 'h' | 'b')) {
-        return Err(format!("umov dest must be a W/X register, got {}", dest));
-    }
 ```
-**Bug report:** bug_reports/encode_neon_umov_sp_fp_dest.md
-**Repro seed:** (none — deterministic regression)
+**Bug report:** bug_reports/encode_neon_ext_invalid_t.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, t = "8h", i = 0
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_sp_as_zr' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:615:9:
-umov sp, v0.b[0] must Err (llvm-mc rejects SP as UMOV dest)
+thread 'backend::arm::assembler::encoder::encode_neon_ext_pbt::test_encode_neon_ext_regression_invalid_t' panicked at src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:542:5:
+ext v0.8h, v1.8h, v2.8h, #1 must Err (gas/llvm-mc accept only .8b/.16b)
+```
+
+### B3: encode_neon_ext masks an out-of-range EXT index instead of rejecting it
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, i > imax(T) ∨ i < 0. encode_neon_ext([Vd.T, Vn.T, Vm.T, #i]) = Err
+**Contract evidence:** inferred (gas "immediate value out of range 0 to 7/15"; ARM Q=0 and imm4<3>!=0 is UNALLOCATED; README.md:12 gas compatibility)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ext([v0.8b, v0.8b, v0.8b, #8])
+**Expected / Actual:** Err / Ok(Word(0x2e004000)) with imm4=8 (UNALLOCATED for Q=0)
+**Impact:** A typo or computed index silently produces a different or illegal instruction. llvm-mc wraps; gas rejects; the SUT encodes UNALLOCATED.
+**Root cause:** neon.rs:412 casts the immediate as u32 with no range check; neon.rs:418 then does `index & 0xF`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:418`
+```rust
+        | (rm << 16)) | ((index & 0xF) << 11)) | (rn << 5) | rd;
+```
+**Suggested fix:** Reject index outside the arrangement's byte count before encoding.
+```rust
+    let max = if arr_d == "16b" { 15 } else { 7 };
+    if index > max {
+        return Err(format!("EXT index {} out of range 0 to {}", index, max));
+    }
+```
+**Bug report:** bug_reports/encode_neon_ext_index_oor.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, t = "8b", over = 1, neg = 1
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_ext_pbt::test_encode_neon_ext_regression_index_oor' panicked at src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:559:5:
+ext v0.8b, v1.8b, v2.8b, #8 must Err (gas range for .8b is [0, 7])
+```
+
+### B4: encode_neon_ext ignores mismatched source arrangements
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b}, i ∈ [0,7]. (Td ≠ Tn ∨ Td ≠ Tm) ⇒ encode_neon_ext([Vd.Td, Vn.Tn, Vm.Tm, #i]) = Err
+**Contract evidence:** inferred (comment neon.rs:415 "EXT Vd.T, Vn.T, Vm.T, #index" names one T; gas/llvm-mc reject mixed T)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ext([v0.8b, v0.8b, v0.16b, #0])
+**Expected / Actual:** Err / Ok(Word(0x2e000000)) encoded as 8B EXT
+**Impact:** A mixed 64-bit/128-bit permute silently becomes an 8B extract using only dest T.
+**Root cause:** neon.rs:410-411 bind source arrangements to `_` and never compare them to arr_d.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:410`
+```rust
+    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rm, _) = get_neon_reg(operands, 2)?;
+```
+**Suggested fix:** Require matching arrangements on all three registers.
+```rust
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    let (rm, arr_m) = get_neon_reg(operands, 2)?;
+    if arr_n != arr_d || arr_m != arr_d {
+        return Err(format!("EXT arrangement mismatch: {} vs {} vs {}", arr_d, arr_n, arr_m));
+    }
+```
+**Bug report:** bug_reports/encode_neon_ext_mismatched_t.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, t_d = "8b", t_n = "8b", t_m = "16b", i = 0
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_ext_pbt::test_encode_neon_ext_regression_mismatched_t' panicked at src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:582:5:
+ext v0.16b, v1.8b, v2.16b, #3 must Err (gas/llvm-mc require matching T)
+```
+
+### B5: encode_neon_ext encodes a GPR or bare-V dest as 8B EXT
+
+**Formal:** ∀ kind ∈ {GPR dest, bare Vn, GPR Vm, bare V dest, non-Imm index}. encode_neon_ext(ops) = Err
+**Contract evidence:** inferred (EXT requires Vd.T; get_neon_reg Operand::Reg path returns empty arrangement; gas/llvm-mc reject `ext x0, …`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ext([x0, v0.8b, v0.8b, #0])
+**Expected / Actual:** Err / Ok(Word(0x2e000000)) encoded as ext v0.8b, v0.8b, v0.8b, #0
+**Impact:** A GPR/FP/bare-V typo silently becomes a different vector extract (x0 maps to Rd=0, empty T ⇒ Q=0).
+**Root cause:** get_neon_reg neon.rs:14 accepts Operand::Reg and returns an empty arrangement; encode_neon_ext treats any non-"16b" arrangement as Q=0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:14`
+```rust
+        Some(Operand::Reg(name)) => {
+            let num = parse_reg_num(name)
+                .ok_or_else(|| format!("invalid register: {}", name))?;
+            Ok((num, String::new()))
+        }
+```
+**Suggested fix:** Reject Operand::Reg in EXT (require RegArrangement on Vd/Vn/Vm).
+```rust
+        Some(Operand::Reg(name)) => {
+            Err(format!("expected NEON register with arrangement, got {}", name))
+        }
+```
+**Bug report:** bug_reports/encode_neon_ext_gpr_dest.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, (t, i) = ("8b", 0), kind = 0, fp_prefix = "x"
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_ext_pbt::test_encode_neon_ext_regression_gpr_dest' panicked at src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:597:5:
+ext x0, v1.16b, v2.16b, #3 must Err (gas/llvm-mc reject GPR dest)
 ```
 
 ## Design Caveats
@@ -155,39 +180,51 @@ umov sp, v0.b[0] must Err (llvm-mc rejects SP as UMOV dest)
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs | 10 properties + 1 KAT + 6 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_umov_pbt` |
+| src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs | 10 properties + 1 KAT + 6 regression witnesses |
 
 ## Reproduction
 
-Whole suite (serial, same as the campaign run):
+Valid-domain suite (5 passing properties + KAT):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_umov -- --test-threads=1
+cargo test --lib encode_neon_ext_diff_llvm_mc -- --test-threads=1
+cargo test --lib encode_neon_ext_kat_llvm_mc -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_umov_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_ext_regression_extra_operand -- --test-threads=1
 ```
 
-B2 index OOR:
+B2 invalid T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_umov_regression_index_oor -- --test-threads=1
+cargo test --lib test_encode_neon_ext_regression_invalid_t -- --test-threads=1
 ```
 
-B3 wrong width:
+B3 index OOR:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_umov_regression_wrong_width -- --test-threads=1
+cargo test --lib test_encode_neon_ext_regression_index_oor -- --test-threads=1
 ```
 
-B4 SP dest:
+B4 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_umov_regression_sp_as_zr -- --test-threads=1
+cargo test --lib test_encode_neon_ext_regression_mismatched_t -- --test-threads=1
+```
+
+B5 GPR dest:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_ext_regression_gpr_dest -- --test-threads=1
+```
+
+Whole suite:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_neon_ext -- --test-threads=1
 ```
 
 ## Output Directories
@@ -196,24 +233,25 @@ cargo test --lib test_encode_neon_umov_regression_sp_as_zr -- --test-threads=1
 - pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — per-function coverage table
+- pbt-out/COVERAGE.md — coverage ledger
 - pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/report.json — machine-readable report
 - pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/report.json — machine-readable report
+- pbt-out/bug_reports/encode_neon_ext_extra_operand.md (+ .html)
+- pbt-out/bug_reports/encode_neon_ext_invalid_t.md (+ .html)
+- pbt-out/bug_reports/encode_neon_ext_index_oor.md (+ .html)
+- pbt-out/bug_reports/encode_neon_ext_mismatched_t.md (+ .html)
+- pbt-out/bug_reports/encode_neon_ext_gpr_dest.md (+ .html)
 - pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/bug_reports/encode_neon_umov_extra_operand.md + .html
-- pbt-out/bug_reports/encode_neon_umov_index_oor.md + .html
-- pbt-out/bug_reports/encode_neon_umov_wrong_width.md + .html
-- pbt-out/bug_reports/encode_neon_umov_sp_fp_dest.md + .html
-- pbt-out/run/encode_neon_umov_test.log — first full test run
-- src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs — harness
+- pbt-out/run/ — test scratch (empty for cargo)
+- proptest-regressions/backend/arm/assembler/encoder/encode_neon_ext_pbt.txt — proptest failure cache (framework artifact)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 10:10 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 108/289 total | PBT candidates: 108 | Tested: 108 (100%) | 0 pass, 108 fail
+> Last updated: 2026-10-05 10:29 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 109/289 total | PBT candidates: 109 | Tested: 109 (100%) | 0 pass, 109 fail
 
 ## Summary
 
@@ -222,10 +260,10 @@ cargo test --lib test_encode_neon_umov_regression_sp_as_zr -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 108 |
-| **Tested (of PBT candidates)** | **108 / 108 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 108 / 0 |
-| **Overall (tested / all functions)** | **108 / 289 (37%)** |
+| PBT candidates (from FUNCTION_INDEX) | 109 |
+| **Tested (of PBT candidates)** | **109 / 109 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 109 / 0 |
+| **Overall (tested / all functions)** | **109 / 289 (38%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -233,13 +271,13 @@ cargo test --lib test_encode_neon_umov_regression_sp_as_zr -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 108 | 108 | 0 | 100% |
+|  | 109 | 109 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 108 | 108 | 0 | 100% |
+| unknown | 109 | 109 | 0 | 100% |
 
 ## File Coverage
 
@@ -252,7 +290,7 @@ cargo test --lib test_encode_neon_umov_regression_sp_as_zr -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 23 | 23 | 100% | covered |
+| neon.rs | 68 | 24 | 24 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -370,3 +408,4 @@ cargo test --lib test_encode_neon_umov_regression_sp_as_zr -- --test-threads=1
 | encode_neon_tbx | neon.rs |
 | encode_neon_ins | neon.rs |
 | encode_neon_umov | neon.rs |
+| encode_neon_ext | neon.rs |

@@ -1,301 +1,306 @@
-# Properties: encode_neon_umov
+# Properties: encode_neon_ext
 
-## encode_neon_umov_diff_llvm_mc
-- Tier: 3
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc, the independent AArch64 assembler the README claims gas-compatible encodings against. State machine rejected (pure function). Round-trip rejected (no in-tree UMOV decoder). Sibling encode_neon_dup / encode_neon_ins / encode_mov rejected (same-job gate: different opcodes / MOV is a multi-form alias encoder).
-- Doc contract: neon.rs:460 "Encode NEON UMOV: move element to GP register" — asserted fingerprint 484130f7
-- Seed: encode_neon_ins_pbt.rs:277 encode_neon_ins_diff_llvm_mc_gpr
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. encode_neon_umov([Reg(gpr(ts,rd)), RegLane(v{rn}, ts, i)]) = llvm-mc("umov {W|X}{rd}, v{rn}.{ts}[{i}]")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
+## encode_neon_ext_diff_llvm_mc
+- Tier: 2
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc on the valid EXT domain. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree EXT decoder). Sibling TBL/TBX/ZIP/UZP rejected (same-job gate: different opcodes). ARM/gas/llvm-mc agree on encodings for T in {8b,16b}, matching arrangements, in-range index.
+- Doc contract: neon.rs:404 "Encode NEON EXT Vd.T, Vn.T, Vm.T, #index" — asserted fingerprint 94586e3d
+- Seed: encode_neon_umov_pbt.rs llvm-mc differential
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, i ∈ [0, imax(T)]. encode_neon_ext([Vd.T, Vn.T, Vm.T, #i]) = llvm-mc("ext Vd.T, Vn.T, Vm.T, #i")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_umov
+function: encoder.encode_neon_ext
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, ts, i]
-  domain: { rd: "0..=31", rn: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]" }
+  vars: [rd, rn, rm, t, i]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {8b,16b}, i: 0..=imax(t) }
   relation:
     op: eq
-    lhs: encode_neon_umov([Reg(gpr(ts,rd)), RegLane(v{rn}, ts, i)])
-    rhs: llvm_mc("umov {W|X}{rd}, v{rn}.{ts}[{i}]")
+    lhs: encode_neon_ext([Vd.t, Vn.t, Vm.t, Imm(i)])
+    rhs: llvm_mc("ext Vd.t, Vn.t, Vm.t, #i")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b"] }
   i: { gen: int, min: 0, max: 15, type: u32 }
 evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_umov_metamorphic_rd_rn
-- Tier: 4
-- Rationale: Algebraic metamorphic on Rd/Rn fields; weaker than differential but independent of llvm-mc. ARM encoding places Rd at bits[4:0] and Rn at bits[9:5].
-- Doc contract: neon.rs:482 "UMOV Rd, Vn.Ts[index]: 0 Q 0 01110 000 imm5 0 0111 1 Rn Rd" — asserted fingerprint 730a17d5
-- Seed: encode_neon_ins_pbt.rs:307 encode_neon_ins_metamorphic_rd_rn
-- Formal: ∀ rd1,rd2,rn1,rn2 ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. let w11 = umov(rd1,rn1,ts,i), w21 = umov(rd2,rn1,ts,i), w12 = umov(rd1,rn2,ts,i). (w11 ⊕ w21) ∧ ¬0x1F = 0 ∧ (w21 ∧ 0x1F) = rd2 ∧ (w11 ⊕ w12) ∧ ¬(0x1F≪5) = 0 ∧ ((w12≫5) ∧ 0x1F) = rn2
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
+## encode_neon_ext_metamorphic_rd_rn_rm
+- Tier: 3
+- Rationale: Weaker than differential; ARM encoding places Rd at bits[4:0], Rn at bits[9:5], Rm at bits[20:16]. Changing only one register must differ only in that field. Complements the llvm-mc differential (required metamorphic).
+- Doc contract: neon.rs:416 "Encoding: 0 Q 10 1110 00 0 Rm 0 imm4 0 Rn Rd" — asserted fingerprint b512cb1d
+- Seed: encode_neon_umov_pbt.rs metamorphic_rd_rn
+- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}, T ∈ {8b,16b}, i ∈ [0, imax(T)]. (encode(rd1,rn1,rm1) ⊕ encode(rd2,rn1,rm1)) & ~0x1F = 0 ∧ (encode(rd1,rn1,rm1) ⊕ encode(rd1,rn2,rm1)) & ~(0x1F<<5) = 0 ∧ (encode(rd1,rn1,rm1) ⊕ encode(rd1,rn1,rm2)) & ~(0x1F<<16) = 0
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_umov
+function: encoder.encode_neon_ext
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd1, rd2, rn1, rn2, ts, i]
-  domain: { rd1: "0..=31", rd2: "0..=31", rn1: "0..=31", rn2: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]" }
-  body: "(w11 xor w21) & !0x1F == 0 && (w21 & 0x1F) == rd2 && (w11 xor w12) & !(0x1F << 5) == 0 && ((w12 >> 5) & 0x1F) == rn2"
+  vars: [rd1, rd2, rn1, rn2, rm1, rm2, t, i]
+  domain: { rd1: vreg, rd2: vreg, rn1: vreg, rn2: vreg, rm1: vreg, rm2: vreg, t: {8b,16b}, i: 0..=imax(t) }
+  relation:
+    op: eq
+    lhs: (w111 xor w211) and not 0x1F
+    rhs: 0
 generators:
   rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
   rn1: { gen: int, min: 0, max: 31, type: u32 }
   rn2: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
+  rm1: { gen: int, min: 0, max: 31, type: u32 }
+  rm2: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b"] }
   i: { gen: int, min: 0, max: 15, type: u32 }
-evidence: neon.rs:482
+evidence: src/backend/arm/assembler/encoder/neon.rs:416
 ```
 
-## encode_neon_umov_invariant_arm_fields
-- Tier: 4
-- Rationale: Algebraic invariant on the documented ARM UMOV layout. Q=1 iff Ts=D; bits[28:21]=01110000; imm5 encodes size+index; bits[15:10]=001111.
-- Doc contract: neon.rs:482 "UMOV Rd, Vn.Ts[index]: 0 Q 0 01110 000 imm5 0 0111 1 Rn Rd" — asserted fingerprint 730a17d5
-- Seed: encode_neon_ins_pbt.rs:335 encode_neon_ins_invariant_arm_fields
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. let w = encode_neon_umov(...). (w≫31)∧1=0 ∧ (w≫30)∧1 = [ts=d] ∧ (w≫29)∧1=0 ∧ (w≫21)∧0xFF=0b01110000 ∧ (w≫16)∧0x1F=imm5(ts,i) ∧ (w≫10)∧0x3F=0b001111 ∧ (w≫5)∧0x1F=rn ∧ w∧0x1F=rd
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
+## encode_neon_ext_invariant_arm_fields
+- Tier: 3
+- Rationale: ARM Advanced SIMD extract layout is an exact structural predicate on the success-path word. Weaker than differential (does not check the reference encoding of imm4/Q jointly with llvm-mc) but pins bit fields independently of the assembler.
+- Doc contract: neon.rs:416 "Encoding: 0 Q 10 1110 00 0 Rm 0 imm4 0 Rn Rd" — asserted fingerprint b512cb1d
+- Seed: encode_neon_umov_pbt.rs invariant_arm_fields
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, i ∈ [0, imax(T)]. let w = encode_neon_ext(...). bit31(w)=0 ∧ Q(w)=(T=16b) ∧ bits[29:24]=101110 ∧ bits[23:21]=000 ∧ Rm=rm ∧ bit15=0 ∧ imm4=i ∧ bit10=0 ∧ Rn=rn ∧ Rd=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_umov
+function: encoder.encode_neon_ext
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, ts, i]
-  domain: { rd: "0..=31", rn: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]" }
-  body: "bit31=0 && Q=(ts==d) && bit29=0 && bits[28:21]=01110000 && imm5 && bits[15:10]=001111 && Rn && Rd"
+  vars: [rd, rn, rm, t, i]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {8b,16b}, i: 0..=imax(t) }
+  relation:
+    op: eq
+    lhs: (w >> 24) and 0x3F
+    rhs: 0b101110
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b"] }
   i: { gen: int, min: 0, max: 15, type: u32 }
-evidence: neon.rs:482
+evidence: src/backend/arm/assembler/encoder/neon.rs:416
 ```
 
-## encode_neon_umov_neg_extra_operand
-- Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects a third operand; README gas-compatibility requires the encoder to Err. The SUT only checks operands.len() < 2.
-- Doc contract: neon.rs:463 "umov requires 2 operands" — asserted fingerprint aa68d80e
-- Seed: encode_neon_ins_pbt.rs:372 encode_neon_ins_neg_extra_operand
-- Formal: ∀ rd,rn,extra ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. llvm-mc("umov gpr, Vn.Ts[i], extra") = Err ⇒ encode_neon_umov([Reg, RegLane, extra]) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_umov([w0, v0.b[0], w0])
-- Bug report: pbt-out/bug_reports/encode_neon_umov_extra_operand.md
-
-```property
-function: encoder.encode_neon_umov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, extra, ts, i]
-  domain: { rd: "0..=31", rn: "0..=31", extra: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]" }
-  relation:
-    op: holds
-    expr: encode_neon_umov(ops_plus_extra).is_err()
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
-  i: { gen: int, min: 0, max: 15, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_umov_neg_index_oor
-- Tier: 4
-- Rationale: Negative/error contract. ARM/llvm-mc lane ranges are b[0-15] h[0-7] s[0-3] d[0-1]. The SUT masks the index (`index & 0xF` etc.) instead of rejecting OOR.
-- Doc contract: neon.rs:467 "Second operand should be a RegLane (v0.b[0])" — asserted fingerprint e26be721
-- Seed: encode_neon_ins_pbt.rs:396 encode_neon_ins_neg_index_oor
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ over ∈ {1..8}. let i = imax(ts)+over. llvm-mc("umov gpr, Vn.Ts[i]") = Err ⇒ encode_neon_umov(...) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_umov([w0, v0.b[16]])
-- Bug report: pbt-out/bug_reports/encode_neon_umov_index_oor.md
-
-```property
-function: encoder.encode_neon_umov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, ts, over]
-  domain: { rd: "0..=31", rn: "0..=31", ts: "{b,h,s,d}", over: "1..=8" }
-  relation:
-    op: holds
-    expr: encode_neon_umov([Reg(gpr), RegLane(v{rn}, ts, imax(ts)+over)]).is_err()
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
-  over: { gen: int, min: 1, max: 8, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_umov_neg_wrong_width
-- Tier: 4
-- Rationale: Negative/error contract. ARM UMOV requires Wd for Ts in {B,H,S} and Xd for Ts=D. llvm-mc rejects the crossed pairing. The SUT sets Q from dest width (`is_64`) and encodes anyway.
-- Doc contract: neon.rs:460 "Encode NEON UMOV: move element to GP register" — asserted fingerprint 484130f7
-- Seed: encode_neon_ins_pbt.rs:431 encode_neon_ins_neg_wrong_width_gpr
-- Formal: ∀ rd ∈ {0..30}, ∀ rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. llvm-mc("umov {wrong-width gpr}, Vn.Ts[i]") = Err ⇒ encode_neon_umov([Reg(wrong), RegLane]) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_umov([x0, v0.b[0]])
-- Bug report: pbt-out/bug_reports/encode_neon_umov_wrong_width.md
-
-```property
-function: encoder.encode_neon_umov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, ts, i]
-  domain: { rd: "0..=30", rn: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]" }
-  relation:
-    op: holds
-    expr: encode_neon_umov([Reg(wrong_gpr(ts,rd)), RegLane(v{rn}, ts, i)]).is_err()
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
-  i: { gen: int, min: 0, max: 15, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_umov_neg_arity_sp_fp
-- Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects arity 0/1, SP/WSP dest, and FP dest (d/s/q/v/h/b). parse_reg_num maps sp/wsp to 31 and accepts FP prefixes. Arity 0/1 and invalid names Err as required; SP/WSP/FP dest currently encode.
-- Doc contract: neon.rs:463 "umov requires 2 operands" — asserted fingerprint aa68d80e
-- Seed: encode_neon_ins_pbt.rs:457 encode_neon_ins_neg_mismatch_sp_fp / encode_neon_ins_neg_arity
-- Formal: ∀ n ∈ {0,1}, ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)], ∀ kind ∈ {arity, sp, wsp, fp, bad-name}. llvm-mc rejects the corresponding assembly ⇒ encode_neon_umov returns Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_umov([sp, v0.b[0]])
-- Bug report: pbt-out/bug_reports/encode_neon_umov_sp_fp_dest.md
-
-```property
-function: encoder.encode_neon_umov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, rd, rn, ts, i, kind]
-  domain: { n: "0..=1", rd: "0..=31", rn: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]", kind: "{arity,sp,wsp,fp,bad-name}" }
-  relation:
-    op: holds
-    expr: encode_neon_umov(invalid_ops).is_err()
-expected_error: String
-generators:
-  n: { gen: int, min: 0, max: 1, type: usize }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
-  i: { gen: int, min: 0, max: 15, type: u32 }
-  kind: { gen: int, min: 0, max: 4, type: u8 }
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_umov_diff_alt_spellings
-- Tier: 3
-- Rationale: Differential vs llvm-mc on uppercase W/X/V register spellings. parse_reg_num lowercases; llvm-mc accepts them. Parser lowercases elem_size so Ts stays lowercase (parser.rs:1945).
-- Doc contract: neon.rs:460 "Encode NEON UMOV: move element to GP register" — asserted fingerprint 484130f7
-- Seed: encode_neon_ins_pbt.rs:542 encode_neon_ins_diff_alt_spellings
-- Formal: ∀ rd ∈ {0..30}, ∀ rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. encode_neon_umov([Reg({W|X}{rd}), RegLane(V{rn}, ts, i)]) = llvm-mc("umov {W|X}{rd}, V{rn}.{ts}[{i}]")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
+## encode_neon_ext_diff_alt_spellings
+- Tier: 2
+- Rationale: parse_reg_num lowercases; llvm-mc and gas accept uppercase V and T. Differential over uppercase spellings of otherwise-valid EXT.
+- Doc contract: neon.rs:404 "Encode NEON EXT Vd.T, Vn.T, Vm.T, #index" — asserted fingerprint 94586e3d
+- Seed: encode_neon_umov_pbt.rs diff_alt_spellings
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, i ∈ [0, imax(T)]. encode_neon_ext([V{rd}.T, V{rn}.T, V{rm}.T, #i]) = llvm-mc("ext V{rd}.T, V{rn}.T, V{rm}.T, #i")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_umov
+function: encoder.encode_neon_ext
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, ts, i]
-  domain: { rd: "0..=30", rn: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]" }
+  vars: [rd, rn, rm, t, i]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {8b,16b}, i: 0..=imax(t) }
   relation:
     op: eq
-    lhs: encode_neon_umov([Reg(upper_gpr), RegLane(V{rn}, ts, i)])
-    rhs: llvm_mc("umov {W|X}{rd}, V{rn}.{ts}[{i}]")
+    lhs: encode_neon_ext(uppercase V regs)
+    rhs: llvm_mc(uppercase V/T asm)
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b"] }
   i: { gen: int, min: 0, max: 15, type: u32 }
 evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_umov_neg_unsupported_elem_size
+## encode_neon_ext_neg_arity
 - Tier: 4
-- Rationale: Sweep — documented error path neon.rs:478 rejects any elem_size outside {b,h,s,d}. The property asserts that invalid sizes {q,8b,16b,4h,empty,x} return Err, matching llvm-mc. This is the documented invalid domain, not a limitation on accepted input.
-- Doc contract: neon.rs:478 "unsupported umov element size" — asserted fingerprint 45bf1914
-- Seed: (none) — coverage_gaps sweep (file-level; manual arm audit)
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ bad_ts ∈ {q,8b,16b,4h,"",x}, ∀ i ∈ [0,15]. llvm-mc rejects umov Wd, Vn.bad_ts[i] ⇒ encode_neon_umov([Wd, RegLane(Vn, bad_ts, i)]) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
+- Rationale: Documented arity error "ext requires 4 operands"; llvm-mc and gas reject fewer than 4. Negative/error contract: too few operands must Err.
+- Doc contract: neon.rs:407 "ext requires 4 operands" — domain-restriction fingerprint bd0b0ba5
+- Seed: encode_neon_umov_pbt.rs neg_arity_sp_fp
+- Formal: ∀ n ∈ {0,1,2,3}, ops prefix of a valid EXT of length n. encode_neon_ext(ops) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_umov
+function: encoder.encode_neon_ext
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, bad_ts, i]
-  domain: { rd: "0..=31", rn: "0..=31", bad_ts: "{q,8b,16b,4h,empty,x}", i: "0..=15" }
+  vars: [n, rd, rn, rm, t, i]
+  domain: { n: 0..=3, rd: vreg, rn: vreg, rm: vreg, t: {8b,16b}, i: 0..=imax(t) }
   relation:
-    op: holds
-    expr: encode_neon_umov([Reg(Wd), RegLane(Vn, bad_ts, i)]).is_err()
+    op: eq
+    lhs: encode_neon_ext(valid_ops[..n]).is_err()
+    rhs: true
 expected_error: String
 generators:
+  n: { gen: int, min: 0, max: 3, type: usize }
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  bad_ts: { gen: string }
-  i: { gen: int, min: 0, max: 15, type: u32 }
-evidence: neon.rs:478
+  t: { gen: oneof, values: ["8b", "16b"] }
+evidence: src/backend/arm/assembler/encoder/neon.rs:407
 ```
 
-## encode_neon_umov_neg_non_lane_src
+## encode_neon_ext_neg_extra_operand
 - Tier: 4
-- Rationale: Sweep — documented operand comment neon.rs:467 "Second operand should be a RegLane (v0.b[0])" and the `_ => Err("umov: expected register lane operand")` arm. Covers Reg / RegArrangement / Imm as the second operand (arity-1 None was already in neg_arity_sp_fp).
-- Doc contract: neon.rs:467 "Second operand should be a RegLane (v0.b[0])" — asserted fingerprint e26be721
-- Seed: (none) — coverage_gaps sweep (file-level; manual arm audit)
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)], ∀ src ∈ {Reg(v{rn}), RegArrangement(v{rn}.8b), Imm(i)}. llvm-mc rejects the corresponding assembly ⇒ encode_neon_umov([Reg(gpr), src]) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Rationale: gas and llvm-mc reject a fifth operand. README claims gas compatibility. The arity comment only guards `< 4`; extras are still invalid assembly (not a documented exclusion of the fifth operand).
+- Doc contract: neon.rs:404 "Encode NEON EXT Vd.T, Vn.T, Vm.T, #index" — asserted fingerprint 94586e3d
+- Seed: encode_neon_umov_pbt.rs neg_extra_operand
+- Formal: ∀ valid 4-operand EXT ops, extra ∈ Operand. encode_neon_ext(ops ++ [extra]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_ext([v0.8b, v0.8b, v0.8b, #0, v0.8b]) = Ok(Word(0x2e000000))
+- Bug report: bug_reports/encode_neon_ext_extra_operand.md
 
 ```property
-function: encoder.encode_neon_umov
+function: encoder.encode_neon_ext
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, ts, i, kind]
-  domain: { rd: "0..=31", rn: "0..=31", ts: "{b,h,s,d}", i: "[0, imax(ts)]", kind: "{Reg,RegArrangement,Imm}" }
+  vars: [rd, rn, rm, t, i, extra]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {8b,16b}, i: 0..=imax(t), extra: vreg }
   relation:
-    op: holds
-    expr: encode_neon_umov([Reg(gpr), non_lane_src]).is_err()
+    op: eq
+    lhs: encode_neon_ext(ops ++ [extra]).is_err()
+    rhs: true
 expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  ts: { gen: string }
+  extra: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b"] }
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_ext_neg_invalid_t
+- Tier: 4
+- Rationale: ARM/gas/llvm-mc accept only T in {8B,16B}. Arrangements 8h/4h/4s/2s/2d/1d/b/h/s/d are invalid. SUT sets Q=1 iff arr_d=="16b" and otherwise encodes Q=0, so invalid T is currently accepted. This is the finding, not a generator exclusion.
+- Doc contract: neon.rs:415 "EXT Vd.T, Vn.T, Vm.T, #index" — asserted fingerprint 8214fdf0
+- Seed: encode_neon_tbx_pbt.rs invalid Ta; encode_neon_umov unsupported elem_size
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∉ {8b,16b} among ARM arrangement tokens, i ∈ [0,15]. encode_neon_ext([Vd.T, Vn.T, Vm.T, #i]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_ext([v0.8h, v0.8h, v0.8h, #0]) = Ok(Word(0x2e000000))
+- Bug report: bug_reports/encode_neon_ext_invalid_t.md
+
+```property
+function: encoder.encode_neon_ext
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t, i]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {8h,4h,4s,2s,2d,1d,b,h,s,d}, i: 0..=15 }
+  relation:
+    op: eq
+    lhs: encode_neon_ext([Vd.t, Vn.t, Vm.t, Imm(i)]).is_err()
+    rhs: true
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8h", "4h", "4s", "2s", "2d", "1d", "b", "h", "s", "d"] }
   i: { gen: int, min: 0, max: 15, type: u32 }
-  kind: { gen: int, min: 0, max: 2, type: u8 }
-evidence: neon.rs:467
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_ext_neg_index_oor
+- Tier: 4
+- Rationale: gas rejects index outside 0-7 (8B) / 0-15 (16B) ("immediate value out of range"). ARM: Q=0 and imm4<3>!=0 is UNALLOCATED. Field masking (`index & 0xF`) is the classic assembler bug class. llvm-mc wraps; README claims gas, so the contract is Err not wrap. Documented bounds sampled at imax+1 and beyond.
+- Doc contract: neon.rs:404 "Encode NEON EXT Vd.T, Vn.T, Vm.T, #index" — asserted fingerprint 94586e3d
+- Seed: encode_neon_umov_pbt.rs neg_index_oor; pbt-patterns generator-design assembler range contracts
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, i > imax(T) ∨ i < 0. encode_neon_ext([Vd.T, Vn.T, Vm.T, #i]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_ext([v0.8b, v0.8b, v0.8b, #8]) = Ok(Word(0x2e004000))
+- Bug report: bug_reports/encode_neon_ext_index_oor.md
+
+```property
+function: encoder.encode_neon_ext
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t, i]
+  domain: { rd: vreg, rn: vreg, rm: vreg, t: {8b,16b}, i: (imax(t)+1).. OR i < 0 }
+  relation:
+    op: eq
+    lhs: encode_neon_ext([Vd.t, Vn.t, Vm.t, Imm(i)]).is_err()
+    rhs: true
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b"] }
+  over: { gen: int, min: 1, max: 16, type: u32 }
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_ext_neg_mismatched_t
+- Tier: 4
+- Rationale: gas and llvm-mc require matching T on Vd, Vn, Vm. SUT discards source arrangements. Not a documented exclusion.
+- Doc contract: neon.rs:415 "EXT Vd.T, Vn.T, Vm.T, #index" — asserted fingerprint 8214fdf0
+- Seed: encode_neon_tbx_pbt.rs mismatched T
+- Formal: ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b}, i ∈ [0,7]. (Td ≠ Tn ∨ Td ≠ Tm) ⇒ encode_neon_ext([Vd.Td, Vn.Tn, Vm.Tm, #i]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_ext([v0.8b, v0.8b, v0.16b, #0]) = Ok(Word(0x2e000000))
+- Bug report: bug_reports/encode_neon_ext_mismatched_t.md
+
+```property
+function: encoder.encode_neon_ext
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t_d, t_n, t_m, i]
+  domain: { t_d: {8b,16b}, t_n: {8b,16b}, t_m: {8b,16b}, i: 0..=7 }
+  relation:
+    op: eq
+    lhs: encode_neon_ext(ops).is_err()
+    rhs: true
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  t_d: { gen: oneof, values: ["8b", "16b"] }
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_ext_neg_gpr_or_bare
+- Tier: 4
+- Rationale: gas and llvm-mc require Vd.T / Vn.T / Vm.T / #imm. Operand::Reg (GPR, FP, bare V) and non-Imm index are invalid. get_neon_reg accepts Operand::Reg.
+- Doc contract: neon.rs:404 "Encode NEON EXT Vd.T, Vn.T, Vm.T, #index" — asserted fingerprint 94586e3d
+- Seed: encode_neon_umov_pbt.rs neg_arity_sp_fp / non_lane_src
+- Formal: ∀ kind ∈ {GPR dest, bare Vn, GPR Vm, bare V dest, non-Imm index}. encode_neon_ext(ops) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_ext([x0, v0.8b, v0.8b, #0]) = Ok(Word(0x2e000000))
+- Bug report: bug_reports/encode_neon_ext_gpr_dest.md
+
+```property
+function: encoder.encode_neon_ext
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t, i, kind]
+  domain: { kind: 0..=4 }
+  relation:
+    op: eq
+    lhs: encode_neon_ext(ops).is_err()
+    rhs: true
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  kind: { gen: int, min: 0, max: 4, type: u8 }
+evidence: src/backend/arm/assembler/README.md:12
 ```
