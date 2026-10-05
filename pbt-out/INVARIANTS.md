@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_dsb)
+
+- Named DSB options (sy/st/ld/ish/ishst/ishld/nsh/nshst/nshld/osh/oshst/oshld), including case folds, match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Barrier vs Symbol encodings are identical.
+- ARM DSB layout holds for named options: 0xD503309F | (CRm << 8); bits[31:12]=0xD5033; bits[7:5]=100; bits[4:0]=11111; different names differ only in bits[11:8] (1000 cases).
+- Unknown Barrier/Symbol names return Err containing "unknown dsb option" (1000 cases).
+- Known-answer: `dsb sy` = 0xd5033f9f; `dsb ish` = 0xd5033b9f; llvm-mc `dsb #0` = 0xd503309f (SUT disagrees).
+- Imm 0..=15, extra operands, empty slice, and non-barrier kinds currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_dsb)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). Cross-checked against GNU as (aarch64-linux-gnu-as).
+- ARM ARM DSB: 1101 0101 0000 0011 0011 CRm 100 11111. Named CRm as above; assembler also accepts #imm 0..=15 as CRm.
+- Dispatch: encoder/mod.rs:967 `"dsb" => encode_dsb(operands)`. Operands passed through unchanged.
+- Sibling encode_dmb is not a same-job differential (DMB op2=101 vs DSB op2=100).
+- encode_dsb matches only first-operand Barrier/Symbol names; unknown names Err; any other first-operand kind (including Imm and empty) silently encodes SY; extra operands ignored.
+- Parser: Barrier for the 12 names (parser.rs:1918-1923); Imm for `#n` and bare integers (parser.rs:1991, 2020).
+- No codegen caller currently emits `dsb`; encode() still routes the mnemonic.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of named Barrier/Symbol, unknown Err, and `_ => 0b1111`.
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_dsb_*.md.
+
 # Confirmed invariants (encode_dmb)
 
 - Named DMB options (sy/st/ld/ish/ishst/ishld/nsh/nshst/nshld/osh/oshst/oshld), including case folds, match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Barrier vs Symbol encodings are identical.

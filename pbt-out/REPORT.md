@@ -1,133 +1,133 @@
-# PBT Campaign Report: encode_dmb
+# PBT Campaign Report: encode_dsb
 
 ## Summary
 
-**Verdict:** 1 high, 3 medium: encode_dmb ignores Operand::Imm so `dmb #0` encodes as `dmb sy` (wrong barrier), and it silently encodes extra, omitted, and non-barrier operands as SY instead of rejecting them the way GNU as and llvm-mc do.
+**Verdict:** 1 high, 3 medium: encode_dsb ignores Operand::Imm so `dsb #0` encodes as `dsb sy` (wrong barrier), and it silently encodes extra, omitted, and non-barrier operands as SY instead of rejecting them the way GNU as and llvm-mc do.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_dmb
+**Modules tested:** encode_dsb
 **Tests:** 8 properties (plus 3 KAT, 4 regression witnesses)
 **Result:** 4 passing, 4 bugs
-**Change surface:** 1 changed function (encode_dmb), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed encode_dmb NOT LINKED because it inspected unrelated C++ binaries. `cargo test --lib encode_dmb` executed the real production symbol (4 passing / 4 failing properties).
+**Change surface:** 1 changed function (encode_dsb), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed encode_dsb NOT LINKED because it inspected unrelated C++ binaries. `cargo test --lib encode_dsb` executed the real production symbol (4 passing / 4 failing properties).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_dmb | 8 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_dsb | 8 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_dmb ignores Imm and encodes SY
+### B1: encode_dsb ignores Imm and encodes SY
 
-**Formal:** ∀ crm ∈ {0,…,15}. encode_dmb([Imm(crm)]) = llvm-mc("dmb #" + crm) as Word
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as and llvm-mc encode `dmb #imm` for imm in 0..=15 as CRm=imm; parser.rs produces Operand::Imm for `#n`; encode() at mod.rs:964 passes operands through)
-**Documentation conflict:** (none) — encode_dmb has no rustdoc covering Imm; system.rs:25 "DMB: 0xD50330BF | (CRm << 8)" states the encoding formula but does not mention immediates
+**Formal:** ∀ crm ∈ {0,…,15}. encode_dsb([Imm(crm)]) = llvm-mc("dsb #" + crm) as Word
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as and llvm-mc encode `dsb #imm` for imm in 0..=15 as CRm=imm; parser.rs produces Operand::Imm for `#n`; encode() at mod.rs:967 passes operands through)
+**Documentation conflict:** (none) — encode_dsb has no rustdoc covering Imm; system.rs:49 "DSB: 0xD503309F | (option << 8)" states the encoding formula but does not mention immediates
 **Severity:** high
-**Counterexample:** encode_dmb(&[Operand::Imm(0)])  (`dmb #0`)
-**Expected / Actual:** Word(0xd50330bf) / Word(0xd5033fbf)
-**Impact:** Valid GNU-style `dmb #imm` assembles as a full-system barrier. Requested CRm values 0–14 become SY, changing memory-ordering semantics.
-**Root cause:** system.rs:23 `_ => 0b1111` — Imm is not matched, so every immediate falls through to SY.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:23`
+**Counterexample:** encode_dsb(&[Operand::Imm(0)])  (`dsb #0`)
+**Expected / Actual:** Word(0xd503309f) / Word(0xd5033f9f)
+**Impact:** Valid GNU-style `dsb #imm` assembles as a full-system barrier. Requested CRm values 0–14 become SY, changing memory-ordering semantics.
+**Root cause:** system.rs:47 `_ => 0b1111` — Imm is not matched, so every immediate falls through to SY.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:47`
 ```rust
         _ => 0b1111,
 ```
 **Suggested fix:** Treat Imm in 0..=15 as CRm; reject immediates outside that range.
 ```rust
         Some(Operand::Imm(n)) if (0..=15).contains(n) => *n as u32,
-        Some(Operand::Imm(n)) => return Err(format!("dmb immediate out of range: {}", n)),
+        Some(Operand::Imm(n)) => return Err(format!("dsb immediate out of range: {}", n)),
 ```
-**Bug report:** bug_reports/encode_dmb_imm_ignored.md
-**Repro seed:** cc b237a050e3f0cc9e9ef0407f2594424cd2a7b9c9d331ee1871ff9d1b6d9d4c57
+**Bug report:** bug_reports/encode_dsb_imm_ignored.md
+**Repro seed:** cc c5614437345ff82a5cc5a5d8c06e99a694c826b52825b26e31c45e7e2f0f733d
 **Raw output:**
 ```text
 Test failed: assertion failed: `(left == right)`
-  left: `3573759935`,
- right: `3573756095`: SUT vs llvm-mc for dmb #0
+  left: `3573759903`,
+ right: `3573756063`: SUT vs llvm-mc for dsb #0
 minimal failing input: crm = 0
 ```
 
-### B2: encode_dmb ignores extra operands
+### B2: encode_dsb ignores extra operands
 
-**Formal:** ∀ name ∈ NamedDmb, ∀ extra ∈ Operand. llvm-mc("dmb " + name + ", …") is Err ⇒ encode_dmb([Barrier(name), extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as rejects `dmb sy, x0`; llvm-mc rejects extra operands)
+**Formal:** ∀ name ∈ NamedDsb, ∀ extra ∈ Operand. llvm-mc("dsb " + name + ", …") is Err ⇒ encode_dsb([Barrier(name), extra]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as rejects `dsb sy, x0`; llvm-mc rejects extra operands)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_dmb(&[Operand::Barrier("sy".into()), Operand::Reg("x0".into())])  (`dmb sy, x0`)
-**Expected / Actual:** Err / Ok(Word(0xd5033fbf))
-**Impact:** Extra operands are dropped; `dmb sy, x0` silently becomes `dmb sy`.
-**Root cause:** system.rs:7 `operands.first()` — only the first operand is examined; length is never checked.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:7`
+**Counterexample:** encode_dsb(&[Operand::Barrier("sy".into()), Operand::Reg("x0".into())])  (`dsb sy, x0`)
+**Expected / Actual:** Err / Ok(Word(0xd5033f9f))
+**Impact:** Extra operands are dropped; `dsb sy, x0` silently becomes `dsb sy`.
+**Root cause:** system.rs:31 `operands.first()` — only the first operand is examined; length is never checked.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:31`
 ```rust
     let option = match operands.first() {
 ```
 **Suggested fix:** Reject a slice longer than one operand.
 ```rust
     if operands.len() > 1 {
-        return Err("dmb: extra operand".to_string());
+        return Err("dsb: extra operand".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_dmb_extra_operand.md
+**Bug report:** bug_reports/encode_dsb_extra_operand.md
 **Repro seed:** (deterministic; name = "sy", extra = Reg("x0"))
 **Raw output:**
 ```text
-Test failed: extra operand must Err (llvm-mc rejects dmb sy, x0)
+Test failed: extra operand must Err (llvm-mc rejects dsb sy, x0)
 minimal failing input: name = "sy", extra = Reg("x0")
 ```
 
-### B3: encode_dmb encodes omitted option as SY
+### B3: encode_dsb encodes omitted option as SY
 
-**Formal:** encode_dmb([]) is Err
+**Formal:** encode_dsb([]) is Err
 **Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as: "missing immediate expression at operand 1"; llvm-mc: "too few operands")
 **Documentation conflict:** (none) — ARM ARM lists the option as optional with default SY, but this assembler claims gas compatibility and gas requires an operand
 **Severity:** medium
-**Counterexample:** encode_dmb(&[])
-**Expected / Actual:** Err / Ok(Word(0xd5033fbf))
-**Impact:** A `dmb` with no operand, rejected by gas and llvm-mc, is encoded as a full-system barrier.
-**Root cause:** system.rs:23 `_ => 0b1111` — `operands.first()` is None and defaults CRm to SY.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:23`
+**Counterexample:** encode_dsb(&[])
+**Expected / Actual:** Err / Ok(Word(0xd5033f9f))
+**Impact:** A `dsb` with no operand, rejected by gas and llvm-mc, is encoded as a full-system barrier.
+**Root cause:** system.rs:47 `_ => 0b1111` — `operands.first()` is None and defaults CRm to SY.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:47`
 ```rust
         _ => 0b1111,
 ```
 **Suggested fix:** Return Err when the operand list is empty.
 ```rust
-        None => return Err("dmb requires a barrier option".to_string()),
+        None => return Err("dsb requires a barrier option".to_string()),
 ```
-**Bug report:** bug_reports/encode_dmb_empty_defaults_sy.md
+**Bug report:** bug_reports/encode_dsb_empty_defaults_sy.md
 **Repro seed:** (deterministic; _n = 0)
 **Raw output:**
 ```text
-Test failed: empty operands must Err (gas/llvm-mc reject omitted dmb option)
+Test failed: empty operands must Err (gas/llvm-mc reject omitted dsb option)
 minimal failing input: _n = 0
 ```
 
-### B4: encode_dmb encodes non-barrier operands as SY
+### B4: encode_dsb encodes non-barrier operands as SY
 
-**Formal:** ∀ op ∈ {Imm(n) | n ∉ 0..=15} ∪ {Reg, Mem, Cond, Shift, Label, …}. llvm-mc rejects the corresponding assembly ⇒ encode_dmb([op]) is Err
+**Formal:** ∀ op ∈ {Imm(n) | n ∉ 0..=15} ∪ {Reg, Mem, Cond, Shift, Label, …}. llvm-mc rejects the corresponding assembly ⇒ encode_dsb([op]) is Err
 **Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as / llvm-mc reject registers and `#imm` outside 0..=15)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_dmb(&[Operand::Imm(-1)])  (`dmb #-1`)
-**Expected / Actual:** Err / Ok(Word(0xd5033fbf))
-**Impact:** Invalid operands such as `dmb #-1` and `dmb x0` encode as `dmb sy` instead of an assembler error.
-**Root cause:** system.rs:23 `_ => 0b1111` — Imm, Reg, Mem, and every other non-Barrier/non-Symbol kind take the SY default.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:23`
+**Counterexample:** encode_dsb(&[Operand::Imm(-1)])  (`dsb #-1`)
+**Expected / Actual:** Err / Ok(Word(0xd5033f9f))
+**Impact:** Invalid operands such as `dsb #-1` and `dsb x0` encode as `dsb sy` instead of an assembler error.
+**Root cause:** system.rs:47 `_ => 0b1111` — Imm, Reg, Mem, and every other non-Barrier/non-Symbol kind take the SY default.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:47`
 ```rust
         _ => 0b1111,
 ```
 **Suggested fix:** Reject non-barrier kinds and immediates outside 0..=15.
 ```rust
         Some(Operand::Imm(n)) if (0..=15).contains(n) => *n as u32,
-        Some(Operand::Imm(n)) => return Err(format!("dmb immediate out of range: {}", n)),
-        Some(_) => return Err("dmb: invalid operand".to_string()),
+        Some(Operand::Imm(n)) => return Err(format!("dsb immediate out of range: {}", n)),
+        Some(_) => return Err("dsb: invalid operand".to_string()),
 ```
-**Bug report:** bug_reports/encode_dmb_wrong_kind_defaults_sy.md
+**Bug report:** bug_reports/encode_dsb_wrong_kind_defaults_sy.md
 **Repro seed:** (deterministic; op = Imm(-1))
 **Raw output:**
 ```text
-Test failed: non-named / out-of-range operand must Err, got Ok(Word(3573759935))
+Test failed: non-named / out-of-range operand must Err, got Ok(Word(3573759903))
 minimal failing input: op = Imm(-1)
 ```
 
@@ -139,70 +139,65 @@ minimal failing input: op = Imm(-1)
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_dmb_pbt.rs | 8 properties, 3 KAT, 4 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_dmb_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_dsb_pbt.rs | 8 properties, 3 KAT, 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_dsb_pbt` registration |
 
 ## Reproduction
 
 Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_dmb -- --test-threads=1
+cargo test --lib encode_dsb -- --test-threads=1
 ```
 
-B1 (`dmb #0` encodes as SY):
+B1 (`dsb #0` encodes as SY):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dmb_regression_imm_crm0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_dsb_regression_imm_crm0 -- --test-threads=1 --nocapture
 ```
 
 B2 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dmb_regression_extra_sy_x0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_dsb_regression_extra_sy_x0 -- --test-threads=1 --nocapture
 ```
 
-B3 (empty operands):
+B3 (omitted option):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dmb_regression_empty -- --test-threads=1 --nocapture
+cargo test --lib test_encode_dsb_regression_empty -- --test-threads=1 --nocapture
 ```
 
-B4 (Imm(-1)):
+B4 (`dsb #-1`):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dmb_regression_imm_neg1 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_dsb_regression_imm_neg1 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_dmb_imm_ignored.md
-- pbt-out/bug_reports/encode_dmb_imm_ignored.html
-- pbt-out/bug_reports/encode_dmb_extra_operand.md
-- pbt-out/bug_reports/encode_dmb_extra_operand.html
-- pbt-out/bug_reports/encode_dmb_empty_defaults_sy.md
-- pbt-out/bug_reports/encode_dmb_empty_defaults_sy.html
-- pbt-out/bug_reports/encode_dmb_wrong_kind_defaults_sy.md
-- pbt-out/bug_reports/encode_dmb_wrong_kind_defaults_sy.html
-- pbt-out/run/encode_dmb_pbt.log
-- pbt-out/run/encode_dmb_regression.log
-- proptest-regressions/backend/arm/assembler/encoder/encode_dmb_pbt.txt (proptest shrunk-failure file, framework convention)
+- pbt-out/REPORT.md — this campaign report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — per-function coverage table
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/report.json — machine-readable report
+- pbt-out/INVARIANTS.md — confirmed invariants for later campaigns
+- pbt-out/FUNCTION_INDEX.md — merged function index
+- pbt-out/bug_reports/encode_dsb_imm_ignored.md + .html
+- pbt-out/bug_reports/encode_dsb_extra_operand.md + .html
+- pbt-out/bug_reports/encode_dsb_empty_defaults_sy.md + .html
+- pbt-out/bug_reports/encode_dsb_wrong_kind_defaults_sy.md + .html
+- pbt-out/run/encode_dsb.log — cargo test log
+- proptest-regressions/backend/arm/assembler/encoder/encode_dsb_pbt.txt — shrunk seeds
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 23:36 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 149/307 total | PBT candidates: 149 | Tested: 149 (100%) | 0 pass, 149 fail
+> Last updated: 2026-10-05 23:51 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 150/307 total | PBT candidates: 150 | Tested: 150 (100%) | 0 pass, 150 fail
 
 ## Summary
 
@@ -211,10 +206,10 @@ cargo test --lib test_encode_dmb_regression_imm_neg1 -- --test-threads=1 --nocap
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 149 |
-| **Tested (of PBT candidates)** | **149 / 149 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 149 / 0 |
-| **Overall (tested / all functions)** | **149 / 307 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 150 |
+| **Tested (of PBT candidates)** | **150 / 150 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 150 / 0 |
+| **Overall (tested / all functions)** | **150 / 307 (49%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -222,13 +217,13 @@ cargo test --lib test_encode_dmb_regression_imm_neg1 -- --test-threads=1 --nocap
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 149 | 149 | 0 | 100% |
+|  | 150 | 150 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 149 | 149 | 0 | 100% |
+| unknown | 150 | 150 | 0 | 100% |
 
 ## File Coverage
 
@@ -400,3 +395,4 @@ cargo test --lib test_encode_dmb_regression_imm_neg1 -- --test-threads=1 --nocap
 | encode_neon_scalar_qshrn | neon.rs |
 | encode_neon_two_misc_narrow | neon.rs |
 | encode_dmb | system.rs |
+| encode_dsb | system.rs |

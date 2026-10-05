@@ -112,6 +112,8 @@ mod encode_neon_scalar_qshrn_pbt;
 mod encode_neon_two_misc_narrow_pbt;
 #[cfg(test)]
 mod encode_dmb_pbt;
+#[cfg(test)]
+mod encode_dsb_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
