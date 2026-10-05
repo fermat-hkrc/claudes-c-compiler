@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_neon_pmul)
+
+- Valid PMUL Vd.T, Vn.T, Vm.T with T in {8b,16b}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16] (1000 cases).
+- Success-path 32-bit word: bit31=0, Q at bit30 (1 iff T=16b), U=1 at bit29, bits[28:24]=01110, size[23:22]=00, bit21=1, Rm at [20:16], bits[15:10]=100111, Rn at [9:5], Rd at [4:0].
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase PMUL/V prefix with matching T matches llvm-mc (1000 cases).
+- Imm/Mem/Label at any slot returns Err (1000 cases).
+- Known-answer: `pmul v0.8b, v1.8b, v2.8b` = 0x2e229c20; `pmul v0.16b, v1.16b, v2.16b` = 0x6e229c20; `pmul v31.8b, v31.8b, v31.8b` = 0x2e3f9fff; `pmul v0.8b, v0.8b, v0.8b` = 0x2e209c00; `pmul v15.16b, v16.16b, v17.16b` = 0x6e319e0f.
+- Extra operand, mismatched T, reserved non-byte T, and bare/GPR dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_pmul)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same PMUL: T in {8B,16B} only; size must be 00; U=1; bits[15:10]=100111.
+- Dispatch: encoder/mod.rs:775 `"pmul" => encode_neon_pmul(operands)` with operands passed through.
+- encode_neon_pmul has no operands.len() check; extra ignored; source arrangements discarded; Q=1 iff arr_d=="16b" else 0 (non-byte T encoded as 8B).
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus reserved T and non-register operands.
+- Four SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_pmul_*.md.
+
+## Quirks (encode_neon_pmul)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangements are discarded (see bugs).
+- Non-byte dest T is encoded as 8B (see bugs).
+- Operand::Reg source and x/w prefixes encode as V registers (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
 # Confirmed invariants (encode_neon_mul)
 
 - Valid MUL Vd.T, Vn.T, Vm.T with T in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
