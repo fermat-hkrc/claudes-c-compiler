@@ -1,148 +1,150 @@
-# PBT Campaign Report: encode_neon_ins
+# PBT Campaign Report: encode_neon_umov
 
 ## Summary
 
-**Verdict:** 4 medium: encode_neon_ins silently encodes invalid INS (extra operand, out-of-range lane, wrong GPR width, SP/FP/mismatched Ts) instead of returning Err, so a GNU-style assembler typo becomes a different legal instruction.
+**Verdict:** 4 medium: encode_neon_umov silently encodes extra operands, out-of-range lanes, wrong dest width, and SP/WSP/FP dest names that llvm-mc rejects, so a GNU-style assembler typo becomes a different valid (or reserved) instruction instead of an error.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_ins
-**Tests:** 10 properties (plus 1 KAT + 6 regression witnesses)
+**Modules tested:** encode_neon_umov
+**Tests:** 10 properties (+ 1 KAT + 6 regression witnesses)
 **Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter listed unrelated binaries and claimed NOT LINKED). The libtest binary ran encode_neon_ins (KAT plus 10 properties). Sweep was a manual arm audit (arity < 2, uppercase V/W/X).
+**Change surface:** 1 changed function (encode_neon_umov), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit added unsupported-elem-size and non-lane-src (both passing).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_ins | 10 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_umov | 10 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_ins ignores a surplus third operand
+### B1: encode_neon_umov ignores a surplus third operand
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}, ts ∈ {b,h,s,d}, i ∈ [0, imax(ts)]. llvm-mc("ins Vd.ts[i], R, extra") fails ⇒ encode_neon_ins(gpr_ops ++ [extra]) = Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects a third operand; neon.rs:551 documents the 2-operand arity but the check is `len < 2`)
-**Documentation conflict:** neon.rs:551 "ins requires 2 operands" — asserted arity, implemented as `len < 2`, so extras are not excluded. (not independently verified as an exclusion)
+**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. llvm-mc("umov gpr, Vn.Ts[i], extra") = Err ⇒ encode_neon_umov([Reg, RegLane, extra]) = Err
+**Contract evidence:** documented neon.rs:463 "umov requires 2 operands"
+**Documentation conflict:** neon.rs:463 "umov requires 2 operands" states the arity IS 2; the code implements `len() < 2` (at least 2). The comment is the contract the code violates.
 **Severity:** medium
-**Counterexample:** encode_neon_ins([v0.b[0], w0, w0]) then Ok(Word(0x4e011c00))
-**Expected / Actual:** Err / Ok(Word(0x4e011c00)) encoded as `ins v0.b[0], w0`
-**Impact:** A typo extra token is assembled as a valid INS instead of an assembler error.
-**Root cause:** neon.rs:550 `if operands.len() < 2` only rejects too few operands; extras past index 1 are never inspected.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:550`
+**Counterexample:** encode_neon_umov([w0, v0.b[0], w0])
+**Expected / Actual:** Err / Ok(Word(0x0e013c00))
+**Impact:** A typo or extra token silently produces a valid 2-operand UMOV instead of an assembler error.
+**Root cause:** neon.rs:462 `if operands.len() < 2` only rejects too few operands; extras past index 1 are never inspected.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:462`
 ```rust
     if operands.len() < 2 {
-        return Err("ins requires 2 operands".to_string());
+        return Err("umov requires 2 operands".to_string());
     }
 ```
 **Suggested fix:** Require exactly two operands.
 ```rust
     if operands.len() != 2 {
-        return Err("ins requires 2 operands".to_string());
+        return Err("umov requires 2 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_ins_extra_operand.md
-**Repro seed:** rd=0, rn=0, extra=0, ts=b, i=0
+**Bug report:** bug_reports/encode_neon_umov_extra_operand.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_ins_pbt::test_encode_neon_ins_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_ins_pbt.rs:576:5:
-ins v0.b[0], w1, w2 must Err (llvm-mc rejects a third operand)
+thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:569:9:
+umov w0, v0.b[0], w0 must Err (llvm-mc rejects a third operand)
 ```
 
-### B2: encode_neon_ins masks an out-of-range lane index
+### B2: encode_neon_umov masks an out-of-range lane index instead of rejecting it
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ts ∈ {b,h,s,d}, i ∈ {imax(ts)+1 .. imax(ts)+8}. encode_neon_ins([Vd.ts[i], R]) = Err ∧ encode_neon_ins([Vd.ts[0], Vn.ts[i]]) = Err
-**Contract evidence:** inferred (ARM INS lane ranges B[0-15] H[0-7] S[0-3] D[0-1]; llvm-mc rejects bound+1; README.md:12 gas-compat)
+**Formal:** ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ over ∈ {1..8}. let i = imax(ts)+over. llvm-mc("umov gpr, Vn.Ts[i]") = Err ⇒ encode_neon_umov(...) = Err
+**Contract evidence:** inferred (ARM Advanced SIMD copy lane ranges b[0-15] h[0-7] s[0-3] d[0-1]; llvm-mc/gas reject OOR; README gas-compatibility)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_ins([v0.b[16], w0]) then Ok(Word(0x4e011c00))
-**Expected / Actual:** Err / Ok(Word(0x4e011c00)) encoded as `ins v0.b[0], w0`
-**Impact:** An out-of-range lane silently becomes a different legal insert.
-**Root cause:** neon.rs:559-563 mask the index (`*index & 0xF` and friends) instead of rejecting values outside the ARM range.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:559`
+**Counterexample:** encode_neon_umov([w0, v0.b[16]])
+**Expected / Actual:** Err / Ok(Word(0x0e013c00)) encoded as v0.b[0]
+**Impact:** An out-of-range lane silently wraps and produces a different valid instruction.
+**Root cause:** neon.rs:474-477 mask the index (`index & 0xF` etc.) instead of range-checking against imax(Ts).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:474`
 ```rust
-            let imm5 = match elem_size.as_str() {
                 "b" => ((*index & 0xF) << 1) | 0b00001,
-                "h" => ((*index & 0x7) << 2) | 0b00010,
-                "s" => ((*index & 0x3) << 3) | 0b00100,
-                "d" => ((*index & 0x1) << 4) | 0b01000,
 ```
-**Suggested fix:** Reject `index > max(Ts)` before packing imm5/imm4.
+**Suggested fix:** Reject an index above the ARM maximum for that element size before encoding imm5.
 ```rust
-            if *index > max {
-                return Err(format!("ins: lane index {} out of range [0, {}]", index, max));
+            if *index > max_for(elem_size) {
+                return Err(format!("umov lane index {} out of range for .{}", index, elem_size));
             }
 ```
-**Bug report:** bug_reports/encode_neon_ins_index_oor.md
-**Repro seed:** rd=0, rn=0, ts=b, over=1
+**Bug report:** bug_reports/encode_neon_umov_index_oor.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_ins_pbt::test_encode_neon_ins_regression_index_oor' panicked at src/backend/arm/assembler/encoder/encode_neon_ins_pbt.rs:585:5:
-ins v0.b[16], w1 must Err (llvm-mc range for .b is [0, 15])
+thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_index_oor' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:578:9:
+umov w0, v0.b[16] must Err (llvm-mc range for .b is [0, 15])
 ```
 
-### B3: encode_neon_ins accepts the wrong GPR width
+### B3: encode_neon_umov accepts the wrong GPR width for UMOV
 
-**Formal:** ∀ rd,rn ∈ {0..30}, ts ∈ {b,h,s,d}, i ∈ [0, imax(ts)]. encode_neon_ins([Vd.ts[i], wrong_width(ts,rn)]) = Err
-**Contract evidence:** inferred (ARM INS general: Wn for B/H/S, Xn for D; llvm-mc rejects the swap; README.md:12 gas-compat)
-**Documentation conflict:** neon.rs:549 "INS Vd.Ts[index], Xn" names Xn informally and does not declare Wn illegal for B/H/S. Not an input-domain restriction.
-**Severity:** medium
-**Counterexample:** encode_neon_ins([v0.b[0], x0]) then Ok(Word(0x4e011c00))
-**Expected / Actual:** Err / Ok(Word(0x4e011c00)) encoded as `ins v0.b[0], w0`
-**Impact:** A 64-bit source on a byte insert (or a 32-bit source on a doubleword insert) silently becomes the other width.
-**Root cause:** neon.rs:555-557 calls parse_reg_num, which treats xN and wN as the same number; no width check against Ts.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:555`
-```rust
-        (Operand::RegLane { reg, elem_size, index }, Operand::Reg(rn_name)) => {
-            let rd = parse_reg_num(reg).ok_or("invalid NEON register")?;
-            let rn = parse_reg_num(rn_name).ok_or("invalid register")?;
-```
-**Suggested fix:** Require Wn for B/H/S and Xn for D.
-```rust
-            if want_x && !is_x || !want_x && !is_w {
-                return Err(format!("ins: GPR source {} has wrong width for .{}", rn_name, elem_size));
-            }
-```
-**Bug report:** bug_reports/encode_neon_ins_wrong_width_gpr.md
-**Repro seed:** rd=0, rn=0, ts=b, i=0
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_ins_pbt::test_encode_neon_ins_regression_wrong_width_gpr' panicked at src/backend/arm/assembler/encoder/encode_neon_ins_pbt.rs:607:5:
-ins v0.b[0], x1 must Err (llvm-mc requires Wn for Ts=B)
-```
-
-### B4: encode_neon_ins encodes SP as XZR and ignores mismatched Ts / FP names
-
-**Formal:** ∀ rd,rn ∈ {0..31}, ts ≠ ts2 ∈ {b,h,s,d}, i ∈ [0, imax(ts)], j ∈ [0, imax(ts2)]. encode_neon_ins([Vd.ts[i], Vn.ts2[j]]) = Err ∧ encode_neon_ins([Vd.ts[i], SP|WSP|dN|sN|qN|vN]) = Err
-**Contract evidence:** inferred (ARM INS general source is Wn/Xn/WZR/XZR; llvm-mc rejects SP/WSP/dN and mismatched Ts; README.md:12 gas-compat)
+**Formal:** ∀ rd ∈ {0..30}, ∀ rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)]. llvm-mc("umov {wrong-width gpr}, Vn.Ts[i]") = Err ⇒ encode_neon_umov([Reg(wrong), RegLane]) = Err
+**Contract evidence:** inferred (ARM UMOV Wd+B/H/S and Xd+D; llvm-mc rejects the crossed pairing; README gas-compatibility)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_ins([v0.b[0], sp]) then Ok(Word(0x4e011fe0))
-**Expected / Actual:** Err / Ok(Word(0x4e011fe0)) encoded as `ins v0.b[0], wzr`
-**Impact:** SP is assembled as WZR; `d1` as w1; `ins v0.b[0], v1.h[0]` as a matching-B insert. Related regressions: test_encode_neon_ins_regression_fp_as_gpr, test_encode_neon_ins_regression_size_mismatch.
-**Root cause:** neon.rs:557 parse_reg_num("sp") yields 31 and accepts d/s/q/v prefixes; neon.rs:574 binds `_src_size` and never compares it to the destination Ts.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:555`
+**Counterexample:** encode_neon_umov([x0, v0.b[0]])
+**Expected / Actual:** Err / Ok(Word(0x4e013c00)) with Q=1
+**Impact:** A width typo silently produces a reserved/invalid UMOV encoding llvm-mc and gas refuse to assemble.
+**Root cause:** neon.rs:471 sets Q from dest GPR width (`is_64`) and never checks that Wd pairs with B/H/S and Xd pairs with D.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:471`
 ```rust
-        (Operand::RegLane { reg, elem_size, index }, Operand::Reg(rn_name)) => {
-            let rd = parse_reg_num(reg).ok_or("invalid NEON register")?;
-            let rn = parse_reg_num(rn_name).ok_or("invalid register")?;
+            let q = if is_64 { 1u32 } else { 0 };
 ```
-**Suggested fix:** Restrict the general-form source to W/X/WZR/XZR, and require matching Ts on the element form.
+**Suggested fix:** Derive Q from the element size and reject a dest width that does not match.
 ```rust
-            if n == "sp" || n == "wsp" || !(is_w || is_x) {
-                return Err(format!("ins: GPR source must be Wn/Xn, got {}", rn_name));
-            }
-            if dst_size != src_size {
-                return Err(format!("ins: element size mismatch {} vs {}", dst_size, src_size));
-            }
+            let q = match elem_size.as_str() {
+                "b" | "h" | "s" => {
+                    if is_64 { return Err("umov B/H/S requires a W register".into()); }
+                    0u32
+                }
+                "d" => {
+                    if !is_64 { return Err("umov D requires an X register".into()); }
+                    1u32
+                }
+                _ => return Err(format!("unsupported umov element size: {}", elem_size)),
+            };
 ```
-**Bug report:** bug_reports/encode_neon_ins_sp_as_zr.md
-**Repro seed:** rd=0, rn=0, ts=b, i=0, kind=1
+**Bug report:** bug_reports/encode_neon_umov_wrong_width.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_ins_pbt::test_encode_neon_ins_regression_sp_as_zr' panicked at src/backend/arm/assembler/encoder/encode_neon_ins_pbt.rs:632:5:
-ins v0.b[0], sp must Err (llvm-mc rejects SP as INS GPR source)
+thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_wrong_width' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:600:9:
+umov x0, v0.b[0] must Err (llvm-mc requires Wd for Ts=B)
+```
+
+### B4: encode_neon_umov encodes SP/WSP and FP names as the UMOV GPR dest
+
+**Formal:** ∀ n ∈ {0,1}, ∀ rd,rn ∈ {0..31}, ∀ ts ∈ {b,h,s,d}, ∀ i ∈ [0, imax(ts)], ∀ kind ∈ {arity, sp, wsp, fp, bad-name}. llvm-mc rejects the corresponding assembly ⇒ encode_neon_umov returns Err
+**Contract evidence:** inferred (ARM UMOV dest is Wd/Xd/WZR/XZR; llvm-mc rejects SP/WSP/FP; README gas-compatibility)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_umov([sp, v0.b[0]])
+**Expected / Actual:** Err / Ok(Word(0x4e013c1f)) for SP; also WSP → 0x0e013c1f, d0 → 0x0e013c00
+**Impact:** A mistyped dest silently becomes XZR/WZR/W0.
+**Root cause:** neon.rs:465 calls get_reg, which uses parse_reg_num (sp/wsp → 31; d/s/q/v/h/b prefixes accepted). encode_neon_umov never restricts dest to W/X/WZR/XZR.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:465`
+```rust
+    let (rd, is_64) = get_reg(operands, 0)?;
+```
+**Suggested fix:** After get_reg, reject SP/WSP and FP/SIMD dest names.
+```rust
+    let dest = match operands.get(0) {
+        Some(Operand::Reg(name)) => name,
+        _ => return Err("umov: expected GPR dest".into()),
+    };
+    let lower = dest.to_lowercase();
+    if lower == "sp" || lower == "wsp" || matches!(lower.chars().next(), Some('d' | 's' | 'q' | 'v' | 'h' | 'b')) {
+        return Err(format!("umov dest must be a W/X register, got {}", dest));
+    }
+```
+**Bug report:** bug_reports/encode_neon_umov_sp_fp_dest.md
+**Repro seed:** (none — deterministic regression)
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_umov_pbt::test_encode_neon_umov_regression_sp_as_zr' panicked at src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs:615:9:
+umov sp, v0.b[0] must Err (llvm-mc rejects SP as UMOV dest)
 ```
 
 ## Design Caveats
@@ -153,70 +155,65 @@ ins v0.b[0], sp must Err (llvm-mc rejects SP as INS GPR source)
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_ins_pbt.rs | 10 properties + 1 KAT + 6 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_ins_pbt` |
+| src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs | 10 properties + 1 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_umov_pbt` |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial, same as the campaign run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_ins -- --test-threads=1
+cargo test --lib encode_neon_umov -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ins_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_umov_regression_extra_operand -- --test-threads=1
 ```
 
-B2 index out of range:
+B2 index OOR:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ins_regression_index_oor -- --test-threads=1
+cargo test --lib test_encode_neon_umov_regression_index_oor -- --test-threads=1
 ```
 
-B3 wrong GPR width:
+B3 wrong width:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ins_regression_wrong_width_gpr -- --test-threads=1
+cargo test --lib test_encode_neon_umov_regression_wrong_width -- --test-threads=1
 ```
 
-B4 SP as ZR:
+B4 SP dest:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ins_regression_sp_as_zr -- --test-threads=1
+cargo test --lib test_encode_neon_umov_regression_sp_as_zr -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_neon_ins_extra_operand.md
-- pbt-out/bug_reports/encode_neon_ins_extra_operand.html
-- pbt-out/bug_reports/encode_neon_ins_index_oor.md
-- pbt-out/bug_reports/encode_neon_ins_index_oor.html
-- pbt-out/bug_reports/encode_neon_ins_wrong_width_gpr.md
-- pbt-out/bug_reports/encode_neon_ins_wrong_width_gpr.html
-- pbt-out/bug_reports/encode_neon_ins_sp_as_zr.md
-- pbt-out/bug_reports/encode_neon_ins_sp_as_zr.html
-- pbt-out/run/encode_neon_ins_pbt.log
-- pbt-out/run/encode_neon_ins_pbt2.log
-- pbt-out/run/encode_neon_ins_pbt3.log
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — per-function coverage table
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/report.json — machine-readable report
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/FUNCTION_INDEX.md — merged function index
+- pbt-out/bug_reports/encode_neon_umov_extra_operand.md + .html
+- pbt-out/bug_reports/encode_neon_umov_index_oor.md + .html
+- pbt-out/bug_reports/encode_neon_umov_wrong_width.md + .html
+- pbt-out/bug_reports/encode_neon_umov_sp_fp_dest.md + .html
+- pbt-out/run/encode_neon_umov_test.log — first full test run
+- src/backend/arm/assembler/encoder/encode_neon_umov_pbt.rs — harness
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 09:49 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 107/289 total | PBT candidates: 107 | Tested: 107 (100%) | 0 pass, 107 fail
+> Last updated: 2026-10-05 10:10 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 108/289 total | PBT candidates: 108 | Tested: 108 (100%) | 0 pass, 108 fail
 
 ## Summary
 
@@ -225,10 +222,10 @@ cargo test --lib test_encode_neon_ins_regression_sp_as_zr -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 107 |
-| **Tested (of PBT candidates)** | **107 / 107 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 107 / 0 |
-| **Overall (tested / all functions)** | **107 / 289 (37%)** |
+| PBT candidates (from FUNCTION_INDEX) | 108 |
+| **Tested (of PBT candidates)** | **108 / 108 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 108 / 0 |
+| **Overall (tested / all functions)** | **108 / 289 (37%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -236,13 +233,13 @@ cargo test --lib test_encode_neon_ins_regression_sp_as_zr -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 107 | 107 | 0 | 100% |
+|  | 108 | 108 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 107 | 107 | 0 | 100% |
+| unknown | 108 | 108 | 0 | 100% |
 
 ## File Coverage
 
@@ -255,7 +252,7 @@ cargo test --lib test_encode_neon_ins_regression_sp_as_zr -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 22 | 22 | 100% | covered |
+| neon.rs | 68 | 23 | 23 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -372,3 +369,4 @@ cargo test --lib test_encode_neon_ins_regression_sp_as_zr -- --test-threads=1
 | encode_neon_ld_st_multi | neon.rs |
 | encode_neon_tbx | neon.rs |
 | encode_neon_ins | neon.rs |
+| encode_neon_umov | neon.rs |

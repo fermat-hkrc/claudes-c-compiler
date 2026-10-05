@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_umov)
+
+- Valid UMOV Wd, Vn.Ts[i] with Ts in {b,h,s}, i in [0, imax(Ts)], v0–v31, W0–W30/WZR and UMOV Xd, Vn.D[i] with i in [0,1], X0–X30/XZR matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; changing only Rn differs only in bits[9:5] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff Ts=D, bit29=0, bits[28:21]=01110000, imm5 at [20:16], bits[15:10]=001111, Rn at [9:5], Rd at [4:0].
+- Uppercase W/X/V spellings match llvm-mc (1000 cases).
+- Arity 0/1, invalid dest/src names (x32/foo/empty/w), unsupported elem_size {q,8b,16b,4h,empty,x}, and non-RegLane second operand (bare vN, vN.8b, Imm) return Err (1000 cases).
+- Known-answer: `umov w0, v0.b[0]` = 0x0e013c00; `umov w0, v0.h[0]` = 0x0e023c00; `umov w0, v0.s[0]` = 0x0e043c00; `umov x0, v0.d[0]` = 0x4e083c00; `umov w0, v0.b[15]` = 0x0e1f3c00; `umov x31, v31.d[1]` = 0x4e183fff; `umov wzr, v0.b[0]` = 0x0e013c1f; `umov w1, v2.h[7]` = 0x0e1e3c41; `umov w3, v4.s[3]` = 0x0e1c3c83; `umov x5, v6.d[1]` = 0x4e183cc5.
+- Extra operand, out-of-range lane, wrong dest width, SP/WSP, and FP-as-GPR dest currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_neon_umov)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. llvm-mc accepts `umov` and disassembles S/D forms as `mov` (UMOV alias).
+- ARM ARM Advanced SIMD copy (UMOV): 0 Q 0 01110 000 imm5 001111 Rn Rd. Wd+B/H/S Q=0; Xd+D Q=1.
+- Dispatch: encoder/mod.rs:679 `"umov" => encode_neon_umov`.
+- Sibling encode_neon_dup / encode_neon_ins / encode_mov are different opcodes or a multi-form alias encoder, not same-job differentials.
+- encode_neon_umov checks operands.len() < 2; extra ignored; index bits masked; Q from dest is_64; parse_reg_num accepts w/x/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases elem_size (parser.rs:1945) so uppercase Ts is not caller-reachable; register names keep original case and parse_reg_num lowercases.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. Co-generate (ts, index) — independent 0..=15 with prop_assume vs imax(d)=1 exhausts global rejects.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (unsupported elem_size / non-lane src).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_umov_*.md.
+
 # Confirmed invariants (encode_neon_ins)
 
 - Valid INS (general) Vd.Ts[i], Wn|Xn|WZR|XZR with Ts in {b,h,s,d}, i in [0, imax(Ts)], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Wn for B/H/S, Xn for D.
