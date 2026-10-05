@@ -80,6 +80,8 @@ mod encode_neon_mla_pbt;
 mod encode_neon_mls_pbt;
 #[cfg(test)]
 mod encode_neon_three_same_pbt;
+#[cfg(test)]
+mod encode_neon_three_diff_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

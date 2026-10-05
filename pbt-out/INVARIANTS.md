@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_neon_three_diff)
+
+- Valid LONG three-different (saddl/uaddl/ssubl/usubl/sabal/uabal/sabdl/uabdl/smlal/umlal/smlsl/umlsl/smull/umull) with Ta=widen(Tb), Tb in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path LONG word: bit31=0, Q at 30, U at 29, bits[28:24]=01110, size at [23:22] from Tb, bit21=1, Rm at [20:16], opcode at [15:12], bits[11:10]=00, Rn at [9:5], Rd at [4:0] (1000 cases).
+- encode(..., u=0) XOR encode(..., u=1) = 1<<29; opcode isolation in bits[15:12]; is_high XOR = 1<<30 on 8b (1000 cases).
+- Arity 0–2 always Err (1000 cases).
+- Unsupported source arrangement {1d,2d,1q,empty} always Err (1000 cases).
+- Known-answer: `saddl v0.8h, v1.8b, v2.8b` = 0x0e220020; `saddl2 v0.8h, v1.16b, v2.16b` = 0x4e220020; `saddl v0.4s, v1.4h, v2.4h` = 0x0e620020; `saddl2 v0.4s, v1.8h, v2.8h` = 0x4e620020; `saddl v0.2d, v1.2s, v2.2s` = 0x0ea20020; `saddl2 v0.2d, v1.4s, v2.4s` = 0x4ea20020; `uaddl v0.8h, v1.8b, v2.8b` = 0x2e220020; `ssubl v0.8h, v1.8b, v2.8b` = 0x0e222020; `usubl v0.8h, v1.8b, v2.8b` = 0x2e222020; `smull v0.8h, v1.8b, v2.8b` = 0x0e22c020; `umull v0.8h, v1.8b, v2.8b` = 0x2e22c020; llvm-mc `saddw v0.8h, v1.8h, v2.8b` = 0x0e221020 (SUT disagrees).
+
+## Environment (encode_neon_three_diff)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-different LONG Tb in {8B,16B,4H,8H,2S,4S}, Ta = widen(Tb); WIDE Vd.Ta, Vn.Ta, Vm.Tb; size:Q=11:x reserved.
+- Dispatch: encoder/mod.rs:314/325 smull/umull vector; 681-688 uabal/sabal/uabdl/sabdl (+2); 815-905 usubl/ssubl/usubw/ssubw/uaddl/saddl/uaddw/saddw/umlal/smlal/umlsl/smlsl/umull2/smull2.
+- encode_neon_three_diff checks operands.len() < 3; extra ignored; dest and Rm arrangements discarded; size/Q from Vn; is_high forces Q=1.
+- get_neon_reg accepts Operand::Reg; parse_reg_num accepts x/w/d/s/q/v/h/b.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep: unsupported-src passing, Rm Tb mismatch failing.
+- Five SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_three_diff_*.md.
+
+## Quirks (encode_neon_three_diff)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Destination arrangement is discarded (see bugs).
+- Vm arrangement is discarded (see bugs).
+- WIDE size/Q come from Vn, not narrow Vm (see bugs).
+- Operand::Reg and x/w prefixes encode as V registers (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus unsupported-src and Rm Tb.
+
+---
+
 # Confirmed invariants (encode_neon_three_same)
 
 - Valid integer three-same (cmeq/cmhi/cmhs/cmge/cmgt/cmtst/sqadd/uqadd/sqsub/uqsub/sshl/ushl/sqshl/uqshl/srshl/urshl/sqrshl/uqrshl/addp) with matching T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
