@@ -1,154 +1,155 @@
-# PBT Campaign Report: encode_neon_eor3
+# PBT Campaign Report: encode_neon_pmull
 
 ## Summary
 
-**Verdict:** 4 medium: encode_neon_eor3 silently encodes a fifth operand, non-.16B arrangements, mismatched T, and GPR/bare-V dest as a valid 16B EOR3 word, so invalid SHA3 assembly becomes machine code instead of an error.
+**Verdict:** 1 high: encode_neon_pmull hardcodes size=11, so valid `pmull v0.8h, v0.8b, v0.8b` is encoded as 64-bit PMULL (`0x0ee0e000` instead of `0x0e20e000`); plus 3 medium bugs (extra operand ignored, invalid arrangement encoded, GPR dest encoded as V0).
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_eor3
-**Tests:** 10 properties (plus 1 KAT + 4 failing regression witnesses)
+**Modules tested:** encode_neon_pmull
+**Tests:** 10
 **Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and listed encode_neon_eor3 as NOT LINKED in unrelated C++ pbt binaries. The cargo lib-test binary executed encode_neon_eor3 (7 passing + 8 failing unit tests including KAT and regressions). Sweep: manual arm audit of the four-statement body plus alt-spellings and non-register error-path properties.
+**Change surface:** 1 changed function (encode_neon_pmull), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_neon_pmull NOT LINKED). Rust cargo tests executed the symbol; sweep was a manual arm audit plus alt-spellings/nonreg properties.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_eor3 | 10 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_pmull | 10 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_eor3 ignores a fifth operand
+### B1: encode_neon_pmull encodes 8-bit PMULL as 64-bit PMULL
 
-**Formal:** ∀ rd,rn,rm,rk,extra ∈ {0..31}. encode_neon_eor3([Vrd.16b, Vrn.16b, Vrm.16b, Vrk.16b, Vextra.16b]) = Err
-**Contract evidence:** documented neon.rs:1114 "eor3 requires 4 operands" plus inferred (README.md:12 gas-compatible; llvm-mc rejects a fifth operand)
-**Documentation conflict:** neon.rs:1114 "eor3 requires 4 operands" states the arity; the check is `len < 4`, so extras are accepted. The comment does not declare extra operands valid.
-**Severity:** medium
-**Counterexample:** encode_neon_eor3([v0.16b, v0.16b, v0.16b, v0.16b, v0.16b])
-**Expected / Actual:** Err / Ok(Word(0xce000000))
-**Impact:** A fifth operand is dropped; the assembler emits a 16B EOR3 instead of diagnosing invalid assembly
-**Root cause:** neon.rs:1113 uses `operands.len() < 4`, so operands after the first four are ignored
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1113`
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}. let Tb = 8b if ¬is_pmull2 else 16b. encode_neon_pmull([Vd.8h, Vn.Tb, Vm.Tb], is_pmull2) = llvm-mc(pmull{2} Vd.8h, Vn.Tb, Vm.Tb) under -triple=aarch64 -mattr=+aes -show-encoding
+**Contract evidence:** inferred (assembler README.md:11 gas-compatible textual assembly; README.md:230 lists pmull under NEON widen/long without restricting Ta to 1Q; ARM three-different PMULL size=00 for Ta=8H)
+**Documentation conflict:** neon.rs:1138-1139 document the 1q/size=11 encoding only; they do not declare 8H invalid or out of domain. (none as an exclusion)
+**Severity:** high
+**Counterexample:** encode_neon_pmull([v0.8h, v0.8b, v0.8b], false)
+**Expected / Actual:** 0x0e20e000 / 0x0ee0e000
+**Impact:** Valid 8-bit polynomial-multiply-long assembly is assembled as the crypto 64-bit form, so callers of `pmull vD.8h, vN.8b, vM.8b` execute the wrong instruction
+**Root cause:** neon.rs:1141 hardcodes `(0b11 << 22)` and discards arrangements, so size cannot be 00
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1141`
 ```rust
-    if operands.len() < 4 {
-        return Err("eor3 requires 4 operands".to_string());
-    }
+    let word = ((q << 30) | (0b001110 << 24) | (0b11 << 22) | (1 << 21)
+        | (rm << 16) | (0b11100 << 11)) | (rn << 5) | rd;
 ```
-**Suggested fix:** Reject arity other than 4
+**Suggested fix:** Derive size from Ta/Tb (8H → 00, 1Q → 11)
 ```rust
-    if operands.len() != 4 {
-        return Err("eor3 requires 4 operands".to_string());
-    }
+    let size = match (arr_d.as_str(), arr_n.as_str()) {
+        ("8h", "8b") | ("8h", "16b") => 0b00u32,
+        ("1q", "1d") | ("1q", "2d") => 0b11u32,
+        _ => return Err(format!("unsupported pmull arrangement: {}.{}", arr_d, arr_n)),
+    };
+    let word = ((q << 30) | (0b001110 << 24) | (size << 22) | (1 << 21)
+        | (rm << 16) | (0b11100 << 11)) | (rn << 5) | rd;
 ```
-**Bug report:** bug_reports/encode_neon_eor3_extra_operand.md
-**Repro seed:** cc 2e291ddd3d73e6cec4ef9a65222204f10403c2176767690106d56cdb58fb402e
+**Bug report:** bug_reports/encode_neon_pmull_8h_as_64bit.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, is_pmull2 = false
 **Raw output:**
 ```text
-Test failed: 5 operands must Err (llvm-mc rejects eor3 v0.16b, v0.16b, v0.16b, v0.16b, v0.16b)
-minimal failing input: rd = 0, rn = 0, rm = 0, rk = 0, extra = 0
+Test failed: assertion failed: `(left == right)`
+  left: `249618432`,
+ right: `237035520`: mismatch for pmull v0.8h, v0.8b, v0.8b
+minimal failing input: rd = 0, rn = 0, rm = 0, is_pmull2 = false
 ```
 
-### B2: encode_neon_eor3 encodes arrangements other than .16B
+### B2: encode_neon_pmull ignores a fourth operand
 
-**Formal:** ∀ rd,rn,rm,rk ∈ {0..31}. ∀ t ∈ {8b,4h,8h,2s,4s,2d,1d}. encode_neon_eor3([Vrd.t, Vrn.t, Vrm.t, Vrk.t]) = Err
-**Contract evidence:** documented neon.rs:1111 "Encode NEON EOR3 (three-way XOR, SHA3 extension): EOR3 Vd.16b, Vn.16b, Vm.16b, Vk.16b"
-**Documentation conflict:** neon.rs:1111 states the instruction form is Vd.16b; the body discards arrangement and always emits the 16B word. The comment asserts the behavior is .16B-only, which the code violates.
+**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, is_pmull2 ∈ {false,true}. llvm-mc rejects pmull{2} Vd.1q, Vn.Tb, Vm.Tb, Vextra.Tb ⇒ encode_neon_pmull([Vd.1q,Vn.Tb,Vm.Tb,Vextra.Tb], is_pmull2) is Err
+**Contract evidence:** documented neon.rs:1130 "pmull requires 3 operands" plus llvm-mc/gas rejection of a fourth operand
+**Documentation conflict:** neon.rs:1130 "pmull requires 3 operands" states the arity; the check is `len < 3`, so extra operands are accepted. The comment asserts the arity rather than declaring extra out of domain as a documented limitation — documented-and-violated.
 **Severity:** medium
-**Counterexample:** encode_neon_eor3([v0.8b, v0.8b, v0.8b, v0.8b])
-**Expected / Actual:** Err / Ok(Word(0xce000000))
-**Impact:** Illegal SHA3 assembly such as `eor3 v0.8b, ...` becomes a valid 16B EOR3 encoding
-**Root cause:** neon.rs:1115-1118 discards every arrangement (`let (rd, _)`) then always packs the SHA3 16B word
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1115`
+**Counterexample:** encode_neon_pmull([v0.1q, v0.1d, v0.1d, v0.1d], false)
+**Expected / Actual:** Err / Ok(Word(0x0ee0e000))
+**Impact:** Extra operands are dropped; invalid assembly is encoded as the three-operand form
+**Root cause:** neon.rs:1129 uses `operands.len() < 3`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1129`
+```rust
+    if operands.len() < 3 {
+        return Err("pmull requires 3 operands".to_string());
+    }
+```
+**Suggested fix:** Reject arity other than 3
+```rust
+    if operands.len() != 3 {
+        return Err("pmull requires 3 operands".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_neon_pmull_extra_operand.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, extra = 0, is_pmull2 = false
+**Raw output:**
+```text
+Test failed: 4 operands must Err (llvm-mc rejects pmull v0.1q, v0.1d, v0.1d, v0.1d)
+minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, is_pmull2 = false
+```
+
+### B3: encode_neon_pmull accepts invalid arrangements
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}, (Td,Tn,Tm) not a valid PMULL{2} Ta/Tb triple. llvm-mc rejects the assembly ⇒ encode_neon_pmull([Vd.Td,Vn.Tn,Vm.Tm], is_pmull2) is Err
+**Contract evidence:** inferred (ARM PMULL Ta in {8H,1Q} with matching Tb; llvm-mc/gas reject other T; README.md:11 gas-compatible)
+**Documentation conflict:** (none) — neon.rs:1138 asserts the 1q encoding; it does not declare `.8b` invalid
+**Severity:** medium
+**Counterexample:** encode_neon_pmull([v0.8b, v0.8b, v0.8b], false)
+**Expected / Actual:** Err / Ok(Word(0x0ee0e000))
+**Impact:** A mistyped arrangement is assembled as 64-bit PMULL instead of being diagnosed
+**Root cause:** neon.rs:1132-1134 discards all three arrangements
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1132`
 ```rust
     let (rd, _) = get_neon_reg(operands, 0)?;
     let (rn, _) = get_neon_reg(operands, 1)?;
     let (rm, _) = get_neon_reg(operands, 2)?;
-    let (rk, _) = get_neon_reg(operands, 3)?;
 ```
-**Suggested fix:** Require arrangement `16b` on every operand
+**Suggested fix:** Keep arrangements and reject triples that are not the four ARM-legal PMULL{2} pairs
 ```rust
     let (rd, arr_d) = get_neon_reg(operands, 0)?;
     let (rn, arr_n) = get_neon_reg(operands, 1)?;
     let (rm, arr_m) = get_neon_reg(operands, 2)?;
-    let (rk, arr_k) = get_neon_reg(operands, 3)?;
-    if arr_d != "16b" || arr_n != "16b" || arr_m != "16b" || arr_k != "16b" {
-        return Err("eor3 requires .16b arrangement".to_string());
+    let legal = matches!(
+        (arr_d.as_str(), arr_n.as_str(), arr_m.as_str(), is_pmull2),
+        ("1q", "1d", "1d", false) | ("1q", "2d", "2d", true)
+            | ("8h", "8b", "8b", false) | ("8h", "16b", "16b", true)
+    );
+    if !legal {
+        return Err(format!("unsupported pmull arrangement: {}/{}/{}", arr_d, arr_n, arr_m));
     }
 ```
-**Bug report:** bug_reports/encode_neon_eor3_invalid_t.md
-**Repro seed:** (deterministic after shrink; t = "8b", rd=rn=rm=rk=0)
+**Bug report:** bug_reports/encode_neon_pmull_invalid_t.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, is_pmull2 = false, td = "8b", tn = "8b", tm = "8b"
 **Raw output:**
 ```text
-Test failed: T=8b must Err (ARM SHA3 EOR3 is 16B only; llvm-mc rejects eor3 v0.8b, v0.8b, v0.8b, v0.8b)
-minimal failing input: rd = 0, rn = 0, rm = 0, rk = 0, t = "8b"
+Test failed: invalid Ta/Tb must Err (ARM PMULL Ta in {8H,1Q} with matching Tb; llvm-mc rejects pmull v0.8b, v0.8b, v0.8b)
+minimal failing input: rd = 0, rn = 0, rm = 0, is_pmull2 = false, td = "8b", tn = "8b", tm = "8b"
 ```
 
-### B3: encode_neon_eor3 ignores mismatched arrangements
+### B4: encode_neon_pmull encodes a GPR destination as a NEON register
 
-**Formal:** ∀ rd,rn,rm,rk ∈ {0..31}. ∀ td,tn,tm,tk ∈ {8b,16b,4h,8h,2s,4s,2d}. (∃ T=16b) ∧ (∃ T≠16b) ⇒ encode_neon_eor3([Vrd.td, Vrn.tn, Vrm.tm, Vrk.tk]) = Err
-**Contract evidence:** documented neon.rs:1111 "Encode NEON EOR3 (three-way XOR, SHA3 extension): EOR3 Vd.16b, Vn.16b, Vm.16b, Vk.16b"
-**Documentation conflict:** neon.rs:1111 names .16b on all four operands; mixed T is accepted because arrangements are discarded
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}, dest ∈ {xN, wN, vN-bare, dN, sN, qN, sp}. llvm-mc rejects the assembly ⇒ encode_neon_pmull([dest, Vn.Tb, Vm.Tb], is_pmull2) is Err
+**Contract evidence:** inferred (ARM requires Vd.<Ta>; llvm-mc/gas reject `pmull x0, v0.1d, v0.1d`; README.md:11 gas-compatible)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_eor3([v0.16b, v0.8b, v0.8b, v0.8b])
-**Expected / Actual:** Err / Ok(Word(0xce000000))
-**Impact:** A source/dest arrangement typo encodes as 16B EOR3 instead of an error
-**Root cause:** neon.rs:1115-1118 discards every arrangement, so mixed T never fails
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1115`
-```rust
-    let (rd, _) = get_neon_reg(operands, 0)?;
-    let (rn, _) = get_neon_reg(operands, 1)?;
-    let (rm, _) = get_neon_reg(operands, 2)?;
-    let (rk, _) = get_neon_reg(operands, 3)?;
-```
-**Suggested fix:** Require arrangement `16b` on every operand
-```rust
-    let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    let (rm, arr_m) = get_neon_reg(operands, 2)?;
-    let (rk, arr_k) = get_neon_reg(operands, 3)?;
-    if arr_d != "16b" || arr_n != "16b" || arr_m != "16b" || arr_k != "16b" {
-        return Err("eor3 requires .16b arrangement".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_neon_eor3_mismatched_t.md
-**Repro seed:** cc ef02d57cdc9ac2da69a9e061d34368fce029823dfac1c3ba1c0154e50fff7822
-**Raw output:**
-```text
-Test failed: mismatched T must Err (llvm-mc/gas reject eor3 v0.16b, v0.8b, v0.8b, v0.8b)
-minimal failing input: rd = 0, rn = 0, rm = 0, rk = 0, td = "16b", tn = "8b", tm = "8b", tk = "8b"
-```
-
-### B4: encode_neon_eor3 accepts GPR, bare V, and non-arrangement operands
-
-**Formal:** ∀ rd,rn,rm,rk ∈ {0..31}. ∀ kind ∈ GPR-dest | bare-V-src | X-src | bare-V-dest | X.16b-dest. encode_neon_eor3(ops(kind)) = Err
-**Contract evidence:** documented neon.rs:1111 "Encode NEON EOR3 (three-way XOR, SHA3 extension): EOR3 Vd.16b, Vn.16b, Vm.16b, Vk.16b"
-**Documentation conflict:** neon.rs:1111 states Vd.16b form; get_neon_reg's Operand::Reg arm accepts x/w/d/s/q/v/h/b/sp and EOR3 ignores the empty arrangement
-**Severity:** medium
-**Counterexample:** encode_neon_eor3([Reg("x0"), v0.16b, v0.16b, v0.16b])
-**Expected / Actual:** Err / Ok(Word(0xce000000))
-**Impact:** `eor3 x0, v0.16b, v0.16b, v0.16b` encodes as `eor3 v0.16b, ...` because parse_reg_num maps x0 to 0
-**Root cause:** neon.rs:1115 calls get_neon_reg, whose Operand::Reg arm (neon.rs:14-17) accepts any parse_reg_num name and returns an empty arrangement that EOR3 ignores
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1115`
+**Counterexample:** encode_neon_pmull([Reg("x0"), v0.1d, v0.1d], false)
+**Expected / Actual:** Err / Ok(Word(0x0ee0e000))
+**Impact:** A GPR dest is encoded as Vd with the same register number, so invalid assembly becomes a well-formed NEON instruction
+**Root cause:** neon.rs:1132 uses get_neon_reg, which accepts Operand::Reg and parse_reg_num on x/w prefixes
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1132`
 ```rust
     let (rd, _) = get_neon_reg(operands, 0)?;
 ```
-**Suggested fix:** Require a V-prefixed RegArrangement with arrangement 16b
+**Suggested fix:** Require Operand::RegArrangement with a V prefix and a legal Ta
 ```rust
     let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    if !matches!(&operands[0], Operand::RegArrangement { reg, .. } if reg.starts_with('v') || reg.starts_with('V'))
-        || arr_d != "16b"
-    {
-        return Err("eor3 requires Vd.16b".to_string());
+    if arr_d.is_empty() {
+        return Err("pmull dest must be a V register with arrangement".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_eor3_gpr_or_bare.md
-**Repro seed:** (deterministic after shrink; kind=0, fp_prefix="x", rd=rn=rm=rk=0)
+**Bug report:** bug_reports/encode_neon_pmull_gpr_dest.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, is_pmull2 = false, kind = 0, fp_prefix = "x"
 **Raw output:**
 ```text
-Test failed: GPR/bare/non-arrangement kind=0 must Err (llvm-mc rejects eor3 x0, v0.16b, v0.16b, v0.16b)
-minimal failing input: rd = 0, rn = 0, rm = 0, rk = 0, kind = 0, fp_prefix = "x"
+Test failed: GPR/bare/non-arrangement kind=0 must Err (llvm-mc rejects pmull x0, v0.1d, v0.1d)
+minimal failing input: rd = 0, rn = 0, rm = 0, is_pmull2 = false, kind = 0, fp_prefix = "x"
 ```
 
 ## Design Caveats
@@ -159,45 +160,39 @@ minimal failing input: rd = 0, rn = 0, rm = 0, rk = 0, kind = 0, fp_prefix = "x"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_eor3_pbt.rs | 10 properties + 1 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs | 10 properties + 1 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_pmull_pbt` |
 
 ## Reproduction
 
-Valid-domain suite (passing properties + KAT):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_eor3_diff_llvm_mc -- --test-threads=1
-cargo test --lib encode_neon_eor3_kat_llvm_mc -- --test-threads=1 --exact
+cargo test --lib encode_neon_pmull -- --test-threads=1
 ```
 
-Whole-suite command (4 property failures + 4 regression failures expected):
+B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_eor3 -- --test-threads=1
+cargo test --lib test_encode_neon_pmull_regression_8h_as_64bit -- --test-threads=1 --exact
 ```
 
-B1 extra operand:
+B2:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_eor3_regression_extra_operand -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_pmull_regression_extra_operand -- --test-threads=1 --exact
 ```
 
-B2 invalid T:
+B3:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_eor3_regression_invalid_t -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_pmull_regression_invalid_t -- --test-threads=1 --exact
 ```
 
-B3 mismatched T:
+B4:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_eor3_regression_mismatched_t -- --test-threads=1 --exact
-```
-
-B4 GPR dest:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_eor3_regression_gpr_dest -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_pmull_regression_gpr_dest -- --test-threads=1 --exact
 ```
 
 ## Output Directories
@@ -208,26 +203,26 @@ cargo test --lib test_encode_neon_eor3_regression_gpr_dest -- --test-threads=1 -
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/report.json
+- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_neon_eor3_extra_operand.md
-- pbt-out/bug_reports/encode_neon_eor3_extra_operand.html
-- pbt-out/bug_reports/encode_neon_eor3_invalid_t.md
-- pbt-out/bug_reports/encode_neon_eor3_invalid_t.html
-- pbt-out/bug_reports/encode_neon_eor3_mismatched_t.md
-- pbt-out/bug_reports/encode_neon_eor3_mismatched_t.html
-- pbt-out/bug_reports/encode_neon_eor3_gpr_or_bare.md
-- pbt-out/bug_reports/encode_neon_eor3_gpr_or_bare.html
-- pbt-out/run/encode_neon_eor3_test.log
-- pbt-out/run/encode_neon_eor3_test_round2.log
+- pbt-out/bug_reports/encode_neon_pmull_8h_as_64bit.md
+- pbt-out/bug_reports/encode_neon_pmull_8h_as_64bit.html
+- pbt-out/bug_reports/encode_neon_pmull_extra_operand.md
+- pbt-out/bug_reports/encode_neon_pmull_extra_operand.html
+- pbt-out/bug_reports/encode_neon_pmull_invalid_t.md
+- pbt-out/bug_reports/encode_neon_pmull_invalid_t.html
+- pbt-out/bug_reports/encode_neon_pmull_gpr_dest.md
+- pbt-out/bug_reports/encode_neon_pmull_gpr_dest.html
+- pbt-out/run/kat.log, pbt-out/run/full.log, pbt-out/run/full2.log
+- proptest-regressions/backend/arm/assembler/encoder/encode_neon_pmull_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 13:33 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 119/289 total | PBT candidates: 119 | Tested: 119 (100%) | 0 pass, 119 fail
+> Last updated: 2026-10-05 13:53 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 120/289 total | PBT candidates: 120 | Tested: 120 (100%) | 0 pass, 120 fail
 
 ## Summary
 
@@ -236,10 +231,10 @@ cargo test --lib test_encode_neon_eor3_regression_gpr_dest -- --test-threads=1 -
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 119 |
-| **Tested (of PBT candidates)** | **119 / 119 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 119 / 0 |
-| **Overall (tested / all functions)** | **119 / 289 (41%)** |
+| PBT candidates (from FUNCTION_INDEX) | 120 |
+| **Tested (of PBT candidates)** | **120 / 120 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 120 / 0 |
+| **Overall (tested / all functions)** | **120 / 289 (42%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -247,13 +242,13 @@ cargo test --lib test_encode_neon_eor3_regression_gpr_dest -- --test-threads=1 -
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 119 | 119 | 0 | 100% |
+|  | 120 | 120 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 119 | 119 | 0 | 100% |
+| unknown | 120 | 120 | 0 | 100% |
 
 ## File Coverage
 
@@ -266,7 +261,7 @@ cargo test --lib test_encode_neon_eor3_regression_gpr_dest -- --test-threads=1 -
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 34 | 34 | 100% | covered |
+| neon.rs | 68 | 35 | 35 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -395,3 +390,4 @@ cargo test --lib test_encode_neon_eor3_regression_gpr_dest -- --test-threads=1 -
 | encode_neon_across | neon.rs |
 | encode_neon_zip_uzp | neon.rs |
 | encode_neon_eor3 | neon.rs |
+| encode_neon_pmull | neon.rs |

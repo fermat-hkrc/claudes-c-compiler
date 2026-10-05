@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_neon_pmull)
+
+- Valid PMULL Vd.1q, Vn.1d, Vm.1d and PMULL2 Vd.1q, Vn.2d, Vm.2d with v0–v31 matches llvm-mc `-triple=aarch64 -mattr=+aes -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16]; pmull vs pmull2 differs only in Q bit 30 (1000 cases).
+- Success-path 64-bit word: bit31=0, Q at bit30, bits[29:24]=001110, size[23:22]=11, bit21=1, Rm at [20:16], bits[15:11]=11100, bit10=0, Rn at [9:5], Rd at [4:0].
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase mnemonic/V prefix with 1Q/1D/2D matches llvm-mc (1000 cases).
+- Imm/Mem/Label at any operand slot returns Err (1000 cases).
+- Known-answer: `pmull v0.1q, v1.1d, v2.1d` = 0x0ee2e020; `pmull2 v0.1q, v1.2d, v2.2d` = 0x4ee2e020; `pmull v31.1q, v31.1d, v31.1d` = 0x0effe3ff; `pmull v0.1q, v0.1d, v0.1d` = 0x0ee0e000. llvm-mc 8h KAT: `pmull v0.8h, v1.8b, v2.8b` = 0x0e22e020 (SUT disagrees).
+- Extra operand, invalid T, GPR dest, and 8h form currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_pmull)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+aes -show-encoding.
+- ARM ARM Advanced SIMD three-different PMULL{2}: Ta in {8H,1Q}; Tb is 8B/16B or 1D/2D; U=0 opcode=1110; size=00 (8-bit) or 11 (64-bit); Q=0 PMULL / Q=1 PMULL2.
+- Dispatch: encoder/mod.rs:779-780 `"pmull"` / `"pmull2"` => encode_neon_pmull.
+- Sibling encode_neon_three_diff / encode_neon_pmul are different opcodes, not same-job differentials.
+- encode_neon_pmull checks operands.len() < 3; extra ignored; all three arrangements discarded; size hardcoded to 11.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus uppercase V alt-spellings and non-register operands.
+- Four SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_pmull_*.md.
+
 # Confirmed invariants (encode_neon_eor3)
 
 - Valid EOR3 Vd.16b, Vn.16b, Vm.16b, Vk.16b with v0–v31 matches llvm-mc `-triple=aarch64 -mattr=+sha3 -show-encoding` (1000 cases).
