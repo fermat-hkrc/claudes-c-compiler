@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_neon_mul)
+
+- Valid MUL Vd.T, Vn.T, Vm.T with T in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16] (1000 cases).
+- Success-path 32-bit word: bit31=0, Q at bit30, U=0 at bit29, bits[28:24]=01110, size at [23:22], bit21=1, Rm at [20:16], bits[15:10]=100111, Rn at [9:5], Rd at [4:0].
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase MUL/V prefix with matching T matches llvm-mc (1000 cases).
+- Imm/Mem/Label at any slot returns Err (1000 cases).
+- Known-answer: `mul v0.8b, v1.8b, v2.8b` = 0x0e229c20; `mul v0.16b, v1.16b, v2.16b` = 0x4e229c20; `mul v0.4h, v1.4h, v2.4h` = 0x0e629c20; `mul v0.8h, v1.8h, v2.8h` = 0x4e629c20; `mul v0.2s, v1.2s, v2.2s` = 0x0ea29c20; `mul v0.4s, v1.4s, v2.4s` = 0x4ea29c20; `mul v31.8b, v31.8b, v31.8b` = 0x0e3f9fff; `mul v0.8b, v0.8b, v0.8b` = 0x0e209c00; `mul v15.4s, v16.4s, v17.4s` = 0x4eb19e0f.
+- Extra operand, mismatched T, reserved 1d/2d, and bare/GPR dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_mul)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same MUL: T in {8B,16B,4H,8H,2S,4S}; size:Q=11:x reserved; U=0; bits[15:11]=10011.
+- Dispatch: encoder/mod.rs:290-296 textual `mul` with RegArrangement goes to encode_neon_three_same / encode_neon_elem; encode_mul (data_processing.rs:586-588) still forwards RegArrangement dest to encode_neon_mul.
+- encode_neon_mul has no operands.len() check; extra ignored; source arrangements discarded; neon_arr_to_q_size accepts 1d/2d.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / get_neon_reg other / alt spellings / reserved T).
+
+## Quirks (encode_neon_mul)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangements are discarded (see bugs).
+- neon_arr_to_q_size 1d/2d is encoded (see bugs).
+- Operand::Reg source and x/w prefixes encode as V registers (see bugs).
+- Bare dest (empty arrangement) hits unsupported arrangement Err via neon_arr_to_q_size.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
 # Confirmed invariants (encode_neon_xtl)
 
 - Valid UXTL/SXTL/UXTL2/SXTL2 Vd.Ta, Vn.Tb with mandated (Ta,Tb,Q) pairs, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

@@ -1,112 +1,121 @@
-# PBT Campaign Report: encode_neon_xtl
+# PBT Campaign Report: encode_neon_mul
 
 ## Summary
 
-**Verdict:** 3 medium: encode_neon_xtl silently encodes extra operands, mismatched UXTL/SXTL arrangements, and GPR/bare destinations that gas/llvm-mc reject, so invalid GNU-style assembly becomes wrong SIMD machine code.
+**Verdict:** 4 medium: encode_neon_mul silently encodes a fourth operand, mismatched T, reserved .1d/.2d, and a bare Vn / GPR dest instead of rejecting them as gas/llvm-mc do.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_xtl
-**Tests:** 9
-**Result:** 6 passing, 3 bugs
+**Modules tested:** encode_neon_mul
+**Tests:** 10 properties + 1 KAT + 6 regression witnesses
+**Result:** 6 passing, 4 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test is not the C++ gcov reporter); it listed unrelated C++ binaries and claimed encode_neon_xtl NOT LINKED. Sweep used a manual arm audit of encode_neon_xtl plus a nonreg property. Native line-level data was not produced.
-**Effort tier:** standard
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (build tree not instrumented); C++ reporter listed unrelated binaries and claimed encode_neon_mul NOT LINKED. Manual arm audit of neon.rs:323-332: dest/src get_neon_reg, neon_arr_to_q_size, Ok Word all driven by the suite.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_xtl | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_mul | 10 properties (6 passing, 4 failing) + 1 KAT + 6 regressions | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_xtl ignores extra operands
+### B1: encode_neon_mul ignores a fourth operand
 
-**Formal:** ∀ valid 2-operand UXTL inputs, ∀ extra. llvm-mc rejects the 3-operand form ⇒ encode_neon_xtl(ops++[extra], u_bit, is_high) = Err
-**Contract evidence:** inferred (README.md:12 gas compatibility; llvm-mc rejects a third operand on uxtl/sxtl)
+**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s}. llvm-mc rejects "mul Vd.T, Vn.T, Vm.T, Vextra.T" ⇒ encode_neon_mul([Vd.T,Vn.T,Vm.T,Vextra.T]) = Err
+**Contract evidence:** documented neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" (three operands); inferred (llvm-mc/gas reject a fourth operand; README gas-compatible assembler)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_xtl([v0.8h, v0.8b, v0.8h], u_bit=0, is_high=false) — asm `sxtl v0.8h, v0.8b, v0.8h`
-**Expected / Actual:** Err / Ok(Word) (same encoding as `sxtl v0.8h, v0.8b`)
-**Impact:** A typo or extra register in GNU-style `uxtl`/`sxtl` assembly is silently encoded as the two-operand form
-**Root cause:** neon.rs:164 checks only `operands.len() < 2`, so operands past index 1 are ignored
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:164`
+**Counterexample:** encode_neon_mul([v0.8b, v0.8b, v0.8b, v0.8b])
+**Expected / Actual:** Err / Ok(Word(0x0e209c00))
+**Impact:** Invalid four-operand MUL is assembled as the three-operand form; a typo is silently dropped
+**Root cause:** neon.rs:323-332 never checks operands.len(); get_neon_reg reads only indices 0..2
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:323`
 ```rust
-    if operands.len() < 2 {
-        return Err("NEON uxtl/sxtl requires 2 operands".to_string());
-    }
-```
-**Suggested fix:** Reject any arity other than 2
-```rust
-    if operands.len() != 2 {
-        return Err("NEON uxtl/sxtl requires 2 operands".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_neon_xtl_extra_operand.md
-**Repro seed:** cc 5e83412a8ab5e9dcf20991445379a2394eea8459d99da05b182bbd96d17fff03
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_xtl_pbt::encode_neon_xtl_neg_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs:366:1:
-Test failed: 3 operands must Err (llvm-mc rejects sxtl v0.8h, v0.8b, v0.8h) at src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs:386.
-minimal failing input: rd = 0, rn = 0, extra = 0, pair = (
-    "8h",
-    "8b",
-    false,
-), u_bit = 0
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
-
-### B2: encode_neon_xtl encodes mismatched UXTL/SXTL arrangements
-
-**Formal:** ∀ rd,rn, ∀ (ta,tb,is_high) not in mandated UXTL pairs. llvm-mc rejects "{uxtl|sxtl}{2?} Vd.ta, Vn.tb" ⇒ encode_neon_xtl = Err
-**Contract evidence:** inferred (ARM UXTL Ta in {8H,4S,2D} paired with Tb 8B/4H/2S or 16B/8H/4S; llvm-mc rejects `sxtl v0.8b, v0.8b`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_xtl([v0.8b, v0.8b], u_bit=0, is_high=false) — asm `sxtl v0.8b, v0.8b`
-**Expected / Actual:** Err / Ok(Word) (dest `.8b` discarded; source `.8b` treated as legal SXTL)
-**Impact:** Invalid arrangement pairs (wrong dest Ta, or UXTL with a UXTL2 source) encode as if the pairing were legal
-**Root cause:** neon.rs:167 binds dest arrangement as `_arr_d` and never checks it; Q comes only from `is_high`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:167`
-```rust
-    let (rd, _arr_d) = get_neon_reg(operands, 0)?;
-```
-**Suggested fix:** Require dest Ta in {8h,4s,2d} and Tb matching (Ta, Q)
-```rust
+pub(crate) fn encode_neon_mul(operands: &[Operand]) -> Result<EncodeResult, String> {
     let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let expected_tb = match (arr_d.as_str(), is_high) {
-        ("8h", false) => "8b",
-        ("8h", true) => "16b",
-        ("4s", false) => "4h",
-        ("4s", true) => "8h",
-        ("2d", false) => "2s",
-        ("2d", true) => "4s",
-        _ => return Err(format!("uxtl/sxtl: unsupported dest arrangement: {}", arr_d)),
-    };
-```
-**Bug report:** bug_reports/encode_neon_xtl_mismatched_ta_tb.md
-**Repro seed:** cc 5e83412a8ab5e9dcf20991445379a2394eea8459d99da05b182bbd96d17fff03
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_xtl_pbt::encode_neon_xtl_neg_mismatched_ta_tb' panicked at src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs:394:1:
-Test failed: invalid/mismatched Ta/Tb must Err (ARM UXTL Ta in {8H,4S,2D} with matching Tb; llvm-mc rejects sxtl v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs:414.
-minimal failing input: rd = 0, rn = 0, ta = "8b", tb = "8b", u_bit = 0, is_high = false
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
+    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rm, _) = get_neon_reg(operands, 2)?;
+    let (q, size) = neon_arr_to_q_size(&arr_d)?;
 
-### B3: encode_neon_xtl encodes GPR or bare-V destinations as SIMD V registers
+    // MUL (vector): 0 Q 0 01110 size 1 Rm 10011 1 Rn Rd
+    let word = (q << 30) | (0b001110 << 24) | (size << 22) | (1 << 21)
+        | (rm << 16) | (0b100111 << 10) | (rn << 5) | rd;
+    Ok(EncodeResult::Word(word))
+}
+```
+**Suggested fix:** Reject any operand count other than 3
+```rust
+if operands.len() != 3 {
+    return Err("mul requires 3 operands".to_string());
+}
+```
+**Bug report:** bug_reports/encode_neon_mul_extra_operand.md
+**Repro seed:** rd=0, rn=0, rm=0, extra=0, t="8b"
+**Raw output:** Test failed: 4 operands must Err (llvm-mc rejects mul v0.8b, v0.8b, v0.8b, v0.8b). minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "8b"
 
-**Formal:** ∀ kind ∈ {GPR dest, bare-V dest, bare-V src, x-prefix dest arrangement, GPR src}. llvm-mc rejects the asm ⇒ encode_neon_xtl = Err
-**Contract evidence:** inferred (README.md:12 gas compatibility; llvm-mc rejects `uxtl x0, v0.8b`)
+### B2: encode_neon_mul ignores source arrangements
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}. ¬(valid_mul_T(Td) ∧ Td=Tn ∧ Tn=Tm) ∧ llvm-mc rejects "mul Vd.Td, Vn.Tn, Vm.Tm" ⇒ encode_neon_mul([Vd.Td,Vn.Tn,Vm.Tm]) = Err
+**Contract evidence:** documented neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" (same T); inferred (ARM matching T; llvm-mc rejects mul v0.8b, v0.8b, v0.16b)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_xtl([Reg("x0"), v0.8b], u_bit=1, is_high=false) — asm `uxtl x0, v0.8b`
-**Expected / Actual:** Err / Ok(Word) (x0 parsed as register 0; dest arrangement discarded)
-**Impact:** A wrong register class in the .s file becomes silent SIMD code (`uxtl x0, v0.8b` encodes as `uxtl v0.8h, v0.8b`)
-**Root cause:** neon.rs:167 calls get_neon_reg, whose Operand::Reg arm (neon.rs:14) accepts x/w prefixes via parse_reg_num
+**Counterexample:** encode_neon_mul([v0.8b, v0.8b, v0.16b])
+**Expected / Actual:** Err / Ok(Word(0x0e209c00))
+**Impact:** A width mismatch is coerced to the destination arrangement, producing a different MUL than written
+**Root cause:** neon.rs:325-326 bind source arrangements to `_`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:325`
+```rust
+    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rm, _) = get_neon_reg(operands, 2)?;
+```
+**Suggested fix:** Require Vn.T and Vm.T to match Vd.T
+```rust
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    let (rm, arr_m) = get_neon_reg(operands, 2)?;
+    if arr_n != arr_d || arr_m != arr_d {
+        return Err(format!("MUL arrangement mismatch: {arr_d} vs {arr_n} vs {arr_m}"));
+    }
+```
+**Bug report:** bug_reports/encode_neon_mul_mismatched_t.md
+**Repro seed:** rd=0, rn=0, rm=0, td="8b", tn="8b", tm="16b"
+**Raw output:** Test failed: invalid/mismatched/reserved T must Err ... mul v0.8b, v0.8b, v0.16b. minimal failing input: rd = 0, rn = 0, rm = 0, td = "8b", tn = "8b", tm = "16b"
+
+### B3: encode_neon_mul encodes reserved .1d/.2d MUL
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {1d,2d}. llvm-mc rejects "mul Vd.T, Vn.T, Vm.T" ⇒ encode_neon_mul([Vd.T,Vn.T,Vm.T]) = Err
+**Contract evidence:** inferred (ARM Advanced SIMD MUL T in {8B,16B,4H,8H,2S,4S}; size:Q=11:x reserved; llvm-mc rejects .1d and .2d)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_mul([v0.1d, v0.1d, v0.1d]); also .2d
+**Expected / Actual:** Err / Ok(Word(0x0ee09c00)) for .1d; Ok(Word(0x4ee09c00)) for .2d
+**Impact:** Unallocated encodings that gas/llvm-mc refuse; executing them is UNDEFINED
+**Root cause:** neon.rs:327 calls neon_arr_to_q_size, which maps 1d/2d to size=11, with no MUL-specific rejection
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:327`
+```rust
+    let (q, size) = neon_arr_to_q_size(&arr_d)?;
+```
+**Suggested fix:** Reject size=11 for vector MUL
+```rust
+    let (q, size) = neon_arr_to_q_size(&arr_d)?;
+    if size == 0b11 {
+        return Err(format!("MUL does not support arrangement {arr_d}"));
+    }
+```
+**Bug report:** bug_reports/encode_neon_mul_reserved_t.md
+**Repro seed:** rd=0, rn=0, rm=0, t="1d"
+**Raw output:** Test failed: reserved MUL T=1d (ARM size:Q=11:x) must Err (llvm-mc rejects mul v0.1d, v0.1d, v0.1d). minimal failing input: rd = 0, rn = 0, rm = 0, t = "1d"
+
+### B4: encode_neon_mul accepts a bare Vn / GPR dest as a NEON register
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, kind ∈ {gpr-dest, bare-Vn, x-Rm, bare-Vd, xN.8b-dest}. llvm-mc rejects the corresponding asm ⇒ encode_neon_mul(ops(kind)) = Err
+**Contract evidence:** documented neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T"; inferred (llvm-mc requires arrangement on every operand; parse_reg_num x/w is not a V register)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_mul([v0.8b, Reg("v0"), v0.8b]); also mul x0.8b, v0.8b, v0.8b
+**Expected / Actual:** Err / Ok(Word(0x0e209c00))
+**Impact:** Missing arrangement or a GPR name is treated as vN.T, assembling a different instruction than written
+**Root cause:** get_neon_reg accepts Operand::Reg (empty arrangement) at neon.rs:14-18; encode_neon_mul discards source T; parse_reg_num accepts x/w prefixes
 **Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:14`
 ```rust
         Some(Operand::Reg(name)) => {
@@ -115,25 +124,15 @@ minimal failing input: rd = 0, rn = 0, ta = "8b", tb = "8b", u_bit = 0, is_high 
             Ok((num, String::new()))
         }
 ```
-**Suggested fix:** Require RegArrangement with a V-prefixed register at both dest and source
+**Suggested fix:** Require a non-empty V-prefixed arrangement on every operand
 ```rust
-        Some(Operand::RegArrangement { reg, arrangement }) if reg.to_lowercase().starts_with('v') => {
-            let num = parse_reg_num(reg)
-                .ok_or_else(|| format!("invalid NEON register: {}", reg))?;
-            Ok((num, arrangement.clone()))
+        Some(Operand::Reg(_)) => {
+            Err(format!("expected NEON register with arrangement at operand {idx}"))
         }
 ```
-**Bug report:** bug_reports/encode_neon_xtl_gpr_or_bare.md
-**Repro seed:** cc 5e83412a8ab5e9dcf20991445379a2394eea8459d99da05b182bbd96d17fff03
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_xtl_pbt::encode_neon_xtl_neg_gpr_or_bare' panicked at src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs:422:1:
-Test failed: GPR/bare/non-arrangement kind=0 must Err (llvm-mc rejects uxtl x0, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs:477.
-minimal failing input: rd = 0, rn = 0, kind = 0, fp_prefix = "x"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
+**Bug report:** bug_reports/encode_neon_mul_bare_src.md
+**Repro seed:** rd=0, rn=0, rm=0, kind=1, fp_prefix="x"
+**Raw output:** Test failed: GPR/bare/non-arrangement kind=1 must Err (llvm-mc rejects mul v0.8b, v0, v0.8b). minimal failing input: rd = 0, rn = 0, rm = 0, kind = 1, fp_prefix = "x"
 
 ## Design Caveats
 
@@ -143,31 +142,39 @@ minimal failing input: rd = 0, rn = 0, kind = 0, fp_prefix = "x"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs | 9 properties + 2 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs | 10 properties + 1 KAT + 6 regressions |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_mul_pbt` |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_xtl -- --test-threads=1
+cargo test --lib encode_neon_mul -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_xtl_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_mul_regression_extra_operand -- --test-threads=1
 ```
 
-B2 mismatched Ta/Tb:
+B2 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_xtl_regression_mismatched_dest_ta -- --test-threads=1
+cargo test --lib test_encode_neon_mul_regression_mismatched_t -- --test-threads=1
 ```
 
-B3 GPR dest:
+B3 reserved T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_xtl_regression_gpr_dest -- --test-threads=1
+cargo test --lib test_encode_neon_mul_regression_reserved_1d -- --test-threads=1
+```
+
+B4 bare src:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_mul_regression_bare_src -- --test-threads=1
 ```
 
 ## Output Directories
@@ -178,24 +185,26 @@ cargo test --lib test_encode_neon_xtl_regression_gpr_dest -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/run/encode_neon_xtl.log
-- pbt-out/bug_reports/encode_neon_xtl_extra_operand.md
-- pbt-out/bug_reports/encode_neon_xtl_extra_operand.html
-- pbt-out/bug_reports/encode_neon_xtl_mismatched_ta_tb.md
-- pbt-out/bug_reports/encode_neon_xtl_mismatched_ta_tb.html
-- pbt-out/bug_reports/encode_neon_xtl_gpr_or_bare.md
-- pbt-out/bug_reports/encode_neon_xtl_gpr_or_bare.html
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_neon_mul_extra_operand.md
+- pbt-out/bug_reports/encode_neon_mul_extra_operand.html
+- pbt-out/bug_reports/encode_neon_mul_mismatched_t.md
+- pbt-out/bug_reports/encode_neon_mul_mismatched_t.html
+- pbt-out/bug_reports/encode_neon_mul_reserved_t.md
+- pbt-out/bug_reports/encode_neon_mul_reserved_t.html
+- pbt-out/bug_reports/encode_neon_mul_bare_src.md
+- pbt-out/bug_reports/encode_neon_mul_bare_src.html
+- pbt-out/run/encode_neon_mul_pbt.log
+- pbt-out/run/encode_neon_mul_pbt_round2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 16:35 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 128/289 total | PBT candidates: 128 | Tested: 128 (100%) | 0 pass, 128 fail
+> Last updated: 2026-10-05 16:58 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 129/289 total | PBT candidates: 129 | Tested: 129 (100%) | 0 pass, 129 fail
 
 ## Summary
 
@@ -204,10 +213,10 @@ cargo test --lib test_encode_neon_xtl_regression_gpr_dest -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 128 |
-| **Tested (of PBT candidates)** | **128 / 128 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 128 / 0 |
-| **Overall (tested / all functions)** | **128 / 289 (44%)** |
+| PBT candidates (from FUNCTION_INDEX) | 129 |
+| **Tested (of PBT candidates)** | **129 / 129 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 129 / 0 |
+| **Overall (tested / all functions)** | **129 / 289 (45%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -215,13 +224,13 @@ cargo test --lib test_encode_neon_xtl_regression_gpr_dest -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 128 | 128 | 0 | 100% |
+|  | 129 | 129 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 128 | 128 | 0 | 100% |
+| unknown | 129 | 129 | 0 | 100% |
 
 ## File Coverage
 
@@ -234,7 +243,7 @@ cargo test --lib test_encode_neon_xtl_regression_gpr_dest -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 43 | 43 | 100% | covered |
+| neon.rs | 68 | 44 | 44 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -372,3 +381,4 @@ cargo test --lib test_encode_neon_xtl_regression_gpr_dest -- --test-threads=1
 | encode_neon_shrn | neon.rs |
 | encode_neon_two_misc | neon.rs |
 | encode_neon_xtl | neon.rs |
+| encode_neon_mul | neon.rs |

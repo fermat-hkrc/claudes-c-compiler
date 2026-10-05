@@ -1,276 +1,305 @@
-# Properties: encode_neon_xtl
+# Properties: encode_neon_mul
 
-## encode_neon_xtl_diff_llvm_mc
-- Tier: 2
-- Rationale: README.md:12 requires GNU-style gas compatibility; llvm-mc `-triple=aarch64 -show-encoding` is an independent assembler of the same AArch64 UXTL/SXTL encoding. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree UXTL decoder). Differential vs encode_neon_shll rejected as primary (independence gate: same encoding family). encode_neon_shl rejected (same-job: same-width SHL).
-- Doc contract: neon.rs:159 "Encode NEON UXTL/SXTL (unsigned/signed extend long)." — asserted fingerprint 070d01c2
-- Seed: neon.rs:7655 encode_neon_shll_alias_xtl
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ (ta,tb,is_high) ∈ mandated UXTL pairs, ∀ u_bit ∈ {0,1}. encode_neon_xtl([Vd.ta, Vn.tb], u_bit, is_high) = llvm-mc("{uxtl|sxtl}{2?} Vd.ta, Vn.tb")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_diff_llvm_mc
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree vector MUL decoder). Sibling encode_neon_three_same rejected as primary differential (independence gate: shared get_neon_reg / neon_arr_to_q_size / dest-only Q,size). encode_neon_elem rejected (same-job gate: by-element MUL). ARM MUL vector T in {8B,16B,4H,8H,2S,4S}; size:Q=11:x reserved.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: data_processing.rs:8648 encode_mul_kat_llvm_mc_neon_v0_16b
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s}. encode_neon_mul([Vd.T,Vn.T,Vm.T]) = llvm-mc("mul Vd.T, Vn.T, Vm.T")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, tb, u_bit, is_high]
-  domain: { rd: "v0..v31", rn: "v0..v31", (ta,tb,is_high): mandated_uxtl_pairs }
+  vars: [rd, rn, rm, t]
+  domain: { rd: "v0..v31", rn: "v0..v31", rm: "v0..v31", t: "{8b,16b,4h,8h,2s,4s}" }
   relation:
     op: eq
-    lhs: encode_neon_xtl([RegArrangement(v{rd},ta), RegArrangement(v{rn},tb)], u_bit, is_high)
-    rhs: llvm_mc("{uxtl|sxtl}{2?} v{rd}.{ta}, v{rn}.{tb}")
+    lhs: encode_neon_mul([RegArrangement(v{rd},t), RegArrangement(v{rn},t), RegArrangement(v{rm},t)])
+    rhs: llvm_mc("mul v{rd}.{t}, v{rn}.{t}, v{rm}.{t}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  is_high: { gen: bool }
-  ta: { gen: string }
-  tb: { gen: string }
-evidence: neon.rs:159
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: string }
+evidence: neon.rs:322
 ```
 
-## encode_neon_xtl_meta_rd_rn_q_u
-- Tier: 3
-- Rationale: ARM encoding isolates Rd at bits[4:0], Rn at bits[9:5], Q at bit 30, U at bit 29. Metamorphic field isolation is weaker than llvm-mc differential but independently checks the documented format. Stronger differential is the sibling property.
-- Doc contract: neon.rs:162 "Format: 0 Q U 011110 immh immb 10100 1 Rn Rd" — asserted fingerprint 9a879603
-- Seed: encode_cnt_pbt.rs Rd/Rn isolation; neon.rs encode_neon_shll_metamorphic_q/u
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ valid (ta,tb), ∀ u_bit,is_high. encode(rd') ⊕ encode(rd) differs only in bits[4:0]; encode(rn') ⊕ encode(rn) differs only in bits[9:5]; flipping u_bit toggles only bit 29; flipping is_high with the matching Tb toggles only bit 30.
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_metamorphic_rd_rn_rm
+- Tier: 4
+- Rationale: ARM three-same layout isolates Rd[4:0], Rn[9:5], Rm[20:16]. Stronger differential is the llvm-mc property; this metamorphic check does not need the external assembler and pins field placement independently of a copied encoder body.
+- Doc contract: neon.rs:329 "MUL (vector): 0 Q 0 01110 size 1 Rm 10011 1 Rn Rd" — asserted fingerprint 76e072ed
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_metamorphic_rd_rn_rm_u
+- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}. letting w(rd,rn,rm)=encode_neon_mul([Vd.8b,Vn.8b,Vm.8b]): (w(rd1,rn1,rm1) xor w(rd2,rn1,rm1)) & ~0x1F = 0 ∧ w(rd2,rn1,rm1)&0x1F = rd2 ∧ (w(rd1,rn1,rm1) xor w(rd1,rn2,rm1)) & ~(0x1F<<5) = 0 ∧ (w(rd1,rn2,rm1)>>5)&0x1F = rn2 ∧ (w(rd1,rn1,rm1) xor w(rd1,rn1,rm2)) & ~(0x1F<<16) = 0 ∧ (w(rd1,rn1,rm2)>>16)&0x1F = rm2
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, tb, u_bit, is_high]
-  domain: { (ta,tb,is_high): mandated_uxtl_pairs }
-  body: xor_only_rd_rn_q_u(encode_neon_xtl)
+  vars: [rd1, rd2, rn1, rn2, rm1, rm2]
+  domain: { rd1: "0..31", rd2: "0..31", rn1: "0..31", rn2: "0..31", rm1: "0..31", rm2: "0..31" }
+  relation:
+    op: holds
+    expr: "((w(rd1,rn1,rm1) ^ w(rd2,rn1,rm1)) & !0x1F) == 0 && (w(rd2,rn1,rm1) & 0x1F) == rd2 && ((w(rd1,rn1,rm1) ^ w(rd1,rn2,rm1)) & !(0x1F << 5)) == 0 && ((w(rd1,rn2,rm1) >> 5) & 0x1F) == rn2 && ((w(rd1,rn1,rm1) ^ w(rd1,rn1,rm2)) & !(0x1F << 16)) == 0 && ((w(rd1,rn1,rm2) >> 16) & 0x1F) == rm2"
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  is_high: { gen: bool }
-  ta: { gen: string }
-  tb: { gen: string }
-evidence: neon.rs:162
+  rd1: { gen: int, min: 0, max: 31, type: u32 }
+  rd2: { gen: int, min: 0, max: 31, type: u32 }
+  rn1: { gen: int, min: 0, max: 31, type: u32 }
+  rn2: { gen: int, min: 0, max: 31, type: u32 }
+  rm1: { gen: int, min: 0, max: 31, type: u32 }
+  rm2: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:329
 ```
 
-## encode_neon_xtl_inv_arm_layout
-- Tier: 3
-- Rationale: ARM Advanced SIMD shift-by-immediate UXTL/SXTL (USHLL/SSHLL #0) fixes bit31=0, bits[28:23]=011110, immh from source esize, immb=000, bits[15:10]=101001. Invariant is weaker than llvm-mc equality but cites the documented format comment.
-- Doc contract: neon.rs:162 "Format: 0 Q U 011110 immh immb 10100 1 Rn Rd" — asserted fingerprint 9a879603
-- Seed: neon.rs encode_neon_shll_invariant_arm_fields
-- Formal: ∀ valid UXTL inputs. word bit31=0 ∧ Q=is_high ∧ U=u_bit ∧ bits[28:23]=011110 ∧ immh=immh(tb) ∧ immb=0 ∧ bits[15:10]=101001 ∧ bits[9:5]=rn ∧ bits[4:0]=rd. immh(8b|16b)=0001, immh(4h|8h)=0010, immh(2s|4s)=0100.
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_invariant_arm_fields
+- Tier: 4
+- Rationale: ARM Advanced SIMD three-same MUL layout is an exact structural invariant of every valid encoding. Weaker than llvm-mc differential; pins U=0, opcode 10011, size:Q from T, bit21=1 independently of the reference tool.
+- Doc contract: neon.rs:329 "MUL (vector): 0 Q 0 01110 size 1 Rm 10011 1 Rn Rd" — asserted fingerprint 76e072ed
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_invariant_arm_fields
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s}. let w = encode_neon_mul([Vd.T,Vn.T,Vm.T]). bit31(w)=0 ∧ Q(w)=Q(T) ∧ U(w)=0 ∧ bits[28:24](w)=01110 ∧ size(w)=size(T) ∧ bit21(w)=1 ∧ Rm(w)=rm ∧ bits[15:10](w)=100111 ∧ Rn(w)=rn ∧ Rd(w)=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, tb, u_bit, is_high]
-  domain: { (ta,tb,is_high): mandated_uxtl_pairs }
-  body: arm_uxtl_fields(encode_neon_xtl(...))
+  vars: [rd, rn, rm, t]
+  domain: { rd: "0..31", rn: "0..31", rm: "0..31", t: "{8b,16b,4h,8h,2s,4s}" }
+  relation:
+    op: holds
+    expr: "((w >> 31) & 1) == 0 && ((w >> 30) & 1) == q(t) && ((w >> 29) & 1) == 0 && ((w >> 24) & 0x1F) == 0b01110 && ((w >> 22) & 3) == size(t) && ((w >> 21) & 1) == 1 && ((w >> 16) & 0x1F) == rm && ((w >> 10) & 0x3F) == 0b100111 && ((w >> 5) & 0x1F) == rn && (w & 0x1F) == rd"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  is_high: { gen: bool }
-  ta: { gen: string }
-  tb: { gen: string }
-evidence: neon.rs:162
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: string }
+evidence: neon.rs:329
 ```
 
-## encode_neon_xtl_neg_arity
-- Tier: 4
-- Rationale: neon.rs:164-166 requires 2 operands; llvm-mc rejects 0- and 1-operand UXTL. Negative/error contract for documented arity. Stronger oracles do not apply to the empty/short operand vector.
-- Doc contract: neon.rs:165 "NEON uxtl/sxtl requires 2 operands" — asserted fingerprint 4250e4ad
-- Seed: encode_cnt_pbt.rs arity; encode_neon_shrn_pbt.rs arity
-- Formal: ∀ ops with |ops| ∈ {0,1}, ∀ u_bit ∈ {0,1}, ∀ is_high ∈ {false,true}. encode_neon_xtl(ops, u_bit, is_high) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_neg_arity
+- Tier: 3
+- Rationale: GNU gas / llvm-mc reject MUL with fewer than 3 operands ("too few operands"). get_neon_reg fails on a missing slot, so the documented 3-operand form is a negative-error contract. Stronger oracles do not apply on the invalid-arity domain.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_arity
+- Formal: ∀ n ∈ {0,1,2}, rd,rn,rm ∈ {0..31}. llvm-mc rejects arity-n mul ⇒ encode_neon_mul(first n of [Vd.8b,Vn.8b,Vm.8b]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops, u_bit, is_high]
-  domain: { ops: "len 0..1" }
+  vars: [n, rd, rn, rm]
+  domain: { n: "0..2", rd: "0..31", rn: "0..31", rm: "0..31" }
   relation:
     op: throws
-    expr: encode_neon_xtl(ops, u_bit, is_high)
+    expr: encode_neon_mul(take(ops3, n))
 generators:
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  is_high: { gen: bool }
-  ops: { gen: list, maxLen: 1 }
+  n: { gen: int, min: 0, max: 2, type: usize }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: neon.rs:165
+evidence: neon.rs:322
 ```
 
-## encode_neon_xtl_neg_extra_operand
-- Tier: 4
-- Rationale: gas/llvm-mc reject a third operand on UXTL/SXTL (two-operand alias of USHLL #0). README.md:12 gas compatibility requires Err. The SUT only checks len < 2, so extra operands are a documented-error path the success differential never reaches.
-- Doc contract: neon.rs:159 "Encode NEON UXTL/SXTL (unsigned/signed extend long)." — asserted fingerprint 070d01c2
-- Seed: encode_neon_shrn_pbt.rs encode_neon_shrn_neg_extra_operand
-- Formal: ∀ valid 2-operand UXTL inputs, ∀ extra. llvm-mc rejects the 3-operand form ⇒ encode_neon_xtl(ops++[extra], u_bit, is_high) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_neg_extra_operand
+- Tier: 3
+- Rationale: llvm-mc / gas reject a fourth operand on vector MUL. The documented form is Vd.T, Vn.T, Vm.T (three operands). encode_neon_mul has no operands.len() check, so extra operands are a documented-error path the generator must reach.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_extra_operand
+- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s}. llvm-mc rejects "mul Vd.T, Vn.T, Vm.T, Vextra.T" ⇒ encode_neon_mul([Vd.T,Vn.T,Vm.T,Vextra.T]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_xtl([v0.8h, v0.8b, v0.8h], u_bit=0, is_high=false) = Ok(Word) while llvm-mc rejects `sxtl v0.8h, v0.8b, v0.8h`
-- Bug report: bug_reports/encode_neon_xtl_extra_operand.md
+- Counterexample: rd=0, rn=0, rm=0, extra=0, t=8b
+- Bug report: bug_reports/encode_neon_mul_extra_operand.md
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, extra, ta, tb, u_bit, is_high]
-  domain: { extra: "v0..v31", (ta,tb,is_high): mandated_uxtl_pairs }
+  vars: [rd, rn, rm, extra, t]
+  domain: { rd: "0..31", rn: "0..31", rm: "0..31", extra: "0..31", t: "{8b,16b,4h,8h,2s,4s}" }
   relation:
     op: throws
-    expr: encode_neon_xtl([Vd.ta, Vn.tb, extra], u_bit, is_high)
+    expr: encode_neon_mul([Vd.t, Vn.t, Vm.t, Vextra.t])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  is_high: { gen: bool }
-  ta: { gen: string }
-  tb: { gen: string }
+  t: { gen: string }
 expected_error: String
-evidence: neon.rs:164
+evidence: neon.rs:322
 ```
 
-## encode_neon_xtl_neg_mismatched_ta_tb
-- Tier: 4
-- Rationale: ARM UXTL requires dest Ta in {8H,4S,2D} paired with source Tb 8B/4H/2S (Q=0) or 16B/8H/4S (Q=1). llvm-mc rejects mismatched pairs (wrong dest, wrong Q-for-Tb, reserved arrangements). The SUT discards dest arrangement and maps 8b|16b to the same immh with Q from is_high only, so this error path is otherwise untested.
-- Doc contract: neon.rs:160 "These are aliases for USHLL/SSHLL with shift #0." — asserted fingerprint 3917f631
-- Seed: encode_neon_shrn_pbt.rs encode_neon_shrn_neg_invalid_arrangement
-- Formal: ∀ rd,rn, ∀ (ta,tb,is_high) not in mandated UXTL pairs. llvm-mc rejects "{uxtl|sxtl}{2?} Vd.ta, Vn.tb" ⇒ encode_neon_xtl = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_neg_invalid_t
+- Tier: 3
+- Rationale: ARM MUL vector T is {8B,16B,4H,8H,2S,4S} matching across Vd/Vn/Vm; size:Q=11:x (1D/2D) is reserved; llvm-mc rejects mismatched T, .2d, .1d, .1q. neon_arr_to_q_size accepts 1d/2d and source arrangements are discarded, so this is the error-path property for those documented rejections.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_invalid_t
+- Formal: ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}. ¬(valid_mul_T(Td) ∧ Td=Tn ∧ Tn=Tm) ∧ llvm-mc rejects "mul Vd.Td, Vn.Tn, Vm.Tm" ⇒ encode_neon_mul([Vd.Td,Vn.Tn,Vm.Tm]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_xtl([v0.8b, v0.8b], u_bit=0, is_high=false) = Ok(Word) while llvm-mc rejects `sxtl v0.8b, v0.8b`
-- Bug report: bug_reports/encode_neon_xtl_mismatched_ta_tb.md
+- Counterexample: rd=0, rn=0, rm=0, td=8b, tn=8b, tm=16b
+- Bug report: bug_reports/encode_neon_mul_mismatched_t.md
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, tb, u_bit, is_high]
-  domain: { (ta,tb,is_high): not mandated_uxtl_pairs }
+  vars: [rd, rn, rm, td, tn, tm]
+  domain: { rd: "0..31", rn: "0..31", rm: "0..31", td: "any_t", tn: "any_t", tm: "any_t" }
   relation:
     op: throws
-    expr: encode_neon_xtl([Vd.ta, Vn.tb], u_bit, is_high)
+    expr: encode_neon_mul([Vd.td, Vn.tn, Vm.tm])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  ta: { gen: string }
-  tb: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  is_high: { gen: bool }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  td: { gen: string }
+  tn: { gen: string }
+  tm: { gen: string }
 expected_error: String
-evidence: neon.rs:160
+evidence: neon.rs:322
 ```
 
-## encode_neon_xtl_neg_gpr_or_bare
-- Tier: 4
-- Rationale: gas/llvm-mc require Vd.Ta / Vn.Tb SIMD arrangements; GPR (x/w), scalar FP (d/s/q/h/b), SP/WSP, and bare V without arrangement are invalid. get_neon_reg accepts Operand::Reg and parse_reg_num accepts x/w prefixes, so this is a caller-reachable error path.
-- Doc contract: neon.rs:159 "Encode NEON UXTL/SXTL (unsigned/signed extend long)." — asserted fingerprint 070d01c2
-- Seed: encode_neon_shrn_pbt.rs encode_neon_shrn_neg_gpr_or_bare
-- Formal: ∀ kind ∈ {GPR dest, bare-V dest, bare-V src, x-prefix dest arrangement, GPR src}. llvm-mc rejects the asm ⇒ encode_neon_xtl = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_neg_gpr_or_bare
+- Tier: 3
+- Rationale: gas/llvm-mc require Vd.T, Vn.T, Vm.T. Bare Vn, GPR dest, scalar d/s/q/x/w, and xN.T are rejected. get_neon_reg accepts Operand::Reg (empty arrangement) and parse_reg_num accepts x/w prefixes, so those inputs are in the API domain and must Err.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_gpr_or_bare
+- Formal: ∀ rd,rn,rm ∈ {0..31}, kind ∈ {gpr-dest, bare-Vn, x-Rm, bare-Vd, xN.8b-dest}. llvm-mc rejects the corresponding asm ⇒ encode_neon_mul(ops(kind)) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_xtl([Reg(x0), v0.8b], u_bit=1, is_high=false) = Ok(Word) while llvm-mc rejects `uxtl x0, v0.8b`
-- Bug report: bug_reports/encode_neon_xtl_gpr_or_bare.md
+- Counterexample: rd=0, rn=0, rm=0, kind=1
+- Bug report: bug_reports/encode_neon_mul_bare_src.md
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, kind]
-  domain: { kind: gpr_or_bare_kinds }
+  vars: [rd, rn, rm, kind]
+  domain: { rd: "0..31", rn: "0..31", rm: "0..31", kind: "0..4" }
   relation:
     op: throws
-    expr: encode_neon_xtl(ops(kind), 1, false)
+    expr: encode_neon_mul(ops_gpr_or_bare(kind))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
   kind: { gen: int, min: 0, max: 4, type: u8 }
 expected_error: String
-evidence: neon.rs:159
+evidence: neon.rs:322
 ```
 
-## encode_neon_xtl_diff_alt_spellings
-- Tier: 2
-- Rationale: parse_reg_num lowercases prefixes; the assembler accepts GNU-style uppercase mnemonics and V prefixes. Differential vs llvm-mc on uppercase spellings of otherwise valid UXTL. Complements the lowercase valid-domain differential.
-- Doc contract: neon.rs:159 "Encode NEON UXTL/SXTL (unsigned/signed extend long)." — asserted fingerprint 070d01c2
-- Seed: encode_neon_shrn_pbt.rs encode_neon_shrn_diff_alt_spellings
-- Formal: ∀ valid UXTL inputs. encode_neon_xtl([V{rd}.ta, V{rn}.tb], u_bit, is_high) = llvm-mc("{UXTL|SXTL}{2?} V{rd}.{TA}, V{rn}.{TB}")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_diff_alt_spellings
+- Tier: 5
+- Rationale: Sweep: uppercase MUL/V/T must agree with llvm-mc. parse_reg_num lowercases names. Same differential oracle as encode_neon_mul_diff_llvm_mc.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_diff_alt_spellings
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s}. encode_neon_mul([V{rd}.T, V{rn}.T, V{rm}.T]) = llvm-mc("MUL Vd.T, Vn.T, Vm.T")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, ta, tb, u_bit, is_high]
-  domain: { (ta,tb,is_high): mandated_uxtl_pairs }
+  vars: [rd, rn, rm, t]
+  domain: { rd: "0..31", rn: "0..31", rm: "0..31", t: "{8b,16b,4h,8h,2s,4s}" }
   relation:
     op: eq
-    lhs: encode_neon_xtl([RegArrangement(V{rd},ta), RegArrangement(V{rn},tb)], u_bit, is_high)
-    rhs: llvm_mc("{UXTL|SXTL}{2?} V{rd}.{TA}, V{rn}.{TB}")
+    lhs: encode_neon_mul([RegArrangement(V{rd}, t), RegArrangement(V{rn}, t), RegArrangement(V{rm}, t)])
+    rhs: llvm_mc("MUL V{rd}.{T}, V{rn}.{T}, V{rm}.{T}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  is_high: { gen: bool }
-  ta: { gen: string }
-  tb: { gen: string }
-evidence: neon.rs:159
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: string }
+evidence: neon.rs:322
 ```
 
-## encode_neon_xtl_neg_nonreg
-- Tier: 4
-- Rationale: Sweep — get_neon_reg other arm (Imm/Mem/Label) is the documented error for a non-register operand. coverage_gaps had no profraw; this generator drives that branch. llvm-mc rejects Imm/Mem/Label in the dest slot.
-- Doc contract: neon.rs:19 "expected NEON register at operand {}, got {:?}" — asserted fingerprint b152f086
-- Seed: encode_neon_shrn_pbt.rs encode_neon_shrn_neg_nonreg
-- Formal: ∀ kind ∈ {Imm, Mem, Label}, ∀ slot ∈ {0,1}. encode_neon_xtl(ops with slot replaced by non-reg, 1, false) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_xtl_pbt.rs
+## encode_neon_mul_neg_nonreg
+- Tier: 3
+- Rationale: Sweep: Imm/Mem/Label in any slot must Err. get_neon_reg's other arm returns Err. Documented 3-register form.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_nonreg
+- Formal: ∀ rd,rn,rm ∈ {0..31}, slot ∈ {0,1,2}, kind ∈ {Imm, Mem, Label}. encode_neon_mul(ops with slot replaced by kind) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_neon_xtl
+function: encoder.encode_neon_mul
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, kind, slot]
-  domain: { kind: {Imm, Mem, Label}, slot: {0,1} }
+  vars: [rd, rn, rm, kind, slot]
+  domain: { rd: "0..31", rn: "0..31", rm: "0..31", kind: "0..2", slot: "0..2" }
   relation:
     op: throws
-    expr: encode_neon_xtl(ops_with_nonreg(slot, kind), 1, false)
+    expr: encode_neon_mul(ops_with_nonreg(slot, kind))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
   kind: { gen: int, min: 0, max: 2, type: u8 }
-  slot: { gen: int, min: 0, max: 1, type: usize }
+  slot: { gen: int, min: 0, max: 2, type: usize }
 expected_error: String
-evidence: neon.rs:19
+evidence: neon.rs:322
+```
+
+## encode_neon_mul_neg_reserved_t
+- Tier: 3
+- Rationale: Sweep: ARM MUL vector size:Q=11:x is reserved (no 1D/2D). llvm-mc rejects mul v0.2d / v0.1d. neon_arr_to_q_size accepts both, so this generator is pinned to the reserved bound.
+- Doc contract: neon.rs:322 "Encode NEON MUL Vd.T, Vn.T, Vm.T" — asserted fingerprint f9a56f7e
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_invalid_t (ADD allows 2d; MUL does not)
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {1d,2d}. llvm-mc rejects "mul Vd.T, Vn.T, Vm.T" ⇒ encode_neon_mul([Vd.T,Vn.T,Vm.T]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_mul_pbt.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, rm=0, t=1d
+- Bug report: bug_reports/encode_neon_mul_reserved_t.md
+
+```property
+function: encoder.encode_neon_mul
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t]
+  domain: { rd: "0..31", rn: "0..31", rm: "0..31", t: "{1d,2d}" }
+  relation:
+    op: throws
+    expr: encode_neon_mul([Vd.t, Vn.t, Vm.t])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: string }
+expected_error: String
+evidence: neon.rs:322
 ```

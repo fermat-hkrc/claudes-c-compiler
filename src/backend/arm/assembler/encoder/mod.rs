@@ -70,6 +70,8 @@ mod encode_neon_shrn_pbt;
 mod encode_neon_two_misc_pbt;
 #[cfg(test)]
 mod encode_neon_xtl_pbt;
+#[cfg(test)]
+mod encode_neon_mul_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
