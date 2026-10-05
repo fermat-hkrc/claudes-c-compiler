@@ -480,3 +480,61 @@ mod pbt_tests {
         });
     }
 }
+
+// ===========================================================================
+// PBT round 04 — change-surface obligation: split_first_word (changed by
+// commit HEAD). Oracle: the function's own documented contract
+// (text_processing.rs:284-287) — first word / rest split, '(' is also a word
+// boundary so `#if(expr)` parses as keyword="if", rest="(expr)".
+// ===========================================================================
+#[cfg(test)]
+mod pbt_round04 {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p9_split_first_word_contract(
+            word in "[A-Za-z_][A-Za-z0-9_]{0,7}",
+            gap in prop_oneof![Just(" "), Just("  "), Just("\t"), Just("")],
+            rest in prop_oneof![
+                3 => "[A-Za-z0-9_]{0,4}",
+                2 => "(\\([A-Za-z0-9_]{0,4})",
+                2 => "[A-Za-z0-9_]{1,4}( [A-Za-z0-9_]{1,4}){1,2}",
+            ],
+        ) {
+            let s = format!("{word}{gap}{rest}");
+            let t = s.trim().to_string();
+            let (w, r) = split_first_word(&s);
+
+            // Reconstruction: w is a prefix of the trimmed input, and r is
+            // exactly what follows (leading ws skipped at a ws split; the '('
+            // kept at a '(' split).
+            prop_assert!(t.starts_with(w), "w={:?} not a prefix of t={:?}", w, t);
+            let after = &t[w.len()..];
+            if after.starts_with('(') {
+                prop_assert_eq!(r, after);
+            } else {
+                prop_assert_eq!(r, after.trim_start());
+            }
+            // Word shape: a non-empty first word contains no whitespace and
+            // no '(' (both are word boundaries per the doc comment).
+            if !w.is_empty() {
+                prop_assert!(!w.contains(|c: char| c.is_whitespace() || c == '('),
+                    "word {:?} contains a boundary char", w);
+            }
+            // Maximality: the char after a non-empty w (when any) is a boundary.
+            if !w.is_empty() && t.len() > w.len() {
+                let c = t.as_bytes()[w.len()] as char;
+                prop_assert!(c.is_whitespace() || c == '(',
+                    "split before boundary-free char {:?} in {:?}", c, t);
+            }
+
+            // Documented KATs (text_processing.rs:286-287).
+            prop_assert_eq!(split_first_word("#if(x)"), ("#if", "(x)"));
+            prop_assert_eq!(split_first_word("define F(x) x"), ("define", "F(x) x"));
+            prop_assert_eq!(split_first_word("endif"), ("endif", ""));
+        }
+    }
+}

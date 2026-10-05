@@ -3,7 +3,7 @@
 - [x] 建立 issue 去重数据库（拉取全部 ~500 个 issue 的编号/标题/函数名到 pbt-out/issue_db.tsv）
 - [x] 创建输出目录 pbt-out/bug_reports/（新 bug）和 pbt-out/bug_reports/found_already/（已有 issue 的重复 bug），编写 issue 建单辅助脚本
 - [x] PBT 战役：src/common（encoding/const_eval/const_arith/long_double 等）
-- [ ] PBT 战役：src/frontend（lexer/parser/preprocessor/sema）
+- [x] PBT 战役：src/frontend lexer ✓ / preprocessor ✓（parser、sema 继续按子目录轮次）
 - [ ] PBT 战役：src/ir + src/passes
 - [ ] PBT 战役：src/backend 核心（cast/regalloc/liveness/stack_layout/call_abi）
 - [ ] PBT 战役：src/backend/elf + linker_common

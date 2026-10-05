@@ -97,3 +97,58 @@ cd /tmp && printf '#include <stdio.h>\nint main(void){ int (*a)[5]; int *b[5]; p
 - pbt-out/FUNCTION_INDEX.md — whole-repo function index (union; parser entries predate this round)
 - pbt-out/rounds/04_parser/ — round archive: FUNCTION_INDEX.md (module pipe table, 102 fns), CHANGE_SURFACE.md, change-surface.json, build.log, dependencies.json, run/ (scratch CWD incl. proptest-regressions)
 - pbt-out/bug_reports/ — round-03 bugs (B1–B3) remain; round 04 added none
+
+## Coverage Report
+
+# PBT Coverage Status
+
+> Last updated: 2026-10-05 09:42 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 12/154 total | PBT candidates: 12 | Tested: 12 (100%) | 12 tested
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Total source files | 6 |
+| Files scanned | 6 / 6 (100%) |
+| Total functions (all files) | 154 |
+| PBT candidates (from FUNCTION_INDEX) | 12 |
+| **Tested (of PBT candidates)** | **12 / 12 (100%)** |
+| **Overall (tested / all functions)** | **12 / 154 (8%)** |
+| Untested | 0 |
+| Skipped | 0 |
+
+## Module Breakdown
+
+| Module | Scanned | Tested | Skipped | Coverage |
+|--------|---------|--------|---------|----------|
+|  | 12 | 12 | 0 | 100% |
+
+## Oracle Type Distribution
+
+| Oracle Type | Total | Covered | Skipped | Coverage |
+|-------------|-------|---------|---------|----------|
+| unknown | 12 | 12 | 0 | 100% |
+
+## File Coverage
+
+| Source File | Funcs | Candidates | Tested | Coverage | Status |
+|-------------|-------|------------|--------|----------|--------|
+| parse.rs | 88 | 1 | 3 | 300% | covered |
+| declarations.rs | 17 | 6 | 1 | 17% | partial |
+| expressions.rs | 15 | 10 | 1 | 10% | partial |
+| types.rs | 15 | 9 | 1 | 11% | partial |
+| declarators.rs | 10 | 7 | 0 | 0% | untested |
+| statements.rs | 9 | 0 | 1 | - | excluded |
+
+## Files Not Yet Scanned (1)
+
+| Source File | Module |
+|-------------|--------|
+| declarators.rs | declarators.rs |
+
+## Recommended Focus
+
+> **Priority 3 — Scan uncovered files**
+> 1 file(s) not yet scanned: declarators.rs (1 files)
+> Run `pi-pbt scan <dir>` to add them to FUNCTION_INDEX.md.

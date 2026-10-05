@@ -1,0 +1,111 @@
+{
+  "source": "commit:HEAD",
+  "files": [
+    "pbt-out/rounds/03_preprocessor/run/l1.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_0.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_1.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_10.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_11.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_12.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_13.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_14.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_15.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_16.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_17.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_18.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_19.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_2.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_20.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_21.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_22.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_23.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_24.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_25.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_26.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_3.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_4.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_5.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_6.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_7.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_8.c",
+    "pbt-out/rounds/03_preprocessor/run/p8scratch/case_9.c",
+    "pbt-out/rounds/03_preprocessor/run/t.c",
+    "pbt-out/rounds/03_preprocessor/run/t3.c",
+    "pbt-out/rounds/03_preprocessor/run/t4.c",
+    "pbt-out/rounds/03_preprocessor/run/vac.c",
+    "pbt-out/rounds/03_preprocessor/run/w1.c",
+    "src/frontend/preprocessor/conditionals.rs",
+    "src/frontend/preprocessor/macro_defs.rs",
+    "src/frontend/preprocessor/mod.rs",
+    "src/frontend/preprocessor/pbt_support.rs",
+    "src/frontend/preprocessor/pipeline.rs",
+    "src/frontend/preprocessor/text_processing.rs"
+  ],
+  "functions": [
+    {
+      "name": "spacer",
+      "file": "src/frontend/preprocessor/conditionals.rs",
+      "line": 810,
+      "errorHandling": false,
+      "hunks": [
+        [
+          810,
+          962
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "pp_output",
+      "file": "src/frontend/preprocessor/macro_defs.rs",
+      "line": 1484,
+      "errorHandling": false,
+      "hunks": [
+        [
+          1484,
+          1602
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "is_ident_start",
+      "file": "src/frontend/preprocessor/pbt_support.rs",
+      "line": 1,
+      "errorHandling": true,
+      "hunks": [
+        [
+          1,
+          440
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "new_pp",
+      "file": "src/frontend/preprocessor/pipeline.rs",
+      "line": 966,
+      "errorHandling": true,
+      "hunks": [
+        [
+          966,
+          1359
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "split_first_word",
+      "file": "src/frontend/preprocessor/text_processing.rs",
+      "line": 296,
+      "errorHandling": false,
+      "hunks": [
+        [
+          296,
+          482
+        ]
+      ],
+      "role": "changed"
+    }
+  ]
+}

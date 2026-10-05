@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7a8cadba7c84bbf5bd89810ff4074397e731e2417164f76408fd3ad2fbda4f22 # shrinks to p = 2, ptypes = []
+cc a8d682b6183dc24c4253efddd373964776ef1cbf88e37fd60d2dccbc1d7ae79a # shrinks to p = 0, dims = [1]
+cc d34eaabcaf56ee1308ce67e1e17fb592ef7c6910eff5a9b49525974fd5394fda # shrinks to s = Member(Lit(0), "g0")
+cc bd6435279d87d614ade3e781b5c123e81c70e054b733651ce7fbe728024a3874 # shrinks to toks = ["int", "_Static_assert"], close = 0
+cc 55c02c3f2cba9c3c2333c989c70c95b0208d43dbb5ba309e9ab081148b77de8b # shrinks to ss = ["if (u0) while (u0) u0 + = 1;"]

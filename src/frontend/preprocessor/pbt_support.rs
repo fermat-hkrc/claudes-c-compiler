@@ -438,3 +438,85 @@ pub fn sut_tokens(pp: &mut crate::frontend::preprocessor::Preprocessor, program:
     let out = pp.preprocess(program);
     tokens(&strip_line_markers(&out))
 }
+
+// ===========================================================================
+// PBT round 04 — change-surface obligation: is_ident_start / is_ident_cont
+// (changed by commit HEAD). These classify the ASCII subset of C11 6.4.2.1
+// nondigits for the round-03 differential ORACLE tokenizer; pin them to the
+// standard clause, plus maximal-munch / whitespace-collapse invariance of
+// tokens() itself (the oracle's own contract, pbt_support.rs:19).
+// ===========================================================================
+mod round04_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn arb_token() -> BoxedStrategy<String> {
+        prop_oneof![
+            "[a-mo-t][a-z0-9_]{0,5}",
+            "[0-9]{1,4}",
+            "[+*<=>!&|]{1,2}",
+            "[( )]{1,3}",
+        ].boxed()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p10_ident_classification_c11(b in 0u8..=255) {
+            // C11 6.4.2.1: identifier-nondigit = _ | letters | ... ; for the
+            // ASCII byte range this is exactly [A-Za-z_], and continuation
+            // additionally admits decimal digits.
+            prop_assert_eq!(is_ident_start(b), b.is_ascii_alphabetic() || b == b'_');
+            prop_assert_eq!(is_ident_cont(b), b.is_ascii_alphanumeric() || b == b'_');
+        }
+
+        #[test]
+        fn p10_tokenizer_ws_collapse_invariance(toks in proptest::collection::vec(arb_token(), 0..8)) {
+            let spaced = toks.join("  ");
+            let collapsed = toks.join(" ");
+            let t1 = tokens(&spaced);
+            let t2 = tokens(&collapsed);
+            prop_assert_eq!(&t1, &t2, "ws-run width must not change the token stream");
+            // Round trip: re-joining the emitted stream with single spaces
+            // re-tokenizes to itself (idempotence of the token spelling).
+            let rejoined = t1.join(" ");
+            prop_assert_eq!(tokens(&rejoined), t1);
+        }
+    }
+}
+
+mod round04_failure_branch {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Bytes that must be REJECTED by is_ident_start/is_ident_cont (the
+    /// negative/failure branch of the classifier changed by commit HEAD):
+    /// printable ASCII separators that are neither letter, digit, nor '_'.
+    /// Quotes and backslash are excluded (they open literals/escapes and are
+    /// covered by the literal branch of tokens(), not the ident branch).
+    const SEPARATOR_BYTES: &[u8] = b"@#%&*+~^|?!<>=,;.:/";
+    const IDENT: &str = "ab_z9";
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p10b_rejected_bytes_terminate_identifiers(b in proptest::sample::select(SEPARATOR_BYTES.to_vec())) {
+            // Failure branch of the classifier: a non-nondigit byte must
+            // return false from both predicates...
+            prop_assert!(!is_ident_start(b), "byte {:?} must not start an identifier", b as char);
+            prop_assert!(!is_ident_cont(b), "byte {:?} must not continue an identifier", b as char);
+            // ...and the tokenizer must therefore SPLIT there: the identifier
+            // cannot swallow the separator byte. If the classifier's reject
+            // branch regressed to accept, this fails.
+            let s = format!("{}{}{}", IDENT, b as char, IDENT);
+            let toks = tokens(&s);
+            prop_assert!(toks.len() >= 2, "identifier swallowed separator {:?} in {:?}", b as char, toks);
+            prop_assert_eq!(&toks[0], IDENT);
+            // The separator may form its own operator token, but no token may
+            // MIX identifier letters with the separator byte (that would mean
+            // the ident classifier's reject branch regressed).
+            prop_assert!(!toks.iter().any(|t| t.contains(IDENT) && t.as_bytes().contains(&b)),
+                "identifier token swallowed separator byte: {:?}", toks);
+        }
+    }
+}

@@ -1306,3 +1306,691 @@ impl Parser {
         }
     }
 }
+
+// ===========================================================================
+// PBT round 04 — property tests. Drives the REAL parser through its public
+// Parser::new(Lexer::tokenize(..)).parse() surface. Oracles are independent:
+// C11 6.5 precedence table (P1), C11 grammar + full parenthesization (P2),
+// C11 6.7.2p5 specifier order-independence (P3), the C declarator
+// inside-out reading rule (P4), well-formedness-by-construction (P5/P8),
+// panic-freedom under the README §13 recovery contract (P6), and the
+// documented typedef-identifier context flip (P7).
+// ===========================================================================
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::frontend::lexer::Lexer;
+    use proptest::prelude::*;
+
+    fn parse_src(src: &str) -> (TranslationUnit, usize) {
+        let toks = Lexer::new(src, 0).tokenize();
+        let mut p = Parser::new(toks);
+        let tu = p.parse();
+        (tu, p.error_count)
+    }
+
+    fn init_expr_of(src: &str) -> Expr {
+        let (tu, errs) = parse_src(src);
+        assert_eq!(errs, 0, "property program must parse cleanly:\n{src}\n");
+        assert_eq!(tu.decls.len(), 1, "expected exactly one decl:\n{src}\n");
+        match &tu.decls[0] {
+            ExternalDecl::Declaration(d) => {
+                assert_eq!(d.declarators.len(), 1);
+                match &d.declarators[0].init {
+                    Some(Initializer::Expr(e)) => (*e).clone(),
+                    other => panic!("expected expr initializer, got {other:?}"),
+                }
+            }
+            other => panic!("expected declaration, got {other:?}"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Structural shape of an expression (spans stripped) + renderer.
+    // ------------------------------------------------------------------
+    #[derive(Debug, Clone, PartialEq)]
+    enum Shape {
+        Lit(i64),
+        Id(String),
+        Bin(&'static str, Box<Shape>, Box<Shape>),
+        Un(&'static str, Box<Shape>),
+        Post(&'static str, Box<Shape>),
+        Call(Box<Shape>, Vec<Shape>),
+        Sub(Box<Shape>, Box<Shape>),
+        Member(Box<Shape>, String),
+        Assign(Box<Shape>, Box<Shape>),
+        Cond(Box<Shape>, Box<Shape>, Box<Shape>),
+        Comma(Box<Shape>, Box<Shape>),
+    }
+
+    fn bin_op_str(op: &BinOp) -> &'static str {
+        match op {
+            BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*", BinOp::Div => "/",
+            BinOp::Mod => "%", BinOp::BitAnd => "&", BinOp::BitOr => "|", BinOp::BitXor => "^",
+            BinOp::Shl => "<<", BinOp::Shr => ">>", BinOp::Eq => "==", BinOp::Ne => "!=",
+            BinOp::Lt => "<", BinOp::Le => "<=", BinOp::Gt => ">", BinOp::Ge => ">=",
+            BinOp::LogicalAnd => "&&", BinOp::LogicalOr => "||",
+        }
+    }
+    fn un_op_str(op: &UnaryOp) -> &'static str {
+        match op {
+            UnaryOp::Plus => "+", UnaryOp::Neg => "-", UnaryOp::BitNot => "~",
+            UnaryOp::LogicalNot => "!", _ => panic!("unary op outside subset: {op:?}"),
+        }
+    }
+    fn post_op_str(op: &PostfixOp) -> &'static str {
+        match op { PostfixOp::PostInc => "++", PostfixOp::PostDec => "--" }
+    }
+
+    fn shape_of(e: &Expr) -> Shape {
+        match e {
+            Expr::IntLiteral(v, _) => Shape::Lit(*v),
+            Expr::Identifier(n, _) => Shape::Id(n.clone()),
+            Expr::BinaryOp(op, a, b, _) =>
+                Shape::Bin(bin_op_str(op), Box::new(shape_of(a)), Box::new(shape_of(b))),
+            Expr::UnaryOp(op, a, _) => Shape::Un(un_op_str(op), Box::new(shape_of(a))),
+            Expr::PostfixOp(op, a, _) => Shape::Post(post_op_str(op), Box::new(shape_of(a))),
+            Expr::FunctionCall(f, args, _) =>
+                Shape::Call(Box::new(shape_of(f)), args.iter().map(shape_of).collect()),
+            Expr::ArraySubscript(a, i, _) =>
+                Shape::Sub(Box::new(shape_of(a)), Box::new(shape_of(i))),
+            Expr::MemberAccess(a, f, _) => Shape::Member(Box::new(shape_of(a)), f.clone()),
+            Expr::Assign(a, b, _) => Shape::Assign(Box::new(shape_of(a)), Box::new(shape_of(b))),
+            Expr::Conditional(c, t, f, _) =>
+                Shape::Cond(Box::new(shape_of(c)), Box::new(shape_of(t)), Box::new(shape_of(f))),
+            Expr::Comma(a, b, _) => Shape::Comma(Box::new(shape_of(a)), Box::new(shape_of(b))),
+            other => panic!("expr outside subset: {other:?}"),
+        }
+    }
+
+    /// Independent renderer from the C11 grammar: every compound node fully
+    /// parenthesized, so the rendering has exactly one admissible parse tree.
+    fn render(s: &Shape) -> String {
+        match s {
+            Shape::Lit(v) => v.to_string(),
+            Shape::Id(n) => n.clone(),
+            Shape::Bin(op, a, b) => format!("({} {} {})", render(a), op, render(b)),
+            Shape::Un(op, a) => format!("({}{})", op, render(a)),
+            Shape::Post(op, a) => format!("({}{})", render(a), op),
+            Shape::Call(f, args) => format!(
+                "{}({})",
+                render(f),
+                args.iter().map(render).collect::<Vec<_>>().join(", ")
+            ),
+            Shape::Sub(a, i) => format!("{}[{}]", render(a), render(i)),
+            Shape::Member(a, f) => format!("{}.{}", render(a), f),
+            Shape::Assign(a, b) => format!("({} = {})", render(a), render(b)),
+            Shape::Cond(c, t, f) => format!("({} ? {} : {})", render(c), render(t), render(f)),
+            Shape::Comma(a, b) => format!("({}, {})", render(a), render(b)),
+        }
+    }
+
+    const BIN_OPS: &[&str] = &[
+        "||", "&&", "|", "^", "&", "==", "!=", "<", "<=", ">", ">=",
+        "<<", ">>", "+", "-", "*", "/", "%",
+    ];
+
+    /// Independent precedence-climb reference from the C11 6.5 table
+    /// (levels 1..10, all binary ops left-associative).
+    fn ref_prec(op: &str) -> u8 {
+        match op {
+            "||" => 1, "&&" => 2, "|" => 3, "^" => 4, "&" => 5,
+            "==" | "!=" => 6, "<" | "<=" | ">" | ">=" => 7,
+            "<<" | ">>" => 8, "+" | "-" => 9, _ => 10,
+        }
+    }
+    fn ref_climb(ids: &[String], ops: &[&'static str]) -> Shape {
+        let mut operands: Vec<Shape> = vec![Shape::Id(ids[0].clone())];
+        let mut pending: Vec<&'static str> = Vec::new();
+        for (op, id) in ops.iter().zip(ids.iter().skip(1)) {
+            while let Some(&top) = pending.last() {
+                if ref_prec(top) >= ref_prec(op) {
+                    let r = operands.pop().unwrap();
+                    let l = operands.pop().unwrap();
+                    operands.push(Shape::Bin(top, Box::new(l), Box::new(r)));
+                    pending.pop();
+                } else { break; }
+            }
+            pending.push(*op);
+            operands.push(Shape::Id(id.clone()));
+        }
+        while let Some(top) = pending.pop() {
+            let r = operands.pop().unwrap();
+            let l = operands.pop().unwrap();
+            operands.push(Shape::Bin(top, Box::new(l), Box::new(r)));
+        }
+        operands.pop().unwrap()
+    }
+
+    fn arb_ident() -> impl Strategy<Value = String> { "[u][0-9]".prop_map(String::from) }
+
+    fn arb_shape(depth: u32) -> BoxedStrategy<Shape> {
+        let leaf = prop_oneof![
+            3 => (0i64..4096).prop_map(Shape::Lit),
+            3 => arb_ident().prop_map(Shape::Id),
+        ];
+        if depth == 0 { return leaf.boxed(); }
+        let sub = arb_shape(depth - 1);
+        let op = proptest::sample::select(BIN_OPS.to_vec());
+        let un = proptest::sample::select(vec!["+", "-", "~", "!"]);
+        let post = proptest::sample::select(vec!["++", "--"]);
+        prop_oneof![
+            1 => leaf,
+            5 => (sub.clone(), sub.clone(), op).prop_map(|(a, b, op)|
+                Shape::Bin(op, Box::new(a), Box::new(b))),
+            2 => (sub.clone(), un).prop_map(|(a, op)| Shape::Un(op, Box::new(a))),
+            1 => (arb_ident(), post).prop_map(|(a, op)| Shape::Post(op, Box::new(Shape::Id(a)))),
+            2 => (sub.clone(), proptest::collection::vec(arb_shape(depth - 1), 0..3))
+                .prop_map(|(f, a)| Shape::Call(Box::new(f), a)),
+            1 => (sub.clone(), sub.clone()).prop_map(|(a, i)|
+                Shape::Sub(Box::new(a), Box::new(i))),
+            1 => (arb_ident(), "[g][0-9]").prop_map(|(a, f)| Shape::Member(Box::new(Shape::Id(a)), f)),
+            1 => (arb_ident(), sub.clone()).prop_map(|(l, r)|
+                Shape::Assign(Box::new(Shape::Id(l)), Box::new(r))),
+            1 => (sub.clone(), sub.clone(), sub.clone()).prop_map(|(c, t, f)|
+                Shape::Cond(Box::new(c), Box::new(t), Box::new(f))),
+            1 => (sub.clone(), sub.clone()).prop_map(|(a, b)|
+                Shape::Comma(Box::new(a), Box::new(b))),
+        ].boxed()
+    }
+
+    // ------------------------------------------------------------------
+    // P1: binary precedence/associativity differential vs C11 6.5 table.
+    // ------------------------------------------------------------------
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p1_binary_precedence_differential(
+            ops in proptest::collection::vec(proptest::sample::select(BIN_OPS.to_vec()), 1..8)
+        ) {
+            let ids: Vec<String> = (0..=ops.len()).map(|i| format!("u{}", i % 10)).collect();
+            let mut src_flat = String::new();
+            for (i, id) in ids.iter().enumerate() {
+                if i > 0 { src_flat.push_str(&format!(" {} ", ops[i - 1])); }
+                src_flat.push_str(id);
+            }
+            let src = format!("int x = {};", src_flat);
+            let got = shape_of(&init_expr_of(&src));
+            let want = ref_climb(&ids, &ops);
+            prop_assert_eq!(got, want, "flat chain: {}", src_flat);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P2: fully-parenthesized round trip (metamorphic, C11 grammar).
+    // ------------------------------------------------------------------
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p2_fully_parenthesized_round_trip(s in arb_shape(4)) {
+            let src = format!("int x = {};", render(&s));
+            let got = shape_of(&init_expr_of(&src));
+            prop_assert_eq!(got, s, "src: {}", src);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P3: type specifier order-independence (C11 6.7.2p5 + types.rs doc).
+    // ------------------------------------------------------------------
+    fn typedef_type_debug(spec: &str) -> String {
+        let src = format!("typedef {spec} Tq1;");
+        let (tu, errs) = parse_src(&src);
+        assert_eq!(errs, 0, "typedef {spec} must parse");
+        match &tu.decls[0] {
+            ExternalDecl::Declaration(d) => format!("{:?}", d.type_spec),
+            other => panic!("expected declaration for `typedef {spec}`, got {other:?}"),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p3_specifier_order_independence(
+            combo in proptest::sample::select(vec![
+                vec!["unsigned", "int"], vec!["unsigned", "char"],
+                vec!["unsigned", "short", "int"], vec!["unsigned", "long"],
+                vec!["unsigned", "long", "long"], vec!["char"],
+                vec!["signed", "char"], vec!["short"], vec!["short", "int"],
+                vec!["signed", "short"], vec!["long"], vec!["long", "int"],
+                vec!["long", "long"], vec!["signed", "long", "long"],
+                vec!["int"], vec!["signed"],
+                vec!["float", "_Complex"], vec!["double", "_Complex"],
+                vec!["long", "double", "_Complex"], vec!["long", "double"],
+                vec!["_Bool"],
+            ]),
+            perm_seed in any::<u64>(),
+        ) {
+            let mut perm = combo.clone();
+            // deterministic shuffle from the seed (independent of SUT)
+            let mut s = perm_seed;
+            for i in (1..perm.len()).rev() {
+                s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let j = (s >> 33) as usize % (i + 1);
+                perm.swap(i, j);
+            }
+            let a = typedef_type_debug(&combo.join(" "));
+            let b = typedef_type_debug(&perm.join(" "));
+            prop_assert_eq!(a, b, "combo {:?} vs perm {:?}", combo, perm);
+        }
+    }
+
+    #[test]
+    fn p3_kat_documented_pairs() {
+        // C11 6.7.2: "long unsigned int" == "unsigned long int" (the module's
+        // own doc example), and the omitted-int rules.
+        assert_eq!(typedef_type_debug("long unsigned int"), typedef_type_debug("unsigned long int"));
+        assert_eq!(typedef_type_debug("unsigned"), typedef_type_debug("unsigned int"));
+        assert_eq!(typedef_type_debug("long"), typedef_type_debug("long int"));
+        assert_eq!(typedef_type_debug("signed"), typedef_type_debug("int"));
+    }
+
+    // ------------------------------------------------------------------
+    // P4: declarator inside-out rule (README §6, declarators.rs:154 doc).
+    // ------------------------------------------------------------------
+    #[derive(Debug, Clone, PartialEq)]
+    enum TShape {
+        Leaf(&'static str),
+        Ptr(Box<TShape>),
+        Arr(Box<TShape>, i64),
+    }
+    fn tshape_of(t: &TypeSpecifier) -> TShape {
+        let leaf = |n: &'static str| TShape::Leaf(n);
+        match t {
+            TypeSpecifier::Void => leaf("Void"),
+            TypeSpecifier::Char => leaf("Char"),
+            TypeSpecifier::Short => leaf("Short"),
+            TypeSpecifier::Int => leaf("Int"),
+            TypeSpecifier::Long => leaf("Long"),
+            TypeSpecifier::LongLong => leaf("LongLong"),
+            TypeSpecifier::Float => leaf("Float"),
+            TypeSpecifier::Double => leaf("Double"),
+            TypeSpecifier::LongDouble => leaf("LongDouble"),
+            TypeSpecifier::UnsignedChar => leaf("UnsignedChar"),
+            TypeSpecifier::UnsignedShort => leaf("UnsignedShort"),
+            TypeSpecifier::UnsignedInt => leaf("UnsignedInt"),
+            TypeSpecifier::UnsignedLong => leaf("UnsignedLong"),
+            TypeSpecifier::UnsignedLongLong => leaf("UnsignedLongLong"),
+            TypeSpecifier::Bool => leaf("Bool"),
+            TypeSpecifier::Pointer(b, _) => TShape::Ptr(Box::new(tshape_of(b))),
+            TypeSpecifier::Array(b, dim) => {
+                let d = match dim.as_deref() {
+                    Some(Expr::IntLiteral(v, _)) => *v,
+                    other => panic!("unexpected array dim {other:?}"),
+                };
+                TShape::Arr(Box::new(tshape_of(b)), d)
+            }
+            other => panic!("type spec outside shape model: {other:?}"),
+        }
+    }
+    /// Full declared shape: folded type_spec, then any remaining derived
+    /// entries applied in the documented fold order (types.rs fold_simple_derived
+    /// + the combine_declarator_parts layout comments): entries apply
+    /// left-to-right as successive wraps, and a RUN of consecutive array dims
+    /// applies with the LAST dim of the run innermost (source order preserved).
+    fn decl_tshape(d: &Declaration) -> TShape {
+        let mut t = tshape_of(&d.type_spec);
+        let derived: &[DerivedDeclarator] =
+            if d.declarators.is_empty() { &[] } else { &d.declarators[0].derived };
+        let dim_of = |e: &DerivedDeclarator| match e {
+            DerivedDeclarator::Array(Some(dim)) => match dim.as_ref() {
+                Expr::IntLiteral(v, _) => *v,
+                other => panic!("unexpected array dim {other:?}"),
+            },
+            other => panic!("expected array dim, got {other:?}"),
+        };
+        let mut i = 0;
+        while i < derived.len() {
+            match &derived[i] {
+                DerivedDeclarator::Pointer => {
+                    t = TShape::Ptr(Box::new(t));
+                    i += 1;
+                }
+                DerivedDeclarator::Array(_) => {
+                    let start = i;
+                    while i < derived.len()
+                        && matches!(derived[i], DerivedDeclarator::Array(_)) { i += 1; }
+                    for j in (start..i).rev() {
+                        t = TShape::Arr(Box::new(t), dim_of(&derived[j]));
+                    }
+                }
+                other => panic!("fptr derived entry in array/ptr model: {other:?}"),
+            }
+        }
+        t
+    }
+    fn decl_of(src: &str) -> Declaration {
+        let (tu, errs) = parse_src(src);
+        assert_eq!(errs, 0, "declarator program must parse cleanly:\n{src}\n");
+        match tu.decls.into_iter().next() {
+            Some(ExternalDecl::Declaration(d)) => d,
+            other => panic!("expected declaration, got {other:?}"),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p4_declarator_inside_out(
+            p in 0usize..3,
+            dims in proptest::collection::vec(1i64..8, 1..3),
+        ) {
+            // (a) `int ***a[2][3]` — suffixes bind tighter than unparenthesized stars:
+            // a is array[d0] of array[d1] of pointer^p to int.
+            let mut src = String::from("int ");
+            src.push_str(&"*".repeat(p));
+            src.push_str("a");
+            for d in &dims { src.push_str(&format!("[{d}]")); }
+            src.push(';');
+            let d = decl_of(&src);
+            prop_assert_eq!(&d.declarators[0].name, "a");
+            let mut model = TShape::Leaf("Int");
+            for _ in 0..p { model = TShape::Ptr(Box::new(model)); }
+            for dim in dims.iter().rev() {
+                model = TShape::Arr(Box::new(model), *dim);
+            }
+            prop_assert_eq!(decl_tshape(&d), model, "bare form: {}", src);
+
+            // (b) `int (***a)[2][3]` — parens reverse: pointer^p to array[d0] of array[d1] of int.
+            let pp = p.max(1);
+            let mut src = String::from("int (");
+            src.push_str(&"*".repeat(pp));
+            src.push_str("a)");
+            for d in &dims { src.push_str(&format!("[{d}]")); }
+            src.push(';');
+            let d = decl_of(&src);
+            prop_assert_eq!(&d.declarators[0].name, "a");
+            let mut inner = TShape::Leaf("Int");
+            for dim in dims.iter().rev() {
+                inner = TShape::Arr(Box::new(inner), *dim);
+            }
+            let mut model = inner;
+            for _ in 0..pp { model = TShape::Ptr(Box::new(model)); }
+            prop_assert_eq!(decl_tshape(&d), model, "paren form: {}", src);
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p4b_function_pointer_declarator(
+            p in 1usize..3,
+            ptypes in proptest::collection::vec(
+                proptest::sample::select(vec![("int", "Int"), ("char", "Char"), ("long", "Long")]),
+                0..3),
+        ) {
+            // Documented layout (declarators.rs:196-199): the LAST inner
+            // Pointer is the fn-ptr syntax marker; extra indirection levels
+            // follow AFTER the FunctionPointer:
+            //   `int (*f)(int)`  -> [Pointer, FunctionPointer]
+            //   `int (**f)(int)` -> [Pointer, FunctionPointer, Pointer]
+            let plist = ptypes.iter().map(|(kw, _)| *kw).collect::<Vec<_>>().join(", ");
+            let src = format!("int ({}f)({});", "*".repeat(p), plist);
+            let d = decl_of(&src);
+            prop_assert_eq!(&d.declarators[0].name, "f");
+            prop_assert_eq!(d.declarators[0].derived.len(), p + 1, "derived chain for {}", src);
+            prop_assert!(matches!(d.declarators[0].derived[0], DerivedDeclarator::Pointer),
+                "first entry must be the syntax-marker Pointer in {}", src);
+            match &d.declarators[0].derived[1] {
+                DerivedDeclarator::FunctionPointer(params, variadic) => {
+                    prop_assert!(!variadic);
+                    prop_assert_eq!(params.len(), ptypes.len());
+                    for (pd, (_kw, dbg)) in params.iter().zip(ptypes.iter()) {
+                        prop_assert_eq!(format!("{:?}", pd.type_spec), *dbg);
+                    }
+                }
+                other => panic!("expected FunctionPointer entry, got {other:?}"),
+            }
+            for entry in &d.declarators[0].derived[2..] {
+                prop_assert!(matches!(entry, DerivedDeclarator::Pointer),
+                    "extra indirection entries after FunctionPointer must be Pointer in {}", src);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P5: well-formed statement programs parse without false rejects.
+    // ------------------------------------------------------------------
+    fn arb_ce(depth: u32) -> BoxedStrategy<String> {
+        if depth == 0 {
+            return prop_oneof![
+                "[u][0-9]",
+                "[0-9]{1,3}",
+            ].boxed();
+        }
+        let e = arb_ce(depth - 1);
+        prop_oneof![
+            "[u][0-9]",
+            "[0-9]{1,3}",
+            (e.clone(), e.clone()).prop_map(|(a, b)| format!("({a} && {b})")),
+            (e.clone(), e.clone()).prop_map(|(a, b)| format!("({a} < {b})")),
+            (e.clone(), e.clone()).prop_map(|(a, b)| format!("({a} + {b})")),
+            (e.clone(), e.clone()).prop_map(|(a, b)| format!("f({a}, {b})")),
+            (e.clone()).prop_map(|a| format!("{a}[2]")),
+        ].boxed()
+    }
+    fn arb_stmt(depth: u32) -> BoxedStrategy<String> {
+        if depth == 0 {
+            return prop_oneof![
+                Just(";".to_string()),
+                Just("f();".to_string()),
+                Just("return;".to_string()),
+                Just("break;".to_string()),
+                Just("continue;".to_string()),
+                "[u][0-9][+][=][1-9]".prop_map(|s| format!("{s};")),
+            ].boxed();
+        }
+        let e = arb_ce(2);
+        prop_oneof![
+            1 => arb_stmt(0),
+            3 => proptest::collection::vec(arb_stmt(depth - 1), 0..3)
+                .prop_map(|ss| format!("{{ {} }}", ss.join(" "))),
+            2 => (e.clone(), arb_stmt(depth - 1)).prop_map(|(c, s)| format!("if ({c}) {s}")),
+            2 => (e.clone(), arb_stmt(depth - 1), arb_stmt(depth - 1))
+                .prop_map(|(c, s1, s2)| format!("if ({c}) {s1} else {s2}")),
+            2 => (e.clone(), arb_stmt(depth - 1)).prop_map(|(c, s)| format!("while ({c}) {s}")),
+            1 => (arb_stmt(depth - 1), e.clone()).prop_map(|(s, c)| format!("do {s} while ({c});")),
+            1 => Just("for (;;) ;".to_string()),
+            2 => e.clone().prop_map(|c| format!("return {c};")),
+            2 => e.prop_map(|c| format!("{c};")),
+        ].boxed()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p5_wellformed_statements_no_false_reject(
+            ss in proptest::collection::vec(arb_stmt(4), 1..6)
+        ) {
+            let src = format!("void h(void) {{ {} }}", ss.join(" "));
+            let (tu, errs) = parse_src(&src);
+            prop_assert_eq!(errs, 0, "false reject on well-formed program: {}", src);
+            prop_assert_eq!(tu.decls.len(), 1);
+            match &tu.decls[0] {
+                ExternalDecl::FunctionDef(fd) => prop_assert_eq!(&fd.name, "h"),
+                other => panic!("expected function def, got {other:?}"),
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P6: malformed token soup never crashes the parser (crash-only:
+    // README §13 documents an error-recovery strategy, not a crash; no
+    // reference oracle defines a tree for garbage — rejection chain in
+    // PROPERTIES.md).
+    // ------------------------------------------------------------------
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p6_malformed_token_soup_no_crash(
+            toks in proptest::collection::vec(proptest::sample::select(vec![
+                "int", "char", "void", "struct", "union", "enum", "typedef", "static",
+                "const", "if", "else", "while", "for", "do", "return", "break",
+                "continue", "goto", "switch", "case", "default", "sizeof", "(", ")",
+                "[", "]", "{", "}", ";", ",", "*", "=", "+", "-", "?", ":", ".", "->",
+                "&&", "||", "<<", ">>", "==", "!=", "<", ">", "&", "|", "^", "~", "!",
+                "++", "--", "%", "/", "0", "1", "42", "'c'", "\"s\"", "foo", "x",
+                "_Bool", "_Static_assert", "__attribute__", "#", "@", "$", "`",
+            ]), 2..48),
+            close in 0usize..6,
+        ) {
+            let mut g = toks.join(" ");
+            for _ in 0..close { g.push(')'); }
+            // Must not panic, abort, or hang; parse() always returns a TU.
+            // (No error-count bound: README §13 recovery may emit several
+            // diagnostics per bad token; the contract is crash-freedom.)
+            let (tu, _errs) = parse_src(&g);
+            prop_assert!(tu.decls.len() <= toks.len() + close);
+        }
+
+        #[test]
+        fn p6b_truncated_wellformed_no_crash(
+            ss in proptest::collection::vec(arb_stmt(3), 1..4),
+            cut in any::<usize>(),
+        ) {
+            // Truncating a well-formed program at an arbitrary byte must
+            // never panic the parser either (README §13 error recovery).
+            let whole = format!("void h(void) {{ {} }}", ss.join(" "));
+            let cut = cut % (whole.len() + 1);
+            let g = String::from_utf8_lossy(&whole.as_bytes()[..cut]).into_owned();
+            let (_tu, _errs) = parse_src(&g);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P6c (strengthening round): deep nesting must not blow the parser's
+    // recursion — edge-skewed crash-freedom (README §13 recovery contract).
+    // ------------------------------------------------------------------
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p6c_deep_nesting_no_crash(
+            n in 8usize..128,
+            kind in proptest::sample::select(vec!["(", "[", "{", "(*"]),
+        ) {
+            let (open, close) = match kind {
+                "(" => ("(", ")"),
+                "[" => ("[", "]"),
+                "{" => ("{", "}"),
+                _ => ("(*", ")"),
+            };
+            let mut g = String::new();
+            for _ in 0..n { g.push_str(open); }
+            g.push_str("1");
+            for _ in 0..n { g.push_str(close); }
+            g.push(';');
+            let _ = parse_src(&g); // must not panic / overflow
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P5b (strengthening round): local declarations (incl. for-init decls and
+    // initializers) interleave with statements without false rejects.
+    // ------------------------------------------------------------------
+    fn arb_local_decl(depth: u32) -> BoxedStrategy<String> {
+        let e = arb_ce(2);
+        prop_oneof![
+            3 => "int [u][0-9] [=] [0-9]{1,3};".prop_map(String::from),
+            2 => e.prop_map(|v| format!("int w0 = {v};")),
+            1 => arb_shape(depth.min(2)).prop_map(|s| format!("int w1 = {};", render(&s))),
+            1 => Just("struct T { int a; };".to_string()),
+            1 => Just("enum E { A, B = 4, C };".to_string()),
+            1 => Just(r#"char *p0 = "str", q0 = 'c';"#.to_string()),
+        ].boxed()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p5b_local_decls_and_for_init_no_false_reject(
+            decls in proptest::collection::vec(arb_local_decl(2), 0..3),
+            tail in proptest::collection::vec(arb_stmt(3), 0..3),
+            finit in prop_oneof![
+                Just(";".to_string()),
+                Just("int j0 = 0;".to_string()),
+                Just("j1 = 0;".to_string()),
+            ],
+        ) {
+            let mut body = String::new();
+            for d in &decls { body.push_str(d); body.push(' '); }
+            body.push_str(&format!("for ({finit} j0 < 4; j0 = j0 + 1) {{ }} "));
+            for st in &tail { body.push_str(st); body.push(' '); }
+            let src = format!("int h(void) {{ {body} return 0; }}");
+            let (tu, errs) = parse_src(&src);
+            prop_assert_eq!(errs, 0, "false reject on well-formed program: {}", src);
+            prop_assert_eq!(tu.decls.len(), 1);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P7: typedef context sensitivity (README §5).
+    // ------------------------------------------------------------------
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p7_typedef_context_sensitivity(n in "[Tt][0-9]{1,3}q") {
+            let (tu, errs) = parse_src(&format!("typedef int {n}; {n} v;"));
+            prop_assert_eq!(errs, 0);
+            match tu.decls.last() {
+                Some(ExternalDecl::Declaration(d)) => {
+                    prop_assert_eq!(&d.declarators[0].name, "v");
+                    prop_assert!(d.is_typedef() == false);
+                }
+                other => panic!("expected variable declaration, got {other:?}"),
+            }
+            let (_, errs2) = parse_src(&format!("{n} v;"));
+            prop_assert!(errs2 >= 1, "unknown name {} must not parse as a declaration", n);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // P8: struct field preservation.
+    // ------------------------------------------------------------------
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p8_struct_field_preservation(
+            n in 1usize..9,
+            specs in proptest::collection::vec(
+                (proptest::sample::select(vec![
+                    ("int", "Int"), ("char", "Char"), ("long", "Long"),
+                    ("long long", "LongLong"), ("unsigned int", "UnsignedInt"),
+                    ("float", "Float"), ("double", "Double"), ("short", "Short"),
+                    ("unsigned char", "UnsignedChar"), ("_Bool", "Bool"),
+                ]), any::<bool>()),
+                1..9),
+        ) {
+            let _ = n;
+            let mut body = String::new();
+            let mut models = Vec::new();
+            for (i, ((kw, dbg), star)) in specs.iter().enumerate() {
+                body.push_str(kw);
+                let model = if *star {
+                    body.push_str(" *");
+                    TShape::Ptr(Box::new(TShape::Leaf(dbg)))
+                } else {
+                    TShape::Leaf(dbg)
+                };
+                body.push_str(&format!(" f{};", i));
+                models.push((format!("f{}", i), model));
+            }
+            let src = format!("struct S {{ {} }};", body);
+            let (tu, errs) = parse_src(&src);
+            prop_assert_eq!(errs, 0, "struct must parse: {}", src);
+            match &tu.decls[0] {
+                ExternalDecl::Declaration(d) => match &d.type_spec {
+                    TypeSpecifier::Struct(name, fields, _, _, _) => {
+                        prop_assert_eq!(name.as_deref(), Some("S"));
+                        let fields = fields.as_ref().expect("struct must carry its fields");
+                        prop_assert_eq!(fields.len(), models.len());
+                        for (f, (want_name, want_shape)) in fields.iter().zip(models.iter()) {
+                            prop_assert_eq!(f.name.as_deref(), Some(want_name.as_str()));
+                            prop_assert_eq!(&tshape_of(&f.type_spec), want_shape);
+                        }
+                    }
+                    other => panic!("expected struct type, got {other:?}"),
+                },
+                other => panic!("expected declaration, got {other:?}"),
+            }
+        }
+    }
+}
