@@ -138,3 +138,72 @@ PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::const_eval::pbt_t
 - pbt-out/rounds/05_sema/ — this round's artifacts: PLAN.md, PROPERTIES.md, report.json, COVERAGE.md, COVERAGE_STATUS.md, FUNCTION_INDEX.md, INVARIANTS.md, CHANGE_SURFACE.md, change-surface.json, build.log, dependencies.json, bug_reports/b1..b5 (.md), run/ (scratch CWD for all runs). The campaign summary REPORT.md itself lives at pbt-out/REPORT.md (close-out ledger location enforced by the harness).
 - pbt-out/ — top-level ledger holds this round's state: REPORT.md, REPORT.html, report.json, PLAN.md, PROPERTIES.md, COVERAGE.md, COVERAGE_STATUS.md, INVARIANTS.md, FUNCTION_INDEX.md (sema entries appended), plan.md, bug_reports/ (b1–b5 .md + auto-rendered .html)
 - Test code itself lives in the repository tree (inline `#[cfg(test)]` mods, rung 1)
+
+## Coverage Report
+
+# PBT Coverage Status
+
+> Last updated: 2026-10-05 10:19 (campaign: coverage)
+> Files: 6/6 scanned (100%) | Functions: 14/116 total | PBT candidates: 14 | Tested: 14 (100%) | 6 pass, 7 fail, 1 other
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Total source files | 6 |
+| Files scanned | 6 / 6 (100%) |
+| Total functions (all files) | 116 |
+| PBT candidates (from FUNCTION_INDEX) | 14 |
+| **Tested (of PBT candidates)** | **14 / 14 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 6 / 7 / 1 |
+| **Overall (tested / all functions)** | **14 / 116 (12%)** |
+| Untested | 0 |
+| Skipped | 0 |
+
+## Module Breakdown
+
+| Module | Scanned | Tested | Skipped | Coverage |
+|--------|---------|--------|---------|----------|
+|  | 14 | 14 | 0 | 100% |
+
+## Oracle Type Distribution
+
+| Oracle Type | Total | Covered | Skipped | Coverage |
+|-------------|-------|---------|---------|----------|
+| unknown | 14 | 14 | 0 | 100% |
+
+## File Coverage
+
+| Source File | Funcs | Candidates | Tested | Coverage | Status |
+|-------------|-------|------------|--------|----------|--------|
+| analysis.rs | 28 | 23 | 4 | 17% | partial |
+| builtins.rs | 6 | 5 | 2 | 40% | partial |
+| const_eval.rs | 10 | 7 | 2 | 29% | partial |
+| type_checker.rs | 6 | 3 | 2 | 67% | partial |
+| type_context.rs | 12 | 9 | 1 | 11% | partial |
+| analysis.rs / type_context.rs / type_checker.rs / const_eval.rs / builtins.rs | 1 | 0 | 0 | - | excluded |
+
+## Files Not Yet Scanned (1)
+
+| Source File | Module |
+|-------------|--------|
+| analysis.rs / type_context.rs / type_checker.rs / const_eval.rs / builtins.rs | analysis.rs  |
+
+## Recommended Focus
+
+> **Priority 1 — Fix failing tests**
+> These functions have failing PBT properties — fix before adding new tests.
+
+| Function | Source |
+|----------|--------|
+| infer_binop_ctype / infer_expr_ctype | type_checker.rs |
+| process_enum_variants / collect_enum_constants_from_type_spec | analysis.rs |
+| analyze / analyze_function_def / analyze_compound_stmt / analyze_stmt | analysis.rs |
+| pop_scope / push_scope / insert_enum_scoped / insert_typedef_scoped / insert_typedef_alignment_scoped / insert_struct_layout_scoped / insert_struct_layout_scoped_from_ref / invalidate_ctype_cache_scoped(_from_ref) | type_context.rs |
+| eval_const_expr (+cast/binop arms) | const_eval.rs |
+| pbt_tests::parse_src (change surface) | parse.rs |
+| sut_tokens (change surface) | pbt_support.rs |
+
+> **Priority 3 — Scan uncovered files**
+> 1 file(s) not yet scanned: analysis.rs  (1 files)
+> Run `pi-pbt scan <dir>` to add them to FUNCTION_INDEX.md.

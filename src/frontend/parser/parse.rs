@@ -1993,4 +1993,45 @@ mod pbt_tests {
             }
         }
     }
+
+    // ------------------------------------------------------------------
+    // PBT round 05 — change-surface obligation: parse_src (parse.rs:1306)
+    // carries the error-handling change; drive the FAILURE branch. Mutations
+    // below are invalid wherever they land (unbalanced closers at a balanced
+    // seed's end, reserved keywords at top level), so error_count >= 1 must
+    // hold, and the README §13 recovery contract forbids panics.
+    // ------------------------------------------------------------------
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p_r05_parse_src_failure_path(
+            which in 0usize..4,
+            mutate in 0u8..6,
+            k in 1usize..4,
+            cut in 0usize..72,
+        ) {
+            let seeds = [
+                "int main(void) { return 0; }",
+                "struct S { int a; char b; }; int f(struct S *s) { return s->a; }",
+                "enum { A, B = 5, C }; int g(void) { switch (A) { case 0: return B; } return C; }",
+                "typedef unsigned long u; u h(u x) { for (;;) { break; } return x; }",
+            ];
+            let mut src = seeds[which].to_string();
+            let definitely_malformed = match mutate % 6 {
+                0 => { src.push_str(&")".repeat(k)); true }
+                1 => { src.push_str(&"}".repeat(k)); true }
+                2 => { src.push_str(" ][ "); true }
+                3 => { src.insert_str(0, "else "); true }
+                4 => { src.insert_str(0, "case 1: "); true }
+                _ => { let n = cut.min(src.len()); src.truncate(n); false }
+            };
+            let (tu, errs) = parse_src(&src);
+            // Recovery contract: a TU is always produced, never a panic.
+            let _ = &tu;
+            if definitely_malformed {
+                prop_assert!(errs >= 1,
+                    "malformed program reported 0 errors: {:?}", src);
+            }
+        }
+    }
 }

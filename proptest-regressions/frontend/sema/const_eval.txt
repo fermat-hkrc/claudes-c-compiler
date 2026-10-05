@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9e9369a9b36af4d305aec6dfb822c88b53539221edccd6294d43f21012f51bb3 # shrinks to e = Bin("<<", Un("-", Bin("+", Lit(23), Lit(-8))), Lit(-257))
+cc 64dd523e030c9d3ed40dc5dcb96869000ddb9466f4d48e832344776b2bbad12b # shrinks to e = Bin("+", Bin("+", Cast("char", Lit(128)), Lit(0)), Lit(0))
+cc 5e37d335acc1bd6925a9cac69d6d36ab89b8d3026780fc3be6c5c2282374da17 # shrinks to e = Un("-", Bin("+", Cast("unsigned", Lit(0)), Lit(-1)))

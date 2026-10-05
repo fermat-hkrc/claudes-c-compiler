@@ -2032,3 +2032,360 @@ impl Default for SemanticAnalyzer {
         Self::new()
     }
 }
+
+// ===========================================================================
+// PBT round 05 — SemanticAnalyzer pipeline properties. P3: enum variant
+// values vs the C11 6.7.2.2 model (incl. i64::MAX counter boundary). P5:
+// enum-constant scope shadowing through the real undo-log. P6: -Wreturn-type
+// fall-through vs the documented rule model (warning_count observable).
+// P12: FunctionInfo contract (params/variadic/is_defined/noreturn stickiness).
+// P13: implicit-function-declaration negative contract. Oracles: C11 clauses
+// + src/frontend/sema/README.md sections cited per property.
+// ===========================================================================
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::frontend::lexer::Lexer;
+    use crate::frontend::parser::Parser;
+    use proptest::prelude::*;
+
+    pub(super) fn sema_of(src: &str) -> (TranslationUnit, SemaResult, DiagnosticEngine) {
+        let toks = Lexer::new(src, 0).tokenize();
+        let mut p = Parser::new(toks);
+        let tu = p.parse();
+        assert_eq!(p.error_count, 0, "property program must parse cleanly:\n{src}\n");
+        let mut sema = SemanticAnalyzer::new();
+        let _ = sema.analyze(&tu);
+        let diags = sema.take_diagnostics();
+        (tu, sema.into_result(), diags)
+    }
+
+    // ------------------- P3: enum variant values (C11 6.7.2.2) ------------
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p3_enum_variant_values(
+            variants in proptest::collection::vec(
+                (r"[A-Z][A-Z0-9]{0,3}",
+                 proptest::option::of(prop_oneof![
+                     4 => -65536i64..65536,
+                     2 => proptest::sample::select(vec![
+                         i64::MIN, i64::MIN + 1, i32::MIN as i64, i32::MAX as i64,
+                         u32::MAX as i64, i64::MAX - 1, i64::MAX,
+                     ]),
+                     2 => any::<i64>(),
+                 ])), 1..6),
+        ) {
+            // Build enum body; explicit values emitted canonically (no leading
+            // zeros — "010" is octal in C), plain when they fit int, LL else.
+            let mut src = String::from("enum { ");
+            let mut expected: Vec<i64> = Vec::new();
+            let mut prev: i64 = 0;
+            let mut first = true;
+            for (name, val) in &variants {
+                if !first { src.push_str(", "); }
+                first = false;
+                match val {
+                    Some(v) => {
+                        if *v >= i32::MIN as i64 && *v <= i32::MAX as i64 {
+                            src.push_str(&format!("{} = {}", name, v));
+                        } else {
+                            src.push_str(&format!("{} = {}LL", name, v));
+                        }
+                        prev = *v;
+                    }
+                    None => src.push_str(name),
+                }
+                expected.push(prev);
+                prev = prev.wrapping_add(1);
+            }
+            src.push_str(" }; int probe = 0;\n");
+
+            let (_, result, _) = sema_of(&src);
+            for ((name, _), want) in variants.iter().zip(expected.iter()) {
+                let got = result.type_context.enum_constants.get(name);
+                prop_assert_eq!(
+                    got, Some(want),
+                    "enum constant {} in {:?}: got {:?} want {}",
+                    name, src, got, want);
+            }
+        }
+
+        // ---------------- P5: enum shadowing through the undo-log -----------
+        #[test]
+        fn p5_enum_scope_shadow_restore(g in 1i64..4096, l in 1i64..4096) {
+            let src = format!(
+                "enum {{ E = {g}; }};\n\
+                 void f(void) {{ enum {{ E = {l}; }} ; int x = E; (void)x; }}\n\
+                 enum {{ F = E + 0 }};\n");
+            let (_, result, _) = sema_of(&src);
+            // After f's body scope pops, the global E (=g) must be restored:
+            // pop_scope doc: "undo changes to ... enum_constants ..." and
+            // insert_enum_scoped: "tracking the change in the current scope frame".
+            let got = result.type_context.enum_constants.get("F");
+            prop_assert_eq!(got, Some(&g),
+                "enum constant F leaked inner E={}: got {:?}", l, got);
+        }
+
+        // ---------------- P12: FunctionInfo contract -------------------------
+        #[test]
+        fn p12_functions_map_contract(
+            ret in proptest::sample::select(vec!["void", "int", "unsigned", "long", "char *", "double"]),
+            params in proptest::collection::vec(
+                proptest::sample::select(vec!["int", "char *", "double", "unsigned long"]), 0..3),
+            variadic in any::<bool>(),
+            noreturn in any::<bool>(),
+            defined in any::<bool>(),
+        ) {
+            let plist = if params.is_empty() && !variadic {
+                "void".to_string()
+            } else {
+                let mut s = params.join(", ");
+                if variadic { if !params.is_empty() { s.push_str(", "); } s.push_str("..."); }
+                s
+            };
+            let attr = if noreturn { "__attribute__((noreturn)) " } else { "" };
+            let mut src = format!("{attr}{ret} f({plist});\n");
+            if defined {
+                let body = match ret {
+                    "void" => "".to_string(),
+                    "double" => "return 0.0;".to_string(),
+                    _ => "return 0;".to_string(),
+                };
+                // Definition WITHOUT the attribute: is_noreturn must be sticky
+                // (README: "The `is_noreturn` flag is sticky").
+                src.push_str(&format!("{ret} f({plist}) {{ {body} }}\n"));
+            }
+            let (_, result, _) = sema_of(&src);
+            let fi = result.functions.get("f")
+                .unwrap_or_else(|| panic!("no FunctionInfo for f in {src}"));
+            prop_assert_eq!(fi.variadic, variadic, "src: {}", src);
+            prop_assert_eq!(fi.is_defined, defined, "src: {}", src);
+            prop_assert_eq!(fi.params.len(), params.len(), "src: {}", src);
+            if noreturn {
+                prop_assert!(fi.is_noreturn, "is_noreturn must be sticky: {src}");
+            }
+        }
+
+        // ---------------- P13: implicit declaration contract ------------------
+        #[test]
+        fn p13_implicit_function_declaration(
+            idx in 0usize..64,
+            is_builtin_name in any::<bool>(),
+        ) {
+            // Names guaranteed outside the seeded libc set and builtin families
+            let unknowns: [&str; 8] = ["zzq_w", "wk_fn0", "q9_call", "zorp_x",
+                                       "nq_f2", "xz_takes", "qq_probe", "zzk_v9"];
+            let builtins: [&str; 8] = ["__builtin_memcpy", "__atomic_load_4",
+                                       "__sync_synchronize_8", "__builtin_trap",
+                                       "__builtin_strlen", "__atomic_fetch_add_2",
+                                       "__sync_lock_release_1", "__builtin_choose_expr"];
+            let name = if is_builtin_name { builtins[idx % 8] } else { unknowns[idx % 8] };
+            let src = format!("int f(void) {{ {name}(1); return 0; }}\n");
+            let (_, result, diags) = sema_of(&src);
+            if is_builtin_name {
+                // Builtins must NOT be implicitly declared (builtins.rs doc:
+                // "so that sema does not emit spurious 'implicit declaration'
+                // warnings for them").
+                prop_assert!(!result.functions.contains_key(name),
+                    "builtin {} got an implicit-declaration entry", name);
+            } else {
+                // README: implicit decl => Int return, variadic, not defined,
+                // plus a -Wimplicit-function-declaration warning.
+                let fi = result.functions.get(name)
+                    .unwrap_or_else(|| panic!("no implicit entry for {} in {src}", name));
+                prop_assert!(matches!(fi.return_type, CType::Int), "src: {src}");
+                prop_assert!(fi.variadic, "src: {src}");
+                prop_assert!(!fi.is_defined, "src: {src}");
+                prop_assert!(diags.warning_count() >= 1, "no warning for {src}");
+            }
+        }
+    }
+
+    // ------------------- P6: -Wreturn-type fall-through model -------------
+
+    /// A generated statement with its model fall-through verdict.
+    #[derive(Debug, Clone)]
+    enum G {
+        Ret,
+        Goto,
+        Break,
+        Cont,
+        Expr,
+        NoreturnCall,
+        If(bool, Box<G>, Option<Box<G>>), // (const-true cond, then, else)
+        While(bool, Box<G>),              // const-true cond?
+        DoWhile(bool, Box<G>),
+        For(bool, bool, Box<G>),          // (has cond, const-true)
+        Switch { default: bool, last_returns: bool, any_break: bool, ncases: u8 },
+    }
+    impl G {
+        fn falls(&self) -> bool {
+            match self {
+                G::Ret | G::Goto | G::Break | G::Cont | G::NoreturnCall => false,
+                G::Expr => true,
+                G::If(c, t, e) => match e {
+                    Some(e2) => t.falls() || e2.falls(),
+                    None => !*c || t.falls(),
+                },
+                G::While(c, _) => !*c,
+                G::DoWhile(c, b) => !*c && b.falls(),
+                // for(;;) (no cond) is infinite -> never falls through;
+                // for(cond) falls through unless cond is constant true.
+                G::For(has_cond, c, _) => *has_cond && !*c,
+                G::Switch { default, last_returns, any_break, .. } =>
+                    !*default || *any_break || !*last_returns,
+            }
+        }
+        fn render(&self, out: &mut String) {
+            match self {
+                G::Ret => out.push_str("return 0;"),
+                G::Goto => out.push_str("goto Lx;"),
+                G::Break => out.push_str("break;"),
+                G::Cont => out.push_str("continue;"),
+                G::Expr => out.push_str("flag = flag + 1;"),
+                G::NoreturnCall => out.push_str("die();"),
+                G::If(c, t, e) => {
+                    let cond = if *c { "1" } else { "flag" };
+                    out.push_str(&format!("if ({cond}) {{ "));
+                    t.render(out);
+                    out.push_str(" }");
+                    if let Some(e2) = e {
+                        out.push_str(" else { ");
+                        e2.render(out);
+                        out.push_str(" }");
+                    }
+                }
+                G::While(c, b) => {
+                    let cond = if *c { "1" } else { "flag" };
+                    out.push_str(&format!("while ({cond}) {{ "));
+                    b.render(out);
+                    out.push_str(" }");
+                }
+                G::DoWhile(c, b) => {
+                    let cond = if *c { "1" } else { "flag" };
+                    out.push_str("do { ");
+                    b.render(out);
+                    out.push_str(&format!(" }} while ({cond});"));
+                }
+                G::For(has_cond, c, b) => {
+                    let cond = if !*has_cond { "" } else if *c { "1" } else { "flag" };
+                    out.push_str(&format!("for (; {cond};) {{ "));
+                    b.render(out);
+                    out.push_str(" }");
+                }
+                G::Switch { default, last_returns, any_break, ncases } => {
+                    // Every label carries a statement (dangling labels before
+                    // `}` are outside the parser surface), and there is always
+                    // at least one segment.
+                    let n = (*ncases).max(1);
+                    out.push_str("switch (flag) { ");
+                    for i in 0..n {
+                        out.push_str(&format!("case {i}: "));
+                        if *any_break {
+                            out.push_str("break; ");
+                        } else if *default && *last_returns && i + 1 == n {
+                            out.push_str("return 0; ");
+                        } else {
+                            out.push_str("flag = flag + 1; ");
+                        }
+                    }
+                    if *default {
+                        out.push_str("default: ");
+                        if *last_returns { out.push_str("return 0; "); }
+                        else { out.push_str("flag = flag + 1; "); }
+                    }
+                    out.push_str(" }");
+                }
+            }
+        }
+    }
+
+    fn gen_g(depth: u32) -> BoxedStrategy<G> {
+        let leaf = prop_oneof![
+            2 => Just(G::Ret),
+            1 => Just(G::Goto),
+            1 => Just(G::Break),
+            1 => Just(G::Cont),
+            3 => Just(G::Expr),
+            2 => Just(G::NoreturnCall),
+        ];
+        if depth == 0 {
+            leaf.boxed()
+        } else {
+            let d = depth - 1;
+            prop_oneof![
+                4 => leaf,
+                3 => (any::<bool>(), gen_g(d), proptest::option::of(gen_g(d)))
+                    .prop_map(|(c, t, e)| G::If(c, Box::new(t), e.map(Box::new))).boxed(),
+                2 => (any::<bool>(), gen_g(d))
+                    .prop_map(|(c, b)| G::While(c, Box::new(b))).boxed(),
+                2 => (any::<bool>(), gen_g(d))
+                    .prop_map(|(c, b)| G::DoWhile(c, Box::new(b))).boxed(),
+                2 => (any::<bool>(), any::<bool>(), gen_g(d))
+                    .prop_map(|(h, c, b)| G::For(h, c, Box::new(b))).boxed(),
+                3 => (any::<bool>(), any::<bool>(), any::<bool>(), 0u8..4)
+                    .prop_map(|(def, lr, ab, n)| G::Switch {
+                        default: def, last_returns: lr, any_break: ab, ncases: n }).boxed(),
+            ].boxed()
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p6_return_type_fallthrough_model(
+            body in proptest::collection::vec(gen_g(2), 1..5),
+        ) {
+            let mut inner = String::new();
+            for g in &body { g.render(&mut inner); }
+            let src = format!(
+                "int flag = 0;\n\
+                 __attribute__((noreturn)) void die(void);\n\
+                 int f(void) {{ {inner} }}\n");
+            let (_, _, diags) = sema_of(&src);
+            let model_falls = body.iter().all(|g| g.falls());
+            let warned = diags.warning_count() >= 1;
+            prop_assert_eq!(warned, model_falls,
+                "body: {:?}\nsrc: {}\nwarnings: {} (model falls: {})",
+                body, src, diags.warning_count(), model_falls);
+        }
+    }
+
+    /// One-time KAT: the -Wreturn-type warning is on by default and both
+    /// trivial poles are classified correctly (pins the P6 observable).
+    #[test]
+    fn p6_kat_warning_observable() {
+        let (_, _, d1) = sema_of("int f(void) { }\n");
+        assert_eq!(d1.warning_count(), 1, "empty non-void fn must warn once");
+        let (_, _, d0) = sema_of("int f(void) { return 0; }\n");
+        assert_eq!(d0.warning_count(), 0, "returning function must not warn");
+    }
+}
+
+// ===========================================================================
+// PBT round 05 — deterministic regression witnesses (intentionally red).
+// ===========================================================================
+#[cfg(test)]
+mod pbt_regression {
+    use super::pbt_tests::sema_of;
+
+    /// B2: a function-local enum constant must not clobber the global one
+    /// after the scope closes (pop_scope: "undo changes to ... enum_constants").
+    #[test]
+    fn test_enum_scope_regression_shadow_leak() {
+        let src = "enum { E = 1 };\nvoid f(void) { enum { E = 2 }; }\nenum { F = E + 0 };\n";
+        let (_, result, _) = sema_of(src);
+        assert_eq!(result.type_context.enum_constants.get("F"), Some(&1),
+            "global E must be restored after f's scope pops");
+    }
+
+    /// B3: gcc errors with "overflow in enumeration values"; the SUT PANICS
+    /// (parser types.rs:828 `val + 1`, debug builds) on a legal token stream.
+    #[test]
+    fn test_enum_regression_i64_max_counter_overflow() {
+        // Must not panic: diagnose like gcc instead.
+        let _ = sema_of("enum { A = 9223372036854775807LL };\n");
+    }
+}

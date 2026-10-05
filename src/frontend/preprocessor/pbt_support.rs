@@ -520,3 +520,57 @@ mod round04_failure_branch {
         }
     }
 }
+
+// ===========================================================================
+// PBT round 05 — change-surface obligation: sut_tokens (pbt_support.rs:438),
+// whose hunk is error-handling. Contract (own doc, line 437): "Run the SUT
+// preprocessor and return the token stream (markers stripped)." Success arm:
+// no line-marker token survives and the stream is a tokens(join(.)) fixed
+// point. Failure-injection arm: malformed preprocessor input (unterminated
+// #if, empty #define, unknown directive) — documented failure result is
+// LENIENT recovery (no panic, still a stripped stream), verified against
+// `ccc -E` behavior on this box.
+// ===========================================================================
+#[cfg(test)]
+mod round05_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    fn is_line_marker(t: &str) -> bool {
+        t.starts_with('#') && t.len() > 1 && t.as_bytes()[1].is_ascii_digit()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p15_sut_tokens_markers_stripped(
+            lines in proptest::collection::vec(
+                proptest::sample::select(vec![
+                    "int x = 1;", "#define FOO 42", "int y = FOO;",
+                    "#ifdef FOO", "#endif", "char c;",
+                    "#define BAR(x) ((x)+1)", "int z = BAR(2);",
+                ]), 1..8),
+            malformed in proptest::option::of(proptest::sample::select(vec![
+                "#if 1", "#define", "#garbage_directive", "#",
+            ])),
+        ) {
+            let mut src = lines.join("\n");
+            if let Some(m) = malformed {
+                src.push('\n');
+                src.push_str(m);
+            }
+            src.push('\n');
+            let mut pp = crate::frontend::preprocessor::Preprocessor::new();
+            // Failure branch: lenient recovery, never a panic
+            let toks = sut_tokens(&mut pp, &src);
+            for t in &toks {
+                prop_assert!(!is_line_marker(t),
+                    "line marker survived: {:?} in {:?} (src {:?})", t, toks, src);
+            }
+            if malformed.is_none() {
+                let joined = toks.join(" ");
+                prop_assert_eq!(tokens(&joined), toks, "src: {:?}", src);
+            }
+        }
+    }
+}

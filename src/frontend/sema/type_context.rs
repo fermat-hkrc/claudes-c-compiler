@@ -514,3 +514,215 @@ impl TypeContext {
         }
     }
 }
+
+// ===========================================================================
+// PBT round 05 — TypeContext undo-log scope management as a state machine.
+// Oracle: layered-scope model (C lexical scoping). pop_scope's own doc:
+// "undo changes to enum_constants, struct_layouts, ctype_cache, and typedefs"
+// (type_context.rs:376-378); the empty-forward-decl carve-out for shadowed
+// struct layouts is the one DOCUMENTED exception (README "Scope Management
+// via Undo-Log"). Generator only inserts NON-empty layouts so the carve-out
+// stays out of the tested surface.
+// ===========================================================================
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::StructFieldLayout;
+    use proptest::prelude::*;
+
+    const NAMES: [&str; 4] = ["kA", "kB", "kC", "kD"];
+
+    fn layout(id: usize) -> StructLayout {
+        StructLayout {
+            fields: vec![StructFieldLayout {
+                name: "f".into(),
+                offset: 0,
+                ty: CType::Int,
+                bit_offset: None,
+                bit_width: None,
+            }],
+            size: 4 + id,
+            align: 4,
+            is_union: false,
+            is_transparent_union: false,
+        }
+    }
+
+    /// Layered-scope model: a stack of layers above a base layer; lookup walks
+    /// top-down. All five tracked maps share the same layer discipline.
+    #[derive(Clone, PartialEq, Debug)]
+    struct Model {
+        typedefs: Vec<FxHashMap<String, CType>>,
+        enums: Vec<FxHashMap<String, i64>>,
+        aligns: Vec<FxHashMap<String, usize>>,
+        cache: Vec<FxHashMap<String, CType>>,
+        layouts: Vec<FxHashMap<String, (usize, usize)>>, // (size, fields.len)
+    }
+    impl Model {
+        fn new() -> Self {
+            Model {
+                typedefs: vec![FxHashMap::default()],
+                enums: vec![FxHashMap::default()],
+                aligns: vec![FxHashMap::default()],
+                cache: vec![FxHashMap::default()],
+                layouts: vec![FxHashMap::default()],
+            }
+        }
+        fn get_ty(&self, k: &str) -> Option<&CType> {
+            self.typedefs.iter().rev().find_map(|l| l.get(k))
+        }
+        fn get_en(&self, k: &str) -> Option<i64> {
+            self.enums.iter().rev().find_map(|l| l.get(k)).copied()
+        }
+        fn get_al(&self, k: &str) -> Option<usize> {
+            self.aligns.iter().rev().find_map(|l| l.get(k)).copied()
+        }
+        fn get_ca(&self, k: &str) -> Option<&CType> {
+            self.cache.iter().rev().find_map(|l| l.get(k))
+        }
+        fn get_la(&self, k: &str) -> Option<(usize, usize)> {
+            self.layouts.iter().rev().find_map(|l| l.get(k)).copied()
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Op {
+        Push,
+        Pop,
+        Ty(usize, u8),
+        En(usize, i16),
+        Al(usize, u8),
+        Ca(usize),
+        La(usize, u8),
+    }
+
+    fn gen_ops() -> BoxedStrategy<Vec<Op>> {
+        proptest::collection::vec(
+            prop_oneof![
+                2 => Just(Op::Push),
+                2 => Just(Op::Pop),
+                3 => (0usize..4, 0u8..4).prop_map(|(n, v)| Op::Ty(n, v)),
+                3 => (0usize..4, -3i16..3).prop_map(|(n, v)| Op::En(n, v)),
+                3 => (0usize..4, 0u8..4).prop_map(|(n, v)| Op::Al(n, v)),
+                2 => (0usize..4).prop_map(Op::Ca),
+                2 => (0usize..4, 0u8..4).prop_map(|(n, v)| Op::La(n, v)),
+            ],
+            1..24,
+        ).boxed()
+    }
+
+    fn ty_of(v: u8) -> CType {
+        match v % 4 {
+            0 => CType::Int,
+            1 => CType::UInt,
+            2 => CType::Long,
+            _ => CType::Pointer(Box::new(CType::Char), AddressSpace::Default),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p4_scope_undo_state_machine(ops in gen_ops()) {
+            let mut tc = TypeContext::new();
+            let mut model = Model::new();
+            // The seeded builtin typedefs must survive untouched (model base
+            // is seeded from the SUT itself — the model only tracks OUR keys).
+            for (i, op) in ops.iter().enumerate() {
+                match *op {
+                    Op::Push => {
+                        tc.push_scope();
+                        model.typedefs.push(FxHashMap::default());
+                        model.enums.push(FxHashMap::default());
+                        model.aligns.push(FxHashMap::default());
+                        model.cache.push(FxHashMap::default());
+                        model.layouts.push(FxHashMap::default());
+                    }
+                    Op::Pop => {
+                        tc.pop_scope();
+                        if model.typedefs.len() > 1 { model.typedefs.pop(); }
+                        if model.enums.len() > 1 { model.enums.pop(); }
+                        if model.aligns.len() > 1 { model.aligns.pop(); }
+                        if model.cache.len() > 1 { model.cache.pop(); }
+                        if model.layouts.len() > 1 { model.layouts.pop(); }
+                    }
+                    Op::Ty(n, v) => {
+                        let k = NAMES[n].to_string();
+                        tc.insert_typedef_scoped(k.clone(), ty_of(v));
+                        model.typedefs.last_mut().unwrap().insert(k, ty_of(v));
+                    }
+                    Op::En(n, v) => {
+                        let k = NAMES[n].to_string();
+                        tc.insert_enum_scoped(k.clone(), v as i64);
+                        model.enums.last_mut().unwrap().insert(k, v as i64);
+                    }
+                    Op::Al(n, v) => {
+                        let k = NAMES[n].to_string();
+                        tc.insert_typedef_alignment_scoped(k.clone(), v as usize);
+                        model.aligns.last_mut().unwrap().insert(k, v as usize);
+                    }
+                    Op::Ca(n) => {
+                        let k = NAMES[n];
+                        tc.invalidate_ctype_cache_scoped(k);
+                        // Model: removal restores the layer below's value
+                        // (matching the SUT's shadowed-restore on pop).
+                        let mut layers = &mut model.cache;
+                        layers.last_mut().unwrap().remove(k);
+                        // record absence at this layer
+                        layers.last_mut().unwrap().insert(format!("__abs_{k}"), CType::Void);
+                        layers.last_mut().unwrap().remove(&format!("__abs_{k}"));
+                    }
+                    Op::La(n, v) => {
+                        let k = NAMES[n].to_string();
+                        tc.insert_struct_layout_scoped(k.clone(), layout(v as usize));
+                        model.layouts.last_mut().unwrap().insert(k, (4 + v as usize, 1));
+                    }
+                }
+                // Invariant after EVERY op: all five maps agree with the model
+                // for our key universe.
+                for n in 0..4 {
+                    let k = NAMES[n];
+                    prop_assert_eq!(
+                        tc.typedefs.get(k), model.get_ty(k),
+                        "typedefs {} diverged at op #{} ({:?}): ops={:?}", k, i, op, ops);
+                    prop_assert_eq!(
+                        tc.enum_constants.get(k).copied(), model.get_en(k),
+                        "enum_constants {} diverged at op #{} ({:?}): ops={:?}", k, i, op, ops);
+                    prop_assert_eq!(
+                        tc.typedef_alignments.get(k).copied(), model.get_al(k),
+                        "typedef_alignments {} diverged at op #{} ({:?}): ops={:?}", k, i, op, ops);
+                    let cache_val = tc.ctype_cache.borrow().get(k).cloned();
+                    prop_assert_eq!(
+                        cache_val.as_ref(), model.get_ca(k),
+                        "ctype_cache {} diverged at op #{} ({:?}): ops={:?}", k, i, op, ops);
+                    let got_layout = tc.struct_layouts.borrow().get(k)
+                        .map(|l| (l.size, l.fields.len()));
+                    prop_assert_eq!(
+                        got_layout, model.get_la(k),
+                        "struct_layouts {} diverged at op #{} ({:?}): ops={:?}", k, i, op, ops);
+                }
+            }
+        }
+    }
+}
+
+// ===========================================================================
+// PBT round 05 — deterministic regression witness (intentionally red).
+// ===========================================================================
+#[cfg(test)]
+mod pbt_regression {
+    use super::*;
+
+    /// B4: re-inserting the same key twice within ONE scope must not
+    /// resurrect the inner value after pop. Shrunk: [Push, Al(kB,0), Al(kB,0), Pop].
+    #[test]
+    fn test_typecontext_regression_double_insert_resurrection() {
+        let mut tc = TypeContext::new();
+        tc.push_scope();
+        tc.insert_typedef_alignment_scoped("kB".into(), 0);
+        tc.insert_typedef_alignment_scoped("kB".into(), 0);
+        tc.pop_scope();
+        assert!(tc.typedef_alignments.get("kB").is_none(),
+            "kB leaked past scope exit (undo-log double-insert resurrection)");
+    }
+}

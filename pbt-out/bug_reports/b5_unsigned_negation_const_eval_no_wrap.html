@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: SemaConstEval unary minus on unsigned constants does not wrap modulo 2^width</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: SemaConstEval unary minus on unsigned constants does not wrap modulo 2^width</h1>
+<p><span class="badge">medium</span> <code>b5</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>SemaConstEval unary minus on unsigned constants does not wrap modulo 2^width</p>
+<table><tr><th>Expected behavior</th><td>const_values[p] == 1 (-(4294967295u) wraps to 1u; C11 6.5.3.3p4, gcc 9.4 agrees)</td></tr><tr><th>Observed behavior</th><td>const_values[p] == -4294967295</td></tr><tr><th>Impact assessment</th><td>Enum values, array sizes, and static initializers built from negated unsigned constant expressions get a negative value instead of the wrapped unsigned one (e.g. -4294967295 instead of 1).</td></tr><tr><th>Minimal counterexample</th><td><code>e = Un(&quot;-&quot;, Bin(&quot;+&quot;, Cast(&quot;unsigned&quot;, Lit(0)), Lit(-1))) — `int p = -((unsigned)(0) + (-1));` const-folds to -4294967295; C (gcc 9.4) wraps to 1</code></td></tr></table>
+
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>const_arith_c_semantics (<code>p7</code>)</td></tr><tr><th>Formal property</th><td>forall e in integer Expr (C11-defined subset; UB excluded per 6.5p5/6.5.5p6/6.5.6p3/6.5.7p3-4). const_values[(int p = e;).init] == model_c_eval(e)</td></tr><tr><th>Oracle</th><td>differential</td></tr><tr><th>System under test</th><td>SemaConstEval::eval_const_expr</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/const_eval.rs:76</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/const_eval.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::sema::const_eval</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::sema::const_eval::pbt_regression::test_const_eval_regression_unsigned_negation_no_wrap</code></pre>
+<p class="muted">No random seed is required for this deterministic reproduction.</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Mirror the sibling BitNot fix-up in the UnaryOp::Neg arm of SemaConstEval::eval_const_expr: after negate_const, re-wrap unsigned operands to their width (u32/u64 mask) before storing.</p>
+</section>
+</body>
+</html>

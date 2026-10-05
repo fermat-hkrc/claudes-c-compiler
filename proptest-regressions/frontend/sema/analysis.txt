@@ -1,0 +1,10 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9358b0e888d97a0548893023393b62a533e90e0db37880e30908fb8e495387ee # shrinks to body = [For(false, false, Ret)]
+cc 23805cb69dbbf1c75582a5c6cc72fbba3333394307828674ae4687785976d13d # shrinks to g = 1, l = 2
+cc ce1acf796c59991a4cf297b0d88a6b5082dc9bf9202f0eb5531b054f733e8b14 # shrinks to variants = [("A", Some("010"))]
+cc ee4646376c1257f5696b43e1e75a4455c97a5830bd368662e14e1427b0939dfd # shrinks to variants = [("A", Some(9223372036854775807))]

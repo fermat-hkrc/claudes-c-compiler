@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: TypeContext undo-log resurrects a same-scope re-inserted value after pop (typedefs/alignments/layouts/ctype_cache)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: TypeContext undo-log resurrects a same-scope re-inserted value after pop (typedefs/alignments/layouts/ctype_cache)</h1>
+<p><span class="badge">medium</span> <code>b4</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>TypeContext undo-log resurrects a same-scope re-inserted value after pop (typedefs/alignments/layouts/ctype_cache)</p>
+<table><tr><th>Expected behavior</th><td>kB absent after pop (it did not exist before push)</td></tr><tr><th>Observed behavior</th><td>typedef_alignments[&quot;kB&quot;] == Some(0) after pop</td></tr><tr><th>Impact assessment</th><td>Same-scope redeclarations (accepted by design) leak their value past the scope: `void f(void){ typedef int T; typedef long T; }` leaves T = long after f.</td></tr><tr><th>Minimal counterexample</th><td><code>ops = [Push, Al(1,0), Al(1,0), Pop] — typedef_alignments[&quot;kB&quot;] survives the pop (same-scope re-insert resurrection)</code></td></tr></table>
+
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>typecontext_scope_undo_state_machine (<code>p4</code>)</td></tr><tr><th>Formal property</th><td>Automaton: states = layered scope maps (typedefs, enum_constants, typedef_alignments, ctype_cache, struct_layouts); ops = Push|Pop|Insert*; invariant: after each op every map equals the layered model (Pop on empty stack = no-op)</td></tr><tr><th>Oracle</th><td>state_machine</td></tr><tr><th>System under test</th><td>TypeContext::pop_scope</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/type_context.rs:376</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/type_context.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::sema::type_context</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::sema::type_context::pbt_regression::test_typecontext_regression_double_insert_resurrection</code></pre>
+<p class="muted">Replay seed: cc 43047567ca57c611113d8cbde5340dfea3f3c34c124872ba5bae7de054b959a1</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>In the insert_*_scoped family, record added/shadowed only when the key was not already touched in the current frame (e.g. check frame lists before recording); pop then restores correctly.</p>
+</section>
+</body>
+</html>

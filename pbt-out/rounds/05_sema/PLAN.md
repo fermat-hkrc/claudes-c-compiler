@@ -28,13 +28,13 @@
   documented intentionally-red bug witnesses (round-01 `common::long_double` /
   `common::const_eval`, round-02 `frontend::lexer`, round-03
   `frontend::preprocessor`) — see rounds/02_lexer/REPORT.md and
-  rounds/03_preprocessor/REPORT.md. Zero failures touch sema; sema previously had NO
+  rounds/03_preprocessor/REPORT.md. Zero failures touch sema; sema currently has NO
   tests. Rung 1 confirmed: the inline test harness builds and runs.
 - **Harness placement:** rung 1 — extend the repo's own inline test convention. New
   `#[cfg(test)] mod pbt_tests` at the bottom of `src/frontend/sema/type_checker.rs`,
   `type_context.rs`, `analysis.rs`, `const_eval.rs`, `builtins.rs`. Runs from scratch
   CWD `pbt-out/rounds/05_sema/run/`. Build via the user contract command with the
-  target swapped for the test target (`cargo test --lib`).
+  target swapped for the test target (`cargo test --lib frontend::sema`).
 - **Change surface (commit:HEAD = the round-04 archive commit `aa13cf0d`):** 3 changed
   functions, all round-04 TEST artifacts added by that commit itself. Coverage
   decisions:
@@ -46,8 +46,7 @@
   - `sut_tokens` (src/frontend/preprocessor/pbt_support.rs:438) — test-support
     wrapper (`pp.preprocess` + marker strip + tokens) with its own documented
     contract ("Run the SUT preprocessor and return the token stream (markers
-    stripped)"). Covered by NEW property P15 pinning that contract on success AND
-    failure-injection arms (malformed directives → lenient recovery, no panic).
+    stripped)"). Covered by NEW property P15 pinning that contract.
   - `p9_split_first_word_contract` (src/frontend/preprocessor/text_processing.rs:480)
     — is itself a round-04 `proptest!` property (a test, not SUT code). A property
     "for" it would be tests-of-tests with no independent oracle; its SUT

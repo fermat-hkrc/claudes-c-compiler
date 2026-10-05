@@ -1,3 +1,24 @@
+558	open	Bug: encode_neon_umov accepts the wrong GPR width for UMOV
+557	open	Bug: encode_neon_umov encodes SP/WSP and FP names as the UMOV GPR dest
+556	open	Bug: encode_neon_umov masks an out-of-range lane index instead of rejecting it
+555	open	Bug: encode_neon_umov ignores a surplus third operand
+554	open	Bug: encode_neon_ins accepts the wrong GPR width for INS (general)
+553	open	Bug: encode_neon_ins encodes SP/WSP and FP names as the INS GPR source
+552	open	Bug: encode_neon_ins masks an out-of-range lane index instead of rejecting it
+551	open	Bug: encode_neon_ins ignores a surplus third operand
+550	open	Bug: encode_neon_tbx accepts a table arrangement other than .16b
+549	open	Bug: encode_neon_tbx ignores non-sequential table register names
+548	open	Bug: encode_neon_tbx ignores Vm.Ta vs Vd.Ta mismatch
+547	open	Bug: encode_neon_tbx encodes Ta other than 8b/16b as Q=0
+546	open	Bug: encode_neon_tbx encodes a GPR/FP dest as Vd
+545	open	Bug: encode_neon_tbx wraps table lists longer than 4 into len&3
+544	open	Bug: encode_neon_tbx ignores a surplus fourth operand
+543	open	Bug: encode_neon_tbx panics on an empty register list
+542	open	Bug: encode_neon_tbx encodes a bare GPR as Vm
+541	open	Bug: encode_neon_tbx accepts a bare Reg as a table-list member
+540	open	Bug: #error diagnostics report the absolutized file path instead of the filename the caller set (contradicts __FILE__)
+539	open	Bug: empty-bodied macro expansion glues adjacent tokens — -EMPTY- becomes "--" instead of "- -" (also ++, //, <<)
+538	open	Bug: g(fmt, ## __VA_ARGS__) with an explicitly empty trailing argument drops the comma — VAC(a, ) expands to g(a) instead of g(a, )
 537	open	Bug: encode_neon_ld_st_multi rejects uppercase arrangement specifiers that gas/llvm-mc accept
 536	open	Bug: encode_neon_ld_st_multi encodes LD2/ST2/LD3/ST3/LD4/ST4 with .1d, which llvm-mc/gas reject
 535	open	Bug: encode_neon_ld_st_multi encodes an illegal post-index immediate as the legal #imm form
@@ -535,6 +556,3 @@
 3	open	Bug: float-to-unsigned casts store U8/U16 as signed I8/I16, so to_i64() sign-extends
 2	open	Bug: cast_float_to_target panics on f64 subnormals when targeting F128
 1	closed	Double-check found bugs
-540	open	Bug: #error diagnostics report the absolutized file path instead of the filename the caller set
-539	open	Bug: empty-bodied macro expansion glues adjacent tokens — -EMPTY- becomes "--"
-538	open	Bug: g(fmt, ## __VA_ARGS__) with an explicitly empty trailing argument drops the comma

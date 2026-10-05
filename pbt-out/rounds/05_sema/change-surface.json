@@ -1,0 +1,49 @@
+{
+  "source": "commit:HEAD",
+  "files": [
+    "src/frontend/parser/parse.rs",
+    "src/frontend/preprocessor/pbt_support.rs",
+    "src/frontend/preprocessor/text_processing.rs"
+  ],
+  "functions": [
+    {
+      "name": "parse_src",
+      "file": "src/frontend/parser/parse.rs",
+      "line": 1306,
+      "errorHandling": true,
+      "hunks": [
+        [
+          1306,
+          1996
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "sut_tokens",
+      "file": "src/frontend/preprocessor/pbt_support.rs",
+      "line": 438,
+      "errorHandling": true,
+      "hunks": [
+        [
+          438,
+          522
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "p9_split_first_word_contract",
+      "file": "src/frontend/preprocessor/text_processing.rs",
+      "line": 480,
+      "errorHandling": false,
+      "hunks": [
+        [
+          480,
+          540
+        ]
+      ],
+      "role": "changed"
+    }
+  ]
+}

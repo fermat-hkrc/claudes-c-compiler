@@ -1,0 +1,2 @@
+#define
+int b;

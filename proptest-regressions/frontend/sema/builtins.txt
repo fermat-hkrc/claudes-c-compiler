@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9221f8a84b7c8e4a7841749efd268102c9f95bf01dc5cbbd47a1864545bc1561 # shrinks to prefix_idx = 1, stem = "__sync_fetch_and_add", suffix = ""
+cc 0229096b14e1c1c04843ce3492e71bbc8ec611b7dae79f4dc12d59b788a9d49c # shrinks to prefix_idx = 2, stem = "__builtin_choose_expr", suffix = ""
+cc 5a1c99a4db9e0743d202a8fbaed390dc0ccfe0605db0538fc55b336eb124e701 # shrinks to prefix_idx = 1, stem = "__sync_fetch_and_add", suffix = "_3"

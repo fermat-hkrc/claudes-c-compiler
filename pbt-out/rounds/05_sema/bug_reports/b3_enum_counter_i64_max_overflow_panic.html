@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: enum with explicit i64::MAX value panics with integer overflow (parser types.rs:828 and sema enum_counter)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: enum with explicit i64::MAX value panics with integer overflow (parser types.rs:828 and sema enum_counter)</h1>
+<p><span class="badge">medium</span> <code>b3</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>enum with explicit i64::MAX value panics with integer overflow (parser types.rs:828 and sema enum_counter)</p>
+<table><tr><th>Expected behavior</th><td>A diagnostic (like gcc), never a panic</td></tr><tr><th>Observed behavior</th><td>panic &quot;attempt to add with overflow&quot; at parser/types.rs:828 (val + 1); sema analysis.rs:717 enum_counter += 1 has the same defect</td></tr><tr><th>Impact assessment</th><td>Debug builds panic (crash on a legal token stream); release builds silently wrap the enum counter to i64::MIN. gcc 9.4 instead diagnoses &#39;overflow in enumeration values&#39;.</td></tr><tr><th>Minimal counterexample</th><td><code>variants = [(&quot;A&quot;, Some(9223372036854775807))] — `enum { A = 9223372036854775807LL };` panics &quot;attempt to add with overflow&quot; at parser/types.rs:828 (gcc: &quot;overflow in enumeration values&quot; diagnostic instead)</code></td></tr></table>
+
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>enum_variant_values_model (<code>p3</code>)</td></tr><tr><th>Formal property</th><td>forall variants in VariantList. analyze(&quot;enum { A0[=e0], ... }&quot;) implies forall i. enum_constants[Ai] == ei if explicit else prev+1 — no panic on any legal token stream</td></tr><tr><th>Oracle</th><td>differential</td></tr><tr><th>System under test</th><td>SemanticAnalyzer::process_enum_variants</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/analysis.rs:717</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/analysis.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::sema::analysis</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::sema::analysis::pbt_regression::test_enum_regression_i64_max_counter_overflow</code></pre>
+<p class="muted">No random seed is required for this deterministic reproduction.</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Use checked_add / saturating semantics on both enum counters (parser next_value and sema enum_counter) and emit an &#39;overflow in enumeration values&#39; diagnostic like gcc.</p>
+</section>
+</body>
+</html>

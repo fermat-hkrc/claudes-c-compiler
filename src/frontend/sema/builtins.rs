@@ -772,3 +772,147 @@ pub fn normalize_atomic_size_suffix(name: &str) -> Option<&'static str> {
         _ => None,
     }
 }
+
+// ===========================================================================
+// PBT round 05 — builtin-name recognition vs the documented families.
+// P10: is_builtin over generated names (valid/invalid op stems x suffixes).
+// P11: strip_sync_size_suffix contract + LibcAlias mapping for the
+// documented __builtin_<libc> family. Oracle basis: builtins.rs:648-745 doc
+// comments and family lists (mirroring GCC's documented builtin surface).
+// ===========================================================================
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    const ATOMIC_DIRECT: &[&str] = &[
+        "__atomic_fetch_add", "__atomic_fetch_sub", "__atomic_fetch_and",
+        "__atomic_fetch_or", "__atomic_fetch_xor", "__atomic_fetch_nand",
+        "__atomic_add_fetch", "__atomic_sub_fetch", "__atomic_and_fetch",
+        "__atomic_or_fetch", "__atomic_xor_fetch", "__atomic_nand_fetch",
+        "__atomic_exchange_n", "__atomic_exchange",
+        "__atomic_compare_exchange_n", "__atomic_compare_exchange",
+        "__atomic_load_n", "__atomic_load",
+        "__atomic_store_n", "__atomic_store",
+        "__atomic_test_and_set", "__atomic_clear",
+        "__atomic_thread_fence", "__atomic_signal_fence",
+        "__atomic_is_lock_free", "__atomic_always_lock_free",
+    ];
+    const ATOMIC_NORMALIZE: &[&str] = &[
+        "__atomic_load", "__atomic_store", "__atomic_exchange",
+        "__atomic_compare_exchange",
+        "__atomic_fetch_add", "__atomic_fetch_sub", "__atomic_fetch_and",
+        "__atomic_fetch_or", "__atomic_fetch_xor", "__atomic_fetch_nand",
+        "__atomic_add_fetch", "__atomic_sub_fetch", "__atomic_and_fetch",
+        "__atomic_or_fetch", "__atomic_xor_fetch", "__atomic_nand_fetch",
+    ];
+    const SYNC_OPS: &[&str] = &[
+        "__sync_fetch_and_add", "__sync_fetch_and_sub", "__sync_fetch_and_and",
+        "__sync_fetch_and_or", "__sync_fetch_and_xor", "__sync_fetch_and_nand",
+        "__sync_add_and_fetch", "__sync_sub_and_fetch", "__sync_and_and_fetch",
+        "__sync_or_and_fetch", "__sync_xor_and_fetch", "__sync_nand_and_fetch",
+        "__sync_val_compare_and_swap", "__sync_bool_compare_and_swap",
+        "__sync_lock_test_and_set", "__sync_lock_release",
+        "__sync_synchronize",
+    ];
+    const SUFFIXES: &[&str] = &["", "_1", "_2", "_3", "_4", "_8", "_16"];
+    const BAD_STEMS: &[&str] = &["__atomic_nope", "__atomic_frobnicate",
+                                 "__sync_nope", "__sync_zap"];
+
+    /// Independent model of the documented recognition rules. `full_stem`
+    /// already carries its family prefix (e.g. "__atomic_fetch_add").
+    fn model_is_builtin(fam: &str, full_stem: &str, suffix: &str) -> bool {
+        let name = format!("{full_stem}{suffix}");
+        const VALID_SIZES: &[&str] = &["", "_1", "_2", "_4", "_8", "_16"];
+        match fam {
+            "__atomic_" => {
+                if suffix.is_empty() {
+                    ATOMIC_DIRECT.contains(&full_stem)
+                } else if VALID_SIZES.contains(&suffix) {
+                    // size-suffixed: must normalize to a canonical form
+                    ATOMIC_NORMALIZE.contains(&full_stem)
+                } else {
+                    false // _3 and friends are not size suffixes
+                }
+            }
+            "__sync_" => SYNC_OPS.contains(&full_stem) && VALID_SIZES.contains(&suffix),
+            "__builtin_" => {
+                matches!(name.as_str(),
+                    "__builtin_choose_expr" | "__builtin_unreachable" | "__builtin_trap")
+                    || BUILTIN_MAP.contains_key(name.as_str())
+            }
+            _ => false,
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p10_builtin_family_recognition(
+            prefix_idx in 0usize..5,
+            stem in prop_oneof![
+                3 => proptest::sample::select(
+                    [ATOMIC_DIRECT, SYNC_OPS].concat().iter()
+                        .map(|x| x.to_string()).collect::<Vec<_>>()),
+                1 => proptest::sample::select(
+                    BAD_STEMS.iter().map(|x| x.to_string()).collect::<Vec<_>>()),
+                1 => Just("__builtin_choose_expr".to_string()),
+                1 => Just("__builtin_unreachable".to_string()),
+                1 => Just("__builtin_trap".to_string()),
+                1 => Just("__builtin_memcpy".to_string()),
+                1 => Just("__builtin_nope".to_string()),
+            ],
+            suffix in proptest::sample::select(SUFFIXES.to_vec()),
+        ) {
+            let prefixes: [&str; 5] = ["__atomic_", "__sync_", "__builtin_", "", "__atomic_"];
+            let prefix = prefixes[prefix_idx];
+            // stems already carry their own prefix family — only combine a
+            // stem with ITS family prefix or a bad stem with any prefix
+            let same_family = (prefix == "__atomic_" && stem.starts_with("__atomic_"))
+                || (prefix == "__sync_" && stem.starts_with("__sync_"))
+                || (prefix == "__builtin_" && stem.starts_with("__builtin_"))
+                || prefix.is_empty();
+            // A same-family stem already carries its prefix; do not double it.
+            let name = if same_family {
+                format!("{stem}{suffix}")
+            } else {
+                format!("{prefix}{stem}{suffix}")
+            };
+            let expect = if same_family {
+                // family prefix of the stem itself
+                let fam = if stem.starts_with("__atomic_") { "__atomic_" }
+                          else if stem.starts_with("__sync_") { "__sync_" }
+                          else { "__builtin_" };
+                model_is_builtin(fam, &stem, suffix)
+            } else {
+                // bare names and cross-family combos are never builtins
+                false
+            };
+            prop_assert_eq!(is_builtin(&name), expect,
+                "name {:?} (prefix {:?}, stem {:?}, suffix {:?})", name, prefix, stem, suffix);
+        }
+
+        #[test]
+        fn p11_strip_sync_suffix_and_libc_alias(
+            op in proptest::sample::select(SYNC_OPS.to_vec()),
+            s in proptest::sample::select(["1", "2", "4", "8", "16"].to_vec()),
+            libc in proptest::sample::select(vec![
+                "memcpy", "strlen", "abs", "fabs", "printf", "malloc"]),
+        ) {
+            let suffixed = format!("{op}_{s}");
+            let stripped = strip_sync_size_suffix(&suffixed);
+            // Doc: "__sync_fetch_and_add_8" -> "__sync_fetch_and_add".
+            prop_assert_eq!(stripped, op);
+            // Idempotence: a second strip changes nothing
+            prop_assert_eq!(strip_sync_size_suffix(stripped), stripped);
+            // LibcAlias: __builtin_<libc> resolves to an alias named <libc>
+            let name = format!("__builtin_{libc}");
+            let info = resolve_builtin(&name)
+                .unwrap_or_else(|| panic!("no builtin info for {}", name));
+            match &info.kind {
+                BuiltinKind::LibcAlias(alias) => prop_assert_eq!(alias, libc),
+                other => panic!("{} is not a LibcAlias: {:?}", name, other),
+            }
+        }
+    }
+}

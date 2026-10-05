@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: usual_arithmetic_conversion: unsigned long + long long typed as signed LongLong (C11 6.3.1.8 rule 5 broken)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: usual_arithmetic_conversion: unsigned long + long long typed as signed LongLong (C11 6.3.1.8 rule 5 broken)</h1>
+<p><span class="badge">high</span> <code>b1</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>usual_arithmetic_conversion: unsigned long + long long typed as signed LongLong (C11 6.3.1.8 rule 5 broken)</p>
+<table><tr><th>Expected behavior</th><td>ULongLong (unsigned counterpart when the higher-ranked signed type is same-width)</td></tr><tr><th>Observed behavior</th><td>LongLong</td></tr><tr><th>Impact assessment</th><td>Mixed size_t/unsigned-long vs long-long expressions get signed semantics: wrapped unsigned values compare &gt;= 0, divide and shift differently than gcc; the same shared conversion is used downstream of sema.</td></tr><tr><th>Minimal counterexample</th><td><code>t1=&quot;unsigned long&quot;, t2=&quot;long long&quot;, op=&quot;+&quot; — expr_types[a+b] == LongLong, C11 6.3.1.8 requires ULongLong (gcc-verified)</code></td></tr></table>
+
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>uac_binop_ctype (<code>p1</code>)</td></tr><tr><th>Formal property</th><td>forall t1,t2 in CScalarTypes^2, op in BinOps. expr_types[(t1 a; t2 b; int p = a op b;).init] == C11_uac(promote(t1), promote(t2), op)</td></tr><tr><th>Oracle</th><td>differential</td></tr><tr><th>System under test</th><td>ExprTypeChecker::infer_binop_ctype</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/type_checker.rs:351</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/type_checker.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::sema::type_checker</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::sema::type_checker::pbt_regression::test_usual_arith_conversion_regression_ul_plus_ll</code></pre>
+<p class="muted">Replay seed: cc 48bbef9a3ec8b0f195fbbf057d5231a588f8505d53adc3f15dff5742b5eb6284</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>In src/common/types.rs usual_arithmetic_conversion final else: only return the signed type when its SIZE exceeds the unsigned operand&#39;s size; otherwise return the unsigned counterpart of the signed type&#39;s rank.</p>
+</section>
+</body>
+</html>

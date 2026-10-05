@@ -951,3 +951,235 @@ impl<'a> ExprTypeChecker<'a> {
         }
     }
 }
+
+// ===========================================================================
+// PBT round 05 — property tests. P1: usual arithmetic conversions (C11
+// 6.3.1.1p2 + 6.3.1.8) checked against an INDEPENDENT model built from the
+// standard clauses, read through the real SemanticAnalyzer pipeline's
+// expr_types annotations. P2: enum_constant_type's documented GCC promotion
+// bands, boundary-exact. Oracle basis: C11 clauses + type_checker.rs:36-50
+// doc comment; gcc 9.4 KAT gate pins the model (one gcc compile).
+// ===========================================================================
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::CType;
+    use crate::frontend::lexer::Lexer;
+    use crate::frontend::parser::Parser;
+    use crate::frontend::parser::ast::{Expr, ExternalDecl, Initializer};
+    use crate::frontend::sema::analysis::{SemaResult, SemanticAnalyzer};
+    use proptest::prelude::*;
+
+    /// Parse + sema a whole program; return the SemaResult.
+    pub(super) fn sema_of(src: &str) -> (crate::frontend::parser::ast::TranslationUnit, SemaResult) {
+        let toks = Lexer::new(src, 0).tokenize();
+        let mut p = Parser::new(toks);
+        let tu = p.parse();
+        assert_eq!(p.error_count, 0, "property program must parse cleanly:\n{src}\n");
+        let mut sema = SemanticAnalyzer::new();
+        let _ = sema.analyze(&tu);
+        (tu, sema.into_result())
+    }
+
+    /// The first global declaration that carries an expression initializer.
+    pub(super) fn init_expr_of(tu: &crate::frontend::parser::ast::TranslationUnit) -> &Expr {
+        for d in &tu.decls {
+            if let ExternalDecl::Declaration(decl) = d {
+                if let Some(Initializer::Expr(e)) = &decl.declarators[0].init {
+                    return e;
+                }
+            }
+        }
+        panic!("no expr initializer found in TU");
+    }
+
+    // ------------------------------------------------------------------
+    // Independent C11 model (LP64): scalar descriptor (rank, size, signed).
+    // ------------------------------------------------------------------
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    pub(super) struct Scalar {
+        rank: u8,       // 0 float, 1 double, 2 long double, 10 int, 11 long, 12 long long
+        size: u8,
+        signed: bool,
+        float: bool,
+    }
+    pub(super) fn model_scalar(sp: &str) -> Scalar {
+        match sp {
+            "float" => Scalar { rank: 0, size: 4, signed: true, float: true },
+            "double" => Scalar { rank: 1, size: 8, signed: true, float: true },
+            "long double" => Scalar { rank: 2, size: 16, signed: true, float: true },
+            // sub-int types integer-promote to int (C11 6.3.1.1p2): int can
+            // represent every value of char/signed char/unsigned char/short/
+            // unsigned short on every target.
+            "char" | "signed char" | "unsigned char" | "short" | "unsigned short" =>
+                Scalar { rank: 10, size: 4, signed: true, float: false },
+            "int" => Scalar { rank: 10, size: 4, signed: true, float: false },
+            "unsigned int" => Scalar { rank: 10, size: 4, signed: false, float: false },
+            "long" => Scalar { rank: 11, size: 8, signed: true, float: false },
+            "unsigned long" => Scalar { rank: 11, size: 8, signed: false, float: false },
+            "long long" => Scalar { rank: 12, size: 8, signed: true, float: false },
+            "unsigned long long" => Scalar { rank: 12, size: 8, signed: false, float: false },
+            _ => panic!("unknown spelling {sp}"),
+        }
+    }
+    pub(super) fn model_result_ctype(s: Scalar) -> CType {
+        match (s.rank, s.signed, s.float) {
+            (0, _, true) => CType::Float,
+            (1, _, true) => CType::Double,
+            (2, _, true) => CType::LongDouble,
+            (10, true, false) => CType::Int,
+            (10, false, false) => CType::UInt,
+            (11, true, false) => CType::Long,
+            (11, false, false) => CType::ULong,
+            (12, true, false) => CType::LongLong,
+            (12, false, false) => CType::ULongLong,
+            _ => unreachable!(),
+        }
+    }
+    /// C11 6.3.1.8 usual arithmetic conversions on already-promoted scalars.
+    pub(super) fn uac(a: Scalar, b: Scalar) -> Scalar {
+        if a.float || b.float {
+            if a.rank == 2 || b.rank == 2 { return model_scalar("long double"); }
+            if a.rank == 1 || b.rank == 1 { return model_scalar("double"); }
+            return model_scalar("float");
+        }
+        if a == b { return a; }
+        if a.signed == b.signed {
+            // Same signedness: the type with greater rank wins (6.3.1.8 rule 1)
+            return if a.rank > b.rank { a } else { b };
+        }
+        let (u, s) = if !a.signed { (a, b) } else { (b, a) }; // u unsigned, s signed
+        if u.rank >= s.rank { return u; }                     // 6.3.1.8 rule 3
+        if s.size > u.size { return s; }                      // rule 4: signed can represent all
+        // rule 5: unsigned counterpart of the signed type's rank
+        Scalar { rank: s.rank, size: s.size, signed: false, float: false }
+    }
+
+    const TYPES: [&str; 14] = [
+        "char", "signed char", "unsigned char", "short", "unsigned short", "int",
+        "unsigned int", "long", "unsigned long", "long long", "unsigned long long",
+        "float", "double", "long double",
+    ];
+    const ARITH_OPS: [&str; 10] = ["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"];
+    const CMP_OPS: [&str; 8] = ["==", "!=", "<", "<=", ">", ">=", "&&", "||"];
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p1_uac_binop_ctype(
+            t1 in proptest::sample::select(TYPES.to_vec()),
+            t2 in proptest::sample::select(TYPES.to_vec()),
+            op in prop_oneof![
+                7 => proptest::sample::select(ARITH_OPS.to_vec()),
+                3 => proptest::sample::select(CMP_OPS.to_vec()),
+            ],
+        ) {
+            let src = format!("{t1} a; {t2} b; int p = a {op} b;\n");
+            let (tu, result) = sema_of(&src);
+            let e = init_expr_of(&tu);
+            let got = result.expr_types.get(&e.id())
+                .unwrap_or_else(|| panic!("expr_types missing for {src}"));
+            let expected = if matches!(op, "==" | "!=" | "<" | "<=" | ">" | ">=" | "&&" | "||") {
+                CType::Int
+            } else if matches!(op, "<<" | ">>") {
+                // C11 6.5.7p3: promoted type of the LEFT operand only
+                model_result_ctype(model_scalar(t1))
+            } else {
+                model_result_ctype(uac(model_scalar(t1), model_scalar(t2)))
+            };
+            prop_assert_eq!(got, &expected, "src: {}", src);
+        }
+
+        #[test]
+        fn p2_enum_constant_type_bands(
+            v in prop_oneof![
+                4 => proptest::sample::select(vec![
+                    i64::MIN, i64::MIN + 1, i32::MIN as i64 - 1, i32::MIN as i64,
+                    -1i64, 0i64, 1i64, i32::MAX as i64 - 1, i32::MAX as i64,
+                    i32::MAX as i64 + 1, u32::MAX as i64 - 1, u32::MAX as i64,
+                    u32::MAX as i64 + 1, i64::MAX - 1, i64::MAX,
+                ]),
+                6 => any::<i64>(),
+            ],
+        ) {
+            // Doc contract (type_checker.rs:37-38): GCC progression
+            // int -> unsigned int -> long long -> unsigned long long.
+            let expected = if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
+                CType::Int
+            } else if v >= 0 && v <= u32::MAX as i64 {
+                CType::UInt
+            } else if v >= 0 {
+                CType::ULongLong
+            } else {
+                CType::LongLong
+            };
+            prop_assert_eq!(enum_constant_type(v), expected, "v = {}", v);
+        }
+    }
+
+    /// gcc KAT gate for the P1 model: one gcc compile asserting sizeof(a op b)
+    /// matches the model's result-type size for the full 14x14 x {+} grid plus
+    /// representative shift/comparison ops. If gcc is unavailable the gate is
+    /// skipped (model already derived from C11 clauses).
+    #[test]
+    fn p1_kat_gcc_model_gate() {
+        let mut c = String::from("typedef unsigned long usize_t;\n");
+        let mut n = 0usize;
+        for t1 in TYPES {
+            for t2 in TYPES {
+                let m = uac(model_scalar(t1), model_scalar(t2));
+                let sz = m.size as usize;
+                c.push_str(&format!(
+                    "_Static_assert(sizeof(({t1})0 + ({t2})0) == {sz}, \"uac {t1}+{t2}\");\n"
+                ));
+                n += 1;
+            }
+        }
+        // Shift: result type is promoted LEFT operand
+        c.push_str("_Static_assert(sizeof((char)1 << (long)1) == sizeof(int), \"shift left\");\n");
+        c.push_str("_Static_assert(sizeof((long)1 << (char)1) == sizeof(long), \"shift right\");\n");
+        c.push_str("_Static_assert(sizeof((unsigned char)1 << (char)1) == sizeof(int), \"shift uchar\");\n");
+        // Comparison/logical -> int
+        c.push_str("_Static_assert(sizeof((long double)1 < (double)1) == sizeof(int), \"cmp\");\n");
+        c.push_str("_Static_assert(sizeof((char)1 && (char)1) == sizeof(int), \"logical\");\n");
+        let dir = std::env::temp_dir().join(format!("ccc_p1_kat_{}.c", std::process::id()));
+        std::fs::write(&dir, &c).unwrap();
+        let out = std::process::Command::new("gcc")
+            .arg("-std=c11").arg("-w").arg("-c").arg(&dir)
+            .arg("-o").arg(dir.with_extension("o"))
+            .output();
+        match out {
+            Ok(o) if o.status.success() => { /* model pinned by gcc */ let _ = n; }
+            Ok(o) => panic!(
+                "P1 model disagrees with gcc 9.4:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)),
+            Err(_) => eprintln!("[p1_kat] gcc unavailable — model stands on C11 clauses alone"),
+        }
+        let _ = std::fs::remove_file(&dir);
+    }
+}
+
+// ===========================================================================
+// PBT round 05 — deterministic regression witnesses (intentionally red).
+// Each reproduces a confirmed bug with its shrunk counterexample; they stay
+// failing until the SUT is fixed. See pbt-out/rounds/05_sema/bug_reports/.
+// ===========================================================================
+#[cfg(test)]
+mod pbt_regression {
+    use super::pbt_tests::{sema_of, init_expr_of, model_scalar, model_result_ctype, uac};
+    use crate::common::types::CType;
+
+    /// B1: C11 6.3.1.8 rule 5 — when the higher-ranked signed type cannot
+    /// represent all values of the unsigned operand (same size), the result
+    /// is the UNSIGNED counterpart. unsigned long + long long must be
+    /// unsigned long long; SUT yields LongLong.
+    #[test]
+    fn test_usual_arith_conversion_regression_ul_plus_ll() {
+        let src = "unsigned long a; long long b; int p = a + b;\n";
+        let (tu, result) = sema_of(src);
+        let e = init_expr_of(&tu);
+        let got = result.expr_types.get(&e.id()).unwrap();
+        let want = model_result_ctype(uac(model_scalar("unsigned long"), model_scalar("long long")));
+        assert_eq!(*got, want, "unsigned long + long long must be unsigned long long");
+    }
+}

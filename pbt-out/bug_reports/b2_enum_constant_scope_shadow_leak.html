@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: Function-local enum constant permanently clobbers the global one (undo-log has no enums_shadowed restore)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: Function-local enum constant permanently clobbers the global one (undo-log has no enums_shadowed restore)</h1>
+<p><span class="badge">high</span> <code>b2</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>Function-local enum constant permanently clobbers the global one (undo-log has no enums_shadowed restore)</p>
+<table><tr><th>Expected behavior</th><td>enum_constants[&quot;F&quot;] == 1 (global E restored after f&#39;s scope pops)</td></tr><tr><th>Observed behavior</th><td>enum_constants[&quot;F&quot;] == 2 (inner value leaked)</td></tr><tr><th>Impact assessment</th><td>Silent wrong compile-time constants: after any function with a local `enum { E = ... }`, the global E keeps the inner value for the rest of the TU.</td></tr><tr><th>Minimal counterexample</th><td><code>g=1, l=2 — `enum { E = 1 }; void f(void) { enum { E = 2 }; } enum { F = E + 0 };` gives F == 2 (inner value leaked past scope exit)</code></td></tr></table>
+<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>&quot;Pop the top type-system scope frame and undo changes to enum_constants, struct_layouts, ctype_cache, and typedefs.&quot; — src/frontend/sema/type_context.rs:376-378</code></p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>scope_shadow_via_analyze (<code>p5</code>)</td></tr><tr><th>Formal property</th><td>forall (g,l). analyze(&quot;enum { E = g; }; void f(void){ enum { E = l; } } enum { F = E + 0 };&quot;) implies enum_constants[F] == g</td></tr><tr><th>Oracle</th><td>differential</td></tr><tr><th>System under test</th><td>SemanticAnalyzer::analyze</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/analysis.rs:159</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/sema/analysis.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::sema::analysis</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::sema::analysis::pbt_regression::test_enum_scope_regression_shadow_leak</code></pre>
+<p class="muted">Replay seed: cc 23805cb69dbbf1c75582a5c6cc72fbba3333394307828674ae4687785976d13d</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Add enums_shadowed: Vec&lt;(String, i64)&gt; to TypeScopeFrame; in insert_enum_scoped record the previous value when the key exists and was not already touched this frame; restore in pop_scope.</p>
+</section>
+</body>
+</html>
