@@ -1,3 +1,36 @@
+# Confirmed invariants (encode_neon_logical)
+
+- Valid AND/ORR/EOR Vd.T, Vn.T, Vm.T with T in {8b,16b}, v0–v31, opc in {0b00,0b01,0b10} matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: bit31=0, Q at 30 (1 iff T=16b), U at 29, bits[28:24]=01110, size at [23:22] (00 AND / 10 ORR / 00 EOR), bit21=1, Rm at [20:16], bits[15:10]=000111, Rn at [9:5], Rd at [4:0] (1000 cases).
+- AND vs ORR differ only in size bits[23:22]; AND vs EOR differ only in U bit 29; 8b vs 16b XOR = 1<<30 (1000 cases).
+- Rd/Rn/Rm isolation in bits[4:0]/[9:5]/[20:16] (1000 cases).
+- Arity 0–2 always Err (1000 cases).
+- opc outside {0,1,2,3} always Err("unsupported NEON logical opc") (1000 cases).
+- Uppercase V prefix matches llvm-mc (1000 cases).
+- Known-answer: `and v0.8b, v1.8b, v2.8b` = 0x0e221c20; `and v0.16b` = 0x4e221c20; `orr v0.8b` = 0x0ea21c20; `orr v0.16b` = 0x4ea21c20; `eor v0.8b` = 0x2e221c20; `eor v0.16b` = 0x6e221c20; `and v31.16b, v31.16b, v31.16b` = 0x4e3f1fff; `eor v15.16b, v16.16b, v17.16b` = 0x6e311e0f.
+
+## Environment (encode_neon_logical)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same AND/ORR/EOR T in {8B,16B}; size field is the logical opcode discriminator, not element size.
+- Dispatch: encoder/mod.rs:295-298 and/orr/eor/ands => encode_logical; data_processing.rs:461-463 NEON vector form (first operand RegArrangement) passes through to encode_neon_logical.
+- encode_neon_logical does not check operands.len() > 3; arr_n/arr_m discarded; Q is 1 iff dest arrangement is exactly "16b"; get_neon_reg accepts Operand::Reg; opc=0b11 encodes as EOR.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep: arity/unsupported-opc/alt-spellings passing, ANDS failing.
+- Five SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_logical_*.md.
+
+## Quirks (encode_neon_logical)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangements are discarded (see bugs).
+- Arrangements other than 16b encode Q=0 (see bugs).
+- Operand::Reg and x/w prefixes encode as V registers (see bugs).
+- opc=0b11 (ANDS) encodes as EOR (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus arity/unsupported-opc/alt-spellings/ANDS.
+
+---
+
 # Confirmed invariants (encode_neon_three_diff)
 
 - Valid LONG three-different (saddl/uaddl/ssubl/usubl/sabal/uabal/sabdl/uabdl/smlal/umlal/smlsl/umlsl/smull/umull) with Ta=widen(Tb), Tb in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
