@@ -1,375 +1,328 @@
-# Properties: encode_neon_logical
+# Properties: encode_neon_cmp_zero
 
-## encode_neon_logical_diff_llvm_mc
+## encode_neon_cmp_zero_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc on the GNU-style assembler contract. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree vector-logical decoder). Sibling encode_neon_bic / encode_neon_bsl / encode_orn rejected (same-job gate: different size/U opcodes).
-- Doc contract: neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" — asserted fingerprint ce2d8b1a
-- Seed: encode_neon_bsl_pbt.rs:167 encode_neon_bsl_diff_llvm_mc
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. encode_neon_logical([Vd.T,Vn.T,Vm.T], opc) = llvm-mc(mnemonic Vd.T, Vn.T, Vm.T) where mnemonic = {0b00→and, 0b01→orr, 0b10→eor}
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the GNU-style assembly this encoder claims to accept. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree compare-zero decoder). Sibling encode_neon_float_cmp_zero / encode_neon_three_same / encode_neon_two_misc rejected (same-job gate: FP size map, register-register three-same, or different two-misc opcodes).
+- Doc contract: neon.rs:186 "Encode NEON compare-to-zero: CMEQ Vd, Vn, #0, CMGE Vd, Vn, #0, etc." — asserted fingerprint 7a9bf7c1
+- Seed: encode_neon_not_pbt.rs:166 llvm-mc differential; encode_neon_float_cmp_zero_pbt KAT/diff
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, (U,opc,mnem) ∈ {(0,0b01001,cmeq),(1,0b01000,cmge),(0,0b01000,cmgt),(1,0b01001,cmle),(0,0b01010,cmlt)}. encode_neon_cmp_zero([Vd.T, Vn.T], U, opc) = llvm-mc(mnem Vd.T, Vn.T, #0)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, opc]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {8b,16b}, opc: {0,1,2} }
+  vars: [rd, rn, t, u, opcode, mnem]
+  domain: { rd: v0_v31, rn: v0_v31, t: {8b,16b,4h,8h,2s,4s,2d} }
   relation:
     op: eq
-    lhs: encode_neon_logical([arr(rd,t), arr(rn,t), arr(rm,t)], opc)
-    rhs: llvm_mc(mnemonic(opc) + " v{rd}.{t}, v{rn}.{t}, v{rm}.{t}")
+    lhs: "encode_neon_cmp_zero(&[arr(rd,t), arr(rn,t)], u, opcode)"
+    rhs: "llvm_mc_word(&format!(\"{mnem} v{rd}.{t}, v{rn}.{t}, #0\"))"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
-evidence: README.md:12 GNU-style gas contract; neon.rs:296-308 AND/ORR/EOR encodings; encoder/mod.rs:295-297 dispatch
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+evidence: README.md:12 README.md:227 neon.rs:186 encoder/mod.rs:566-666
 ```
 
-## encode_neon_logical_meta_rd_rn_rm
+## encode_neon_cmp_zero_meta_rd_rn_u
 - Tier: 4
-- Rationale: Algebraic metamorphic — changing only Rd/Rn/Rm must differ only in bits[4:0]/[9:5]/[20:16]. Stronger differential is P1; this isolates field packing independently of llvm-mc.
-- Doc contract: neon.rs:306 "ORR: 0 Q 0 01110 10 1 Rm 000111 Rn Rd  (opc=0b01 -> size=10)" — asserted fingerprint 880d7f42
-- Seed: encode_neon_bsl_pbt.rs:182 encode_neon_bsl_meta_rd_rn_rm
-- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. let w(rd,rn,rm)=encode_neon_logical([Vd.T,Vn.T,Vm.T],opc). (w(rd1,rn1,rm1) ⊕ w(rd2,rn1,rm1)) & ~0x1F = 0 ∧ (w(rd1,rn1,rm1) ⊕ w(rd1,rn2,rm1)) & ~(0x1F<<5) = 0 ∧ (w(rd1,rn1,rm1) ⊕ w(rd1,rn1,rm2)) & ~(0x1F<<16) = 0
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: ARM two-misc layout isolates Rd at [4:0], Rn at [9:5], U at bit 29. Metamorphic: changing only one of those inputs must flip only that field. Weaker than differential; kept as an independent algebraic check that does not depend on llvm-mc.
+- Doc contract: neon.rs:188 "Format: 0 Q U 01110 size 10000 opcode 10 Rn Rd" — asserted fingerprint cbb51bf8
+- Seed: encode_neon_not_pbt.rs encode_neon_not_meta_rd_rn
+- Formal: ∀ rd1,rd2,rn1,rn2 ∈ {0..31}, T ∈ valid_T, U ∈ {0,1}, opc ∈ {0b01000,0b01001,0b01010}. let w(rd,rn,U)=encode_neon_cmp_zero([Vd.T,Vn.T],U,opc). (w(rd1,rn1,U) ⊕ w(rd2,rn1,U)) ∧ ¬0x1F = 0 ∧ w[4:0]=rd. (w(rd1,rn1,U) ⊕ w(rd1,rn2,U)) ∧ ¬(0x1F≪5) = 0 ∧ w[9:5]=rn. w(...,0) ⊕ w(...,1) = 1≪29
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd1, rd2, rn1, rn2, rm1, rm2, t, opc]
-  domain: { rd1: v0_31, rd2: v0_31, rn1: v0_31, rn2: v0_31, rm1: v0_31, rm2: v0_31, t: {8b,16b}, opc: {0,1,2} }
-  body: field isolation of Rd bits[4:0], Rn bits[9:5], Rm bits[20:16]
+  vars: [rd1, rd2, rn1, rn2, t, u, opcode]
+  domain: { rd1: v0_v31, t: valid_T }
+  relation:
+    op: holds
+    expr: "(w11 ^ w21) & !0x1Fu32 == 0 && (w11 ^ w12) & !(0x1Fu32 << 5) == 0 && (w_u0 ^ w_u1) == (1u32 << 29)"
 generators:
   rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
   rn1: { gen: int, min: 0, max: 31, type: u32 }
   rn2: { gen: int, min: 0, max: 31, type: u32 }
-  rm1: { gen: int, min: 0, max: 31, type: u32 }
-  rm2: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
-evidence: neon.rs:306-308 Rm/Rn/Rd field comments
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 8, max: 10, type: u32 }
+evidence: neon.rs:188 ARM ARM two-register miscellaneous
 ```
 
-## encode_neon_logical_inv_layout
+## encode_neon_cmp_zero_inv_layout
 - Tier: 4
-- Rationale: Algebraic invariant — ARM Advanced SIMD three-same logical layout 0 Q U 01110 size 1 Rm 000111 Rn Rd with (U,size)=(0,00) AND / (0,10) ORR / (1,00) EOR, Q=1 iff T=16b. 8b vs 16b differ only in bit 30.
-- Doc contract: neon.rs:307 "AND: 0 Q 0 01110 00 1 Rm 000111 Rn Rd  (opc=0b00 -> size=00)" — asserted fingerprint 8f640cbb
-- Seed: encode_neon_bsl_pbt.rs:219 encode_neon_bsl_inv_layout
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. encode_neon_logical([Vd.T,Vn.T,Vm.T], opc) = arm_logical_word(rd,rn,rm,T,opc)
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: ARM ARM two-register miscellaneous compare-with-zero field layout is an exact structural invariant of every success-path word. Independent of llvm-mc (bit positions from the ARM encoding diagram quoted at neon.rs:188).
+- Doc contract: neon.rs:188 "Format: 0 Q U 01110 size 10000 opcode 10 Rn Rd" — asserted fingerprint cbb51bf8
+- Seed: encode_neon_not_pbt.rs encode_neon_not_inv_layout
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ valid_T, U ∈ {0,1}, opc ∈ {0b01000,0b01001,0b01010}. let w=encode_neon_cmp_zero([Vd.T,Vn.T],U,opc). w[31]=0 ∧ w[30]=Q(T) ∧ w[29]=U ∧ w[28:24]=01110 ∧ w[23:22]=size(T) ∧ w[21:17]=10000 ∧ w[16:12]=opc ∧ w[11:10]=10 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, opc]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {8b,16b}, opc: {0,1,2} }
+  vars: [rd, rn, t, u, opcode]
+  domain: { rd: v0_v31, t: valid_T }
   relation:
-    op: eq
-    lhs: encode_neon_logical([arr(rd,t), arr(rn,t), arr(rm,t)], opc)
-    rhs: arm_logical_word(rd, rn, rm, t, opc)
+    op: holds
+    expr: "w >> 31 == 0 && (w >> 30) & 1 == q && (w >> 29) & 1 == u && (w >> 24) & 0x1F == 0b01110 && (w >> 22) & 3 == size && (w >> 17) & 0x1F == 0b10000 && (w >> 12) & 0x1F == opcode && (w >> 10) & 3 == 0b10 && (w >> 5) & 0x1F == rn && (w & 0x1F) == rd"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
-evidence: neon.rs:306-308; ARM ARM ASIMDSAME AND/ORR/EOR
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 8, max: 10, type: u32 }
+evidence: neon.rs:188 ARM ARM C7.2 CMEQ/CMGE/CMGT/CMLE/CMLT (vector, zero)
 ```
 
-## encode_neon_logical_meta_opc
-- Tier: 4
-- Rationale: Algebraic metamorphic — holding registers and T fixed, AND/ORR/EOR must differ only in U (bit 29) and size (bits 23-22). Required metamorphic/differential for STANDARD tier (P1 is differential; this is the opc transform).
-- Doc contract: neon.rs:308 "EOR: 0 Q 1 01110 00 1 Rm 000111 Rn Rd  (opc=0b10 -> size=00, U=1)" — asserted fingerprint d4f469c1
-- Seed: encode_neon_bsl_pbt.rs:237 8b vs 16b Q isolation
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}. let a=encode_neon_logical(ops,0b00), o=encode_neon_logical(ops,0b01), e=encode_neon_logical(ops,0b10). (a ⊕ o) & ~(0b11<<22) = 0 ∧ (a ⊕ e) & ~(1<<29) = 0 ∧ (o ⊕ e) has only U and size bits
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+## encode_neon_cmp_zero_neg_arity
+- Tier: 3
+- Rationale: Documented minimum arity. neon.rs:191 returns Err when operands.len() < 2. Negative/error contract from the function's own domain restriction.
+- Doc contract: neon.rs:191 "NEON compare-zero requires at least 2 operands" — domain-restriction fingerprint f5f706b7
+- Seed: encode_neon_not_pbt.rs encode_neon_not_neg_arity
+- Formal: ∀ n ∈ {0,1}, ops with |ops|=n. encode_neon_cmp_zero(ops, U, opc) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_logical
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, t]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {8b,16b} }
-  body: AND vs ORR differ only in size bits[23:22]; AND vs EOR differ only in U bit 29
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-evidence: neon.rs:306-308 U/size as opcode discriminator
-```
-
-## encode_neon_logical_neg_extra
-- Tier: 3
-- Rationale: Negative/error contract — gas/llvm-mc reject a fourth operand. README.md:12 same textual assembly as gas. SUT does not check operands.len() > 3.
-- Doc contract: neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" — asserted fingerprint ce2d8b1a (three operands; extra is out of the documented form)
-- Seed: encode_neon_bsl_pbt.rs:256 encode_neon_bsl_neg_extra
-- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. llvm-mc rejects mnemonic Vd.T,Vn.T,Vm.T,Vextra.T ⇒ encode_neon_logical([Vd.T,Vn.T,Vm.T,Vextra.T], opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_logical([v0.8b, v0.8b, v0.8b, v0.8b], opc=0) = Ok(Word) ; llvm-mc rejects `and v0.8b, v0.8b, v0.8b, v0.8b`
-- Bug report: pbt-out/bug_reports/encode_neon_logical_extra_operand.md
-
-```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, extra, t, opc]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, extra: v0_31, t: {8b,16b}, opc: {0,1,2} }
+  vars: [n, rd, t, u, opcode]
+  domain: { n: {0,1} }
   relation:
     op: throws
-    expr: encode_neon_logical([arr(rd,t), arr(rn,t), arr(rm,t), arr(extra,t)], opc)
-    error: String
+    expr: "encode_neon_cmp_zero(&ops_of_len(n), u, opcode)"
+generators:
+  n: { gen: int, min: 0, max: 1, type: usize }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+expected_error: String
+evidence: neon.rs:191
+```
+
+## encode_neon_cmp_zero_neg_extra
+- Tier: 3
+- Rationale: gas/llvm-mc reject a fourth operand on `cmeq Vd.T, Vn.T, #0`. README.md:12 claims the assembler accepts the same textual assembly gas would consume. The helper is caller-reachable with operands passed through (mod.rs:566-666). Extra operand must Err. Function comment's "at least 2" is a minimum, not a license to ignore trailing operands.
+- Doc contract: neon.rs:186 "Encode NEON compare-to-zero: CMEQ Vd, Vn, #0, CMGE Vd, Vn, #0, etc." — asserted fingerprint 7a9bf7c1
+- Seed: encode_neon_not_pbt.rs encode_neon_not_neg_extra
+- Formal: ∀ rd,rn,extra ∈ {0..31}, T ∈ valid_T, (U,opc,mnem) ∈ cmp_zero_table. llvm-mc(mnem Vd.T, Vn.T, #0, Vextra.T) = Err ∧ encode_neon_cmp_zero([Vd.T, Vn.T, Imm(0), Vextra.T], U, opc) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, extra=0, t=8b, insn=(0, 0b01001, cmeq) — cmeq v0.8b, v0.8b, #0, v0.8b
+- Bug report: pbt-out/bug_reports/encode_neon_cmp_zero_extra_operand.md
+
+```property
+function: encoder.encode_neon_cmp_zero
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, extra, t, u, opcode]
+  domain: { rd: v0_v31, t: valid_T }
+  relation:
+    op: throws
+    expr: "encode_neon_cmp_zero(&[arr(rd,t), arr(rn,t), Operand::Imm(0), arr(extra,t)], u, opcode)"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
 expected_error: String
-evidence: README.md:12 gas contract; llvm-mc rejects fourth operand; neon.rs:296 three-operand form
+evidence: README.md:12 llvm-mc rejects fourth operand
 ```
 
-## encode_neon_logical_neg_mismatch_t
+## encode_neon_cmp_zero_neg_mismatch_t
 - Tier: 3
-- Rationale: Negative/error — ARM/llvm-mc require matching T on Vd,Vn,Vm. SUT discards arr_n and arr_m.
-- Doc contract: neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" — asserted fingerprint ce2d8b1a (same T)
-- Seed: encode_neon_bsl_pbt.rs:296 encode_neon_bsl_neg_mismatch_t
-- Formal: ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. ¬(Td=Tn=Tm) ⇒ encode_neon_logical([Vd.Td,Vn.Tn,Vm.Tm], opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: ARM/gas/llvm-mc require matching T on Vd and Vn. The helper discards arr_n. Mismatched T must Err.
+- Doc contract: neon.rs:186 "Encode NEON compare-to-zero: CMEQ Vd, Vn, #0, CMGE Vd, Vn, #0, etc." — asserted fingerprint 7a9bf7c1
+- Seed: encode_neon_not_pbt.rs encode_neon_not_neg_mismatch_t
+- Formal: ∀ rd,rn ∈ {0..31}, Td ≠ Tn both in valid_T. llvm-mc(cmeq Vd.Td, Vn.Tn, #0) = Err ∧ encode_neon_cmp_zero([Vd.Td, Vn.Tn], 0, 0b01001) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_logical([v0.8b, v0.8b, v0.16b], opc=0) = Ok(Word) ; llvm-mc rejects `and v0.8b, v0.8b, v0.16b`
-- Bug report: pbt-out/bug_reports/encode_neon_logical_mismatch_t.md
+- Counterexample: rd=0, rn=0, td=16b, tn=8b — cmeq v0.16b, v0.8b, #0
+- Bug report: pbt-out/bug_reports/encode_neon_cmp_zero_mismatch_t.md
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, td, tn, tm, opc]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, td: {8b,16b}, tn: {8b,16b}, tm: {8b,16b}, opc: {0,1,2} }
-  body: td!=tn or tn!=tm implies Err
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  td: { gen: oneof, items: ["8b", "16b"] }
-  tn: { gen: oneof, items: ["8b", "16b"] }
-  tm: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
-expected_error: String
-evidence: neon.rs:296 Vd.T, Vn.T, Vm.T same T; ARM ARM AND/ORR/EOR; llvm-mc operand mismatch
-```
-
-## encode_neon_logical_neg_invalid_t
-- Tier: 3
-- Rationale: Negative/error — ARM AND/ORR/EOR accept only T in {8B,16B}. llvm-mc rejects 8h/4s/2d/4h/2s/1d. SUT sets Q=1 iff dest=="16b" else Q=0, so other arrangements silently encode as 8b.
-- Doc contract: neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" — asserted fingerprint ce2d8b1a; ARM T in {8B,16B}
-- Seed: encode_neon_bsl_pbt.rs:274 encode_neon_bsl_neg_invalid_t
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {4h,8h,2s,4s,2d,1d,4b,8d}, opc ∈ {0b00,0b01,0b10}. encode_neon_logical([Vd.T,Vn.T,Vm.T], opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_logical([v0.4h, v0.4h, v0.4h], opc=0) = Ok(Word) ; llvm-mc rejects `and v0.4h, v0.4h, v0.4h`
-- Bug report: pbt-out/bug_reports/encode_neon_logical_invalid_t.md
-
-```property
-function: encoder.neon.encode_neon_logical
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, t, opc]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {4h,8h,2s,4s,2d,1d,4b,8d}, opc: {0,1,2} }
+  vars: [rd, rn, td, tn]
+  domain: { td != tn, both in valid_T }
   relation:
     op: throws
-    expr: encode_neon_logical([arr(rd,t), arr(rn,t), arr(rm,t)], opc)
-    error: String
+    expr: "encode_neon_cmp_zero(&[arr(rd, td), arr(rn, tn)], 0, 0b01001)"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["4h", "8h", "2s", "4s", "2d", "1d", "4b", "8d"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
+  td: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  tn: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
 expected_error: String
-evidence: ARM ARM AND/ORR/EOR T in {8B,16B}; llvm-mc invalid operand for 8h/4s
+evidence: README.md:12 ARM matching-T; llvm-mc invalid operand
 ```
 
-## encode_neon_logical_neg_gpr_bare_sp
+## encode_neon_cmp_zero_neg_reserved_1d
 - Tier: 3
-- Rationale: Negative/error — vector logical requires arranged NEON registers. llvm-mc rejects GPR/SP/bare-v/scalar-fp sources. get_neon_reg accepts Operand::Reg. Caller-reachable: encode_logical dispatches on dest RegArrangement and passes Vn/Vm through.
-- Doc contract: neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" — asserted fingerprint ce2d8b1a
-- Seed: encode_neon_bsl_pbt.rs:321 encode_neon_bsl_neg_gpr_bare_sp
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}, kind ∈ {x-src, w-src, sp-src, bare-v, d-src, s-src, q-src}. encode_neon_logical([Vd.T, non-arranged Vn/Vm], opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: ARM ARM size:Q=11:0 is reserved for integer compare-to-zero; llvm-mc rejects .1d. neon_arr_to_q_size maps "1d" to (0, 0b11). Input is accepted by the API (RegArrangement) so it must Err, not encode a reserved encoding.
+- Doc contract: neon.rs:186 "Encode NEON compare-to-zero: CMEQ Vd, Vn, #0, CMGE Vd, Vn, #0, etc." — asserted fingerprint 7a9bf7c1
+- Seed: encode_neon_three_same_pbt.rs cmeq v0.1d reserved
+- Formal: ∀ rd,rn ∈ {0..31}, (U,opc) in cmp_zero_u_opc. llvm-mc(cmeq Vd.1d, Vn.1d, #0) = Err ∧ encode_neon_cmp_zero([Vd.1d, Vn.1d], U, opc) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_logical([v0.8b, x0, x0], opc=0) = Ok(Word) ; llvm-mc rejects `and v0.8b, x0, x0`
-- Bug report: pbt-out/bug_reports/encode_neon_logical_gpr_src.md
+- Counterexample: rd=0, rn=0, u=0, opcode=8 — cmeq v0.1d, v0.1d, #0
+- Bug report: pbt-out/bug_reports/encode_neon_cmp_zero_reserved_1d.md
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, opc, kind]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {8b,16b}, opc: {0,1,2}, kind: {0..6} }
+  vars: [rd, rn, u, opcode]
+  domain: { rd: v0_v31, t: 1d }
   relation:
     op: throws
-    expr: encode_neon_logical(non_arranged_src(kind), opc)
-    error: String
+    expr: "encode_neon_cmp_zero(&[arr(rd, \"1d\"), arr(rn, \"1d\")], u, opcode)"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
-  kind: { gen: int, min: 0, max: 6, type: u8 }
+  u: { gen: int, min: 0, max: 1, type: u32 }
+  opcode: { gen: int, min: 8, max: 10, type: u32 }
 expected_error: String
-evidence: neon.rs:296 Vd.T arranged form; llvm-mc rejects GPR/bare/SP sources
+evidence: ARM ARM reserved size:Q=11:0; llvm-mc invalid operand for .1d
 ```
 
-## encode_neon_logical_neg_ands
+## encode_neon_cmp_zero_neg_gpr_bare_nonv
 - Tier: 3
-- Rationale: Negative/error — ANDS is not a NEON instruction. llvm-mc rejects `ands v0.8b, ...`. Comment at neon.rs:313 admits "ANDS - not valid for NEON, fall back" on an input the API accepts (encode_logical routes "ands" with opc=0b11). Known limitation; keep in domain.
-- Doc contract: neon.rs:313 "ANDS - not valid for NEON, fall back" — limitation fingerprint 3d76eeef
-- Seed: (none) — strengthening round on documented ANDS fallback
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}. encode_neon_logical([Vd.T,Vn.T,Vm.T], 0b11) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: gas/llvm-mc require arranged V registers (vN.T). GPR (x/w), SP, bare v/d/s/q, and non-V prefixes on RegArrangement are invalid. parse_reg_num accepts x/w/d/s/q/v/h/b and sp→31, so the helper must still Err.
+- Doc contract: neon.rs:186 "Encode NEON compare-to-zero: CMEQ Vd, Vn, #0, CMGE Vd, Vn, #0, etc." — asserted fingerprint 7a9bf7c1
+- Seed: encode_neon_not_pbt.rs encode_neon_not_neg_gpr_bare_sp
+- Formal: ∀ kind ∈ {x-dest, w-dest, sp-dest, bare-v, arranged-x-prefix, GPR-src, s-dest}. llvm-mc rejects ∧ encode_neon_cmp_zero(ops, 0, 0b01001) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_logical([v0.8b, v0.8b, v0.8b], opc=0b11) = Ok(Word) encoding EOR; llvm-mc rejects `ands v0.8b, v0.8b, v0.8b`
-- Bug report: pbt-out/bug_reports/encode_neon_logical_ands.md
+- Counterexample: rd=0, rn=0, t=8b, kind=4 — cmeq x0.8b, v0.8b, #0
+- Bug report: pbt-out/bug_reports/encode_neon_cmp_zero_non_v_prefix.md
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {8b,16b} }
+  vars: [rd, rn, t, kind]
+  domain: { kind: gpr_bare_nonv_kinds }
   relation:
     op: throws
-    expr: encode_neon_logical([arr(rd,t), arr(rn,t), arr(rm,t)], 0b11)
-    error: String
+    expr: "encode_neon_cmp_zero(&ops_for(kind), 0, 0b01001)"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  kind: { gen: int, min: 0, max: 7, type: u8 }
 expected_error: String
-evidence: neon.rs:313 ANDS not valid for NEON; llvm-mc rejects ands vector form; encoder/mod.rs:298 ands => opc=0b11
+evidence: README.md:12 llvm-mc invalid operand for GPR/bare/non-V
 ```
 
-## encode_neon_logical_neg_arity
+## encode_neon_cmp_zero_neg_invalid_t
 - Tier: 3
-- Rationale: Negative/error — fewer than 3 operands must Err. get_neon_reg returns Err on missing operand. Strengthening round.
-- Doc contract: neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" — asserted fingerprint ce2d8b1a
-- Seed: encode_neon_bsl_pbt.rs:242 encode_neon_bsl_neg_arity
-- Formal: ∀ n ∈ {0,1,2}, rd ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. encode_neon_logical(ops[:n], opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: Sweep — arrangements other than the ARM-legal set (and other than reserved 1d) must Err via neon_arr_to_q_size. llvm-mc rejects 4b/8d/2h/1s/32b/empty.
+- Doc contract: neon.rs:186 "Encode NEON compare-to-zero: CMEQ Vd, Vn, #0, CMGE Vd, Vn, #0, etc." — asserted fingerprint 7a9bf7c1
+- Seed: encode_neon_not_pbt.rs encode_neon_not_neg_invalid_t
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {4b,8d,2h,1s,32b,ε}. llvm-mc(cmeq Vd.T, Vn.T, #0) = Err ∧ encode_neon_cmp_zero([Vd.T, Vn.T], 0, 0b01001) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, rd, t, opc]
-  domain: { n: {0,1,2}, rd: v0_31, t: {8b,16b}, opc: {0,1,2} }
+  vars: [rd, rn, t]
+  domain: { t: invalid_T }
   relation:
     op: throws
-    expr: encode_neon_logical(ops_prefix(n), opc)
-    error: String
+    expr: "encode_neon_cmp_zero(&[arr(rd, t), arr(rn, t)], 0, 0b01001)"
 generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, values: ["4b", "8d", "2h", "1s", "32b", ""] }
 expected_error: String
-evidence: neon.rs:296 three-operand form; get_neon_reg missing-operand Err
+evidence: neon.rs:54 unsupported NEON arrangement; llvm-mc invalid operand
 ```
 
-## encode_neon_logical_neg_unsupported_opc
+## encode_neon_cmp_zero_neg_nonreg
 - Tier: 3
-- Rationale: Negative/error contract on the documented invalid opc domain. neon.rs:314 declares opc not in {0,1,2,3} invalid and returns Err("unsupported NEON logical opc"). The property asserts that documented rejection; it is not an exclusion of a valid enumerator.
-- Doc contract: neon.rs:314 `_ => return Err("unsupported NEON logical opc")` — domain-restriction fingerprint cd744e09
-- Seed: (none)
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, opc ∈ ℕ \ {0,1,2,3}. encode_neon_logical([Vd.T,Vn.T,Vm.T], opc) = Err("unsupported NEON logical opc")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: Sweep — Imm/Mem dest or Imm src must Err via get_neon_reg's non-register arm.
+- Doc contract: neon.rs:191 "NEON compare-zero requires at least 2 operands" — domain-restriction fingerprint f5f706b7
+- Seed: encode_neon_not_pbt.rs gpr/bare
+- Formal: ∀ kind ∈ {Imm dest, Imm src, Mem dest}. encode_neon_cmp_zero(ops, 0, 0b01001) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, opc]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {8b,16b}, opc: {4..255} }
+  vars: [rd, t, kind]
+  domain: { kind: {0,1,2} }
   relation:
     op: throws
-    expr: encode_neon_logical([arr(rd,t), arr(rn,t), arr(rm,t)], opc)
-    error: String
+    expr: "encode_neon_cmp_zero(&ops_nonreg(kind), 0, 0b01001)"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 4, max: 255, type: u32 }
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  kind: { gen: int, min: 0, max: 2, type: u8 }
 expected_error: String
-evidence: neon.rs:314 unsupported NEON logical opc
+evidence: neon.rs:19 expected NEON register
 ```
 
-## encode_neon_logical_diff_alt_spellings
+## encode_neon_cmp_zero_diff_alt_spellings
 - Tier: 5
-- Rationale: Differential vs llvm-mc on uppercase V prefix (parse_reg_num lowercases). Strengthening / sweep of register-name contract.
-- Doc contract: neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" — asserted fingerprint ce2d8b1a
-- Seed: encode_neon_bsl_pbt.rs:394 encode_neon_bsl_diff_alt_spellings
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. encode_neon_logical([V{rd}.T, V{rn}.T, V{rm}.T], opc) = llvm-mc(mnemonic V{rd}.T, V{rn}.T, V{rm}.T)
-- Test file: src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs
+- Rationale: Sweep — uppercase V prefix is accepted by parse_reg_num (to_lowercase) and by llvm-mc; encodings must agree.
+- Doc contract: neon.rs:186 "Encode NEON compare-to-zero: CMEQ Vd, Vn, #0, CMGE Vd, Vn, #0, etc." — asserted fingerprint 7a9bf7c1
+- Seed: encode_neon_not_pbt.rs encode_neon_not_diff_alt_spellings
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ valid_T, (U,opc,mnem) ∈ cmp_zero_table. encode_neon_cmp_zero([V{rd}.T, V{rn}.T], U, opc) = llvm-mc(mnem V{rd}.T, V{rn}.T, #0)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_logical
+function: encoder.encode_neon_cmp_zero
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, opc]
-  domain: { rd: v0_31, rn: v0_31, rm: v0_31, t: {8b,16b}, opc: {0,1,2} }
+  vars: [rd, rn, t, u, opcode, mnem]
+  domain: { rd: v0_v31, t: valid_T }
   relation:
     op: eq
-    lhs: encode_neon_logical([Arr(V{rd},t), Arr(V{rn},t), Arr(V{rm},t)], opc)
-    rhs: llvm_mc(mnemonic(opc) + " V{rd}.{t}, V{rn}.{t}, V{rm}.{t}")
+    lhs: "encode_neon_cmp_zero(&[Arr(V{rd},t), Arr(V{rn},t)], u, opcode)"
+    rhs: "llvm_mc_word(&format!(\"{mnem} V{rd}.{t}, V{rn}.{t}, #0\"))"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["8b", "16b"] }
-  opc: { gen: int, min: 0, max: 2, type: u32 }
-evidence: README.md:12; parse_reg_num lowercases; llvm-mc accepts V0.8b
+  t: { gen: oneof, values: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+evidence: README.md:12 parse_reg_num to_lowercase; llvm-mc accepts V
 ```

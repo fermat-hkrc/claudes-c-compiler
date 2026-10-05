@@ -3632,3 +3632,39 @@
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / T / extra / shift range / mismatched T / non-V prefix / Operand::Reg dest+source).
 
+
+---
+
+# Confirmed invariants (encode_neon_cmp_zero)
+
+- Valid CMEQ/CMGE/CMGT/CMLE/CMLT Vd.T, Vn.T, #0 with T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31, ARM-correct (U, opcode) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; U in bit 29 (1000 cases).
+- Success-path word: bit31=0, Q at 30, U at 29, bits[28:24]=01110, size at [23:22], bits[21:17]=10000, opcode at [16:12], bits[11:10]=10, Rn at [9:5], Rd at [4:0] (1000 cases).
+- Arity 0–1 always Err (1000 cases).
+- Invalid T {4b,8d,2h,1s,32b,empty} always Err (1000 cases).
+- Imm/Mem dest or Imm src always Err (1000 cases).
+- Uppercase V prefix matches llvm-mc (1000 cases).
+- Known-answer: `cmeq v0.8b, v1.8b, #0` = 0x0e209820; `cmeq v0.16b` = 0x4e209820; `cmge v0.4s` = 0x6ea08820; `cmgt v0.2d` = 0x4ee08820; `cmle v0.8h` = 0x6e609820; `cmlt v0.4h` = 0x0e60a820; `cmeq v31.8b, v31.8b, #0` = 0x0e209bff.
+- Extra operand, mismatched T, reserved .1d, and GPR/non-V names currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_cmp_zero)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD two-register miscellaneous integer compare-with-zero: T in {8B,16B,4H,8H,2S,4S,2D}; size:Q=11:0 reserved; (U,opcode): CMEQ (0,01001), CMGE (1,01000), CMGT (0,01000), CMLE (1,01001), CMLT (0,01010).
+- Dispatch: encoder/mod.rs:566-584 cmeq/cmge/cmgt Imm(0); encoder/mod.rs:665-666 cmlt/cmle.
+- encode_neon_cmp_zero checks operands.len() < 2; extra ignored; source arrangement discarded; neon_arr_to_q_size accepts 1d.
+- get_neon_reg accepts Operand::Reg; parse_reg_num accepts x/w/d/s/q/v/h/b.
+- Scalar `cmeq Dd, Dn, #0` is a different encoding (bits[31:30]=01) — not this vector helper.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep: invalid-T/nonreg/alt-spellings passing.
+- Four SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_cmp_zero_*.md.
+
+## Quirks (encode_neon_cmp_zero)
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- neon_arr_to_q_size 1d is encoded (see bugs).
+- Operand::Reg source and x/w prefixes encode as V registers (see bugs).
+- Bare dest (empty arrangement) hits unsupported arrangement Err via neon_arr_to_q_size.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus invalid-T/nonreg/alt-spellings.

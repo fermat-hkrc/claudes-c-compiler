@@ -1,146 +1,130 @@
-# PBT Campaign Report: encode_neon_logical
+# PBT Campaign Report: encode_neon_cmp_zero
 
 ## Summary
 
-**Verdict:** 5 medium: encode_neon_logical silently accepts extra operands, mismatched/invalid arrangements, GPR sources, and ANDS (encoded as EOR), so vector AND/ORR/EOR typos assemble as the wrong instruction instead of failing like gas/llvm-mc.
+**Verdict:** 4 medium: encode_neon_cmp_zero silently encodes assembly gas/llvm-mc reject — extra operand, mismatched T, reserved .1d, and GPR/non-V names as V registers.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_logical
-**Tests:** 12
-**Result:** 7 passing, 5 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests execute encode_neon_logical (8 KAT + 12 properties). Sweep round 1/1 spent: ANDS, arity, unsupported opc, uppercase V.
+**Modules tested:** encode_neon_cmp_zero
+**Tests:** 11 properties (plus 4 KAT + 5 regression witnesses)
+**Result:** 7 passing, 4 failing properties, 4 bugs
+**Change surface:** 1 changed function (encode_neon_cmp_zero), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Rust `cargo test --lib encode_neon_cmp_zero` executed the production symbol (4 KAT + 11 properties). Sweep was a manual arm audit plus invalid-T / non-register / uppercase-V properties.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_logical | 12 | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_cmp_zero | 11 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_logical ignores a fourth operand
+### B1: encode_neon_cmp_zero ignores a fourth operand
 
-**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. llvm-mc rejects mnemonic Vd.T,Vn.T,Vm.T,Vextra.T ⇒ encode_neon_logical([Vd.T,Vn.T,Vm.T,Vextra.T], opc) is Err
-**Contract evidence:** documented neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" (three operands); inferred (README.md:12 gas/llvm-mc reject a fourth operand)
-**Documentation conflict:** (none)
+**Formal:** ∀ rd,rn,extra ∈ {0..31}, T ∈ valid_T, (U,opc,mnem) ∈ cmp_zero_table. llvm-mc(mnem Vd.T, Vn.T, #0, Vextra.T) = Err ∧ encode_neon_cmp_zero([Vd.T, Vn.T, Imm(0), Vextra.T], U, opc) = Err
+**Contract evidence:** inferred (README.md:12 GNU-style/gas compatibility; llvm-mc rejects a fourth operand; dispatcher passes operands through)
+**Documentation conflict:** (none) — neon.rs:191 states a minimum of 2 operands, not a maximum
 **Severity:** medium
-**Counterexample:** encode_neon_logical([v0.8b, v0.8b, v0.8b, v0.8b], opc=0)
-**Expected / Actual:** Err / Ok(Word) of `and v0.8b, v0.8b, v0.8b`
-**Impact:** A typo such as `and v0.8b, v1.8b, v2.8b, v3.8b` assembles instead of failing like gas/llvm-mc
-**Root cause:** neon.rs:297-318 never checks operands.len(); it reads indices 0..2 and returns Word
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:298`
+**Counterexample:** encode_neon_cmp_zero([v0.8b, v0.8b, Imm(0), v0.8b], u=0, opcode=0b01001) — `cmeq v0.8b, v0.8b, #0, v0.8b`
+**Expected / Actual:** Err / Ok(Word) same as `cmeq v0.8b, v0.8b, #0`
+**Impact:** A typo or extra operand is silently assembled instead of diagnosed.
+**Root cause:** neon.rs:190 only rejects `operands.len() < 2`; operands at index 2+ are never inspected.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:190`
 ```rust
+    if operands.len() < 2 {
+        return Err("NEON compare-zero requires at least 2 operands".to_string());
+    }
     let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    let (rn, _) = get_neon_reg(operands, 1)?;
 ```
-**Suggested fix:** Reject anything other than exactly three operands
+**Suggested fix:** Reject more than two NEON registers; a third operand must be Imm(0).
 ```rust
-if operands.len() != 3 {
-    return Err("NEON logical requires 3 operands".to_string());
-}
+    if operands.len() > 3 {
+        return Err("NEON compare-zero: extra operand".to_string());
+    }
+    if operands.len() == 3 && !matches!(operands.get(2), Some(Operand::Imm(0))) {
+        return Err("NEON compare-zero: expected #0".to_string());
+    }
 ```
-**Bug report:** bug_reports/encode_neon_logical_extra_operand.md
-**Repro seed:** cc 0ee0f868bfa6335bd9456d319a52171a5d81f957cd7251d5263c2b08167d79d9
-**Raw output:** Test failed: extra operand must Err (llvm-mc rejects and v0.8b, v0.8b, v0.8b, v0.8b). minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "8b", opc = 0
+**Bug report:** bug_reports/encode_neon_cmp_zero_extra_operand.md
+**Repro seed:** cc bbffe64bd42b91c8a80c4b97bd9b2f0f3f480f89b64b180b1b068fb4168f94fd
+**Raw output:** Test failed: extra operand must Err (llvm-mc rejects cmeq v0.8b, v0.8b, #0, v0.8b). minimal failing input: rd = 0, rn = 0, extra = 0, t = "8b", insn = (0, 9, "cmeq")
 
-### B2: encode_neon_logical ignores mismatched source arrangements
+### B2: encode_neon_cmp_zero ignores source arrangement mismatch
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}. ¬(Td=Tn=Tm) ⇒ encode_neon_logical([Vd.Td,Vn.Tn,Vm.Tm], opc) is Err
-**Contract evidence:** documented neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T" (same T)
+**Formal:** ∀ rd,rn ∈ {0..31}, Td ≠ Tn both in valid_T. llvm-mc(cmeq Vd.Td, Vn.Tn, #0) = Err ∧ encode_neon_cmp_zero([Vd.Td, Vn.Tn], 0, 0b01001) = Err
+**Contract evidence:** inferred (ARM matching-T; README.md:12; llvm-mc invalid operand)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_logical([v0.8b, v0.8b, v0.16b], opc=0)
-**Expected / Actual:** Err / Ok(Word) of `and v0.8b, v0.8b, v0.8b`
-**Impact:** Mixed-width typos assemble as dest-Q AND/ORR/EOR
-**Root cause:** neon.rs:299-300 bind `_arr_n` / `_arr_m` and never compare them to dest T
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:299`
+**Counterexample:** encode_neon_cmp_zero([v0.16b, v0.8b], 0, 0b01001) — `cmeq v0.16b, v0.8b, #0`
+**Expected / Actual:** Err / Ok(Word) encoded as if both were .16b
+**Impact:** Mismatched lane arrangements assemble using only dest T.
+**Root cause:** neon.rs:194 discards the source arrangement.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:194`
 ```rust
-    let (rn, _arr_n) = get_neon_reg(operands, 1)?;
+    let (rn, _) = get_neon_reg(operands, 1)?;
 ```
-**Suggested fix:** Require dest, Rn, and Rm arrangements to match
+**Suggested fix:** Require arr_n == arr_d.
 ```rust
     let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    let (rm, arr_m) = get_neon_reg(operands, 2)?;
-    if arr_d != arr_n || arr_n != arr_m {
-        return Err(format!("NEON logical arrangement mismatch: .{arr_d}, .{arr_n}, .{arr_m}"));
+    if arr_n != arr_d {
+        return Err(format!("NEON compare-zero: arrangement mismatch {} vs {}", arr_d, arr_n));
     }
 ```
-**Bug report:** bug_reports/encode_neon_logical_mismatch_t.md
-**Repro seed:** (deterministic regression)
-**Raw output:** Test failed: mismatched T must Err (llvm-mc rejects and v0.8b, v0.8b, v0.16b). minimal failing input: rd = 0, rn = 0, rm = 0, td = "8b", tn = "8b", tm = "16b", opc = 0
+**Bug report:** bug_reports/encode_neon_cmp_zero_mismatch_t.md
+**Repro seed:** (deterministic after shrink: td=16b, tn=8b)
+**Raw output:** Test failed: mismatched T must Err (llvm-mc rejects cmeq v0.16b, v0.8b, #0). minimal failing input: rd = 0, rn = 0, td = "16b", tn = "8b"
 
-### B3: encode_neon_logical accepts arrangements other than .8b/.16b
+### B3: encode_neon_cmp_zero encodes reserved .1d (size:Q=11:0)
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {4h,8h,2s,4s,2d,1d,4b,8d}, opc ∈ {0b00,0b01,0b10}. encode_neon_logical([Vd.T,Vn.T,Vm.T], opc) is Err
-**Contract evidence:** documented neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T"; ARM ARM AND/ORR/EOR T in {8B,16B}
-**Documentation conflict:** (none)
+**Formal:** ∀ rd,rn ∈ {0..31}, (U,opc) in cmp_zero_u_opc. llvm-mc(cmeq Vd.1d, Vn.1d, #0) = Err ∧ encode_neon_cmp_zero([Vd.1d, Vn.1d], U, opc) = Err
+**Contract evidence:** inferred (ARM ARM reserved size:Q=11:0 for integer compare-to-zero; llvm-mc invalid operand)
+**Documentation conflict:** (none) — neon_arr_to_q_size accepts 1d for other NEON uses; this instruction must still reject it
 **Severity:** medium
-**Counterexample:** encode_neon_logical([v0.4h, v0.4h, v0.4h], opc=0)
-**Expected / Actual:** Err / Ok(Word) of `and v0.8b, v0.8b, v0.8b` (Q=0)
-**Impact:** Invalid SIMD shapes assemble as the wrong Q-width instruction
-**Root cause:** neon.rs:302 sets Q=1 only when dest is exactly "16b", else Q=0, with no {8b,16b} allow-list
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:302`
+**Counterexample:** encode_neon_cmp_zero([v0.1d, v0.1d], u=0, opcode=8) — `cmeq v0.1d, v0.1d, #0`
+**Expected / Actual:** Err / Ok(Word) with Q=0, size=11
+**Impact:** Reserved encoding is emitted for an arrangement llvm-mc/gas reject.
+**Root cause:** neon.rs:195 uses neon_arr_to_q_size, which maps "1d" to (0, 0b11) at neon.rs:52, without rejecting that reserved pair.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:52`
 ```rust
-    let q: u32 = if arr_d == "16b" { 1 } else { 0 };
+        "1d" => Ok((0, 0b11)),
 ```
-**Suggested fix:** Accept only .8b and .16b
+**Suggested fix:** Reject Q=0,size=11 inside encode_neon_cmp_zero.
 ```rust
-    let q: u32 = match arr_d.as_str() {
-        "8b" => 0,
-        "16b" => 1,
-        other => return Err(format!("NEON logical requires .8b or .16b, got .{other}")),
-    };
-```
-**Bug report:** bug_reports/encode_neon_logical_invalid_t.md
-**Repro seed:** (deterministic regression)
-**Raw output:** Test failed: invalid T must Err (only .8b/.16b; llvm-mc rejects and v0.4h, v0.4h, v0.4h). minimal failing input: rd = 0, rn = 0, rm = 0, t = "4h", opc = 0
-
-### B4: encode_neon_logical encodes GPR/SP/bare/FP sources as NEON registers
-
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}, opc ∈ {0b00,0b01,0b10}, kind ∈ {x-src, w-src, sp-src, bare-v, d-src, s-src, q-src}. encode_neon_logical([Vd.T, non-arranged Vn/Vm], opc) is Err
-**Contract evidence:** documented neon.rs:296 "Encode NEON logical operations: ORR/AND/EOR Vd.T, Vn.T, Vm.T"; inferred (encode_logical passes Vn/Vm through when dest is RegArrangement)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_logical([v0.8b, x0, x0], opc=0)
-**Expected / Actual:** Err / Ok(Word) of `and v0.8b, v0.8b, v0.8b`
-**Impact:** Mixed GPR/vector typos produce the wrong instruction
-**Root cause:** neon.rs:299-300 call get_neon_reg, which accepts Operand::Reg; GPR numbers are packed into Rn/Rm
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:299`
-```rust
-    let (rn, _arr_n) = get_neon_reg(operands, 1)?;
-```
-**Suggested fix:** Require a non-empty arrangement on every operand
-```rust
-    if arr_d.is_empty() || arr_n.is_empty() || arr_m.is_empty() {
-        return Err("NEON logical requires arranged vector registers".to_string());
+    let (q, size) = neon_arr_to_q_size(&arr_d)?;
+    if q == 0 && size == 0b11 {
+        return Err("NEON compare-zero: .1d is reserved".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_logical_gpr_src.md
-**Repro seed:** (deterministic regression)
-**Raw output:** Test failed: non-arranged NEON / GPR / SP / FP source must Err (llvm-mc rejects and v0.8b, x0, x0). minimal failing input: rd = 0, rn = 0, rm = 0, t = "8b", opc = 0, kind = 0
+**Bug report:** bug_reports/encode_neon_cmp_zero_reserved_1d.md
+**Repro seed:** (deterministic after shrink: rd=0, rn=0, u=0, opcode=8)
+**Raw output:** Test failed: reserved .1d must Err (ARM size:Q=11:0 reserved; llvm-mc rejects cmeq v0.1d, v0.1d, #0). minimal failing input: rd = 0, rn = 0, u = 0, opcode = 8
 
-### B5: encode_neon_logical encodes ANDS vector form as EOR
+### B4: encode_neon_cmp_zero accepts GPR/non-V names as NEON registers
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b}. encode_neon_logical([Vd.T,Vn.T,Vm.T], 0b11) is Err
-**Contract evidence:** documented limitation neon.rs:313 "ANDS - not valid for NEON, fall back"
-**Documentation conflict:** neon.rs:313 "ANDS - not valid for NEON, fall back" — admits a gap on an input the API accepts (encode_logical routes "ands" with opc=0b11). Known limitation, not an input-domain exclusion.
-**Severity:** medium (documented by the author)
-**Counterexample:** encode_neon_logical([v0.8b, v0.8b, v0.8b], opc=0b11)
-**Expected / Actual:** Err / Ok(Word) of `eor v0.8b, v0.8b, v0.8b`
-**Impact:** `ands v0.16b, v1.16b, v2.16b` emits EOR instead of failing
-**Root cause:** neon.rs:313 maps opc=0b11 to (U=1, size=00), the EOR encoding
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:313`
+**Formal:** ∀ kind ∈ {x-dest, w-dest, sp-dest, bare-v, arranged-x-prefix, GPR-src, s-dest}. llvm-mc rejects ∧ encode_neon_cmp_zero(ops, 0, 0b01001) = Err
+**Contract evidence:** inferred (README.md:12; llvm-mc requires Vd.T / Vn.T)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_cmp_zero([RegArrangement{reg:"x0", arrangement:"8b"}, v0.8b], 0, 0b01001) — `cmeq x0.8b, v0.8b, #0`
+**Expected / Actual:** Err / Ok(Word) identical to `cmeq v0.8b, v0.8b, #0`
+**Impact:** GPR names assemble as V registers. Additional witness: `cmeq v0.8b, x0, #0` also encodes.
+**Root cause:** get_neon_reg feeds any register name through parse_reg_num, which accepts x/w/d/s/q/v/h/b prefixes.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:9`
 ```rust
-        0b11 => (1, 0b00),  // ANDS - not valid for NEON, fall back
+            let num = parse_reg_num(reg)
+                .ok_or_else(|| format!("invalid NEON register: {}", reg))?;
+            Ok((num, arrangement.clone()))
 ```
-**Suggested fix:** Return Err for opc=0b11
+**Suggested fix:** Require a V-prefixed RegArrangement on both operands.
 ```rust
-        0b11 => return Err("ANDS is not a NEON instruction".to_string()),
+            Some(Operand::RegArrangement { reg, arrangement })
+                if reg.starts_with('v') || reg.starts_with('V') => { /* parse */ }
 ```
-**Bug report:** bug_reports/encode_neon_logical_ands.md
-**Repro seed:** (deterministic regression)
-**Raw output:** Test failed: ANDS is not a NEON instruction (neon.rs:313); must Err (llvm-mc rejects ands v0.8b, v0.8b, v0.8b). minimal failing input: rd = 0, rn = 0, rm = 0, t = "8b"
+**Bug report:** bug_reports/encode_neon_cmp_zero_non_v_prefix.md
+**Repro seed:** (deterministic after shrink: kind=4, rd=0, rn=0, t=8b)
+**Raw output:** Test failed: non-arranged NEON / GPR / SP / non-V prefix must Err (llvm-mc rejects cmeq x0.8b, v0.8b, #0). minimal failing input: rd = 0, rn = 0, t = "8b", kind = 4
 
 ## Design Caveats
 
@@ -150,77 +134,70 @@ if operands.len() != 3 {
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_logical_pbt.rs | 12 properties + 8 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_cmp_zero_pbt.rs | 11 properties + 4 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_cmp_zero_pbt` |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_logical -- --test-threads=1
+cargo test --lib encode_neon_cmp_zero -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_logical_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_neon_cmp_zero_neg_extra -- --test-threads=1
 ```
 
 B2 mismatch T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_logical_regression_mismatch_t -- --test-threads=1
+cargo test --lib encode_neon_cmp_zero_neg_mismatch_t -- --test-threads=1
 ```
 
-B3 invalid T:
+B3 reserved 1d:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_logical_regression_invalid_t -- --test-threads=1
+cargo test --lib encode_neon_cmp_zero_neg_reserved_1d -- --test-threads=1
 ```
 
-B4 GPR source:
+B4 non-V prefix:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_logical_regression_gpr_src -- --test-threads=1
-```
-
-B5 ANDS as EOR:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_logical_regression_ands -- --test-threads=1
+cargo test --lib encode_neon_cmp_zero_neg_gpr_bare_nonv -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/report.json
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/run/encode_neon_logical_pbt.log
-- pbt-out/run/encode_neon_logical_pbt_round2.log
-- pbt-out/bug_reports/encode_neon_logical_extra_operand.md
-- pbt-out/bug_reports/encode_neon_logical_extra_operand.html
-- pbt-out/bug_reports/encode_neon_logical_mismatch_t.md
-- pbt-out/bug_reports/encode_neon_logical_mismatch_t.html
-- pbt-out/bug_reports/encode_neon_logical_invalid_t.md
-- pbt-out/bug_reports/encode_neon_logical_invalid_t.html
-- pbt-out/bug_reports/encode_neon_logical_gpr_src.md
-- pbt-out/bug_reports/encode_neon_logical_gpr_src.html
-- pbt-out/bug_reports/encode_neon_logical_ands.md
-- pbt-out/bug_reports/encode_neon_logical_ands.html
+- pbt-out/report.json
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_neon_cmp_zero_extra_operand.md
+- pbt-out/bug_reports/encode_neon_cmp_zero_extra_operand.html
+- pbt-out/bug_reports/encode_neon_cmp_zero_mismatch_t.md
+- pbt-out/bug_reports/encode_neon_cmp_zero_mismatch_t.html
+- pbt-out/bug_reports/encode_neon_cmp_zero_reserved_1d.md
+- pbt-out/bug_reports/encode_neon_cmp_zero_reserved_1d.html
+- pbt-out/bug_reports/encode_neon_cmp_zero_non_v_prefix.md
+- pbt-out/bug_reports/encode_neon_cmp_zero_non_v_prefix.html
+- pbt-out/run/encode_neon_cmp_zero_test.log
+- pbt-out/run/encode_neon_cmp_zero_test2.log
+- pbt-out/run/encode_neon_cmp_zero_test3.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 18:52 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 135/289 total | PBT candidates: 135 | Tested: 135 (100%) | 0 pass, 135 fail
+> Last updated: 2026-10-05 19:12 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 136/289 total | PBT candidates: 136 | Tested: 136 (100%) | 0 pass, 136 fail
 
 ## Summary
 
@@ -229,10 +206,10 @@ cargo test --lib test_encode_neon_logical_regression_ands -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 135 |
-| **Tested (of PBT candidates)** | **135 / 135 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 135 / 0 |
-| **Overall (tested / all functions)** | **135 / 289 (47%)** |
+| PBT candidates (from FUNCTION_INDEX) | 136 |
+| **Tested (of PBT candidates)** | **136 / 136 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 136 / 0 |
+| **Overall (tested / all functions)** | **136 / 289 (47%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -240,13 +217,13 @@ cargo test --lib test_encode_neon_logical_regression_ands -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 135 | 135 | 0 | 100% |
+|  | 136 | 136 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 135 | 135 | 0 | 100% |
+| unknown | 136 | 136 | 0 | 100% |
 
 ## File Coverage
 
@@ -259,7 +236,7 @@ cargo test --lib test_encode_neon_logical_regression_ands -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 50 | 50 | 100% | covered |
+| neon.rs | 68 | 51 | 51 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -404,3 +381,4 @@ cargo test --lib test_encode_neon_logical_regression_ands -- --test-threads=1
 | encode_neon_three_same | neon.rs |
 | encode_neon_three_diff | neon.rs |
 | encode_neon_logical | neon.rs |
+| encode_neon_cmp_zero | neon.rs |
