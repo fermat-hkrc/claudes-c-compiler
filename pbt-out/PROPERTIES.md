@@ -1,249 +1,259 @@
-# Properties: encode_neon_scalar_three_same
+# Properties: encode_neon_scalar_addp
 
-## encode_neon_scalar_three_same_diff_llvm_mc
+## encode_neon_scalar_addp_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the documented scalar domain ADD/SUB Dd, Dn, Dm. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree scalar ADD/SUB decoder). Sibling encode_neon_three_same / encode_neon_add_sub rejected (same-job gate: vector Vd.T vs scalar Dd).
-- Doc contract: neon.rs:1790 "Encode scalar NEON three-same: 01 U 11110 size 1 Rm opcode 1 Rn Rd" — asserted fingerprint 7e993fde
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_diff_llvm_mc
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}. encode_neon_scalar_three_same([Dd, Dn, Dm], U=is_sub, opcode=10000, size=11) = Word(w) ∧ w = llvm-mc("{add|sub} Dd, Dn, Dm")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree scalar ADDP decoder). Sibling encode_neon_three_same / encode_neon_faddp rejected (same-job gate: vector ADDP and float FADDP are different opcodes). Doc evidence: README.md:12 GNU-style assembly; README.md:237 `addp` (scalar); neon.rs:1801 form `addp Dd, Vn.2d`.
+- Doc contract: neon.rs:1801 "NEON scalar ADDP: addp Dd, Vn.2d" — asserted fingerprint d6d5ee84
+- Seed: encode_neon_scalar_three_same_pbt.rs:168 llvm-mc differential
+- Formal: ∀ rd,rn ∈ {0..31}. encode_neon_scalar_addp([Reg("d{rd}"), RegArrangement("v{rn}","2d")]) = Word(llvm-mc("addp d{rd}, v{rn}.2d"))
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool }
+  vars: [rd, rn]
+  domain: { rd: "0..=31", rn: "0..=31" }
   relation:
     op: eq
-    lhs: encode_neon_scalar_three_same([Reg(d rd), Reg(d rn), Reg(d rm)], u=is_sub, opcode=0b10000, size=0b11)
-    rhs: llvm_mc("{add|sub} d{rd}, d{rn}, d{rm}")
+    lhs: encode_neon_scalar_addp([Reg(d{rd}), RegArrangement(v{rn}, 2d)])
+    rhs: llvm_mc_word("addp d{rd}, v{rn}.2d")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-evidence: src/backend/arm/assembler/encoder/neon.rs:1790
+evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_scalar_three_same_meta_rd_rn_rm_u
+## encode_neon_scalar_addp_meta_rd_rn
 - Tier: 3
-- Rationale: ARM scalar three-same layout isolates Rd[4:0], Rn[9:5], Rm[20:16], U[29]. Changing one of those must differ only in that field. Weaker than differential (already used for value agreement) but independently checks field placement.
-- Doc contract: neon.rs:1790 "Encode scalar NEON three-same: 01 U 11110 size 1 Rm opcode 1 Rn Rd" — asserted fingerprint 7e993fde
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_metamorphic_rd_rn_rm_u
-- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}. let w(rd,rn,rm,u)=encode_neon_scalar_three_same([Dd,Dn,Dm], u, 10000, 11). (w(rd1,rn1,rm1,0) ⊕ w(rd2,rn1,rm1,0)) ∧ ¬0x1F = 0 ∧ Rd=rd; (w ⊕ w_rn2) ∧ ¬(0x1F<<5) = 0; (w ⊕ w_rm2) ∧ ¬(0x1F<<16) = 0; (w ⊕ w_u1) ∧ ¬(1<<29) = 0
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+- Rationale: Weaker than differential; metamorphic field isolation: changing only Rd (resp. Rn) differs only in bits[4:0] (resp. bits[9:5]). Stronger rejected as above for this relation. ARM SISD ADDP layout at neon.rs:1812.
+- Doc contract: neon.rs:1812 "Scalar ADDP: 01 0 11110 11 11000 11011 10 Rn Rd" — asserted fingerprint 124148d9
+- Seed: encode_neon_scalar_three_same_pbt.rs:204 Rd/Rn isolation
+- Formal: ∀ rd1,rd2,rn1,rn2 ∈ {0..31}. let w11 = f(rd1,rn1); w21 = f(rd2,rn1); w12 = f(rd1,rn2). (w11 ⊕ w21) ∧ ¬0x1F = 0 ∧ (w21 ∧ 0x1F) = rd2 ∧ (w11 ⊕ w12) ∧ ¬(0x1F≪5) = 0 ∧ ((w12≫5) ∧ 0x1F) = rn2
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd1, rd2, rn1, rn2, rm1, rm2]
-  domain: { rd1: u32_0_31, rd2: u32_0_31, rn1: u32_0_31, rn2: u32_0_31, rm1: u32_0_31, rm2: u32_0_31 }
+  vars: [rd1, rd2, rn1, rn2]
+  domain: { rd1: "0..=31", rd2: "0..=31", rn1: "0..=31", rn2: "0..=31" }
   relation:
     op: holds
-    expr: field_isolation(Rd[4:0], Rn[9:5], Rm[20:16], U[29])
+    expr: rd_rn_isolation(rd1, rd2, rn1, rn2)
 generators:
   rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
   rn1: { gen: int, min: 0, max: 31, type: u32 }
   rn2: { gen: int, min: 0, max: 31, type: u32 }
-  rm1: { gen: int, min: 0, max: 31, type: u32 }
-  rm2: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/arm/assembler/encoder/neon.rs:1790
+evidence: src/backend/arm/assembler/encoder/neon.rs:1812
 ```
 
-## encode_neon_scalar_three_same_invariant_arm_fields
-- Tier: 4
-- Rationale: Documented ARM scalar three-same word layout must hold on the success path, including opcode at [15:11] and size at [23:22] over the ARM field widths. Weaker than differential.
-- Doc contract: neon.rs:1790 "Encode scalar NEON three-same: 01 U 11110 size 1 Rm opcode 1 Rn Rd" — asserted fingerprint 7e993fde
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_invariant_arm_fields
-- Formal: ∀ rd,rn,rm ∈ {0..31}, u ∈ {0,1}, opcode ∈ {0..31}, size ∈ {0..3}. let w=encode_neon_scalar_three_same([Dd,Dn,Dm], u, opcode, size). w[31:30]=01 ∧ w[29]=u ∧ w[28:24]=11110 ∧ w[23:22]=size ∧ w[21]=1 ∧ w[20:16]=rm ∧ w[15:11]=opcode ∧ w[10]=1 ∧ w[9:5]=rn ∧ w[4:0]=rd
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+## encode_neon_scalar_addp_invariant_arm_fields
+- Tier: 3
+- Rationale: Algebraic invariant of the ARM SISD ADDP encoding. Stronger differential covers value equality; this pins every documented field bit. Evidence: neon.rs:1812 encoding comment.
+- Doc contract: neon.rs:1812 "Scalar ADDP: 01 0 11110 11 11000 11011 10 Rn Rd" — asserted fingerprint 124148d9
+- Seed: encode_neon_scalar_three_same_pbt.rs:250 ARM field layout
+- Formal: ∀ rd,rn ∈ {0..31}. let w = encode_neon_scalar_addp([Reg("d{rd}"), RegArrangement("v{rn}","2d")]). w[31:30]=01 ∧ w[29]=0 ∧ w[28:24]=11110 ∧ w[23:22]=11 ∧ w[21:17]=11000 ∧ w[16:12]=11011 ∧ w[11:10]=10 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, u, opcode, size]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, u: {0,1}, opcode: u32_0_31, size: u32_0_3 }
+  vars: [rd, rn]
+  domain: { rd: "0..=31", rn: "0..=31" }
   relation:
     op: holds
-    expr: arm_scalar_three_same_layout(w, rd, rn, rm, u, opcode, size)
+    expr: arm_sisd_addp_fields(encode_neon_scalar_addp([Reg(d{rd}), RegArrangement(v{rn}, 2d)]))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  u: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-evidence: src/backend/arm/assembler/encoder/neon.rs:1790
+evidence: src/backend/arm/assembler/encoder/neon.rs:1812
 ```
 
-## encode_neon_scalar_three_same_neg_arity
-- Tier: 5
-- Rationale: Documented "scalar three-same requires 3 operands"; llvm-mc rejects arity 0-2 for add/sub Dd. Negative/error contract.
-- Doc contract: neon.rs:1792 "scalar three-same requires 3 operands" — domain-restriction fingerprint cff945ed
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_neg_arity
-- Formal: ∀ n ∈ {0,1,2}, rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}. llvm-mc rejects arity-n add|sub ∧ encode_neon_scalar_three_same(ops[:n], U, 10000, 11) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+## encode_neon_scalar_addp_neg_arity
+- Tier: 4
+- Rationale: Documented error contract — arity < 2 returns Err. llvm-mc also rejects 0- and 1-operand addp. Domain restriction at neon.rs:1803.
+- Doc contract: neon.rs:1803 "scalar addp requires 2 operands" — domain-restriction fingerprint 8c205ae9
+- Seed: encode_neon_scalar_three_same_pbt.rs:276 arity
+- Formal: ∀ n ∈ {0,1}, rd,rn ∈ {0..31}. llvm-mc rejects arity-n addp ∧ encode_neon_scalar_addp(ops[..n]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, rd, rn, rm, is_sub]
-  domain: { n: 0..2, rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool }
+  vars: [n, rd, rn]
+  domain: { n: "0..=1", rd: "0..=31", rn: "0..=31" }
   relation:
     op: holds
-    expr: encode_neon_scalar_three_same(ops[:n], u, 0b10000, 0b11).is_err()
+    expr: encode_neon_scalar_addp(ops.take(n)).is_err()
+expected_error: String
 generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
+  n: { gen: int, min: 0, max: 1, type: usize }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-expected_error: String
-evidence: src/backend/arm/assembler/encoder/neon.rs:1792
+evidence: src/backend/arm/assembler/encoder/neon.rs:1803
 ```
 
-## encode_neon_scalar_three_same_neg_extra_operand
-- Tier: 5
-- Rationale: gas/llvm-mc reject a fourth operand on add/sub Dd, Dn, Dm. The assembler claims gas-compatible assembly. encode() passes extra operands through when dest is Dd (is_neon_scalar_d_reg_op only checks dest and len>=3). Negative/error: 4 operands must Err. The body checks only len()<3 so extras are ignored — that is the finding, not a reason to weaken the oracle.
-- Doc contract: neon.rs:1792 "scalar three-same requires 3 operands" — domain-restriction fingerprint cff945ed
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_neg_extra_operand
-- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, is_sub ∈ {false,true}. llvm-mc rejects "{add|sub} Dd, Dn, Dm, Dx" ∧ encode_neon_scalar_three_same([Dd,Dn,Dm,Dx], U, 10000, 11) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+## encode_neon_scalar_addp_neg_extra_operand
+- Tier: 4
+- Rationale: GNU/gas and llvm-mc reject a third operand on scalar ADDP. Function comment "requires 2 operands" plus README GNU-style contract. Function checks only len < 2; extra ignored is a documented-arity violation.
+- Doc contract: neon.rs:1803 "scalar addp requires 2 operands" — domain-restriction fingerprint 8c205ae9
+- Seed: encode_neon_scalar_three_same_pbt.rs:306 extra operand
+- Formal: ∀ rd,rn,extra ∈ {0..31}. llvm-mc("addp d{rd}, v{rn}.2d, d{extra}") fails ∧ encode_neon_scalar_addp([Dd, Vn.2d, extra]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, extra=0, is_sub=false — encode_neon_scalar_three_same([d0, d0, d0, d0], U=0, opcode=10000, size=11) = Word(0x5ee08400) instead of Err
-- Bug report: bug_reports/encode_neon_scalar_three_same_extra_operand.md
+- Counterexample: encode_neon_scalar_addp([Reg("d0"), RegArrangement { reg: "v0", arrangement: "2d" }, Reg("d0")])
+- Bug report: pbt-out/bug_reports/encode_neon_scalar_addp_extra_operand.md
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, extra, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, extra: u32_0_31, is_sub: bool }
+  vars: [rd, rn, extra]
+  domain: { rd: "0..=31", rn: "0..=31", extra: "0..=31" }
   relation:
     op: holds
-    expr: encode_neon_scalar_three_same([Dd, Dn, Dm, Dx], u, 0b10000, 0b11).is_err()
+    expr: encode_neon_scalar_addp([Dd, Vn.2d, extra]).is_err()
+expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-expected_error: String
-evidence: src/backend/arm/assembler/encoder/neon.rs:1792
+evidence: src/backend/arm/assembler/encoder/neon.rs:1803
 ```
 
-## encode_neon_scalar_three_same_neg_wrong_reg_class
-- Tier: 5
-- Rationale: ARM/llvm-mc accept only D registers for integer scalar ADD/SUB (size=11). The function comment names ADD/SUB Dd, Dn, Dm. encode() routes here whenever dest is Dd, so a non-D Rn/Rm is caller-reachable. Negative/error: must Err.
-- Doc contract: neon.rs:1789 "NEON scalar three-same: ADD/SUB Dd, Dn, Dm" — asserted fingerprint 630276e4
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_neg_gpr_or_bare
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, slot ∈ {1,2}, pfx ∈ {s,h,b,x,w,q,v,sp,xzr}. dest is Dd ∧ source slot is non-D ∧ llvm-mc rejects the asm ∧ encode_neon_scalar_three_same(ops, U, 10000, 11) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+## encode_neon_scalar_addp_neg_wrong_reg_class
+- Tier: 4
+- Rationale: ARM/gas/llvm-mc require dest Dd (not s/h/b/x/w/q/v/sp/zr) and source Vn.2D (not x/w/d/s prefix). Comment neon.rs:1801 form `addp Dd, Vn.2d` and error "expected d register". Function accepts any parse_reg_num dest and any prefix on the .2d source.
+- Doc contract: neon.rs:1801 "NEON scalar ADDP: addp Dd, Vn.2d" — asserted fingerprint d6d5ee84
+- Seed: encode_neon_scalar_three_same_pbt.rs:330 wrong reg class
+- Formal: ∀ rd,rn ∈ {0..31}, pfx ∈ {s,h,b,x,w,q,v,sp,xzr,wsp,wzr,lr}. llvm-mc rejects addp with dest pfx (or source pfx.2d) ∧ encode_neon_scalar_addp on that operand vector = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, is_sub=false, slot=1, pfx="s" — encode_neon_scalar_three_same([d0, s0, d0], U=0, opcode=10000, size=11) = Word instead of Err
-- Bug report: bug_reports/encode_neon_scalar_three_same_wrong_reg_class.md
+- Counterexample: encode_neon_scalar_addp([Reg("s0"), RegArrangement { reg: "v0", arrangement: "2d" }])
+- Bug report: pbt-out/bug_reports/encode_neon_scalar_addp_wrong_reg_class.md
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_sub, slot, pfx]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool, slot: {1,2}, pfx: {s,h,b,x,w,q,v,sp,xzr} }
+  vars: [rd, rn, slot, pfx]
+  domain: { rd: "0..=31", rn: "0..=31", slot: "0..=1", pfx: "non-d dest or non-v source" }
   relation:
     op: holds
-    expr: encode_neon_scalar_three_same(ops_with_non_d_source, u, 0b10000, 0b11).is_err()
+    expr: encode_neon_scalar_addp(wrong_class_ops).is_err()
+expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-  slot: { gen: int, min: 1, max: 2, type: usize }
-  pfx: { gen: element, of: ["s", "h", "b", "x", "w", "q", "v", "sp", "xzr"] }
-expected_error: String
-evidence: src/backend/arm/assembler/encoder/neon.rs:1789
+  slot: { gen: int, min: 0, max: 1, type: usize }
+evidence: src/backend/arm/assembler/encoder/neon.rs:1801
 ```
 
-## encode_neon_scalar_three_same_neg_nonreg
-- Tier: 5
-- Rationale: Function returns "expected register" for a non-Reg operand. llvm-mc rejects Imm/Mem/Label in any of the three slots. Negative/error contract.
-- Doc contract: neon.rs:1793 "expected register" — domain-restriction fingerprint 551b0369
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_neg_nonreg
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, slot ∈ {0,1,2}, kind ∈ {Imm,Mem,Label}. encode_neon_scalar_three_same(ops with non-Reg at slot, U, 10000, 11) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+## encode_neon_scalar_addp_neg_bad_arrangement
+- Tier: 4
+- Rationale: Source must be Vn.2d; any other arrangement is rejected by llvm-mc and by the function's own error at neon.rs:1807. Documented bound: arrangement == "2d". Generator covers the closed set of other NEON arrangements.
+- Doc contract: neon.rs:1807 "scalar addp requires .2d source, got .{}" — asserted fingerprint 4241c204
+- Seed: encode_neon_faddp_pbt.rs invalid T
+- Formal: ∀ rd,rn ∈ {0..31}, arr ∈ {8b,16b,4h,8h,2s,4s,1d}. llvm-mc rejects addp d{rd}, v{rn}.{arr} ∧ encode_neon_scalar_addp([Dd, Vn.arr]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_sub, slot, kind]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool, slot: 0..2, kind: {Imm,Mem,Label} }
+  vars: [rd, rn, arr]
+  domain: { rd: "0..=31", rn: "0..=31", arr: "{8b,16b,4h,8h,2s,4s,1d}" }
   relation:
     op: holds
-    expr: encode_neon_scalar_three_same(ops_with_nonreg_at_slot, u, 0b10000, 0b11).is_err()
+    expr: encode_neon_scalar_addp([Reg(d{rd}), RegArrangement(v{rn}, arr)]).is_err()
+expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-  slot: { gen: int, min: 0, max: 2, type: usize }
+  arr: { gen: oneof, values: ["8b","16b","4h","8h","2s","4s","1d"] }
+evidence: src/backend/arm/assembler/encoder/neon.rs:1807
+```
+
+## encode_neon_scalar_addp_neg_nonreg
+- Tier: 4
+- Rationale: Imm/Mem/Label in either slot is not a register form. llvm-mc rejects; function should Err. Error paths at neon.rs:1805 (dest) and neon.rs:1810 (source).
+- Doc contract: neon.rs:1805 "expected d register" — asserted fingerprint b47dce50
+- Seed: encode_neon_scalar_three_same_pbt.rs:365 nonreg
+- Formal: ∀ rd,rn ∈ {0..31}, kind ∈ {Imm,Mem,Label}, slot ∈ {0,1}. encode_neon_scalar_addp(ops with slot=kind) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_neon_scalar_addp
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, kind, slot]
+  domain: { rd: "0..=31", rn: "0..=31", kind: "0..=2", slot: "0..=1" }
+  relation:
+    op: holds
+    expr: encode_neon_scalar_addp(nonreg_ops).is_err()
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
   kind: { gen: int, min: 0, max: 2, type: u8 }
-expected_error: String
-evidence: src/backend/arm/assembler/encoder/neon.rs:1793
+  slot: { gen: int, min: 0, max: 1, type: usize }
+evidence: src/backend/arm/assembler/encoder/neon.rs:1805
 ```
 
-## encode_neon_scalar_three_same_diff_alt_spellings
+## encode_neon_scalar_addp_diff_alt_spellings
 - Tier: 2
-- Rationale: gas-compatible assembly accepts uppercase D registers and uppercase ADD/SUB mnemonics. parse_reg_num lowercases prefixes. Sweep/strengthening differential vs llvm-mc.
-- Doc contract: neon.rs:1790 "Encode scalar NEON three-same: 01 U 11110 size 1 Rm opcode 1 Rn Rd" — asserted fingerprint 7e993fde
-- Seed: encode_neon_add_sub_pbt.rs:encode_neon_add_sub_diff_alt_spellings
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}. encode_neon_scalar_three_same([D{rd}, D{rn}, D{rm}], U, 10000, 11) = llvm-mc("{ADD|SUB} D{rd}, D{rn}, D{rm}")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs
+- Rationale: Sweep / strengthening: uppercase D/V prefixes and ADDP mnemonic must still match llvm-mc. parse_reg_num lowercases; arrangement in the test is the parser-canonical "2d".
+- Doc contract: neon.rs:1801 "NEON scalar ADDP: addp Dd, Vn.2d" — asserted fingerprint d6d5ee84
+- Seed: encode_neon_scalar_three_same_pbt.rs:410 alt-spellings
+- Formal: ∀ rd,rn ∈ {0..31}. encode_neon_scalar_addp([Reg("D{rd}"), RegArrangement("V{rn}","2d")]) = Word(llvm-mc("ADDP D{rd}, V{rn}.2D"))
+- Test file: src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_scalar_three_same
+function: encode_neon_scalar_addp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool }
+  vars: [rd, rn]
+  domain: { rd: "0..=31", rn: "0..=31" }
   relation:
     op: eq
-    lhs: encode_neon_scalar_three_same([Reg(D rd), Reg(D rn), Reg(D rm)], u=is_sub, opcode=0b10000, size=0b11)
-    rhs: llvm_mc("{ADD|SUB} D{rd}, D{rn}, D{rm}")
+    lhs: encode_neon_scalar_addp([Reg(D{rd}), RegArrangement(V{rn}, 2d)])
+    rhs: llvm_mc_word("ADDP D{rd}, V{rn}.2D")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-evidence: src/backend/arm/assembler/encoder/neon.rs:1790
+evidence: src/backend/arm/assembler/README.md:12
 ```

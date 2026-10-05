@@ -102,6 +102,8 @@ mod encode_neon_bitwise_insert_pbt;
 mod encode_neon_faddp_pbt;
 #[cfg(test)]
 mod encode_neon_scalar_three_same_pbt;
+#[cfg(test)]
+mod encode_neon_scalar_addp_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

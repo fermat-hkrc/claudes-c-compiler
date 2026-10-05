@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 144 | Excluded: 145
+> Total files: 10 | Total functions: 289 | PBT candidates: 145 | Excluded: 144
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -163,7 +163,7 @@
 | encode_neon_shift_left_imm | neon.rs | 1744 | function | yes | - |
 | is_neon_scalar_d_reg_op | neon.rs | 1778 | function | no | out of campaign scope |
 | encode_neon_scalar_three_same | neon.rs | 1791 | function | yes | - |
-| encode_neon_scalar_addp | neon.rs | 1802 | function | no | out of campaign scope |
+| encode_neon_scalar_addp | neon.rs | 1802 | function | yes | - |
 | encode_neon_scalar_two_misc | neon.rs | 1819 | function | no | out of campaign scope |
 | encode_neon_scalar_qshrn | neon.rs | 1835 | function | no | out of campaign scope |
 | encode_cmp | compare_branch.rs | 6 | function | yes | - |

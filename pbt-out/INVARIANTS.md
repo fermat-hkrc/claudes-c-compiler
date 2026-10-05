@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_neon_scalar_addp)
+
+- Valid ADDP Dd, Vn.2d with d0–d31 / v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5] (1000 cases).
+- Success-path word: bits[31:30]=01, bit29=0, bits[28:24]=11110, bits[23:22]=11, bits[21:17]=11000, bits[16:12]=11011, bits[11:10]=10, Rn at [9:5], Rd at [4:0] (1000 cases). Template 0x5ef1b800 | (rn<<5) | rd.
+- Arity 0–1 returns Err (1000 cases).
+- Arrangement ≠ 2d returns Err (1000 cases).
+- Imm/Mem/Label in either slot returns Err (1000 cases).
+- Uppercase D/V prefix and ADDP mnemonic match llvm-mc (1000 cases).
+- Known-answer: `addp d0, v1.2d` = 0x5ef1b820; `addp d31, v31.2d` = 0x5ef1bbff; `addp d0, v0.2d` = 0x5ef1b800; `addp d15, v16.2d` = 0x5ef1ba0f; `addp D0, V1.2D` = 0x5ef1b820; `ADDP d0, v1.2d` = 0x5ef1b820.
+- Extra operand and non-D dest / non-V source currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_scalar_addp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD scalar pairwise ADDP: 01 0 11110 11 11000 11011 10 Rn Rd; dest Dd only; source Vn.2D only.
+- Dispatch: encoder/mod.rs:641-646 addp => encode_neon_scalar_addp when operands.len()==2 and dest starts with d/D, else encode_neon_three_same (vector ADDP).
+- Sibling encode_neon_three_same / encode_neon_faddp are not same-job differentials.
+- encode_neon_scalar_addp checks operands.len() < 2 only; extra ignored; dest any Operand::Reg accepted by parse_reg_num; source arrangement must be "2d" but source prefix is not checked.
+- parse_reg_num lowercases prefixes; parser lowercases arrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus diff_alt_spellings.
+- Two failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_scalar_addp_*.md.
+
 # Confirmed invariants (encode_neon_scalar_three_same)
 
 - Valid ADD/SUB Dd, Dn, Dm with d0–d31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
