@@ -1,7 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_zip_uzp)
-> Files: 10/10 scanned (100%) | Functions: 118/289 total | PBT candidates: 118 | Tested: 118 | Coverage evidence: file-level (symbol presence)
+> Last updated: 2026-10-05 13:30 (campaign: encode_neon_eor3)
+> Files: 10/10 scanned (100%) | Functions: 119/289 total | PBT candidates: 119 | Tested: 119 | encode_neon_eor3: 6 pass / 4 fail
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and listed encode_neon_eor3 as NOT LINKED in unrelated C++ binaries. cargo test --lib encode_neon_eor3 executed the SUT.
 
 ## Summary
 
@@ -10,18 +11,33 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 118 |
-| **Tested (of PBT candidates)** | **118 / 118** |
-| This campaign target | encode_neon_zip_uzp |
-| This campaign properties | 5 passing / 4 failing (+ 1 passing alt-spellings sweep) |
-| **Coverage evidence** | file-level (symbol presence) — coverage_gaps found no .gcda/.profraw; C++ reporter listed unrelated binaries and claimed NOT LINKED. Manual arm audit: arity Err, get_neon_reg Err, neon_arr_to_q_size Err, Ok Word all driven. |
+| PBT candidates (from FUNCTION_INDEX) | 119 |
+| **Tested (of PBT candidates)** | **119 / 119** |
+| This campaign target | encode_neon_eor3 (6 passing / 4 failing properties) |
+| **Overall (tested / all functions)** | **119 / 289 (41%)** |
 
-## File Coverage (this campaign)
+## Module Breakdown
 
-| Source File | Target | Tested | Notes |
-|-------------|--------|--------|-------|
-| neon.rs | encode_neon_zip_uzp | yes | 9 properties on cargo test --lib encode_neon_zip_uzp |
+| Module | Scanned | Tested | Skipped | Coverage |
+|--------|---------|--------|---------|----------|
+| encode_neon_eor3 | 1 | 1 | 0 | 100% |
 
-## Recommended Focus
+## Oracle Type Distribution
 
-Fix the four failing encode_neon_zip_uzp negative contracts (extra operand, reserved 1d, mismatched T, bare/GPR source) before treating the permute encoder as gas-compatible.
+| Oracle Type | Total | Covered |
+|-------------|-------|---------|
+| differential | 2 | 2 |
+| algebraic.metamorphic | 1 | 1 |
+| algebraic.invariant | 1 | 1 |
+| negative_error | 6 | 6 |
+
+## File Coverage
+
+| Source File | Funcs | Candidates | Tested | Coverage | Status |
+|-------------|-------|------------|--------|----------|--------|
+| neon.rs | 68 | 34 | 34 | 100% | covered |
+
+## This campaign — encode_neon_eor3
+
+Passing: diff_llvm_mc, metamorphic_rd_rn_rm_rk, invariant_arm_fields, neg_arity, diff_alt_spellings, neg_nonreg
+Failing: neg_extra_operand, neg_invalid_t, neg_mismatched_t, neg_gpr_or_bare

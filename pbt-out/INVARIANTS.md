@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_neon_eor3)
+
+- Valid EOR3 Vd.16b, Vn.16b, Vm.16b, Vk.16b with v0–v31 matches llvm-mc `-triple=aarch64 -mattr=+sha3 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16]; only Rk in bits[14:10] (1000 cases).
+- Success-path word: bits[31:24]=11001110, bits[23:21]=000, Rm at [20:16], bit15=0, Rk/Ra at [14:10], Rn at [9:5], Rd at [4:0] = 0xce000000 | (Rm<<16) | (Rk<<10) | (Rn<<5) | Rd.
+- Arity 0–3 returns Err (1000 cases).
+- Uppercase V prefix with 16b arrangement matches llvm-mc (1000 cases).
+- Imm/Mem/Label at any operand slot returns Err (1000 cases).
+- Known-answer: `eor3 v0.16b, v1.16b, v2.16b, v3.16b` = 0xce020c20; `eor3 v31.16b, v31.16b, v31.16b, v31.16b` = 0xce1f7fff; `eor3 v0.16b, v0.16b, v0.16b, v0.16b` = 0xce000000.
+- Extra operand, T≠16b, mismatched T, and GPR/bare-V currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_eor3)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+sha3 -show-encoding.
+- ARM ARM Cryptographic three-register SHA3 EOR3: only arrangement 16B; Vd, Vn, Vm, Va.
+- Dispatch: encoder/mod.rs:776 `"eor3" => encode_neon_eor3`.
+- Sibling encode_neon_aes / encode_neon_logical are different opcodes, not same-job differentials.
+- encode_neon_eor3 checks operands.len() < 4; extra ignored; all four arrangements discarded.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus uppercase V alt-spellings and non-register operands.
+- Four SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_eor3_*.md.
+
 # Confirmed invariants (encode_neon_zip_uzp)
 
 - Valid ZIP1/ZIP2/UZP1/UZP2/TRN1/TRN2 with T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
