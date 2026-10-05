@@ -1,7 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_rev64)
-> Files: 10/10 scanned (100%) | Functions: 114/289 total | PBT candidates: 114 | Tested: 114 (100%) | 0 pass, 114 fail
+> Last updated: 2026-10-05 (campaign: encode_neon_bsl, English)
+> Files: 10/10 scanned (100%) | Functions: 115/289 total | PBT candidates: 115 | Tested: 115 (100%) | 0 pass, 115 fail
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; C++ reporter claimed NOT LINKED. Cargo lib tests executed encode_neon_bsl.
 
 ## Summary
 
@@ -10,10 +11,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 114 |
-| **Tested (of PBT candidates)** | **114 / 114 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 114 / 0 |
-| **Overall (tested / all functions)** | **114 / 289 (39%)** |
+| PBT candidates (from FUNCTION_INDEX) | 115 |
+| **Tested (of PBT candidates)** | **115 / 115 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 115 / 0 |
+| **Overall (tested / all functions)** | **115 / 289 (40%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +22,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 113 | 113 | 0 | 100% |
+|  | 115 | 115 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 113 | 113 | 0 | 100% |
+| unknown | 115 | 115 | 0 | 100% |
 
 ## File Coverage
 
@@ -40,8 +41,8 @@
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
+| neon.rs | 68 | 30 | 30 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
-| neon.rs | 68 | 29 | 28 | 97% | partial |
 
 ## Recommended Focus
 
@@ -163,3 +164,5 @@
 | encode_neon_mvni | neon.rs |
 | encode_cnt | neon.rs |
 | encode_neon_not | neon.rs |
+| encode_neon_rev64 | neon.rs |
+| encode_neon_bsl | neon.rs |

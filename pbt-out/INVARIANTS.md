@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_bsl)
+
+- Valid BSL Vd.T, Vn.T, Vm.T with T in {8b,16b}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff T=16b, bits[29:24]=101110, size bits[23:22]=01, bit21=1, Rm at [20:16], bits[15:10]=000111, Rn at [9:5], Rd at [4:0] = 0x2e601c00 | (Q<<30) | (Rm<<16) | (Rn<<5) | Rd. 8b vs 16b differs only in Q.
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase V prefix with lowercase T matches llvm-mc (1000 cases).
+- Known-answer: `bsl v0.8b, v1.8b, v2.8b` = 0x2e621c20; `bsl v0.16b, v1.16b, v2.16b` = 0x6e621c20; `bsl v31.8b, v31.8b, v31.8b` = 0x2e7f1fff; `bsl v31.16b, v0.16b, v1.16b` = 0x6e611c1f.
+- Extra operand, T∉{8b,16b}, mismatched T, and GPR/SP/bare-V/FP currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_bsl)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same (BSL): 0 Q 1 01110 size=01 1 Rm 000111 Rn Rd. T in {8B,16B} only. Q=1 iff T=16B.
+- Dispatch: encoder/mod.rs:699 `"bsl" => encode_neon_bsl`.
+- Sibling encode_neon_bic / encode_neon_bitwise_insert (BIT/BIF) are different opcodes, not same-job differentials.
+- encode_neon_bsl checks operands.len() < 3; extra ignored; source arrangements discarded; Q=1 iff arr_d=="16b" else 0 (no 8b check).
+- get_neon_reg accepts Operand::Reg; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (uppercase V alt-spellings).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_bsl_*.md.
+
 # Confirmed invariants (encode_neon_rev64)
 
 - Valid REV64 Vd.T, Vn.T with T in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
