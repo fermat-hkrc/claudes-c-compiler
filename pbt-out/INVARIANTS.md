@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_neon_fcvtl)
+
+- Valid FCVTL/FCVTL2 Vd.{4s,2d}, Vn.{4h,8h,2s,4s} with ARM-correct (Ta,Tb,Q) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: bit31=0, Q at 30 (is_high), U=0, bits[28:24]=01110, bit23=0, sz at 22 (0 for .4s, 1 for .2d), bits[21:17]=10000, bits[16:12]=10111, bits[11:10]=10, Rn at [9:5], Rd at [4:0] (1000 cases).
+- Rd/Rn isolation in bits[4:0]/[9:5]; Q isolation at bit 30 (1000 cases).
+- Arity 0–1 always Err (1000 cases).
+- Imm/Mem/Label in either slot always Err (1000 cases).
+- Uppercase V prefix matches llvm-mc (1000 cases).
+- Known-answer: `fcvtl v0.4s, v1.4h` = 0x0e217820; `fcvtl2 v0.4s, v1.8h` = 0x4e217820; `fcvtl v0.2d, v1.2s` = 0x0e617820; `fcvtl2 v0.2d, v1.4s` = 0x4e617820.
+
+## Environment (encode_neon_fcvtl)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD two-register miscellaneous FCVTL{2}: Ta=4S Tb=4H (Q=0) or 8H (Q=1); Ta=2D Tb=2S (Q=0) or 4S (Q=1); U=0; opcode=10111; sz=0 half→single, sz=1 single→double.
+- Dispatch: encoder/mod.rs:535-536 fcvtl/fcvtl2 => encode_neon_fcvtl(operands, is_high).
+- encode_neon_fcvtl has no arity maximum; source arrangement discarded; dest "2s" accepted as sz=0; get_neon_reg accepts Operand::Reg and x/w prefixes on RegArrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep: neg_nonreg passing.
+- Three SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_fcvtl_*.md.
+
+## Quirks (encode_neon_fcvtl)
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- Dest arrangement 2s encodes as sz=0 (see bugs).
+- X-prefixed RegArrangement dest encodes as V (see bugs).
+- Bare Operand::Reg dest returns Err via empty arrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus neg_nonreg.
+
 # Confirmed invariants (encode_neon_float_elem)
 
 - Rd/Rn isolation in bits[4:0]/[9:5]; U isolation at bit 29 (1000 cases).

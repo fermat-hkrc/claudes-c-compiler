@@ -92,6 +92,8 @@ mod encode_neon_elem_long_pbt;
 mod encode_neon_elem_pbt;
 #[cfg(test)]
 mod encode_neon_float_elem_pbt;
+#[cfg(test)]
+mod encode_neon_fcvtl_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

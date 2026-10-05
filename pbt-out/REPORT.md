@@ -1,221 +1,113 @@
-# PBT Campaign Report: encode_neon_float_elem
+# PBT Campaign Report: encode_neon_fcvtl
 
 ## Summary
 
-**Verdict:** 1 high: encode_neon_float_elem leaves ARM size bit 23 clear, so every FMUL/FMLA/FMLS by-element word disagrees with llvm-mc/gas (0x0f009000 vs 0x0f809000 for `fmul v0.2s, v0.2s, v0.s[0]`); plus 5 medium: extra operand, mismatched T, X-prefix dest, index OOB, mismatched lane size.
+**Verdict:** 1 high, 2 medium: encode_neon_fcvtl accepts dest `.2s` and ignores source arrangement so invalid FCVTL encodes as a different valid instruction; it also silently drops a third operand and encodes an X-prefixed dest as V.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_float_elem
-**Tests:** 11
-**Result:** 4 passing, 7 bugs (6 unique defects; B1 and B7 are the same size-bit encoding)
-**Change surface:** 1 changed function (encode_neon_float_elem), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter; claimed NOT LINKED). The SUT ran under `cargo test --lib encode_neon_float_elem`. Sweep round 1/1 spent.
-**Effort tier:** standard
+**Modules tested:** encode_neon_fcvtl
+**Tests:** 9
+**Result:** 6 passing, 3 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). The cargo test run executed encode_neon_fcvtl via encode_neon_fcvtl_pbt.rs.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_float_elem | 11 | 7 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_fcvtl | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_float_elem leaves ARM size bit 23 clear
+### B1: encode_neon_fcvtl ignores a third operand
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, idx ∈ {0..imax(T)}, (U,opc,mnem) ∈ {(0,0b1001,fmul),(0,0b0001,fmla),(0,0b0101,fmls),(1,0b1001,fmulx)}. encode_neon_float_elem([Vd.T, Vn.T, Vm.Ts[idx]], U, opc) = llvm-mc("-triple=aarch64 -show-encoding", "mnem Vd.T, Vn.T, Vm.Ts[idx]") where imax(2s)=imax(4s)=3, imax(2d)=1, Ts is s for 2s/4s and d for 2d
-**Contract evidence:** inferred (README.md:12 gas compatibility; ARM Advanced SIMD vector x indexed element size=10/11; llvm-mc 15.0.6)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_neon_float_elem([v0.2s, v0.2s, v0.s[0]], u_bit=0, opcode=0b1001)
-**Expected / Actual:** 0x0f809000 / 0x0f009000
-**Impact:** Every NEON FP by-element instruction the assembler emits is the wrong 32-bit word (reserved size 00/01). Linked objects execute a different instruction than the assembly text
-**Root cause:** neon.rs:1633 shifts `sz` (0 for S, 1 for D) to bit 22 only, leaving bit 23 = 0. ARM/llvm-mc encode size[1:0] as 10 (S) / 11 (D)
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1633`
-```rust
-    let word = (q << 30) | (u_bit << 29) | (0b01111 << 24) | (sz << 22)
-```
-**Suggested fix:** OR the high size bit so S=0b10 and D=0b11
-```rust
-    let word = (q << 30) | (u_bit << 29) | (0b01111 << 24) | ((0b10 | sz) << 22)
-```
-**Bug report:** bug_reports/encode_neon_float_elem_size_bit23.md
-**Repro seed:** cc c99eaf81cfd8b5362f14e6432377b70fa338f321e7658ecdb5613b7d2b65b85b
-**Raw output:**
-```text
-Test failed: assertion failed: `(left == right)`
-  left: `251695104`,
- right: `260083712`: SUT vs llvm-mc for fmul v0.2s, v0.2s, v0.s[0]
-minimal failing input: rd = 0, rn = 0, rm = 0, idx_raw = 0, shape = ("2s", "s", 3), insn = (0, 9, "fmul")
-```
-
-### B7: encode_neon_float_elem ARM size field is 00/01 instead of 10/11
-
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, idx ∈ {0..imax(T)}, U ∈ {0,1}, opc ∈ {0b0001,0b0101,0b1001}. let w=encode_neon_float_elem([Vd.T,Vn.T,Vm.Ts[idx]],U,opc). w[23:22]=size(T) where size(2s)=size(4s)=0b10, size(2d)=0b11
-**Contract evidence:** inferred (ARM Advanced SIMD vector x indexed element size=10/11)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_neon_float_elem([v0.2s, v0.2s, v0.s[0]], U=0, opc=0b0001) has bits[23:22]=00, ARM size for S is 10
-**Expected / Actual:** bits[23:22]=10 / bits[23:22]=00
-**Impact:** Same encoding defect as B1, observed via the ARM layout invariant
-**Root cause:** neon.rs:1633 shifts sz to bit 22 only, leaving bit 23 clear
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1633`
-```rust
-    let word = (q << 30) | (u_bit << 29) | (0b01111 << 24) | (sz << 22)
-```
-**Suggested fix:** OR the high size bit so S=0b10 and D=0b11
-```rust
-    let word = (q << 30) | (u_bit << 29) | (0b01111 << 24) | ((0b10 | sz) << 22)
-```
-**Bug report:** bug_reports/encode_neon_float_elem_size_layout.md
-**Repro seed:** (deterministic)
-**Raw output:**
-```text
-Test failed: assertion failed: `(left == right)`
-  left: `0`,
- right: `2`: size must be 10 (S) or 11 (D)
-minimal failing input: rd = 0, rn = 0, rm = 0, idx_raw = 0, shape = ("2s", "s", 3), u = 0, opcode = 1
-```
-
-### B2: encode_neon_float_elem ignores a fourth operand
-
-**Formal:** ∀ valid (rd,rn,rm,T,idx,U,opc,mnem) and extra ∈ {0..31}. llvm-mc(mnem Vd.T, Vn.T, Vm.Ts[idx], Ve.T) is Err ∧ encode_neon_float_elem([Vd.T,Vn.T,Vm.Ts[idx],Ve.T], U, opc) is Err
-**Contract evidence:** inferred (README.md:12 gas compatibility; llvm-mc rejects a fourth operand)
-**Documentation conflict:** neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction of a minimum of 3, not a maximum; it does not declare extras valid
-**Severity:** medium
-**Counterexample:** encode_neon_float_elem([v0.2s, v0.2s, v0.s[0], v0.2s], u_bit=0, opcode=0b1001)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** Trailing junk after a by-element FMUL is silently dropped
-**Root cause:** neon.rs:1615 checks only `operands.len() < 3`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1615`
-```rust
-    if operands.len() < 3 { return Err("NEON float by-element requires 3 operands".to_string()); }
-```
-**Suggested fix:** Reject anything other than exactly 3 operands
-```rust
-    if operands.len() != 3 { return Err("NEON float by-element requires 3 operands".to_string()); }
-```
-**Bug report:** bug_reports/encode_neon_float_elem_extra_operand.md
-**Repro seed:** (deterministic; first extra case)
-**Raw output:**
-```text
-Test failed: extra operand must Err (llvm-mc rejects fmul v0.2s, v0.2s, v0.s[0], v0.2s)
-minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, idx_raw = 0, shape = ("2s", "s", 3), insn = (0, 9, "fmul")
-```
-
-### B3: encode_neon_float_elem ignores a mismatched source arrangement
-
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, T' ≠ T, idx ∈ {0..imax(T)}. llvm-mc("fmul Vd.T, Vn.T', Vm.Ts[idx]") is Err ∧ encode_neon_float_elem([Vd.T, Vn.T', Vm.Ts[idx]], 0, 0b1001) is Err
-**Contract evidence:** inferred (README.md:12; llvm-mc invalid operand for mismatched T)
+**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ valid (ta,tb,is_high). llvm-mc rejects "fcvtl{2} Vd.ta, Vn.tb, Vextra.ta" ⇒ encode_neon_fcvtl([Vd.ta,Vn.tb,Vextra.ta], is_high) is Err
+**Contract evidence:** documented src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume"
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_float_elem([v0.4s, v0.8b, v0.s[0]], u_bit=0, opcode=0b1001)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** `fmul v0.4s, v0.8b, v0.s[0]` encodes as if both were .4s
-**Root cause:** neon.rs:1617 discards the source arrangement
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1617`
+**Counterexample:** encode_neon_fcvtl([v0.4s, v0.4h, v0.4s], is_high=false)
+**Expected / Actual:** Err / Ok(Word(0x0e217800))
+**Impact:** Trailing junk after FCVTL is silently dropped, so a mistyped extra register does not fail the assemble
+**Root cause:** neon.rs:1641–1642 read only operands[0] and operands[1]; there is no maximum-arity check
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1641`
 ```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
     let (rn, _) = get_neon_reg(operands, 1)?;
 ```
-**Suggested fix:** Require the source arrangement to equal dest
+**Suggested fix:** Reject anything other than exactly 2 operands
 ```rust
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    if arr_n != arr_d {
-        return Err(format!("float by-element: mismatched arrangement {} vs {}", arr_d, arr_n));
+    if operands.len() != 2 {
+        return Err("fcvtl requires 2 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_float_elem_mismatch_t.md
-**Repro seed:** (deterministic; v0.4s vs v0.8b)
-**Raw output:**
-```text
-Test failed: mismatched source T must Err (llvm-mc rejects fmul v0.4s, v0.8b, v0.s[0])
-minimal failing input: rd = 0, rn = 0, rm = 0, idx_raw = 0, shape = ("4s", "s", 3), t_wrong = "8b"
+**Bug report:** bug_reports/encode_neon_fcvtl_extra_operand.md
+**Repro seed:** rd = 0, rn = 0, extra = 0, pair = ("4s", "4h", false)
+**Raw output:** Test failed: 3 operands must Err (llvm-mc rejects fcvtl v0.4s, v0.4h, v0.4s)
+
+### B2: encode_neon_fcvtl accepts dest 2S and ignores source arrangement
+
+**Formal:** ∀ rd,rn ∈ {0..31}, ∀ ta,tb ∈ arrangements, ∀ is_high ∈ {false,true}. (ta,tb,is_high) ∉ ARM FCVTL pairs ⇒ llvm-mc rejects the asm ∧ encode_neon_fcvtl([Vd.ta,Vn.tb], is_high) is Err
+**Contract evidence:** documented neon.rs:1638 "FCVTL: half→single or single→double widening float convert"
+**Documentation conflict:** neon.rs:1638 states half→single or single→double (dest 4S or 2D). The code at neon.rs:1643 also accepts dest "2s". The comment does not declare dest 2S valid — it states the conversions FCVTL performs. Dest 2S is a contract the code violates, not an input-domain restriction.
+**Severity:** high
+**Counterexample:** encode_neon_fcvtl([v0.2s, v0.8b], is_high=false)
+**Expected / Actual:** Err / Ok(Word)
+**Impact:** Invalid assembly encodes as a different valid FCVTL (sz from dest only), producing wrong machine code instead of an assemble error
+**Root cause:** neon.rs:1642 discards the source arrangement; neon.rs:1643 matches dest "2s" as sz=0
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1642`
+```rust
+    let (rn, _) = get_neon_reg(operands, 1)?;
+    let sz = match arr_d.as_str() { "4s" | "2s" => 0u32, "2d" => 1,
+        _ => return Err(format!("fcvtl: unsupported dest: {}", arr_d)), };
 ```
+**Suggested fix:** Accept only dest 4s/2d and require the ARM-mandated source arrangement
+```rust
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    let sz = match arr_d.as_str() {
+        "4s" => 0u32,
+        "2d" => 1,
+        _ => return Err(format!("fcvtl: unsupported dest: {}", arr_d)),
+    };
+    let expected_tb = match (arr_d.as_str(), is_high) {
+        ("4s", false) => "4h",
+        ("4s", true) => "8h",
+        ("2d", false) => "2s",
+        ("2d", true) => "4s",
+        _ => return Err(format!("fcvtl: unsupported dest: {}", arr_d)),
+    };
+    if arr_n != expected_tb {
+        return Err(format!("fcvtl: dest {} requires source {}", arr_d, expected_tb));
+    }
+```
+**Bug report:** bug_reports/encode_neon_fcvtl_mismatched_ta_tb.md
+**Repro seed:** rd = 0, rn = 0, ta = "2s", tb = "8b", is_high = false
+**Raw output:** Test failed: invalid/mismatched Ta/Tb must Err (ARM FCVTL Ta in {4S,2D} with matching Tb; llvm-mc rejects fcvtl v0.2s, v0.8b)
 
-### B4: encode_neon_float_elem accepts an X-prefixed destination as Vd
+### B3: encode_neon_fcvtl encodes an X-prefixed destination as a V register
 
-**Formal:** ∀ kind ∈ {x-dest, w-dest, sp-dest, bare-V, x-prefix-arr, s-dest}. llvm-mc(asm(kind)) is Err ∧ encode_neon_float_elem(ops(kind), 0, 0b1001) is Err
-**Contract evidence:** inferred (README.md:12; llvm-mc rejects `fmul x0.4s, ...`)
+**Formal:** ∀ rd,rn ∈ {0..31}, ∀ kind ∈ {bare-fp-dest, bare-v-src, bare-v-dest, x-prefixed-dest-arr, x-src}. llvm-mc rejects the corresponding asm ⇒ encode_neon_fcvtl(ops, false) is Err
+**Contract evidence:** documented src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume"
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_float_elem([RegArrangement { reg: "x0", arrangement: "4s" }, v0.4s, v0.s[0]], u_bit=0, opcode=0b1001)
-**Expected / Actual:** Err / Ok(Word) with Rd=0
-**Impact:** `fmul x0.4s, v0.4s, v0.s[0]` encodes as `fmul v0.4s, ...`
-**Root cause:** neon.rs:1616 uses get_neon_reg → parse_reg_num, which accepts the x prefix and returns 0
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1616`
+**Counterexample:** encode_neon_fcvtl([RegArrangement{reg:"x0", arrangement:"4s"}, v0.4h], is_high=false)
+**Expected / Actual:** Err / Ok(Word) identical to `fcvtl v0.4s, v0.4h`
+**Impact:** A GPR-prefixed arrangement dest is encoded as the corresponding V register
+**Root cause:** neon.rs:1641 calls get_neon_reg; parse_reg_num accepts the 'x' prefix; encode_neon_fcvtl never requires a V prefix
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1641`
 ```rust
     let (rd, arr_d) = get_neon_reg(operands, 0)?;
 ```
-**Suggested fix:** Require a V prefix on dest and source register names
+**Suggested fix:** Reject a destination whose register name is not V-prefixed
 ```rust
-    if !reg.to_ascii_lowercase().starts_with('v') {
-        return Err(format!("expected NEON V register, got {}", reg));
+    match &operands[0] {
+        Operand::RegArrangement { reg, .. } if reg.to_ascii_lowercase().starts_with('v') => {}
+        _ => return Err("fcvtl: destination must be a V register with arrangement".to_string()),
     }
 ```
-**Bug report:** bug_reports/encode_neon_float_elem_x_prefix.md
-**Repro seed:** cc 9f450d3ead4f348f55eb12cfec1fd265045848b6dcde3eb4ab5bdb41e6f22fad
-**Raw output:**
-```text
-Test failed: non-arranged NEON / GPR / SP / non-V prefix must Err (llvm-mc rejects fmul x0.4s, v0.4s, v0.s[0])
-minimal failing input: rd = 0, rn = 0, rm = 0, idx = 0, kind = 4
-```
-
-### B5: encode_neon_float_elem accepts an out-of-range lane index
-
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, extra ∈ {1..8}. let idx = imax(T)+extra. llvm-mc("fmul Vd.T, Vn.T, Vm.Ts[idx]") is Err ∧ encode_neon_float_elem([Vd.T,Vn.T,Vm.Ts[idx]], 0, 0b1001) is Err
-**Contract evidence:** inferred (llvm-mc "vector lane must be an integer in range [0, 3]" / "[0, 1]")
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_float_elem([v0.2s, v0.2s, v0.s[4]], u_bit=0, opcode=0b1001)
-**Expected / Actual:** Err / Ok(Word) with H:L from the low bits of 4
-**Impact:** An out-of-range lane is silently turned into a different in-range lane
-**Root cause:** neon.rs:1618 extracts index and uses only H/L bits; no range check
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1618`
-```rust
-    let (rm, index) = match &operands[2] {
-```
-**Suggested fix:** Reject index above the ARM maximum for the dest size
-```rust
-    let imax = if sz == 0 { 3u32 } else { 1u32 };
-    if index > imax {
-        return Err(format!("float by-element: lane index {} out of range 0..{}", index, imax));
-    }
-```
-**Bug report:** bug_reports/encode_neon_float_elem_index_oob.md
-**Repro seed:** (deterministic; idx = imax+1)
-**Raw output:**
-```text
-Test failed: index 4 out of range for .s must Err (llvm-mc rejects fmul v0.2s, v0.2s, v0.s[4])
-minimal failing input: rd = 0, rn = 0, rm = 0, shape = ("2s", "s", 3), extra = 1
-```
-
-### B6: encode_neon_float_elem ignores a mismatched lane element size
-
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, wrong ≠ Ts(T), idx ∈ {0..imax(T)}. llvm-mc("fmul Vd.T, Vn.T, Vm.wrong[idx]") is Err ∧ encode_neon_float_elem([Vd.T, Vn.T, Vm.wrong[idx]], 0, 0b1001) is Err
-**Contract evidence:** inferred (README.md:12; llvm-mc rejects `fmul v0.2d, v0.2d, v0.b[0]`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_float_elem([v0.2d, v0.2d, v0.b[0]], u_bit=0, opcode=0b1001)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** A mistyped lane size is encoded as if it matched T
-**Root cause:** neon.rs:1618 matches RegLane with `elem_size` in `..`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1619`
-```rust
-        Operand::RegLane { reg, index, .. } => (parse_reg_num(reg).ok_or("invalid reg")?, *index),
-```
-**Suggested fix:** Bind elem_size and, after sz is known, require it to match dest T
-```rust
-    let expect = if sz == 0 { "s" } else { "d" };
-    if elem_size != expect {
-        return Err(format!("float by-element: lane size {} does not match {}", elem_size, expect));
-    }
-```
-**Bug report:** bug_reports/encode_neon_float_elem_lane_elem.md
-**Repro seed:** cc d7758af9b506bbd4e8df324fdb19055235d90fe62b37ac1ae9d07d222708122a
-**Raw output:**
-```text
-Test failed: lane elem_size b must match arrangement d (llvm-mc rejects fmul v0.2d, v0.2d, v0.b[0])
-minimal failing input: rd = 0, rn = 0, rm = 0, idx_raw = 0, shape = ("2d", "d", 1), wrong = "b"
-```
+**Bug report:** bug_reports/encode_neon_fcvtl_gpr_dest.md
+**Repro seed:** rd = 0, rn = 0, kind = 3, fp_prefix = "x"
+**Raw output:** Test failed: GPR/bare/non-arrangement kind=3 must Err (llvm-mc rejects fcvtl x0.4s, v0.4h)
 
 ## Design Caveats
 
@@ -225,33 +117,33 @@ minimal failing input: rd = 0, rn = 0, rm = 0, idx_raw = 0, shape = ("2d", "d", 
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs | 11 properties + 2 KAT + 6 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_neon_float_elem_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_neon_fcvtl_pbt.rs | 9 properties + 2 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_neon_fcvtl_pbt` registration |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_float_elem -- --test-threads=1
+cargo test --lib encode_neon_fcvtl -- --test-threads=1
 ```
 
-Whole-suite command (same as the build contract with the test target swapped):
-
+B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_float_elem -- --test-threads=1
+cargo test --lib encode_neon_fcvtl_neg_extra_operand -- --test-threads=1
 ```
 
-Per-bug:
-
+B2 mismatched Ta/Tb:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_float_elem_diff_llvm_mc -- --test-threads=1
-cargo test --lib encode_neon_float_elem_neg_extra -- --test-threads=1
-cargo test --lib encode_neon_float_elem_neg_mismatch_t -- --test-threads=1
-cargo test --lib encode_neon_float_elem_neg_gpr_bare_nonv -- --test-threads=1
-cargo test --lib encode_neon_float_elem_neg_index_oob -- --test-threads=1
-cargo test --lib encode_neon_float_elem_neg_lane_elem_mismatch -- --test-threads=1
+cargo test --lib encode_neon_fcvtl_neg_mismatched_ta_tb -- --test-threads=1
+```
+
+B3 GPR dest:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_neon_fcvtl_neg_gpr_or_bare -- --test-threads=1
 ```
 
 ## Output Directories
@@ -265,29 +157,19 @@ cargo test --lib encode_neon_float_elem_neg_lane_elem_mismatch -- --test-threads
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_neon_float_elem_size_bit23.md
-- pbt-out/bug_reports/encode_neon_float_elem_size_bit23.html
-- pbt-out/bug_reports/encode_neon_float_elem_size_layout.md
-- pbt-out/bug_reports/encode_neon_float_elem_size_layout.html
-- pbt-out/bug_reports/encode_neon_float_elem_extra_operand.md
-- pbt-out/bug_reports/encode_neon_float_elem_extra_operand.html
-- pbt-out/bug_reports/encode_neon_float_elem_mismatch_t.md
-- pbt-out/bug_reports/encode_neon_float_elem_mismatch_t.html
-- pbt-out/bug_reports/encode_neon_float_elem_x_prefix.md
-- pbt-out/bug_reports/encode_neon_float_elem_x_prefix.html
-- pbt-out/bug_reports/encode_neon_float_elem_index_oob.md
-- pbt-out/bug_reports/encode_neon_float_elem_index_oob.html
-- pbt-out/bug_reports/encode_neon_float_elem_lane_elem.md
-- pbt-out/bug_reports/encode_neon_float_elem_lane_elem.html
-- pbt-out/run/encode_neon_float_elem_pbt.log
-- src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
+- pbt-out/bug_reports/encode_neon_fcvtl_extra_operand.md
+- pbt-out/bug_reports/encode_neon_fcvtl_extra_operand.html
+- pbt-out/bug_reports/encode_neon_fcvtl_mismatched_ta_tb.md
+- pbt-out/bug_reports/encode_neon_fcvtl_mismatched_ta_tb.html
+- pbt-out/bug_reports/encode_neon_fcvtl_gpr_dest.md
+- pbt-out/bug_reports/encode_neon_fcvtl_gpr_dest.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 20:20 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 139/289 total | PBT candidates: 139 | Tested: 139 (100%) | 0 pass, 139 fail
+> Last updated: 2026-10-05 20:37 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 140/289 total | PBT candidates: 140 | Tested: 140 (100%) | 0 pass, 140 fail
 
 ## Summary
 
@@ -296,10 +178,10 @@ cargo test --lib encode_neon_float_elem_neg_lane_elem_mismatch -- --test-threads
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 139 |
-| **Tested (of PBT candidates)** | **139 / 139 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 139 / 0 |
-| **Overall (tested / all functions)** | **139 / 289 (48%)** |
+| PBT candidates (from FUNCTION_INDEX) | 140 |
+| **Tested (of PBT candidates)** | **140 / 140 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 140 / 0 |
+| **Overall (tested / all functions)** | **140 / 289 (48%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -307,13 +189,13 @@ cargo test --lib encode_neon_float_elem_neg_lane_elem_mismatch -- --test-threads
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 139 | 139 | 0 | 100% |
+|  | 140 | 140 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 139 | 139 | 0 | 100% |
+| unknown | 140 | 140 | 0 | 100% |
 
 ## File Coverage
 
@@ -326,7 +208,7 @@ cargo test --lib encode_neon_float_elem_neg_lane_elem_mismatch -- --test-threads
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 54 | 54 | 100% | covered |
+| neon.rs | 68 | 55 | 55 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -475,3 +357,4 @@ cargo test --lib encode_neon_float_elem_neg_lane_elem_mismatch -- --test-threads
 | encode_neon_elem_long | neon.rs |
 | encode_neon_elem | neon.rs |
 | encode_neon_float_elem | neon.rs |
+| encode_neon_fcvtl | neon.rs |
