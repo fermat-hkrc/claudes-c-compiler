@@ -1,285 +1,281 @@
-# Properties: encode_neon_across
+# Properties: encode_neon_zip_uzp
 
-## encode_neon_across_diff_llvm_mc
-- Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the GNU-style assembly the SUT claims to accept (README.md:12). State machine rejected (pure function). Algebraic round-trip rejected (no in-tree decoder). Sibling encode_neon_addv / encode_neon_across_long rejected (same-job gate: different opcodes/mnemonics). SUT-boundary: internal-helper; encode_instruction passes operands through unchanged for umaxv/uminv/smaxv/sminv (encoder/mod.rs:693-696). Mapping: [Reg(Vd_scalar), RegArrangement(Vn,T)] <-> `{mnem} Vd, Vn.T`.
-- Doc contract: neon.rs:439 "Encode NEON across-vector instructions: UMAXV, UMINV, SMAXV, SMINV" — asserted fingerprint b465ed41
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:228 encode_neon_addv_diff_llvm_mc
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ (v,T) ∈ {(b,8b),(b,16b),(h,4h),(h,8h),(s,4s)}, ∀ (mnem,U,opc) ∈ {(umaxv,1,0b01010),(uminv,1,0b11010),(smaxv,0,0b01010),(sminv,0,0b11010)}. encode_neon_across([Reg(v∥rd), RegArrangement(v∥rn, T)], U, opc) = llvm-mc("{mnem} {v}{rd}, v{rn}.{T}")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_diff_llvm_mc
+- Tier: 4
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. README.md:12 claims the assembler accepts the same textual assembly gas would consume; encoder/mod.rs:1-7 claims 32-bit AArch64 words. llvm-mc `-triple=aarch64 -show-encoding` is an independent assembler of the same GNU-style mnemonics. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree ZIP/UZP/TRN decoder). Sibling encode_neon_ext / encode_neon_tbl / encode_neon_tbx rejected (same-job gate: different ARM permute subclasses).
+- Doc contract: neon.rs:1093 "Encode NEON UZP1/UZP2/ZIP1/ZIP2" — asserted fingerprint bb62b080
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:130 (valid-domain llvm-mc agreement for permute)
+- Formal: ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm ∈ {0..31}. encode_neon_zip_uzp([Vd.T,Vn.T,Vm.T], opc(mnemonic), false) = llvm-mc(mnemonic Vd.T, Vn.T, Vm.T) as little-endian u32
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, v, t, mnem, u_bit, opcode]
-  domain: { rd: 0..31, rn: 0..31, (v,t): valid_across_vt, (mnem,u_bit,opcode): caller_triples }
+  vars: [mnemonic, t, rd, rn, rm]
+  domain: { mnemonic: {zip1,zip2,uzp1,uzp2,trn1,trn2}, t: {8b,16b,4h,8h,2s,4s,2d}, rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: encode_neon_across([Reg(v||rd), RegArrangement(v||rn, t)], u_bit, opcode)
-    rhs: llvm_mc("{mnem} {v}{rd}, v{rn}.{t}")
+    lhs: encode_neon_zip_uzp([RegArrangement(v{rd},t), RegArrangement(v{rn},t), RegArrangement(v{rm},t)], opc(mnemonic), false)
+    rhs: llvm_mc_word("{mnemonic} v{rd}.{t}, v{rn}.{t}, v{rm}.{t}")
 generators:
+  mnemonic: { gen: oneof, items: ["zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"] }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  mnem: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:439
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1093
 ```
 
-## encode_neon_across_meta_rd_rn
-- Tier: 4
-- Rationale: ARM across-lanes packing places Rd in bits[4:0] and Rn in bits[9:5] (format comment neon.rs:441). Metamorphic isolation of those fields is independent of the producing `|` expression. Stronger differential is P1; this catches field-overlap bugs even if llvm-mc is unavailable.
-- Doc contract: neon.rs:441 "Format: 0 Q U 01110 size 11000 opcode 10 Rn Rd" — asserted fingerprint a7586ffe
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:240 encode_neon_addv_meta_rd_rn
-- Formal: ∀ rd1,rd2,rn1,rn2 ∈ {0..31}, ∀ valid (v,T), ∀ caller (U,opc). Let w11 = encode_neon_across([v∥rd1, v∥rn1.T], U, opc), w21 = encode_neon_across([v∥rd2, v∥rn1.T], U, opc), w12 = encode_neon_across([v∥rd1, v∥rn2.T], U, opc). Then (w11 ⊕ w21) ∧ ¬0x1F = 0 ∧ (w11 ∧ 0x1F) = rd1 ∧ (w21 ∧ 0x1F) = rd2 ∧ (w11 ⊕ w12) ∧ ¬(0x1F≪5) = 0 ∧ ((w11≫5) ∧ 0x1F) = rn1 ∧ ((w12≫5) ∧ 0x1F) = rn2
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_metamorphic_rd_rn_rm
+- Tier: 3
+- Rationale: ARM permute encoding isolates Rd at bits[4:0], Rn at bits[9:5], Rm at bits[20:16] (format comments neon.rs:1103-1106). Stronger differential is P1; this metamorphic does not need llvm-mc and checks field packing independently.
+- Doc contract: neon.rs:1105 "ZIP1: 0 Q 0 01110 size 0 Rm 0 011 10 Rn Rd  (op_bits=011)" — asserted fingerprint 4819b69b
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:208 (Rd/Rn/Rm isolation)
+- Formal: ∀ T ∈ {8b,16b,4h,8h,2s,4s,2d}, opc ∈ {001,010,011,101,110,111}, rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}. let w(rd,rn,rm)=encode_neon_zip_uzp([Vd.T,Vn.T,Vm.T], opc, false). (w(rd1,rn1,rm1) ⊕ w(rd2,rn1,rm1)) & ~0x1F = 0 ∧ w(rd2,rn1,rm1) & 0x1F = rd2 ∧ (w(rd1,rn1,rm1) ⊕ w(rd1,rn2,rm1)) & ~(0x1F<<5) = 0 ∧ (w(rd1,rn2,rm1)>>5) & 0x1F = rn2 ∧ (w(rd1,rn1,rm1) ⊕ w(rd1,rn1,rm2)) & ~(0x1F<<16) = 0 ∧ (w(rd1,rn1,rm2)>>16) & 0x1F = rm2
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd1, rd2, rn1, rn2, v, t, u_bit, opcode]
-  domain: { rd1,rd2,rn1,rn2: 0..31, (v,t): valid_across_vt, (u_bit,opcode): caller_pairs }
-  body: ((w11 ^ w21) & !0x1F) == 0 && (w11 & 0x1F) == rd1 && ((w11 ^ w12) & !(0x1F << 5)) == 0 && ((w11 >> 5) & 0x1F) == rn1
+  vars: [t, opc, rd1, rd2, rn1, rn2, rm1, rm2]
+  domain: { t: {8b,16b,4h,8h,2s,4s,2d}, opc: {1,2,3,5,6,7}, rd1: 0..31, rd2: 0..31, rn1: 0..31, rn2: 0..31, rm1: 0..31, rm2: 0..31 }
+  body: changing only Rd/Rn/Rm differs only in bits[4:0]/[9:5]/[20:16]
 generators:
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  opc: { gen: oneof, items: [1, 2, 3, 5, 6, 7], type: u32 }
   rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
   rn1: { gen: int, min: 0, max: 31, type: u32 }
   rn2: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:441
+  rm1: { gen: int, min: 0, max: 31, type: u32 }
+  rm2: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1105
 ```
 
-## encode_neon_across_inv_layout
-- Tier: 4
-- Rationale: Function docstring neon.rs:441 claims ARM layout `0 Q U 01110 size 11000 opcode 10 Rn Rd`. Independent reconstruction from ARM Advanced SIMD across-lanes (Q/size from T: 8b=(0,00), 16b=(1,00), 4h=(0,01), 8h=(1,01), 4s=(1,10); 2S and size=11 reserved) is a value invariant, not a copy of the producing `|` chain. Weaker than P1 differential.
-- Doc contract: neon.rs:441 "Format: 0 Q U 01110 size 11000 opcode 10 Rn Rd" — asserted fingerprint a7586ffe
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:270 encode_neon_addv_inv_layout
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ valid (v,T), ∀ caller (U,opc). encode_neon_across([Reg(v∥rd), RegArrangement(v∥rn,T)], U, opc) = (Q≪30) | (U≪29) | (0b01110≪24) | (size≪22) | (0b11000≪17) | (opc≪12) | (0b10≪10) | (rn≪5) | rd, with (Q,size) the ARM table for T
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_invariant_arm_fields
+- Tier: 3
+- Rationale: ARM Advanced SIMD permute layout (and neon.rs:1103-1106) fixes every field of a success-path word. Independent of the producing statement via llvm-mc KAT mapping. Weaker than P1 differential; still pins Q/size/opc packing if llvm-mc is unavailable.
+- Doc contract: neon.rs:1103 "UZP1: 0 Q 0 01110 size 0 Rm 0 001 10 Rn Rd  (op_bits=001)" — asserted fingerprint d47de039
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:247 (ARM field invariant)
+- Formal: ∀ T ∈ {8b,16b,4h,8h,2s,4s,2d}, opc ∈ {001,010,011,101,110,111}, rd,rn,rm ∈ {0..31}. let w=encode_neon_zip_uzp([Vd.T,Vn.T,Vm.T], opc, false). (w>>31)&1=0 ∧ (w>>30)&1=Q(T) ∧ (w>>24)&0x3F=0b001110 ∧ (w>>22)&3=size(T) ∧ (w>>21)&1=0 ∧ (w>>16)&0x1F=rm ∧ (w>>15)&1=0 ∧ (w>>12)&7=opc ∧ (w>>10)&3=0b10 ∧ (w>>5)&0x1F=rn ∧ w&0x1F=rd. Q/size: 8b=(0,00) 16b=(1,00) 4h=(0,01) 8h=(1,01) 2s=(0,10) 4s=(1,10) 2d=(1,11)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, v, t, u_bit, opcode]
-  domain: { rd,rn: 0..31, (v,t): valid_across_vt, (u_bit,opcode): caller_pairs }
-  relation:
-    op: eq
-    lhs: encode_neon_across([Reg(v||rd), RegArrangement(v||rn, t)], u_bit, opcode)
-    rhs: arm_across_word(rd, rn, t, u_bit, opcode)
+  vars: [t, opc, rd, rn, rm]
+  domain: { t: {8b,16b,4h,8h,2s,4s,2d}, opc: {1,2,3,5,6,7}, rd: 0..31, rn: 0..31, rm: 0..31 }
+  body: ARM permute fields of encode_neon_zip_uzp word match Q/size/opc/Rd/Rn/Rm packing
 generators:
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  opc: { gen: oneof, items: [1, 2, 3, 5, 6, 7], type: u32 }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:441
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1103
 ```
 
-## encode_neon_across_meta_u_opcode
-- Tier: 4
-- Rationale: Docstring neon.rs:443-444 places U at bit 29 and opcode at bits[16:12]. Metamorphic: flipping only U must differ only in bit 29; changing only opcode must differ only in bits[16:12]. Independent of the producing shifts.
-- Doc contract: neon.rs:443 "`u_bit`: 0 for signed, 1 for unsigned" — asserted fingerprint 56e000f4; neon.rs:444 "`opcode`: 5-bit opcode (bits 16-12)" — asserted fingerprint 43218dcd
-- Seed: src/backend/arm/assembler/encoder/neon.rs:2667 encode_neon_across_long_metamorphic_u_bit
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ valid (v,T), ∀ opc1,opc2 ∈ {0b01010,0b11010}. Let w_u0 = encode_neon_across(..., 0, opc1), w_u1 = encode_neon_across(..., 1, opc1). Then (w_u0 ⊕ w_u1) = (1≪29) ∧ changing only opcode differs only in bits[16:12]
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_neg_arity
+- Tier: 2
+- Rationale: neon.rs:1096 documents "uzp/zip requires 3 operands"; the check is `operands.len() < 3`. llvm-mc/gas reject arity 0..2. Documented error contract.
+- Doc contract: neon.rs:1096 "uzp/zip requires 3 operands" — domain-restriction fingerprint f7c87a19
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:311 (arity Err)
+- Formal: ∀ n ∈ {0,1,2}, mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm ∈ {0..31}. encode_neon_zip_uzp(ops[0..n], opc(mnemonic), false) = Err ∧ llvm-mc(arity-n asm) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_across
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, v, t, opcode1, opcode2]
-  domain: { rd,rn: 0..31, (v,t): valid_across_vt, opcode1,opcode2: {0b01010,0b11010} }
-  body: (w_u0 ^ w_u1) == (1 << 29) && ((w_op1 ^ w_op2) & !(0x1F << 12)) == 0 && ((w_op1 >> 12) & 0x1F) == opcode1
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  opcode1: { gen: oneof, items: [10, 26] }
-  opcode2: { gen: oneof, items: [10, 26] }
-evidence: neon.rs:443
-```
-
-## encode_neon_across_neg_arity
-- Tier: 3
-- Rationale: neon.rs:447 returns Err when operands.len() < 2 with message "NEON across-vector requires 2 operands". Negative/error contract on the documented under-arity domain.
-- Doc contract: neon.rs:447 "NEON across-vector requires 2 operands" — domain-restriction fingerprint 1d8f2315
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:296 encode_neon_addv_neg_arity
-- Formal: ∀ n ∈ {0,1}, ∀ rd ∈ {0..31}, ∀ valid (v,T), ∀ caller (U,opc). encode_neon_across(ops with n operands, U, opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, rd, v, t, u_bit, opcode]
-  domain: { n: 0..1, rd: 0..31, (v,t): valid_across_vt, (u_bit,opcode): caller_pairs }
+  vars: [n, mnemonic, t, rd, rn, rm]
+  domain: { n: 0..2, mnemonic: {zip1,zip2,uzp1,uzp2,trn1,trn2}, t: {8b,16b,4h,8h,2s,4s,2d}, rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: throws
-    expr: encode_neon_across(ops_len_n, u_bit, opcode)
+    expr: encode_neon_zip_uzp(take(ops, n), opc(mnemonic), false)
 generators:
-  n: { gen: int, min: 0, max: 1, type: usize }
+  n: { gen: int, min: 0, max: 2, type: usize }
+  mnemonic: { gen: oneof, items: ["zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"] }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: neon.rs:447
+evidence: neon.rs:1096
 ```
 
-## encode_neon_across_neg_extra
-- Tier: 3
-- Rationale: Docstring/arity message "requires 2 operands" plus llvm-mc/gas reject a third operand (`invalid operand for instruction`). The public assembler contract (README.md:12) therefore rejects extra operands. The check is `len < 2`, so extras currently pass — that is the finding. Domain is the documented 2-operand form, not the passing one.
-- Doc contract: neon.rs:447 "NEON across-vector requires 2 operands" — domain-restriction fingerprint 1d8f2315
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:308 encode_neon_addv_neg_extra
-- Formal: ∀ rd,rn,extra ∈ {0..31}, ∀ valid (v,T), ∀ caller (mnem,U,opc). llvm-mc("{mnem} {v}{rd}, v{rn}.{T}, v{extra}.{T}") is Err ⇒ encode_neon_across([Vd, Vn.T, Vextra.T], U, opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_neg_extra_operand
+- Tier: 2
+- Rationale: llvm-mc and gas reject a fourth operand on ZIP/UZP/TRN. README.md:12 gas-compatibility is the contract. The SUT check is only `len < 3`, so extra operands are a documented-invalid input that the public assembler path must reject.
+- Doc contract: neon.rs:1096 "uzp/zip requires 3 operands" — domain-restriction fingerprint f7c87a19
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:344 (extra operand Err)
+- Formal: ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm,extra ∈ {0..31}. llvm-mc(mnemonic Vd.T,Vn.T,Vm.T,Vextra.T)=Err ⇒ encode_neon_zip_uzp([Vd.T,Vn.T,Vm.T,Vextra.T], opc(mnemonic), false)=Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, extra=0, v=b, t=8b, mnem=umaxv, u_bit=1, opcode=0b01010; encode_neon_across([b0, v0.8b, v0.8b], 1, 0b01010) = Ok(Word(0x2e30a800))
-- Bug report: pbt-out/bug_reports/encode_neon_across_extra_operand.md
+- Counterexample: encode_neon_zip_uzp([v0.8b, v0.8b, v0.8b, v0.8b], 0b011, false)
+- Bug report: bug_reports/encode_neon_zip_uzp_extra_operand.md
 
 ```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, extra, v, t, mnem, u_bit, opcode]
-  domain: { rd,rn,extra: 0..31, (v,t): valid_across_vt, (mnem,u_bit,opcode): caller_triples }
-  body: llvm_mc_rejects(3-operand) => encode_neon_across(three_ops, u_bit, opcode).is_err()
+  vars: [mnemonic, t, rd, rn, rm, extra]
+  domain: { mnemonic: {zip1,zip2,uzp1,uzp2,trn1,trn2}, t: {8b,16b,4h,8h,2s,4s,2d}, rd: 0..31, rn: 0..31, rm: 0..31, extra: 0..31 }
+  relation:
+    op: throws
+    expr: encode_neon_zip_uzp([Vd.T,Vn.T,Vm.T,Vextra.T], opc(mnemonic), false)
 generators:
+  mnemonic: { gen: oneof, items: ["zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"] }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  mnem: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: neon.rs:447
+evidence: neon.rs:1096
 ```
 
-## encode_neon_across_neg_invalid_t
-- Tier: 3
-- Rationale: ARM Advanced SIMD across lanes reserves size:Q=10:0 (2S) and size=11 (1D/2D). llvm-mc/gas reject T ∉ {8b,16b,4h,8h,4s}. The function does not document those T as valid; neon_arr_to_q_size accepts 2s/1d/2d. Keep them in the generator (documented ARM domain, not the passing one).
-- Doc contract: neon.rs:439 "Encode NEON across-vector instructions: UMAXV, UMINV, SMAXV, SMINV" — asserted fingerprint b465ed41 (ARM across-lanes T set; function does not list 2S/1D/2D)
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:327 encode_neon_addv_neg_invalid_t
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ T ∈ {2s,1d,2d,4b,8d,2h,1s}, ∀ caller (mnem,U,opc). llvm-mc("{mnem} {dest}{rd}, v{rn}.{T}") is Err ⇒ encode_neon_across([Reg(dest∥rd), RegArrangement(v∥rn,T)], U, opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_neg_reserved_1d
+- Tier: 2
+- Rationale: ARM Advanced SIMD permute lists size:Q=11:0 (1D) as reserved; llvm-mc and gas reject `*.1d`. README.md:12 gas-compatibility is the contract. neon_arr_to_q_size accepts "1d"; the function does not document 1d as valid.
+- Doc contract: neon.rs:1093 "Encode NEON UZP1/UZP2/ZIP1/ZIP2" — asserted fingerprint bb62b080
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:368 (invalid T Err)
+- Formal: ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, rd,rn,rm ∈ {0..31}. llvm-mc(mnemonic Vd.1d,Vn.1d,Vm.1d)=Err ⇒ encode_neon_zip_uzp([Vd.1d,Vn.1d,Vm.1d], opc(mnemonic), false)=Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, t=2s, mnem=umaxv, u_bit=1, opcode=0b01010; encode_neon_across([s0, v0.2s], 1, 0b01010) = Ok(Word(0x2eb0a800))
-- Bug report: pbt-out/bug_reports/encode_neon_across_reserved_t.md
+- Counterexample: encode_neon_zip_uzp([v0.1d, v0.1d, v0.1d], 0b011, false)
+- Bug report: bug_reports/encode_neon_zip_uzp_reserved_1d.md
 
 ```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, t, mnem, u_bit, opcode]
-  domain: { rd,rn: 0..31, t: {2s,1d,2d,4b,8d,2h,1s}, (mnem,u_bit,opcode): caller_triples }
-  body: llvm_mc_rejects(invalid T) => encode_neon_across(ops, u_bit, opcode).is_err()
+  vars: [mnemonic, rd, rn, rm]
+  domain: { mnemonic: {zip1,zip2,uzp1,uzp2,trn1,trn2}, rd: 0..31, rn: 0..31, rm: 0..31 }
+  relation:
+    op: throws
+    expr: encode_neon_zip_uzp([Vd.1d,Vn.1d,Vm.1d], opc(mnemonic), false)
 generators:
+  mnemonic: { gen: oneof, items: ["zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: oneof, items: ["2s", "1d", "2d", "4b", "8d", "2h", "1s"] }
-  mnem: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: neon.rs:439
+evidence: neon.rs:1093
 ```
 
-## encode_neon_across_neg_dest
-- Tier: 3
-- Rationale: ARM/gas/llvm-mc require dest Bd/Hd/Sd matching T. GPR (x/w/sp), arranged Vd.T, dest-width mismatch (h vs 8b, …) are rejected by llvm-mc. get_neon_reg accepts Operand::Reg of any prefix and discards dest arrangement (`let (rd, _)`). Public dispatch passes dest through. Domain is the documented dest, not the passing one.
-- Doc contract: neon.rs:439 "Encode NEON across-vector instructions: UMAXV, UMINV, SMAXV, SMINV" — asserted fingerprint b465ed41
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:351 encode_neon_addv_neg_dest
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ valid (v,T), ∀ caller (mnem,U,opc), ∀ dest ∈ {GPR-x, GPR-w, sp, Vd.T arranged, mismatched scalar prefix}. llvm-mc rejects dest ⇒ encode_neon_across([bad_dest, Vn.T], U, opc) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_neg_mismatched_t
+- Tier: 2
+- Rationale: ARM permute requires matching arrangements on Vd, Vn, Vm. llvm-mc and gas reject mismatched T. README.md:12 gas-compatibility. The SUT discards source arrangements.
+- Doc contract: neon.rs:1093 "Encode NEON UZP1/UZP2/ZIP1/ZIP2" — asserted fingerprint bb62b080
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:410 (mismatched T Err)
+- Formal: ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm ∈ {0..31}. (Td≠Tn ∨ Td≠Tm) ⇒ llvm-mc(mnemonic Vd.Td,Vn.Tn,Vm.Tm)=Err ∧ encode_neon_zip_uzp([Vd.Td,Vn.Tn,Vm.Tm], opc(mnemonic), false)=Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, v=b, t=8b, mnem=umaxv, u_bit=1, opcode=0b01010, kind=0; encode_neon_across([x0, v0.8b], 1, 0b01010) = Ok(Word(0x2e30a800))
-- Bug report: pbt-out/bug_reports/encode_neon_across_invalid_dest.md
+- Counterexample: encode_neon_zip_uzp([v0.8b, v0.8b, v0.16b], 0b011, false)
+- Bug report: bug_reports/encode_neon_zip_uzp_mismatched_t.md
 
 ```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, v, t, mnem, u_bit, opcode, dest_kind]
-  domain: { rd,rn: 0..31, (v,t): valid_across_vt, dest_kind: {x,w,sp,arranged,mismatch} }
-  body: llvm_mc_rejects(bad dest) => encode_neon_across(ops, u_bit, opcode).is_err()
+  vars: [mnemonic, td, tn, tm, rd, rn, rm]
+  domain: { mnemonic: {zip1,zip2,uzp1,uzp2,trn1,trn2}, td: valid_t, tn: valid_t, tm: valid_t, rd: 0..31, rn: 0..31, rm: 0..31 }
+  relation:
+    op: throws
+    expr: encode_neon_zip_uzp([Vd.Td,Vn.Tn,Vm.Tm], opc(mnemonic), false)
 generators:
+  mnemonic: { gen: oneof, items: ["zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"] }
+  td: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  tn: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  tm: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  mnem: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
-  dest_kind: { gen: int, min: 0, max: 4, type: u8 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: neon.rs:439
+evidence: neon.rs:1093
 ```
 
-## encode_neon_across_diff_alt_spellings
-- Tier: 5
-- Rationale: Sweep: parser/llvm-mc accept uppercase mnemonic and V/B/H/S prefixes (parse_reg_num lowercases). Differential vs llvm-mc on that documented spelling domain. Same mapping as P1.
-- Doc contract: neon.rs:439 "Encode NEON across-vector instructions: UMAXV, UMINV, SMAXV, SMINV" — asserted fingerprint b465ed41
-- Seed: src/backend/arm/assembler/encoder/encode_neon_addv_pbt.rs:411 encode_neon_addv_diff_alt_spellings
-- Formal: ∀ rd,rn ∈ {0..31}, ∀ valid (v,T), ∀ caller (mnem,U,opc). encode_neon_across([Reg(V_up∥rd), RegArrangement(V∥rn, T)], U, opc) = llvm-mc("{MNEM} {V}{rd}, V{rn}.{T}")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs
+## encode_neon_zip_uzp_neg_gpr_or_bare
+- Tier: 2
+- Rationale: llvm-mc and gas reject GPR, bare V (no arrangement), and FP scalar (B/H/S/D/Q) operands for ZIP/UZP/TRN. README.md:12 gas-compatibility. get_neon_reg accepts Operand::Reg and parse_reg_num maps x/w/d/s/q/h/b. Dest as Operand::Reg fails via empty arrangement; source as Operand::Reg encodes.
+- Doc contract: neon.rs:1093 "Encode NEON UZP1/UZP2/ZIP1/ZIP2" — asserted fingerprint bb62b080
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:439 (GPR/bare Err)
+- Formal: ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm ∈ {0..31}, kind ∈ {gpr_x, gpr_w, bare_v, fp_d, fp_s}. llvm-mc(non-arranged asm)=Err ⇒ encode_neon_zip_uzp(non-arranged ops, opc(mnemonic), false)=Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_zip_uzp([v0.8b, Reg("v0"), v0.8b], 0b011, false)
+- Bug report: bug_reports/encode_neon_zip_uzp_bare_src.md
+
+```property
+function: encoder.encode_neon_zip_uzp
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, t, rd, rn, rm, kind]
+  domain: { mnemonic: {zip1,zip2,uzp1,uzp2,trn1,trn2}, t: {8b,16b,4h,8h,2s,4s,2d}, rd: 0..31, rn: 0..31, rm: 0..31, kind: {gpr_x,gpr_w,bare_v,fp_d,fp_s} }
+  relation:
+    op: throws
+    expr: encode_neon_zip_uzp(non_neon_ops(kind), opc(mnemonic), false)
+generators:
+  mnemonic: { gen: oneof, items: ["zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"] }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  kind: { gen: int, min: 0, max: 4, type: u8 }
+expected_error: String
+evidence: neon.rs:1093
+```
+
+## encode_neon_zip_uzp_diff_alt_spellings
+- Tier: 4
+- Rationale: Sweep — uppercase V prefix with lowercase T is accepted by llvm-mc and parse_reg_num lowercases. Same differential contract as P1 on an alt-spelling generator.
+- Doc contract: neon.rs:1093 "Encode NEON UZP1/UZP2/ZIP1/ZIP2" — asserted fingerprint bb62b080
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ext_pbt.rs:271 (alt-spellings)
+- Formal: ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm ∈ {0..31}. encode_neon_zip_uzp([V{rd}.T, V{rn}.T, V{rm}.T], opc(mnemonic), false) = llvm-mc(mnemonic V{rd}.T, V{rn}.T, V{rm}.T)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.neon.encode_neon_across
+function: encoder.encode_neon_zip_uzp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, v, t, mnem, u_bit, opcode]
-  domain: { rd,rn: 0..31, (v,t): valid_across_vt, (mnem,u_bit,opcode): caller_triples }
+  vars: [mnemonic, t, rd, rn, rm]
+  domain: { mnemonic: {zip1,zip2,uzp1,uzp2,trn1,trn2}, t: {8b,16b,4h,8h,2s,4s,2d}, rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: encode_neon_across([Reg(upper(v)||rd), RegArrangement(V||rn, t)], u_bit, opcode)
-    rhs: llvm_mc("{MNEM} {V}{rd}, V{rn}.{T}")
+    lhs: encode_neon_zip_uzp([RegArrangement(V{rd},t), RegArrangement(V{rn},t), RegArrangement(V{rm},t)], opc(mnemonic), false)
+    rhs: llvm_mc_word("{mnemonic} V{rd}.{T}, V{rn}.{T}, V{rm}.{T}")
 generators:
+  mnemonic: { gen: oneof, items: ["zip1", "zip2", "uzp1", "uzp2", "trn1", "trn2"] }
+  t: { gen: oneof, items: ["8b", "16b", "4h", "8h", "2s", "4s", "2d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  v: { gen: string }
-  t: { gen: string }
-  mnem: { gen: string }
-  u_bit: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:439
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: neon.rs:1093
 ```

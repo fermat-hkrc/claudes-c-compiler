@@ -1,141 +1,145 @@
-# PBT Campaign Report: encode_neon_across
+# PBT Campaign Report: encode_neon_zip_uzp
 
 ## Summary
 
-**Verdict:** 3 medium: encode_neon_across silently encodes a third operand, reserved T (2S/1D/2D), and a GPR/mismatched dest that llvm-mc/gas reject, so invalid UMAXV/UMINV/SMAXV/SMINV assembly becomes a NEON word.
+**Verdict:** 4 medium: encode_neon_zip_uzp silently encodes extra operands, reserved 1D, mismatched arrangements, and bare/GPR sources that gas and llvm-mc reject, so invalid ZIP/UZP/TRN assembly becomes a 32-bit word.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_across
-**Tests:** 9 properties (plus 10 KAT + 3 failing regression witnesses)
-**Result:** 6 passing, 3 bugs
-**Change surface:** 1 changed function (encode_neon_across), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo lib tests executed encode_neon_across.
+**Modules tested:** encode_neon_zip_uzp
+**Tests:** 9
+**Result:** 5 passing, 4 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps found no .gcda/.profraw (build tree not instrumented / C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of encode_neon_zip_uzp: arity Err, get_neon_reg Err, neon_arr_to_q_size Err, Ok Word all driven.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_across | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_zip_uzp | 9 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_across ignores a third operand
+### B1: encode_neon_zip_uzp ignores a fourth operand
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ valid (v,T), ∀ caller (mnem,U,opc). llvm-mc("{mnem} {v}{rd}, v{rn}.{T}, v{extra}.{T}") is Err ⇒ encode_neon_across([Vd, Vn.T, Vextra.T], U, opc) is Err
-**Contract evidence:** documented neon.rs:447 "NEON across-vector requires 2 operands"
-**Documentation conflict:** neon.rs:447 "NEON across-vector requires 2 operands" — states the instruction requires 2 operands (exactly); the check is `len < 2`, so extras are accepted. The comment is the contract the code violates. (not independently verified)
+**Formal:** ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm,extra ∈ {0..31}. llvm-mc(mnemonic Vd.T,Vn.T,Vm.T,Vextra.T)=Err ⇒ encode_neon_zip_uzp([Vd.T,Vn.T,Vm.T,Vextra.T], opc(mnemonic), false)=Err
+**Contract evidence:** inferred (README.md:12 gas-compatibility; llvm-mc/gas reject a fourth operand; neon.rs:1096 "uzp/zip requires 3 operands")
+**Documentation conflict:** neon.rs:1096 `return Err("uzp/zip requires 3 operands".to_string());` — the check is `operands.len() < 3`, so extra operands are not rejected. The comment does not declare extra valid; gas/README require exactly 3.
 **Severity:** medium
-**Counterexample:** encode_neon_across([b0, v0.8b, v0.8b], 1, 0b01010)
-**Expected / Actual:** Err / Ok(Word(0x2e30a800))
-**Impact:** The assembler silently encodes `umaxv Vd, Vn.T, extra` as `umaxv Vd, Vn.T`, dropping the extra operand instead of diagnosing invalid assembly
-**Root cause:** neon.rs:446 uses `operands.len() < 2`, so extra operands after the first two are ignored
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:446`
+**Counterexample:** encode_neon_zip_uzp([v0.8b, v0.8b, v0.8b, v0.8b], 0b011, false)
+**Expected / Actual:** Err / Ok(Word(0x0e003800))
+**Impact:** Invalid four-operand ZIP/UZP/TRN is assembled as the three-operand form, dropping the extra operand.
+**Root cause:** neon.rs:1095 uses `operands.len() < 3`, so operands after the first three are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1095`
 ```rust
-    if operands.len() < 2 {
-        return Err("NEON across-vector requires 2 operands".to_string());
+    if operands.len() < 3 {
+        return Err("uzp/zip requires 3 operands".to_string());
     }
 ```
-**Suggested fix:** Reject arity other than 2
+**Suggested fix:** Reject arity other than 3
 ```rust
-    if operands.len() != 2 {
-        return Err("NEON across-vector requires 2 operands".to_string());
+    if operands.len() != 3 {
+        return Err("uzp/zip requires 3 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_across_extra_operand.md
-**Repro seed:** rd = 0, rn = 0, extra = 0, (v, t) = ("b", "8b"), (mnem, u_bit, opcode) = ("umaxv", 1, 10)
+**Bug report:** bug_reports/encode_neon_zip_uzp_extra_operand.md
+**Repro seed:** cc 9b67a6acb5b9b4868037f953a8ad0e2ded32eb53d3ba488ec80820016f5bf472
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_across_pbt::encode_neon_across_neg_extra' panicked at src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs:297:1:
-Test failed: extra operand must Err (llvm-mc rejects umaxv b0, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs:417.
-minimal failing input: rd = 0, rn = 0, extra = 0, (v, t) = (
-    "b",
-    "8b",
-), (mnem, u_bit, opcode) = (
-    "umaxv",
-    1,
-    10,
-)
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+Test failed: 4 operands must Err (llvm-mc rejects zip1 v0.8b, v0.8b, v0.8b, v0.8b)
+minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "8b", m = "zip1"
 ```
 
-### B2: encode_neon_across encodes reserved across-lanes arrangements
+### B2: encode_neon_zip_uzp encodes reserved 1D arrangement
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ T ∈ {2s,1d,2d,4b,8d,2h,1s}, ∀ caller (mnem,U,opc). llvm-mc("{mnem} {dest}{rd}, v{rn}.{T}") is Err ⇒ encode_neon_across([Reg(dest∥rd), RegArrangement(v∥rn,T)], U, opc) is Err
-**Contract evidence:** inferred (ARM Advanced SIMD across lanes T in {8B,16B,4H,8H,4S}; size:Q=10:0 and size=11 reserved; llvm-mc/gas reject)
+**Formal:** ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, rd,rn,rm ∈ {0..31}. llvm-mc(mnemonic Vd.1d,Vn.1d,Vm.1d)=Err ⇒ encode_neon_zip_uzp([Vd.1d,Vn.1d,Vm.1d], opc(mnemonic), false)=Err
+**Contract evidence:** inferred (ARM Advanced SIMD permute size:Q=11:0 reserved; README.md:12 gas-compatibility; llvm-mc/gas reject `*.1d`)
+**Documentation conflict:** (none) — neon_arr_to_q_size accepts "1d"; the function comment does not list 1D as valid
+**Severity:** medium
+**Counterexample:** encode_neon_zip_uzp([v0.1d, v0.1d, v0.1d], 0b011, false)
+**Expected / Actual:** Err / Ok(Word(0x0ec03800))
+**Impact:** Reserved 1D permute encodings are emitted for assembly that gas and llvm-mc reject.
+**Root cause:** neon.rs:1101 uses neon_arr_to_q_size which maps "1d" to (Q=0, size=11) with no reserved-pair check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1101`
+```rust
+    let (q, size) = neon_arr_to_q_size(&arr_d)?;
+```
+**Suggested fix:** Reject size:Q = 11:0 after decoding Q/size
+```rust
+    let (q, size) = neon_arr_to_q_size(&arr_d)?;
+    if size == 0b11 && q == 0 {
+        return Err("uzp/zip: 1d arrangement is reserved".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_neon_zip_uzp_reserved_1d.md
+**Repro seed:** (deterministic; rd=rn=rm=0, m=zip1)
+**Raw output:**
+```text
+Test failed: reserved 1d must Err (llvm-mc/gas reject zip1 v0.1d, v0.1d, v0.1d)
+minimal failing input: rd = 0, rn = 0, rm = 0, m = "zip1"
+```
+
+### B3: encode_neon_zip_uzp ignores mismatched source arrangements
+
+**Formal:** ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm ∈ {0..31}. (Td≠Tn ∨ Td≠Tm) ⇒ llvm-mc(mnemonic Vd.Td,Vn.Tn,Vm.Tm)=Err ∧ encode_neon_zip_uzp([Vd.Td,Vn.Tn,Vm.Tm], opc(mnemonic), false)=Err
+**Contract evidence:** inferred (ARM permute matching arrangements; README.md:12 gas-compatibility; llvm-mc/gas reject mismatched T)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_across([s0, v0.2s], 1, 0b01010)
-**Expected / Actual:** Err / Ok(Word(0x2eb0a800))
-**Impact:** Illegal `umaxv s0, v0.2s` (and 1d/2d) is assembled into a reserved encoding instead of being diagnosed
-**Root cause:** neon.rs:452 calls neon_arr_to_q_size on the source arrangement with no across-lanes T filter, so 2s/1d/2d become size/Q fields
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:452`
+**Counterexample:** encode_neon_zip_uzp([v0.8b, v0.8b, v0.16b], 0b011, false)
+**Expected / Actual:** Err / Ok(Word(0x0e003800))
+**Impact:** `zip1 v0.8b, v0.8b, v0.16b` is assembled as `zip1 v0.8b, v0.8b, v0.8b`.
+**Root cause:** neon.rs:1099-1100 discard source arrangements (`let (rn, _)`, `let (rm, _)`).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1099`
 ```rust
-    let (q, size) = neon_arr_to_q_size(&arr_n)?;
+    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rm, _) = get_neon_reg(operands, 2)?;
 ```
-**Suggested fix:** Reject arrangements other than 8b/16b/4h/8h/4s before encoding
+**Suggested fix:** Require source arrangements to match dest T
 ```rust
-    let (q, size) = neon_arr_to_q_size(&arr_n)?;
-    if matches!((q, size), (0, 0b10) | (_, 0b11)) {
-        return Err(format!("NEON across-vector: unsupported arrangement: {}", arr_n));
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    let (rm, arr_m) = get_neon_reg(operands, 2)?;
+    if arr_n != arr_d || arr_m != arr_d {
+        return Err(format!("uzp/zip: mismatched arrangements {arr_d}/{arr_n}/{arr_m}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_across_reserved_t.md
-**Repro seed:** rd = 0, rn = 0, t = "2s", (mnem, u_bit, opcode) = ("umaxv", 1, 10)
+**Bug report:** bug_reports/encode_neon_zip_uzp_mismatched_t.md
+**Repro seed:** (deterministic; td=8b, tn=8b, tm=16b, m=zip1)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_across_pbt::encode_neon_across_neg_invalid_t' panicked at src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs:297:1:
-Test failed: invalid T must Err (ARM reserved/unsupported; llvm-mc rejects umaxv s0, v0.2s) at src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs:443.
-minimal failing input: rd = 0, rn = 0, t = "2s", (mnem, u_bit, opcode) = (
-    "umaxv",
-    1,
-    10,
-)
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+Test failed: mismatched T must Err (llvm-mc/gas reject zip1 v0.8b, v0.8b, v0.16b)
+minimal failing input: rd = 0, rn = 0, rm = 0, td = "8b", tn = "8b", tm = "16b", m = "zip1"
 ```
 
-### B3: encode_neon_across accepts a GPR destination
+### B4: encode_neon_zip_uzp encodes a bare V or GPR source
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ valid (v,T), ∀ caller (mnem,U,opc), ∀ dest ∈ {GPR-x, GPR-w, sp, Vd.T arranged, mismatched scalar prefix}. llvm-mc rejects dest ⇒ encode_neon_across([bad_dest, Vn.T], U, opc) is Err
-**Contract evidence:** inferred (ARM dest Bd/Hd/Sd matching T; llvm-mc/gas reject GPR/arranged/mismatch; public dispatch encoder/mod.rs:693-696 passes dest through)
-**Documentation conflict:** (none)
+**Formal:** ∀ mnemonic ∈ {zip1,zip2,uzp1,uzp2,trn1,trn2}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, rd,rn,rm ∈ {0..31}, kind ∈ {gpr_x, gpr_w, bare_v, fp_d, fp_s}. llvm-mc(non-arranged asm)=Err ⇒ encode_neon_zip_uzp(non-arranged ops, opc(mnemonic), false)=Err
+**Contract evidence:** inferred (README.md:12 gas-compatibility; llvm-mc/gas require Vn.T / Vm.T)
+**Documentation conflict:** (none) — dest as Operand::Reg already Errs via empty arrangement; source as Operand::Reg encodes because arrangements are discarded
 **Severity:** medium
-**Counterexample:** encode_neon_across([x0, v0.8b], 1, 0b01010)
-**Expected / Actual:** Err / Ok(Word(0x2e30a800))
-**Impact:** `umaxv x0, v0.8b` is assembled as if dest were b0, producing a NEON word for invalid assembly
-**Root cause:** neon.rs:449 takes only the register number from dest (`let (rd, _)`) and never checks that dest is a matching B/H/S SIMD scalar
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:449`
+**Counterexample:** encode_neon_zip_uzp([v0.8b, Reg("v0"), v0.8b], 0b011, false)
+**Expected / Actual:** Err / Ok(Word(0x0e003800))
+**Impact:** `zip1 v0.8b, v0, v0.8b` (and `xN` as Rm) is assembled as a valid three-register permute.
+**Root cause:** get_neon_reg accepts Operand::Reg and returns an empty arrangement; encode_neon_zip_uzp discards source arrangements.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:14`
 ```rust
-    let (rd, _) = get_neon_reg(operands, 0)?;
+        Some(Operand::Reg(name)) => {
+            let num = parse_reg_num(name)
+                .ok_or_else(|| format!("invalid register: {}", name))?;
+            Ok((num, String::new()))
+        }
 ```
-**Suggested fix:** Require a scalar SIMD dest whose prefix matches T
+**Suggested fix:** Require RegArrangement on every ZIP/UZP/TRN operand
 ```rust
-    let dest = match &operands[0] {
-        Operand::Reg(r) if dest_prefix_matches(r, &arr_n) => parse_reg_num(r).ok_or("invalid dest")?,
-        _ => return Err("NEON across-vector: dest must be Bd/Hd/Sd matching T".to_string()),
-    };
+        Some(Operand::Reg(_)) => {
+            Err(format!("expected NEON register with arrangement at operand {}", idx))
+        }
 ```
-**Bug report:** bug_reports/encode_neon_across_invalid_dest.md
-**Repro seed:** rd = 0, rn = 0, (v, t) = ("b", "8b"), (mnem, u_bit, opcode) = ("umaxv", 1, 10), kind = 0
+**Bug report:** bug_reports/encode_neon_zip_uzp_bare_src.md
+**Repro seed:** cc 54bd80ef4ef3b6b1d2f0d671f69f2967a737d47ca19202db0b7c3c3c3ef0e386
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_across_pbt::encode_neon_across_neg_dest' panicked at src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs:297:1:
-Test failed: invalid dest must Err (llvm-mc rejects umaxv x0, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs:491.
-minimal failing input: rd = 0, rn = 0, (v, t) = (
-    "b",
-    "8b",
-), (mnem, u_bit, opcode) = (
-    "umaxv",
-    1,
-    10,
-), kind = 0
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+Test failed: GPR/bare/non-arrangement kind=1 must Err (llvm-mc rejects zip1 v0.8b, v0, v0.8b)
+minimal failing input: rd = 0, rn = 0, rm = 0, t = "8b", m = "zip1", kind = 1, fp_prefix = "x"
 ```
 
 ## Design Caveats
@@ -146,32 +150,39 @@ minimal failing input: rd = 0, rn = 0, (v, t) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_across_pbt.rs | 9 properties + 10 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.rs | 9 properties + 1 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_neon_zip_uzp_pbt;` |
 
 ## Reproduction
 
-Whole suite (filter avoids encode_neon_across_long):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_across_pbt -- --test-threads=1
+cargo test --lib encode_neon_zip_uzp -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_across_regression_extra_operand -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_zip_uzp_regression_extra_operand -- --test-threads=1 --exact
 ```
 
-B2 reserved T:
+B2 reserved 1d:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_across_regression_reserved_2s -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_zip_uzp_regression_reserved_1d -- --test-threads=1 --exact
 ```
 
-B3 GPR dest:
+B3 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_across_regression_gpr_dest -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_zip_uzp_regression_mismatched_t -- --test-threads=1 --exact
+```
+
+B4 bare source:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_zip_uzp_regression_bare_src -- --test-threads=1 --exact
 ```
 
 ## Output Directories
@@ -183,23 +194,26 @@ cargo test --lib test_encode_neon_across_regression_gpr_dest -- --test-threads=1
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_across_extra_operand.md
-- pbt-out/bug_reports/encode_neon_across_extra_operand.html
-- pbt-out/bug_reports/encode_neon_across_reserved_t.md
-- pbt-out/bug_reports/encode_neon_across_reserved_t.html
-- pbt-out/bug_reports/encode_neon_across_invalid_dest.md
-- pbt-out/bug_reports/encode_neon_across_invalid_dest.html
-- pbt-out/run/encode_neon_across.log
-- pbt-out/run/encode_neon_across_pbt.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_neon_zip_uzp_extra_operand.md
+- pbt-out/bug_reports/encode_neon_zip_uzp_extra_operand.html
+- pbt-out/bug_reports/encode_neon_zip_uzp_reserved_1d.md
+- pbt-out/bug_reports/encode_neon_zip_uzp_reserved_1d.html
+- pbt-out/bug_reports/encode_neon_zip_uzp_mismatched_t.md
+- pbt-out/bug_reports/encode_neon_zip_uzp_mismatched_t.html
+- pbt-out/bug_reports/encode_neon_zip_uzp_bare_src.md
+- pbt-out/bug_reports/encode_neon_zip_uzp_bare_src.html
+- pbt-out/run/encode_neon_zip_uzp.log
+- pbt-out/run/encode_neon_zip_uzp_round2.log
+- proptest-regressions/backend/arm/assembler/encoder/encode_neon_zip_uzp_pbt.txt (proptest failure corpus; left in-tree as the framework writes it)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 12:55 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 117/289 total | PBT candidates: 117 | Tested: 117 (100%) | 0 pass, 117 fail
+> Last updated: 2026-10-05 13:14 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 118/289 total | PBT candidates: 118 | Tested: 118 (100%) | 0 pass, 118 fail
 
 ## Summary
 
@@ -208,10 +222,10 @@ cargo test --lib test_encode_neon_across_regression_gpr_dest -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 117 |
-| **Tested (of PBT candidates)** | **117 / 117 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 117 / 0 |
-| **Overall (tested / all functions)** | **117 / 289 (40%)** |
+| PBT candidates (from FUNCTION_INDEX) | 118 |
+| **Tested (of PBT candidates)** | **118 / 118 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 118 / 0 |
+| **Overall (tested / all functions)** | **118 / 289 (41%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -219,13 +233,13 @@ cargo test --lib test_encode_neon_across_regression_gpr_dest -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 117 | 117 | 0 | 100% |
+|  | 118 | 118 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 117 | 117 | 0 | 100% |
+| unknown | 118 | 118 | 0 | 100% |
 
 ## File Coverage
 
@@ -238,7 +252,7 @@ cargo test --lib test_encode_neon_across_regression_gpr_dest -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 32 | 32 | 100% | covered |
+| neon.rs | 68 | 33 | 33 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -365,3 +379,4 @@ cargo test --lib test_encode_neon_across_regression_gpr_dest -- --test-threads=1
 | encode_neon_bsl | neon.rs |
 | encode_neon_addv | neon.rs |
 | encode_neon_across | neon.rs |
+| encode_neon_zip_uzp | neon.rs |

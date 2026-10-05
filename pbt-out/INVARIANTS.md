@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_zip_uzp)
+
+- Valid ZIP1/ZIP2/UZP1/UZP2/TRN1/TRN2 with T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16] (1000 cases).
+- Success-path word: bit31=0, Q at bit30, bits[29:24]=001110, size at [23:22], bit21=0, Rm at [20:16], bit15=0, opc at [14:12], bits[11:10]=10, Rn at [9:5], Rd at [4:0]. Q/size from T: 8b=(0,00), 16b=(1,00), 4h=(0,01), 8h=(1,01), 2s=(0,10), 4s=(1,10), 2d=(1,11). opc: UZP1=001 TRN1=010 ZIP1=011 UZP2=101 TRN2=110 ZIP2=111.
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase V prefix with lowercase T matches llvm-mc (1000 cases).
+- Known-answer: `zip1 v0.8b, v1.8b, v2.8b` = 0x0e023820; `zip1 v0.16b, v1.16b, v2.16b` = 0x4e023820; `zip1 v0.2d, v1.2d, v2.2d` = 0x4ec23820; `zip2 v0.8b, v1.8b, v2.8b` = 0x0e027820; `uzp1 v0.8b, v1.8b, v2.8b` = 0x0e021820; `uzp2 v0.8b, v1.8b, v2.8b` = 0x0e025820; `trn1 v0.8b, v1.8b, v2.8b` = 0x0e022820; `trn2 v0.8b, v1.8b, v2.8b` = 0x0e026820.
+- Extra operand, reserved 1d, mismatched T, and bare/GPR source currently disagree with llvm-mc/gas (see bugs). Dest as Operand::Reg (empty arrangement) already Errs via neon_arr_to_q_size.
+
+## Environment (encode_neon_zip_uzp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD permute (ZIP/UZP/TRN): T in {8B,16B,4H,8H,2S,4S,2D}; size:Q=11:0 (1D) reserved; matching arrangements.
+- Dispatch: encoder/mod.rs:682-683 trn1/trn2; encoder/mod.rs:770-773 uzp1/uzp2/zip1/zip2 => encode_neon_zip_uzp(operands, opc, false).
+- Sibling encode_neon_ext / encode_neon_tbl / encode_neon_tbx are different opcodes, not same-job differentials.
+- encode_neon_zip_uzp checks operands.len() < 3; extra ignored; source arrangements discarded; neon_arr_to_q_size accepts 1d; `_is_zip` unused.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus uppercase V alt-spellings.
+- Four SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_zip_uzp_*.md.
+
 # Confirmed invariants (encode_neon_across)
 
 - Valid UMAXV/UMINV/SMAXV/SMINV with dest Bd/Hd/Sd matching T in {8b,16b,4h,8h,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
