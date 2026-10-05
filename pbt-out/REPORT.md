@@ -1,122 +1,134 @@
-# PBT Campaign Report: encode_neon_fcvtn
+# PBT Campaign Report: encode_neon_bitwise_insert
 
 ## Summary
 
-**Verdict:** 1 high, 2 medium: encode_neon_fcvtn accepts dest `.8b` and source `.2s` so invalid FCVTN encodes as a different valid instruction; it also silently drops a third operand and encodes a bare V dest as `Vd.4H`.
+**Verdict:** 4 medium: encode_neon_bitwise_insert silently encodes a fourth operand, T outside {8B,16B}, mismatched source T, and GPR/SP/bare-V/FP as if they were valid BIT/BIF, so invalid assembly becomes wrong machine code.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_fcvtn
+**Modules tested:** encode_neon_bitwise_insert
 **Tests:** 9
-**Result:** 6 passing, 3 bugs
+**Result:** 5 passing, 4 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). The cargo test run executed encode_neon_fcvtn via encode_neon_fcvtn_pbt.rs.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). The cargo test run executed encode_neon_bitwise_insert via encode_neon_bitwise_insert_pbt.rs.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_fcvtn | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_bitwise_insert | 9 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_fcvtn ignores a third operand
+### B1: encode_neon_bitwise_insert ignores a fourth operand
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ valid (tb,ta,is_high). llvm-mc("fcvtn{2} Vd.tb, Vn.ta, Ve.tb") = Err ∧ encode_neon_fcvtn([Vd.tb,Vn.ta,Ve.tb], is_high) = Err
-**Contract evidence:** documented src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume"
+**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}. llvm-mc(mnem size four-ops) is Err ⇒ encode_neon_bitwise_insert([Vd.t,Vn.t,Vm.t,Vextra.t], size) is Err
+**Contract evidence:** inferred (llvm-mc/gas reject a fourth operand; README.md:12 gas-compatible assembly)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_fcvtn([v0.4h, v0.4s, v0.4h], is_high=false)
-**Expected / Actual:** Err / Ok(Word(0x0e216800))
-**Impact:** Trailing junk after FCVTN is silently dropped, so a mistyped extra register does not fail the assemble
-**Root cause:** neon.rs:1653–1654 read only operands[0] and operands[1]; there is no maximum-arity check
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1653`
+**Counterexample:** encode_neon_bitwise_insert([v0.8b, v0.8b, v0.8b, v0.8b], size=0b10)
+**Expected / Actual:** Err / Ok(Word(0x2ea01c00))
+**Impact:** Trailing junk after BIT/BIF is silently dropped, so a mistyped extra register does not fail the assemble
+**Root cause:** neon.rs:1668 uses `operands.len() < 3`, so extra operands after the first three are ignored
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1668`
 ```rust
-    let (rd, _) = get_neon_reg(operands, 0)?;
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-```
-**Suggested fix:** Reject anything other than exactly 2 operands
-```rust
-    if operands.len() != 2 {
-        return Err("fcvtn requires 2 operands".to_string());
+    if operands.len() < 3 {
+        return Err("bit/bif requires 3 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_fcvtn_extra_operand.md
-**Repro seed:** rd = 0, rn = 0, extra = 0, pair = ("4h", "4s", false)
-**Raw output:** Test failed: 3 operands must Err (llvm-mc rejects fcvtn v0.4h, v0.4s, v0.4h) at src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs:348.
-minimal failing input: rd = 0, rn = 0, extra = 0, pair = (
-    "4h",
-    "4s",
-    false,
-)
-
-### B2: encode_neon_fcvtn accepts dest 8B and source 2S
-
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ tb,ta ∈ NEON arrangements, ∀ is_high ∈ {false,true}. ¬valid_pair(tb,ta,is_high) ⇒ llvm-mc rejects ∧ encode_neon_fcvtn([Vd.tb,Vn.ta], is_high) = Err
-**Contract evidence:** inferred (ARM FCVTN admits only Ta in {4S,2D} with matching Tb {4H/8H, 2S/4S}; README.md:12 gas-compatible assembly)
-**Documentation conflict:** neon.rs:1651 "FCVTN: single→half or double→single narrowing float convert" states the conversions, not arrangement counts. neon.rs:1656 "fcvtn: unsupported source:" is the `_` arm of a match that explicitly accepts "2s". Neither comment declares dest 8B or source 2S invalid / out of domain.
-**Severity:** high
-**Counterexample:** encode_neon_fcvtn([v0.8b, v0.2s], is_high=false)
-**Expected / Actual:** Err / Ok(Word(0x0e216800))
-**Impact:** Invalid assembly encodes as a different valid FCVTN (sz from source only, dest discarded), producing wrong machine code instead of an assemble error
-**Root cause:** neon.rs:1653 discards the dest arrangement; neon.rs:1655 matches source "2s" as sz=0
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1653`
+**Suggested fix:** Reject arity other than 3
 ```rust
-    let (rd, _) = get_neon_reg(operands, 0)?;
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    let sz = match arr_n.as_str() { "4s" | "2s" => 0u32, "2d" => 1,
-        _ => return Err(format!("fcvtn: unsupported source: {}", arr_n)), };
+    if operands.len() != 3 {
+        return Err("bit/bif requires 3 operands".to_string());
+    }
 ```
-**Suggested fix:** Accept only source 4s/2d and require the ARM-mandated dest arrangement
+**Bug report:** bug_reports/encode_neon_bitwise_insert_extra_operand.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, extra = 0, t = "8b", size = 2
+**Raw output:** Test failed: extra operand must Err (llvm-mc rejects bit v0.8b, v0.8b, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs:305.
+minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "8b", size = 2
+
+### B2: encode_neon_bitwise_insert encodes T outside {8B,16B}
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, ∀ t ∈ {4h,8h,2s,4s,2d,1d,4b,8d,2h,1s}, ∀ size ∈ {0b10,0b11}. llvm-mc rejects mnem Vd.t,Vn.t,Vm.t ⇒ encode_neon_bitwise_insert([Vd.t,Vn.t,Vm.t], size) is Err
+**Contract evidence:** inferred (ARM Advanced SIMD three-same BIT/BIF admit only T in {8B,16B}; README.md:12 gas-compatible assembly)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_bitwise_insert([v0.4h, v0.4h, v0.4h], size=0b10)
+**Expected / Actual:** Err / Ok(Word) with Q=0 as if T were 8B
+**Impact:** Invalid assembly such as `bit v0.4h, v0.4h, v0.4h` encodes as 8B BIT, producing wrong machine code instead of an assemble error
+**Root cause:** neon.rs:1674 sets Q=1 iff dest arrangement is exactly "16b", else 0, with no check that T is 8b or 16b
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1674`
+```rust
+    let q: u32 = if arr_d == "16b" { 1 } else { 0 };
+```
+**Suggested fix:** Accept only 8b/16b
+```rust
+    let q: u32 = match arr_d.as_str() {
+        "8b" => 0,
+        "16b" => 1,
+        _ => return Err(format!("bit/bif: unsupported arrangement: {}", arr_d)),
+    };
+```
+**Bug report:** bug_reports/encode_neon_bitwise_insert_invalid_t.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, t = "4h", size = 2
+**Raw output:** Test failed: invalid T must Err (only .8b/.16b; llvm-mc rejects bit v0.4h, v0.4h, v0.4h) at src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs:327.
+minimal failing input: rd = 0, rn = 0, rm = 0, t = "4h", size = 2
+
+### B3: encode_neon_bitwise_insert ignores mismatched source arrangements
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, ∀ td,tn,tm ∈ {8b,16b} not all equal, ∀ size ∈ {0b10,0b11}. llvm-mc rejects mismatched T ⇒ encode_neon_bitwise_insert([Vd.td,Vn.tn,Vm.tm], size) is Err
+**Contract evidence:** inferred (llvm-mc/gas require matching T on Vd, Vn, Vm; README.md:12 gas-compatible assembly)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_bitwise_insert([v0.16b, v0.8b, v0.8b], size=0b10)
+**Expected / Actual:** Err / Ok(Word) with Q from dest "16b" only
+**Impact:** A width mismatch such as `bit v0.16b, v0.8b, v0.8b` encodes as 16B BIT, so the assemble does not fail
+**Root cause:** neon.rs:1672–1673 discard source arrangements; only dest T is read for Q
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1672`
+```rust
+    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rm, _) = get_neon_reg(operands, 2)?;
+```
+**Suggested fix:** Require Vn.T and Vm.T to equal Vd.T
+```rust
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    let (rm, arr_m) = get_neon_reg(operands, 2)?;
+    if arr_n != arr_d || arr_m != arr_d {
+        return Err("bit/bif: operand arrangement mismatch".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_neon_bitwise_insert_mismatch_t.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, td = "16b", tn = "8b", tm = "8b", size = 2
+**Raw output:** Test failed: mismatched T must Err (llvm-mc rejects bit v0.16b, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs:352.
+minimal failing input: rd = 0, rn = 0, rm = 0, td = "16b", tn = "8b", tm = "8b", size = 2
+
+### B4: encode_neon_bitwise_insert accepts GPR, SP, bare V, and FP scalars
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}, ∀ kind ∈ {x-gpr, w-dest, sp, bare-v, d-scalar, s-dest, q-dest}. llvm-mc rejects that form ⇒ encode_neon_bitwise_insert(ops(kind), size) is Err
+**Contract evidence:** inferred (llvm-mc/gas require arranged NEON Vd.T, Vn.T, Vm.T; README.md:12 gas-compatible assembly)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_bitwise_insert([x0, x0, x0], size=0b10)
+**Expected / Actual:** Err / Ok(Word) — empty arrangement yields Q=0
+**Impact:** `bit x0, x0, x0` (and SP / bare V / scalar FP) encodes as 8B BIT, so a wrong register class is not diagnosed
+**Root cause:** neon.rs:1671 calls get_neon_reg, which accepts Operand::Reg; empty arrangement then takes the Q=0 arm at neon.rs:1674
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1671`
 ```rust
     let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    let sz = match arr_n.as_str() {
-        "4s" => 0u32,
-        "2d" => 1,
-        _ => return Err(format!("fcvtn: unsupported source: {}", arr_n)),
-    };
-    let expected_tb = match (arr_n.as_str(), is_high) {
-        ("4s", false) => "4h",
-        ("4s", true) => "8h",
-        ("2d", false) => "2s",
-        ("2d", true) => "4s",
-        _ => return Err(format!("fcvtn: unsupported source: {}", arr_n)),
-    };
-    if arr_d != expected_tb {
-        return Err(format!("fcvtn: source {} requires dest {}", arr_n, expected_tb));
+    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rm, _) = get_neon_reg(operands, 2)?;
+    let q: u32 = if arr_d == "16b" { 1 } else { 0 };
+```
+**Suggested fix:** Require RegArrangement with T in {8b,16b} on every operand
+```rust
+    if arr_d != "8b" && arr_d != "16b" {
+        return Err(format!("bit/bif: expected Vd.8b or Vd.16b, got {}", arr_d));
     }
 ```
-**Bug report:** bug_reports/encode_neon_fcvtn_mismatched_ta_tb.md
-**Repro seed:** rd = 0, rn = 0, tb = "8b", ta = "2s", is_high = false
-**Raw output:** Test failed: invalid/mismatched Tb/Ta must Err (ARM FCVTN Ta in {4S,2D} with matching Tb; llvm-mc rejects fcvtn v0.8b, v0.2s) at src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs:375.
-minimal failing input: rd = 0, rn = 0, tb = "8b", ta = "2s", is_high = false
-
-### B3: encode_neon_fcvtn encodes a bare V dest as FCVTN Vd.4H
-
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ kind ∈ GPR/bare/non-V. llvm-mc rejects the corresponding asm ∧ encode_neon_fcvtn(ops(kind), false) = Err
-**Contract evidence:** inferred (ARM FCVTN dest is Vd.Tb; README.md:12 gas-compatible assembly; llvm-mc rejects `fcvtn v0, v0.4s`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_fcvtn([Reg("v0"), v0.4s], is_high=false)
-**Expected / Actual:** Err / Ok(Word(0x0e216800))
-**Impact:** A dest without arrangement is encoded as the corresponding V register, so a mistyped `fcvtn v0, v0.4s` silently becomes `fcvtn v0.4h, v0.4s`
-**Root cause:** neon.rs:1653 calls get_neon_reg which accepts Operand::Reg, then discards dest arrangement
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1653`
-```rust
-    let (rd, _) = get_neon_reg(operands, 0)?;
-```
-**Suggested fix:** Reject a destination that is not a V-prefixed RegArrangement
-```rust
-    match &operands[0] {
-        Operand::RegArrangement { reg, .. } if reg.to_ascii_lowercase().starts_with('v') => {}
-        _ => return Err("fcvtn: destination must be a V register with arrangement".to_string()),
-    }
-```
-**Bug report:** bug_reports/encode_neon_fcvtn_bare_dest.md
-**Repro seed:** rd = 0, rn = 0, kind = 2, fp_prefix = "x"
-**Raw output:** Test failed: GPR/bare/non-arrangement kind=2 must Err (llvm-mc rejects fcvtn v0, v0.4s) at src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs:438.
-minimal failing input: rd = 0, rn = 0, kind = 2, fp_prefix = "x"
+**Bug report:** bug_reports/encode_neon_bitwise_insert_gpr_bare_sp.md
+**Repro seed:** rd = 0, rn = 0, rm = 0, t = "8b", size = 2, kind = 0
+**Raw output:** Test failed: non-arranged NEON / GPR / SP / FP must Err (llvm-mc rejects bit x0, x0, x0) at src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs:411.
+minimal failing input: rd = 0, rn = 0, rm = 0, t = "8b", size = 2, kind = 0
 
 ## Design Caveats
 
@@ -126,60 +138,49 @@ minimal failing input: rd = 0, rn = 0, kind = 2, fp_prefix = "x"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs | 9 properties + 2 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs | 9 properties + 4 KAT + 6 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtn -- --test-threads=1
+cargo test --lib encode_neon_bitwise_insert -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtn_neg_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_bitwise_insert_regression_extra_operand -- --test-threads=1 --exact
 ```
 
-B2 mismatched arrangements:
+B2 invalid T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtn_neg_mismatched_ta_tb -- --test-threads=1
+cargo test --lib test_encode_neon_bitwise_insert_regression_invalid_t -- --test-threads=1 --exact
 ```
 
-B3 bare dest:
+B3 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtn_neg_gpr_or_bare -- --test-threads=1
+cargo test --lib test_encode_neon_bitwise_insert_regression_mismatch_t -- --test-threads=1 --exact
+```
+
+B4 GPR dest:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_bitwise_insert_regression_gpr_dest -- --test-threads=1 --exact
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md — this report
-- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — coverage ledger
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/INVARIANTS.md — confirmed invariants
-- pbt-out/report.json — machine-readable report
-- pbt-out/bug_reports/encode_neon_fcvtn_extra_operand.md
-- pbt-out/bug_reports/encode_neon_fcvtn_extra_operand.html
-- pbt-out/bug_reports/encode_neon_fcvtn_mismatched_ta_tb.md
-- pbt-out/bug_reports/encode_neon_fcvtn_mismatched_ta_tb.html
-- pbt-out/bug_reports/encode_neon_fcvtn_bare_dest.md
-- pbt-out/bug_reports/encode_neon_fcvtn_bare_dest.html
-- pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/CHANGE_SURFACE.md — change surface
-- src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs — harness
+pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/PROPERTIES.md, pbt-out/PLAN.md, pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md, pbt-out/report.json, pbt-out/INVARIANTS.md, pbt-out/FUNCTION_INDEX.md, pbt-out/bug_reports/encode_neon_bitwise_insert_extra_operand.md, pbt-out/bug_reports/encode_neon_bitwise_insert_extra_operand.html, pbt-out/bug_reports/encode_neon_bitwise_insert_invalid_t.md, pbt-out/bug_reports/encode_neon_bitwise_insert_invalid_t.html, pbt-out/bug_reports/encode_neon_bitwise_insert_mismatch_t.md, pbt-out/bug_reports/encode_neon_bitwise_insert_mismatch_t.html, pbt-out/bug_reports/encode_neon_bitwise_insert_gpr_bare_sp.md, pbt-out/bug_reports/encode_neon_bitwise_insert_gpr_bare_sp.html, pbt-out/run/ (test logs).
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 20:53 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 141/289 total | PBT candidates: 141 | Tested: 141 (100%) | 0 pass, 141 fail
+> Last updated: 2026-10-05 21:09 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 142/289 total | PBT candidates: 142 | Tested: 142 (100%) | 0 pass, 142 fail
 
 ## Summary
 
@@ -188,10 +189,10 @@ cargo test --lib encode_neon_fcvtn_neg_gpr_or_bare -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 141 |
-| **Tested (of PBT candidates)** | **141 / 141 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 141 / 0 |
-| **Overall (tested / all functions)** | **141 / 289 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 142 |
+| **Tested (of PBT candidates)** | **142 / 142 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 142 / 0 |
+| **Overall (tested / all functions)** | **142 / 289 (49%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -199,13 +200,13 @@ cargo test --lib encode_neon_fcvtn_neg_gpr_or_bare -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 141 | 141 | 0 | 100% |
+|  | 142 | 142 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 141 | 141 | 0 | 100% |
+| unknown | 142 | 142 | 0 | 100% |
 
 ## File Coverage
 
@@ -218,7 +219,7 @@ cargo test --lib encode_neon_fcvtn_neg_gpr_or_bare -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 56 | 56 | 100% | covered |
+| neon.rs | 68 | 57 | 57 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -369,3 +370,4 @@ cargo test --lib encode_neon_fcvtn_neg_gpr_or_bare -- --test-threads=1
 | encode_neon_float_elem | neon.rs |
 | encode_neon_fcvtl | neon.rs |
 | encode_neon_fcvtn | neon.rs |
+| encode_neon_bitwise_insert | neon.rs |

@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_fcvtn)
-> Files: 10/10 scanned (100%) | Functions: 141/289 total | PBT candidates: 141 | Tested: 141 (100%) | 0 pass, 141 fail
+> Last updated: 2026-10-05 (campaign: encode_neon_bitwise_insert, English)
+> Files: 10/10 scanned (100%) | Functions: 142/289 total | PBT candidates: 142 | Tested: 142 (100%) | coverage evidence: file-level (symbol presence)
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 141 |
-| **Tested (of PBT candidates)** | **141 / 141 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 141 / 0 |
-| **Overall (tested / all functions)** | **141 / 289 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 142 |
+| **Tested (of PBT candidates)** | **142 / 142 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 141 / 0 |
+| **Overall (tested / all functions)** | **142 / 289 (49%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -189,5 +189,5 @@
 | encode_neon_elem_long | neon.rs |
 | encode_neon_elem | neon.rs |
 | encode_neon_float_elem | neon.rs |
-| encode_neon_fcvtn | neon.rs |
 | encode_neon_fcvtl | neon.rs |
+| encode_neon_fcvtn | neon.rs |

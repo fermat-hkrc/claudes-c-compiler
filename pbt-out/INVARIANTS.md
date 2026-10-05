@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_bitwise_insert)
+
+- Valid BIT/BIF Vd.T, Vn.T, Vm.T with T in {8b,16b}, size in {0b10,0b11}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16]; only size in bits[23:22] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff T=16b, U=1, bits[28:24]=01110, size bits[23:22]=10 BIT / 11 BIF, bit21=1, Rm at [20:16], bits[15:10]=000111, Rn at [9:5], Rd at [4:0]. 8b vs 16b differs only in Q.
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase V prefix with lowercase T matches llvm-mc (1000 cases).
+- Known-answer: `bit v0.8b, v1.8b, v2.8b` = 0x2ea21c20; `bif v0.8b, v1.8b, v2.8b` = 0x2ee21c20; `bit v0.16b, v1.16b, v2.16b` = 0x6ea21c20; `bif v31.16b, v0.16b, v1.16b` = 0x6ee11c1f.
+- Extra operand, T∉{8b,16b}, mismatched T, and GPR/SP/bare-V/FP currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_bitwise_insert)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same (BIT/BIF): 0 Q 1 01110 ss 1 Rm 000111 Rn Rd. T in {8B,16B} only. size=10 BIT, size=11 BIF. Q=1 iff T=16B.
+- Dispatch: encoder/mod.rs:754-755 `"bit" => encode_neon_bitwise_insert(operands, 0b10); "bif" => encode_neon_bitwise_insert(operands, 0b11)`.
+- Sibling encode_neon_bsl / encode_neon_bic are different opcodes, not same-job differentials.
+- encode_neon_bitwise_insert checks operands.len() < 3; extra ignored; source arrangements discarded; Q=1 iff arr_d=="16b" else 0 (no 8b check).
+- get_neon_reg accepts Operand::Reg; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (uppercase V alt-spellings).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_bitwise_insert_*.md.
+
 # Confirmed invariants (encode_neon_fcvtn)
 
 - Valid FCVTN/FCVTN2 Vd.{4h,8h,2s,4s}, Vn.{4s,2d} with ARM-correct (Tb,Ta,Q) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
