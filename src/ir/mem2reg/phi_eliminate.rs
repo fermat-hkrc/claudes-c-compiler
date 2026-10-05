@@ -583,3 +583,232 @@ mod tests {
         assert!(result.contains(&1), "Chain phi whose dest is read by conflicting phi should also be marked");
     }
 }
+
+// ── PBT properties (round 06) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::{AddressSpace, IrType};
+    use crate::ir::reexports::IrConst;
+    use crate::ir::mem2reg::promote_allocas_with_params;
+    use proptest::prelude::*;
+    use proptest::collection::vec;
+
+    /// Random alloca-based IR (same shape as promote.rs pbt_tests::build_random_func).
+    fn build_random_func(
+        name: &str, n: usize, k: usize,
+        ops: &[Vec<(u8, u8, u8, i64)>],
+        terms: &[(u8, u32, u32)],
+    ) -> IrFunction {
+        let mut func = IrFunction::new(name.to_string(), IrType::I32, vec![], false);
+        let mut next: u32 = k as u32;
+        for bi in 0..n {
+            let mut insts: Vec<Instruction> = vec![];
+            let mut defined_here: Vec<u32> = vec![];
+            if bi == 0 {
+                for a in 0..k {
+                    insts.push(Instruction::Alloca {
+                        dest: Value(a as u32), ty: IrType::I32, size: 4, align: 4, volatile: false,
+                    });
+                }
+            }
+            if k > 0 {
+                for &(op, which, vsrc, cval) in &ops[bi] {
+                    let ptr = Value((which as usize % k) as u32);
+                    if op % 2 == 0 {
+                        let dest = Value(next);
+                        next += 1;
+                        insts.push(Instruction::Load { dest, ptr, ty: IrType::I32, seg_override: AddressSpace::Default });
+                        defined_here.push(dest.0);
+                    } else {
+                        let val = if vsrc % 3 == 0 && !defined_here.is_empty() {
+                            Operand::Value(Value(defined_here[(vsrc as usize) % defined_here.len()]))
+                        } else {
+                            Operand::Const(IrConst::I32(cval as i32))
+                        };
+                        insts.push(Instruction::Store { val, ptr, ty: IrType::I32, seg_override: AddressSpace::Default });
+                    }
+                }
+            }
+            let pick = |s: u32| -> Operand {
+                if defined_here.is_empty() {
+                    Operand::Const(IrConst::I32(1))
+                } else {
+                    Operand::Value(Value(defined_here[(s as usize) % defined_here.len()]))
+                }
+            };
+            let nn = n as u32;
+            let t = &terms[bi];
+            let term = match t.0 % 4 {
+                0 => Terminator::Return(Some(pick(t.1))),
+                1 => Terminator::Branch(BlockId(t.1 % nn)),
+                2 => Terminator::CondBranch {
+                    cond: pick(t.1),
+                    true_label: BlockId(t.1 % nn),
+                    false_label: BlockId(t.2 % nn),
+                },
+                _ => Terminator::Switch {
+                    val: pick(t.1),
+                    cases: vec![(1, BlockId(t.1 % nn)), (2, BlockId(t.2 % nn))],
+                    default: BlockId(t.1 % nn),
+                    ty: IrType::I32,
+                },
+            };
+            func.blocks.push(BasicBlock {
+                label: BlockId(bi as u32),
+                instructions: insts,
+                terminator: term,
+                source_spans: vec![],
+            });
+        }
+        func
+    }
+
+    fn successor_labels(term: &Terminator) -> Vec<BlockId> {
+        let mut out = vec![];
+        match term {
+            Terminator::Branch(t) => out.push(*t),
+            Terminator::CondBranch { true_label, false_label, .. } => {
+                out.push(*true_label);
+                if true_label != false_label { out.push(*false_label); }
+            }
+            Terminator::Switch { cases, default, .. } => {
+                out.push(*default);
+                for (_, t) in cases {
+                    if !out.contains(t) { out.push(*t); }
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+
+    /// P13: after promote + eliminate_phis the function must be phi-free and
+    /// structurally sound: every terminator label resolves, every appended trampoline
+    /// is a pure copy block branching to an original label and is referenced by its
+    /// predecessor, and every former phi destination is still defined by some Copy
+    /// instruction (the merged value is still produced).
+    /// Doc contract: "It converts each Phi instruction into Copy instructions placed at
+    /// the end of each predecessor block (before the terminator)." (a6a4eda7)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p13_phi_elimination_structural_preservation(
+            n in 1usize..=8,
+            k in 1usize..=4,
+            ops in vec(
+                vec((any::<u8>(), any::<u8>(), any::<u8>(), any::<i64>()), 0..=6),
+                1..=8),
+            terms in vec((any::<u8>(), any::<u32>(), any::<u32>()), 1..=8),
+        ) {
+            let n = n.min(ops.len()).min(terms.len());
+            let ops = &ops[..n];
+            let terms = &terms[..n];
+            let mut module = IrModule::new();
+            module.functions.push(build_random_func("f1", n, k, ops, terms));
+            module.functions.push(build_random_func("f2", n.min(3), k.min(2), ops, terms));
+
+            promote_allocas_with_params(&mut module);
+
+            // snapshot phi dests (reachable blocks only — unreachable blocks keep dead
+            // phis with empty incoming, dead code by construction) and original labels
+            let snapshot: Vec<(std::collections::BTreeSet<u32>, std::collections::BTreeSet<u32>)> =
+                module.functions.iter().map(|f| {
+                    let idx_of: FxHashMap<BlockId, usize> =
+                        f.blocks.iter().enumerate().map(|(i, b)| (b.label, i)).collect();
+                    let mut reach = vec![false; f.blocks.len()];
+                    if !f.blocks.is_empty() {
+                        let mut stack = vec![0usize];
+                        reach[0] = true;
+                        while let Some(u) = stack.pop() {
+                            for t in successor_labels(&f.blocks[u].terminator) {
+                                if let Some(&ti) = idx_of.get(&t) {
+                                    if !reach[ti] { reach[ti] = true; stack.push(ti); }
+                                }
+                            }
+                        }
+                    }
+                    let mut phis: std::collections::BTreeSet<u32> = Default::default();
+                    for (bi, b) in f.blocks.iter().enumerate() {
+                        if !reach[bi] { continue; }
+                        for i in &b.instructions {
+                            if let Instruction::Phi { dest, .. } = i {
+                                phis.insert(dest.0);
+                            }
+                        }
+                    }
+                    let labels: std::collections::BTreeSet<u32> = f.blocks.iter().map(|b| b.label.0).collect();
+                    (phis, labels)
+                }).collect();
+
+            eliminate_phis(&mut module);
+
+            for (fi, func) in module.functions.iter().enumerate() {
+                let (phi_dests, orig_labels) = &snapshot[fi];
+                let label_set: std::collections::BTreeSet<u32> = func.blocks.iter().map(|b| b.label.0).collect();
+                let idx_of: FxHashMap<BlockId, usize> =
+                    func.blocks.iter().enumerate().map(|(i, b)| (b.label, i)).collect();
+
+                // (a) no phis remain
+                for b in &func.blocks {
+                    prop_assert!(!b.instructions.iter().any(|i| matches!(i, Instruction::Phi { .. })),
+                        "phi survived elimination in {}", func.name);
+                }
+
+                // (b) every terminator label resolves
+                for b in &func.blocks {
+                    for t in successor_labels(&b.terminator) {
+                        prop_assert!(idx_of.contains_key(&t),
+                            "dangling label {:?} in {}", t, func.name);
+                    }
+                }
+
+                // (c) trampoline blocks are pure copy blocks to original labels, referenced by their pred
+                for b in &func.blocks {
+                    if orig_labels.contains(&b.label.0) { continue; }
+                    let Terminator::Branch(target) = &b.terminator else {
+                        prop_assert!(false, "trampoline {} does not end in Branch", b.label.0);
+                        continue;
+                    };
+                    prop_assert!(orig_labels.contains(&target.0),
+                        "trampoline {} branches to non-original label {}", b.label.0, target.0);
+                    for i in &b.instructions {
+                        prop_assert!(matches!(i, Instruction::Copy { .. }),
+                            "non-copy instruction in trampoline {}: {:?}", b.label.0, i);
+                    }
+                }
+                // every non-original block is referenced by some original block's terminator
+                for b in &func.blocks {
+                    if orig_labels.contains(&b.label.0) { continue; }
+                    let referenced = func.blocks.iter().take(func.blocks.len() - 0).any(|p| {
+                        orig_labels.contains(&p.label.0) && successor_labels(&p.terminator).contains(&b.label)
+                    });
+                    prop_assert!(referenced, "trampoline {} is unreachable from any original block", b.label.0);
+                }
+
+                // (d) every USED former phi dest is still defined by some Copy
+                //     (dead/circular phis from uninitialized-memory paths have no
+                //     consumers and legitimately keep no producer)
+                let copy_dests: std::collections::BTreeSet<u32> = func.blocks.iter().flat_map(|b|
+                    b.instructions.iter().filter_map(|i|
+                        if let Instruction::Copy { dest, .. } = i { Some(dest.0) } else { None })).collect();
+                let mut used: std::collections::BTreeSet<u32> = Default::default();
+                for b in &func.blocks {
+                    used.extend(b.terminator.used_values());
+                    for i in &b.instructions {
+                        if !matches!(i, Instruction::Copy { .. }) {
+                            used.extend(i.used_values());
+                        }
+                    }
+                }
+                for pd in phi_dests {
+                    if used.contains(pd) {
+                        prop_assert!(copy_dests.contains(pd),
+                            "phi dest {} used but no longer defined by any Copy in {}", pd, func.name);
+                    }
+                }
+                let _ = label_set;
+            }
+        }
+    }
+}

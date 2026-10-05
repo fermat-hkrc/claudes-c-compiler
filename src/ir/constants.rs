@@ -642,3 +642,255 @@ impl IrConst {
         }
     }
 }
+
+// ── PBT properties (round 06) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::IrType;
+    use proptest::prelude::*;
+
+    /// P5: unsigned representation convention — a constant of unsigned sub-64-bit type
+    /// must be stored zero-extended so to_i64() reads back the unsigned value. All
+    /// three writers of "a U8/U16/U32 constant with value v" must agree.
+    /// Doc contract (from_i64): "Store unsigned sub-64-bit types (U8, U16, U32) as I64
+    /// with zero-extended values to preserve unsigned semantics." (86a284c8)
+    /// Doc contract (cast_float_to_target): "For unsigned integer targets, converts via
+    /// the unsigned type first to get correct wrapping behavior (e.g., 200.0 as u8 = 200,
+    /// not saturated to i8 max)." (a21e7eb9)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p5_unsigned_repr_writer_differential(ty_idx in 0usize..3, raw in any::<u32>()) {
+            let (ty, mask): (IrType, u32) = match ty_idx {
+                0 => (IrType::U8, u8::MAX as u32),
+                1 => (IrType::U16, u16::MAX as u32),
+                _ => (IrType::U32, u32::MAX),
+            };
+            let v = raw & mask;
+
+            // writer 1: from_i64 (the convention's author)
+            prop_assert_eq!(IrConst::from_i64(v as i64, ty).to_i64(), Some(v as i64),
+                "from_i64 {:?} {}", ty, v);
+
+            // writer 2: cast_float_to_target — same job, must read back the same value
+            let cf = IrConst::cast_float_to_target(v as f64, ty)
+                .unwrap_or_else(|| panic!("cast_float_to_target returned None for {:?}", ty));
+            prop_assert_eq!(cf.to_i64(), Some(v as i64),
+                "cast_float_to_target({:?}, {}) = {:?} reads back {:?}", ty, v, cf, cf.to_i64());
+
+            // writer 3: cast_long_double_to_target (full-precision integer path)
+            let ld = IrConst::long_double_from_u64(v as u64);
+            let bytes = *ld.long_double_bytes().expect("long double bytes");
+            let cl = IrConst::cast_long_double_to_target(v as f64, &bytes, ty)
+                .unwrap_or_else(|| panic!("cast_long_double_to_target returned None for {:?}", ty));
+            prop_assert_eq!(cl.to_i64(), Some(v as i64),
+                "cast_long_double_to_target({:?}, {}) = {:?} reads back {:?}", ty, v, cl, cl.to_i64());
+        }
+    }
+
+    /// P6: coerce_to must normalize a signed-width constant to the zero-extended I64
+    /// representation when the target type is unsigned sub-64-bit (same convention).
+    /// The early-return `(I8(_), U8)` / `(I16(_), U16)` arms keep the forbidden
+    /// sign-extending native variant instead.
+    /// Doc contract: from_i64 convention comment (constants.rs, 86a284c8).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p6_coerce_to_unsigned_normalization(kind in 0usize..2, raw in any::<u32>()) {
+            match kind {
+                0 => {
+                    let v = 128u32 + (raw % 128); // 128..=255: values whose I8 form is negative
+                    let coerced = IrConst::from_i64(v as i64, IrType::I8).coerce_to(IrType::U8);
+                    prop_assert_eq!(coerced.to_i64(), Some(v as i64),
+                        "I8({}).coerce_to(U8) = {:?} reads back {}", v as i8, coerced, coerced.to_i64().unwrap_or(-1));
+                }
+                _ => {
+                    let v = 32768u32 + (raw % 32768); // 32768..=65535
+                    let coerced = IrConst::from_i64(v as i64, IrType::I16).coerce_to(IrType::U16);
+                    prop_assert_eq!(coerced.to_i64(), Some(v as i64),
+                        "I16({}).coerce_to(U16) = {:?} reads back {}", v as i16, coerced, coerced.to_i64().unwrap_or(-1));
+                }
+            }
+        }
+    }
+
+    // Independent IEEE 754 decoders (field definitions per the format specs quoted in
+    // the encoders' doc comments — not a transcription of the encoder logic).
+    fn decode_f128_to_f64(bytes: &[u8; 16]) -> f64 {
+        let bits = u128::from_le_bytes(*bytes);
+        let neg = bits >> 127 == 1;
+        let sign = if neg { -1.0f64 } else { 1.0 };
+        let exp = ((bits >> 112) & 0x7FFF) as i32;
+        let mantissa = (bits & ((1u128 << 112) - 1)) as f64;
+        if exp == 0x7FFF {
+            return if mantissa == 0.0 {
+                sign * f64::INFINITY
+            } else {
+                f64::NAN
+            };
+        }
+        if exp == 0 {
+            // f128 subnormal: cannot represent an f64-sourced value except zero
+            return sign * mantissa * 2.0f64.powi(1 - 16383 - 112);
+        }
+        sign * (1.0 + mantissa / 2.0f64.powi(112)) * 2.0f64.powi(exp - 16383)
+    }
+
+    fn decode_x87_to_f64(bytes: &[u8; 10]) -> f64 {
+        let mant = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+        let se = u16::from_le_bytes(bytes[8..].try_into().unwrap());
+        let neg = se >> 15 == 1;
+        let sign = if neg { -1.0f64 } else { 1.0 };
+        let exp = (se & 0x7FFF) as i32;
+        if exp == 0x7FFF {
+            return if mant & (1u64 << 63) != 0 && mant & !(1u64 << 63) == 0 {
+                sign * f64::INFINITY
+            } else {
+                f64::NAN
+            };
+        }
+        if exp == 0 {
+            return sign * (mant as f64) * 2.0f64.powi(1 - 16383 - 63);
+        }
+        sign * (mant as f64 / 2.0f64.powi(63)) * 2.0f64.powi(exp - 16383)
+    }
+
+    /// P7: the encoders' documented contract is a faithful IEEE 754 encoding of the
+    /// f64 value; an independent field-level decoder must reconstruct every finite f64,
+    /// including subnormals (all f64 subnormals are exactly representable in both
+    /// binary128 and x87 80-bit formats).
+    /// Doc contract: "Convert an f64 value to IEEE 754 binary128 (quad-precision)
+    /// encoding (16 bytes, little-endian)." (a40c100e)
+    /// Doc contract: "x87 format: 1 sign bit, 15 exponent bits (bias 16383), 64 mantissa
+    /// bits (explicit integer bit)." (3512a019)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p7_f128_x87_encoding_roundtrip(
+            v in prop_oneof![
+                any::<f64>().prop_filter("finite", |x| x.is_finite()),
+                Just(5e-324), Just(-5e-324),
+                Just(2.2250738585072011e-308), Just(-2.2250738585072011e-308),
+                Just(f64::MIN_POSITIVE), Just(-f64::MIN_POSITIVE),
+                Just(0.0), Just(-0.0), Just(1.0), Just(-1.0), Just(0.5),
+                Just(f64::MAX), Just(-f64::MAX), Just(1e300), Just(-1e300),
+            ],
+        ) {
+            let f128_bytes = f64_to_f128_bytes(v);
+            let decoded = decode_f128_to_f64(&f128_bytes);
+            prop_assert!(decoded == v, "f128: v={} decoded={}", v, decoded);
+            prop_assert_eq!(f128_bytes[15] >> 7, (v.to_bits() >> 63) as u8, "sign bit lost for {}", v);
+
+            let x87_bytes = f64_to_x87_bytes(v);
+            let decoded_x = decode_x87_to_f64(&x87_bytes);
+            prop_assert!(decoded_x == v, "x87: v={} decoded={}", v, decoded_x);
+            prop_assert_eq!(x87_bytes[9] >> 7, (v.to_bits() >> 63) as u8, "x87 sign bit lost for {}", v);
+        }
+    }
+
+    /// P7b: special-value encoding (KAT): ±0, ±inf, NaN.
+    #[test]
+    fn p7b_special_values() {
+        for (v, name) in [(0.0f64, "+0"), (-0.0, "-0")] {
+            let b = f64_to_f128_bytes(v);
+            let bits128 = u128::from_le_bytes(b);
+            assert_eq!(bits128 & !(1u128 << 127), 0, "{} f128 has non-sign bits set", name);
+            assert_eq!(bits128 >> 127 == 1, v.is_sign_negative(), "{} f128 sign bit", name);
+            assert_eq!(decode_f128_to_f64(&b) == 0.0, true);
+            let x = f64_to_x87_bytes(v);
+            let mant = u64::from_le_bytes(x[..8].try_into().unwrap());
+            let se = u16::from_le_bytes(x[8..].try_into().unwrap());
+            assert_eq!(mant, 0, "{} x87 mantissa", name);
+            assert_eq!(se, if v.is_sign_negative() { 0x8000 } else { 0 }, "{} x87 exp/sign", name);
+        }
+        for v in [f64::INFINITY, f64::NEG_INFINITY] {
+            let b = f64_to_f128_bytes(v);
+            assert_eq!(((u128::from_le_bytes(b) >> 112) & 0x7FFF) as i32, 0x7FFF, "inf exponent");
+            assert!(decode_f128_to_f64(&b).is_infinite());
+            assert_eq!(decode_f128_to_f64(&b).is_sign_negative(), v.is_sign_negative());
+            let x = f64_to_x87_bytes(v);
+            let se = u16::from_le_bytes(x[8..].try_into().unwrap());
+            assert_eq!((se & 0x7FFF) as i32, 0x7FFF, "x87 inf exponent");
+            assert!(decode_x87_to_f64(&x).is_infinite());
+        }
+        for v in [f64::NAN, f64::from_bits(f64::to_bits(f64::NAN) | (1 << 63))] {
+            assert!(decode_f128_to_f64(&f64_to_f128_bytes(v)).is_nan(), "f128 NaN");
+            assert!(decode_x87_to_f64(&f64_to_x87_bytes(v)).is_nan(), "x87 NaN");
+        }
+    }
+
+    /// P8: zero/one/bool contracts across every IrType enumerator.
+    /// Doc contract: C11 6.3.1.2 quoted in bool_normalize doc (084709b7).
+    #[test]
+    fn p8_zero_one_bool_contracts() {
+        let types = [IrType::I8, IrType::U8, IrType::I16, IrType::U16, IrType::I32,
+                     IrType::U32, IrType::I64, IrType::U64, IrType::I128, IrType::U128,
+                     IrType::F32, IrType::F64, IrType::F128, IrType::Ptr, IrType::Void];
+        for ty in types {
+            assert!(IrConst::zero(ty).is_zero(), "zero({:?})", ty);
+            assert!(!IrConst::one(ty).is_zero(), "one({:?})", ty);
+            assert!(IrConst::one(ty).is_nonzero(), "one({:?})", ty);
+        }
+        for (k, ty) in [(0i64, IrType::I8), (127, IrType::I8), (-128, IrType::I8),
+                        (1, IrType::I32), (-1, IrType::I64), (i32::MAX as i64, IrType::I32)] {
+            assert_eq!(IrConst::from_i64(k, ty).to_i64(), Some(k), "from_i64/to_i64 {:?}", ty);
+        }
+        // float constructions read back through to_f64
+        assert_eq!(IrConst::from_i64(3, IrType::F64).to_f64(), Some(3.0));
+        assert_eq!(IrConst::from_i64(3, IrType::F128).to_f64(), Some(3.0));
+        // C11 6.3.1.2 bool normalization
+        for (c, want) in [
+            (IrConst::I64(0), 0i8), (IrConst::I64(42), 1), (IrConst::I64(-1), 1),
+            (IrConst::I128(0), 0), (IrConst::I128(i128::MIN), 1),
+            (IrConst::F64(0.0), 0), (IrConst::F64(-0.0), 0), (IrConst::F64(1e-300), 1),
+            (IrConst::F32(f32::NAN), 1), (IrConst::Zero, 0),
+            (IrConst::LongDouble(0.0, [0u8; 16]), 0), (IrConst::LongDouble(2.5, [1u8; 16]), 1),
+        ] {
+            assert_eq!(c.bool_normalize().to_hash_key(), IrConst::I8(want).to_hash_key(), "bool_normalize({:?})", c);
+        }
+    }
+}
+
+// Deterministic red regression witnesses (round 06, bugs b1–b3).
+#[cfg(test)]
+mod pbt_regression {
+    use super::*;
+    use crate::common::types::IrType;
+
+    /// b1: cast_float_to_target must store U8/U16/U32 constants zero-extended
+    /// (constants.rs from_i64 convention); 200.0 → U8 currently reads back -56.
+    #[test]
+    fn test_ir_const_regression_cast_float_u8_repr() {
+        let c = IrConst::cast_float_to_target(200.0, IrType::U8).unwrap();
+        assert_eq!(c.to_i64(), Some(200), "cast_float_to_target(200.0, U8) = {:?}", c);
+    }
+
+    /// b2: coerce_to must normalize I8→U8 to the zero-extended I64 representation;
+    /// the early-return arm keeps the sign-extending native variant.
+    #[test]
+    fn test_ir_const_regression_coerce_u8_early_return() {
+        let c = IrConst::from_i64(200, IrType::I8).coerce_to(IrType::U8);
+        assert_eq!(c.to_i64(), Some(200), "I8(-56).coerce_to(U8) = {:?}", c);
+    }
+
+    /// b3: f64 subnormals must encode exactly in f128/x87 (they are normal numbers
+    /// there); the current encoders treat them as normals of the source width.
+    #[test]
+    fn test_ir_const_regression_subnormal_encoding() {
+        let v = 5e-324f64; // smallest f64 subnormal
+        let b = f64_to_f128_bytes(v);
+        let bits = u128::from_le_bytes(b);
+        let exp = ((bits >> 112) & 0x7FFF) as i64;
+        let mant = bits & ((1u128 << 112) - 1);
+        // correct f128 for 2^-1074: exponent field 16383-1023=15360 is WRONG — the
+        // value must be m52 * 2^-1074, i.e. a normal f128 with exp 15361 and the
+        // implicit integer bit set; assert the decoded value round-trips
+        let decoded = if exp == 0 {
+            (mant as f64) * 2.0f64.powi(1 - 16383 - 112)
+        } else {
+            (1.0 + (mant as f64) / 2.0f64.powi(112)) * 2.0f64.powi(exp as i32 - 16383)
+        };
+        assert_eq!(decoded, v, "f64_to_f128_bytes(5e-324) decodes to {}", decoded);
+    }
+}

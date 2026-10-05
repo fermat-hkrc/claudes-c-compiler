@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: compute_dominance_frontiers can never contain the entry block in its own frontier (entry cycles skipped by join gate and runner stop)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: compute_dominance_frontiers can never contain the entry block in its own frontier (entry cycles skipped by join gate and runner stop)</h1>
+<p><span class="badge">low</span> <code>b5</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>compute_dominance_frontiers can never contain the entry block in its own frontier (entry cycles skipped by join gate and runner stop)</p>
+<table><tr><th>Expected behavior</th><td>DF(entry) contains entry whenever entry is in any cycle (Cytron DF_local)</td></tr><tr><th>Observed behavior</th><td>DF(0) == {} for succs=[[0]] and for 0-&gt;1-&gt;{0,1}</td></tr><tr><th>Impact assessment</th><td>if a future pass creates an entry cycle, mem2reg would omit the entry phi for loop-carried variables -&gt; silent miscompile; not reachable from today&#39;s C lowering (no in-tree producer of edges into entry)</td></tr><tr><th>Minimal counterexample</th><td><code>n=1, succs=[[0]] (entry self-loop): DF(0) = {} but definition requires {0}; also 0-&gt;1-&gt;{0,1} cycle form</code></td></tr></table>
+<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>&quot;Compute dominance frontiers for each block. DF(b) = set of blocks where b&#39;s dominance ends (join points).&quot; — src/ir/analysis.rs:302</code></p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>p11_frontiers_vs_definition (+p11b_entry_selfloop_df red witness) (<code>p11</code>)</td></tr><tr><th>Formal property</th><td>forall graph G without edges into entry: DF_SUT(b) == {d reachable : exists p in preds(d), b dominates p, and (d == b or b does not strictly dominate d)}; witness p11b (red): entry in any cycle =&gt; entry in DF(entry)</td></tr><tr><th>Oracle</th><td>reference</td></tr><tr><th>System under test</th><td>compute_dominance_frontiers</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs:302</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib ir::analysis</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::analysis --no-run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::analysis::pbt_tests::p11b_entry_selfloop_df</code></pre>
+<p class="muted">No random seed is required for this deterministic reproduction.</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Add the local-frontier pass: for every block b and successor y, if b does not strictly dominate y, insert y into DF(b) (subsumes the entry case)</p>
+</section>
+</body>
+</html>

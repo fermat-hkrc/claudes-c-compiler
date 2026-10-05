@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: build_cfg records duplicate predecessor entries for CondBranch with equal targets and Switch with duplicate case labels</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: build_cfg records duplicate predecessor entries for CondBranch with equal targets and Switch with duplicate case labels</h1>
+<p><span class="badge">medium</span> <code>b4</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>build_cfg records duplicate predecessor entries for CondBranch with equal targets and Switch with duplicate case labels</p>
+<table><tr><th>Expected behavior</th><td>preds and succs are exact transposes with no duplicates: preds[1] == [0]</td></tr><tr><th>Observed behavior</th><td>preds[1] == [0, 0] while succs[0] == [1]</td></tr><tr><th>Impact assessment</th><td>six passes consume preds counts (if_convert diamond gates, GVN join detection, mem2reg DF join gate and phi-cost estimate); currently masked effects but the transpose invariant they build on is violated</td></tr><tr><th>Minimal counterexample</th><td><code>block0: CondBranch{true:L1,false:L1}; block1: Return -&gt; preds[1] = [0,0], succs[0] = [1]</code></td></tr></table>
+<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>&quot;Build predecessor and successor lists from the function&#39;s CFG. Returns (preds, succs) as flat adjacency lists (CSR format).&quot; — src/ir/analysis.rs:106</code></p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>p9_build_cfg_transpose_consistency (<code>p9</code>)</td></tr><tr><th>Formal property</th><td>forall CFG F over blocks with resolved labels: forall i,b: multiplicity of edge (i-&gt;b) in succs equals its multiplicity in preds &amp;&amp; no duplicate entries in either</td></tr><tr><th>Oracle</th><td>algebraic.invariant</td></tr><tr><th>System under test</th><td>build_cfg</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs:110</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib ir::analysis</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::analysis --no-run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::analysis::pbt_tests::p9_build_cfg_transpose_consistency</code></pre>
+<p class="muted">Replay seed: proptest-regressions/ir/analysis.txt</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Deduplicate the preds push symmetrically to the contains-guarded succs push in the CondBranch/Switch/IndirectBranch arms</p>
+</section>
+</body>
+</html>

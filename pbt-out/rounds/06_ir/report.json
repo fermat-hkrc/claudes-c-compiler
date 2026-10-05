@@ -39,14 +39,14 @@
       "actual": "IrConst::I8(-56), to_i64() == Some(-56)",
       "counterexample": "cast_float_to_target(200.0, IrType::U8) = I8(-56), to_i64() = -56 != 200 (also cast_long_double_to_target)",
       "fix": "Store U8/U16 as IrConst::I64(v as u8 as i64) / I64(v as u16 as i64) in both cast functions, mirroring from_i64 and narrowed_to",
-      "reportPath": "rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.md",
+      "reportPath": "bug_reports/ir_constants_unsigned_repr_cast_float.md",
       "contractBasis": "documented-and-violated",
       "documentedBehavior": "\"Store unsigned sub-64-bit types (U8, U16, U32) as I64 with zero-extended values to preserve unsigned semantics.\" — src/ir/constants.rs:437",
       "reproduction": {
         "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants --no-run",
         "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants::pbt_tests::p5_unsigned_repr_writer_differential",
         "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/constants.rs (shrunk: ty_idx=0, raw=272865408)",
+        "seed": "proptest-regressions/ir/constants.txt (shrunk: ty_idx=0, raw=272865408)",
         "path": null
       }
     },
@@ -60,14 +60,14 @@
       "actual": "IrConst::I8(-56), to_i64() == Some(-56)",
       "counterexample": "I8(200 as i8).coerce_to(U8) = I8(-56), to_i64() = -56 != 200",
       "fix": "Split the early-return arms: (I8(_), I8) may return *self but (I8(_), U8) must fall through to from_i64 normalization (same for I16/U16)",
-      "reportPath": "rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.md",
+      "reportPath": "bug_reports/ir_constants_coerce_unsigned_early_return.md",
       "contractBasis": "documented-and-violated",
       "documentedBehavior": "\"Store unsigned sub-64-bit types (U8, U16, U32) as I64 with zero-extended values to preserve unsigned semantics.\" — src/ir/constants.rs:437",
       "reproduction": {
         "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants --no-run",
         "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants::pbt_tests::p6_coerce_to_unsigned_normalization",
         "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/constants.rs (shrunk: kind=0, raw=0)",
+        "seed": "proptest-regressions/ir/constants.txt (shrunk: kind=0, raw=0)",
         "path": null
       }
     },
@@ -81,14 +81,14 @@
       "actual": "decodes to 1.1125369292536e-308 (~2^-1023) — ~2^51 times too large",
       "counterexample": "f64_to_f128_bytes(5e-324) decodes to 1.1125369292536e-308 != 5e-324 (x87 twin equally wrong for subnormals)",
       "fix": "Normalize subnormals (exp11 == 0 && mantissa52 != 0) before packing: find the leading one of mantissa52 and adjust the exponent; do not set the implicit integer bit from the raw mantissa",
-      "reportPath": "rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.md",
+      "reportPath": "bug_reports/ir_constants_subnormal_f128_x87_encoding.md",
       "contractBasis": "documented-and-violated",
       "documentedBehavior": "\"Convert an f64 value to IEEE 754 binary128 (quad-precision) encoding (16 bytes, little-endian).\" — src/ir/constants.rs:50",
       "reproduction": {
         "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants --no-run",
         "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants::pbt_tests::p7_f128_x87_encoding_roundtrip",
         "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/constants.rs (shrunk: v=5e-324)",
+        "seed": "proptest-regressions/ir/constants.txt (shrunk: v=5e-324)",
         "path": null
       }
     },
@@ -102,14 +102,14 @@
       "actual": "preds[1] == [0, 0] while succs[0] == [1]",
       "counterexample": "block0: CondBranch{true:L1,false:L1}; block1: Return -> preds[1] = [0,0], succs[0] = [1]",
       "fix": "Deduplicate the preds push symmetrically to the contains-guarded succs push in the CondBranch/Switch/IndirectBranch arms",
-      "reportPath": "rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.md",
+      "reportPath": "bug_reports/ir_analysis_build_cfg_pred_dup.md",
       "contractBasis": "documented-and-violated",
       "documentedBehavior": "\"Build predecessor and successor lists from the function's CFG. Returns (preds, succs) as flat adjacency lists (CSR format).\" — src/ir/analysis.rs:106",
       "reproduction": {
         "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::analysis --no-run",
         "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::analysis::pbt_tests::p9_build_cfg_transpose_consistency",
         "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/analysis.rs",
+        "seed": "proptest-regressions/ir/analysis.txt",
         "path": null
       }
     },
@@ -123,7 +123,7 @@
       "actual": "DF(0) == {} for succs=[[0]] and for 0->1->{0,1}",
       "counterexample": "n=1, succs=[[0]] (entry self-loop): DF(0) = {} but definition requires {0}; also 0->1->{0,1} cycle form",
       "fix": "Add the local-frontier pass: for every block b and successor y, if b does not strictly dominate y, insert y into DF(b) (subsumes the entry case)",
-      "reportPath": "rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.md",
+      "reportPath": "bug_reports/ir_analysis_df_entry_cycle.md",
       "contractBasis": "documented-and-violated",
       "documentedBehavior": "\"Compute dominance frontiers for each block. DF(b) = set of blocks where b's dominance ends (join points).\" — src/ir/analysis.rs:302",
       "reproduction": {

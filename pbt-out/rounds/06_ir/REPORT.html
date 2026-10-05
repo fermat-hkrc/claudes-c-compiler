@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PBT Report Overview: src/ir</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body>
+<h1>PBT Report Overview: src/ir</h1>
+<p class="muted">Test date: 2026-10-05; Tested revision: <code>8bf7a66c5c633aead94effcb58f14ad08e3e915c</code>; Campaign tier: standard</p>
+<h2>Test Results</h2>
+<table><tr><th>Properties</th><th>Passing</th><th>Failing</th><th>Confirmed Defects</th></tr><tr><td>13</td><td>8</td><td>5</td><td>5</td></tr></table>
+<h2>Defect List</h2>
+<table><tr><th>ID</th><th>Summary</th><th>Severity</th><th>Details</th></tr><tr><td><code>b1</code></td><td>cast_float_to_target / cast_long_double_to_target store U8/U16 constants in sign-extending native variants, violating the documented zero-extension convention</td><td>high</td><td><a href="bug_reports/ir_constants_unsigned_repr_cast_float.html">View defect details</a></td></tr>
+<tr><td><code>b2</code></td><td>coerce_to_with_src early-return keeps the forbidden sign-extending I8/I16 variant for U8/U16 targets</td><td>high</td><td><a href="bug_reports/ir_constants_coerce_unsigned_early_return.html">View defect details</a></td></tr>
+<tr><td><code>b3</code></td><td>f64 subnormals misencoded by f64_to_f128_bytes and f64_to_x87_bytes (treated as normals of the source width)</td><td>medium</td><td><a href="bug_reports/ir_constants_subnormal_f128_x87_encoding.html">View defect details</a></td></tr>
+<tr><td><code>b4</code></td><td>build_cfg records duplicate predecessor entries for CondBranch with equal targets and Switch with duplicate case labels</td><td>medium</td><td><a href="bug_reports/ir_analysis_build_cfg_pred_dup.html">View defect details</a></td></tr>
+<tr><td><code>b5</code></td><td>compute_dominance_frontiers can never contain the entry block in its own frontier (entry cycles skipped by join gate and runner stop)</td><td>low</td><td><a href="bug_reports/ir_analysis_df_entry_cycle.html">View defect details</a></td></tr></table>
+<p class="muted">For technical details, see REPORT.md and report.json in this directory.</p>
+</body>
+</html>

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: f64 subnormals misencoded by f64_to_f128_bytes and f64_to_x87_bytes (treated as normals of the source width)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: f64 subnormals misencoded by f64_to_f128_bytes and f64_to_x87_bytes (treated as normals of the source width)</h1>
+<p><span class="badge">medium</span> <code>b3</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>f64 subnormals misencoded by f64_to_f128_bytes and f64_to_x87_bytes (treated as normals of the source width)</p>
+<table><tr><th>Expected behavior</th><td>decode(f64_to_f128_bytes(5e-324)) == 5e-324 (normal f128 encoding of 2^-1074)</td></tr><tr><th>Observed behavior</th><td>decodes to 1.1125369292536e-308 (~2^-1023) — ~2^51 times too large</td></tr><tr><th>Impact assessment</th><td>subnormal constants flowing into long-double data emission produce wrong bytes on ARM64/RISC-V (f128 emitted verbatim) and wrong x87 constants on x86</td></tr><tr><th>Minimal counterexample</th><td><code>f64_to_f128_bytes(5e-324) decodes to 1.1125369292536e-308 != 5e-324 (x87 twin equally wrong for subnormals)</code></td></tr></table>
+<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>&quot;Convert an f64 value to IEEE 754 binary128 (quad-precision) encoding (16 bytes, little-endian).&quot; — src/ir/constants.rs:50</code></p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>p7_f128_x87_encoding_roundtrip (+p7b_special_values) (<code>p7</code>)</td></tr><tr><th>Formal property</th><td>forall v in finite f64 (incl subnormals): ieee_decode_f128(f64_to_f128_bytes(v)) == v &amp;&amp; ieee_decode_x87(f64_to_x87_bytes(v)) == v; sign bits preserved; inf/NaN fields correct</td></tr><tr><th>Oracle</th><td>reference</td></tr><tr><th>System under test</th><td>f64_to_f128_bytes</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs:50</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib ir::constants</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::constants --no-run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::constants::pbt_tests::p7_f128_x87_encoding_roundtrip</code></pre>
+<p class="muted">Replay seed: proptest-regressions/ir/constants.txt (shrunk: v=5e-324)</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Normalize subnormals (exp11 == 0 &amp;&amp; mantissa52 != 0) before packing: find the leading one of mantissa52 and adjust the exponent; do not set the implicit integer bit from the raw mantissa</p>
+</section>
+</body>
+</html>

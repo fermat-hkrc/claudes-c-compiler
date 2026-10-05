@@ -374,3 +374,362 @@ impl CfgAnalysis {
         }
     }
 }
+
+// ── PBT properties (round 06) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::{AddressSpace, IrType};
+    use crate::ir::reexports::{BasicBlock, IrConst, Operand, Value};
+    use proptest::prelude::*;
+    use proptest::collection::vec;
+
+    /// Materialize an IrFunction from plain terminator descriptors over n blocks.
+    /// kind: 0=Return, 1=Branch(a), 2=CondBranch(a,b) (a==b allowed), 3=Switch
+    fn func_from_descriptors(descs: &[(u8, u32, u32, u32)]) -> IrFunction {
+        let n = descs.len() as u32;
+        let mut func = IrFunction::new("f".to_string(), IrType::I32, vec![], false);
+        for (i, &(kind, a, b, c)) in descs.iter().enumerate() {
+            let id = BlockId(i as u32);
+            let term = match kind % 4 {
+                0 => Terminator::Return(Some(Operand::Const(IrConst::I32(0)))),
+                1 => Terminator::Branch(BlockId(a % n)),
+                2 => Terminator::CondBranch {
+                    cond: Operand::Const(IrConst::I32(1)),
+                    true_label: BlockId(a % n),
+                    false_label: BlockId(b % n),
+                },
+                _ => Terminator::Switch {
+                    val: Operand::Const(IrConst::I32(7)),
+                    cases: vec![(1, BlockId(a % n)), (2, BlockId(b % n))],
+                    default: BlockId(c % n),
+                    ty: IrType::I32,
+                },
+            };
+            func.blocks.push(BasicBlock {
+                label: id,
+                instructions: vec![],
+                terminator: term,
+                source_spans: vec![],
+            });
+        }
+        func
+    }
+
+    /// P9: build_cfg's documented contract is ONE graph returned as a (preds, succs)
+    /// pair — the two CSR lists must be exact transposes with no duplicate entries.
+    /// CondBranch with equal targets and Switch with duplicate case labels are
+    /// representable IR and must not break the pairing.
+    /// Doc contract: "Build predecessor and successor lists from the function's CFG.
+    /// Returns (preds, succs) as flat adjacency lists (CSR format)." (767abe89)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p9_build_cfg_transpose_consistency(
+            descs in vec((any::<u8>(), any::<u32>(), any::<u32>(), any::<u32>()), 1..=8),
+        ) {
+            let func = func_from_descriptors(&descs);
+            let n = func.blocks.len();
+            let label_map = build_label_map(&func);
+            let (preds, succs) = build_cfg(&func, &label_map);
+
+            // successor targets must all resolve (labels are dense BlockId(0..n))
+            let mut edge_pairs_from_succs: Vec<(usize, usize)> = vec![];
+            for i in 0..n {
+                let mut seen = std::collections::BTreeSet::new();
+                for &s in succs.row(i) {
+                    let s = s as usize;
+                    prop_assert!(s < n);
+                    prop_assert!(seen.insert(s), "duplicate successor {} in row {}", s, i);
+                    edge_pairs_from_succs.push((i, s));
+                }
+            }
+            let mut edge_pairs_from_preds: Vec<(usize, usize)> = vec![];
+            for b in 0..n {
+                let mut seen = std::collections::BTreeSet::new();
+                for &p in preds.row(b) {
+                    let p = p as usize;
+                    prop_assert!(p < n);
+                    prop_assert!(seen.insert(p), "duplicate predecessor {} in row {}", p, b);
+                    edge_pairs_from_preds.push((p, b));
+                }
+            }
+            edge_pairs_from_succs.sort();
+            edge_pairs_from_preds.sort();
+            prop_assert_eq!(edge_pairs_from_succs, edge_pairs_from_preds,
+                "preds and succs are not transposes of the same graph");
+        }
+    }
+
+    // Independent reference: textbook iterative dominator-set dataflow
+    // (Aho/Sethi/Ullman; Cytron et al. 1991) over u8 bitsets (n <= 8).
+    fn naive_dominators(n: usize, succs: &[Vec<usize>]) -> (Vec<bool>, Vec<u8>, Vec<usize>) {
+        let mut reach = vec![false; n];
+        if n > 0 {
+            let mut stack = vec![0usize];
+            reach[0] = true;
+            while let Some(u) = stack.pop() {
+                for &s in &succs[u] {
+                    if !reach[s] {
+                        reach[s] = true;
+                        stack.push(s);
+                    }
+                }
+            }
+        }
+        let preds: Vec<Vec<usize>> = {
+            let mut p = vec![vec![]; n];
+            for u in 0..n {
+                for &s in &succs[u] {
+                    p[s].push(u);
+                }
+            }
+            p
+        };
+        let reach_mask: u8 = (0..n).filter(|&i| reach[i]).fold(0u8, |m, i| m | (1 << i));
+        let mut dom = vec![0u8; n];
+        if n > 0 {
+            dom[0] = 1;
+            for b in 1..n {
+                if reach[b] {
+                    dom[b] = reach_mask;
+                }
+            }
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for b in 1..n {
+                    if !reach[b] {
+                        continue;
+                    }
+                    let mut m = reach_mask;
+                    let mut any_pred = false;
+                    for &p in &preds[b] {
+                        if reach[p] {
+                            m &= dom[p];
+                            any_pred = true;
+                        }
+                    }
+                    let _ = any_pred;
+                    let new_dom = m | (1 << b);
+                    if new_dom != dom[b] {
+                        dom[b] = new_dom;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        // idom[b] = the unique strict dominator whose dominator set equals b's strict dominators
+        let mut idom = vec![usize::MAX; n];
+        if n > 0 {
+            idom[0] = 0; // entry dominates itself
+        }
+        for b in 1..n {
+            if !reach[b] {
+                continue;
+            }
+            let strict = dom[b] & !(1 << b);
+            for c in 0..n {
+                if strict & (1 << c) != 0 && dom[c] == strict {
+                    idom[b] = c;
+                    break;
+                }
+            }
+        }
+        (reach, dom, idom)
+    }
+
+    fn succs_from_bits(n: usize, bits: &[u8]) -> Vec<Vec<usize>> {
+        (0..n)
+            .map(|i| (0..n).filter(|&t| bits[i] & (1 << t) != 0).collect())
+            .collect()
+    }
+
+    fn transpose(n: usize, succs: &[Vec<usize>]) -> Vec<Vec<usize>> {
+        let mut p = vec![vec![]; n];
+        for u in 0..n {
+            for &s in &succs[u] {
+                p[s].push(u);
+            }
+        }
+        p
+    }
+
+    /// P10: Cooper-Harvey-Kennedy SUT vs the textbook dataflow reference; unreachable
+    /// blocks must carry the documented usize::MAX sentinel, entry idom is itself.
+    /// Doc contract: "Uses usize::MAX as sentinel for undefined/unreachable blocks." (ab794cba)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p10_dominators_vs_naive_reference(
+            n in 1usize..=8,
+            bits in vec(any::<u8>(), 1..=8),
+        ) {
+            let n = n.min(bits.len());
+            let bits = &bits[..n];
+            let succs = succs_from_bits(n, bits);
+            let preds = transpose(n, &succs);
+            let pred_adj = FlatAdj::from_vecs_usize(&preds);
+            let succ_adj = FlatAdj::from_vecs_usize(&succs);
+
+            let sut = compute_dominators(n, &pred_adj, &succ_adj);
+            let (reach, _dom, naive) = naive_dominators(n, &succs);
+
+            prop_assert_eq!(sut.len(), n);
+            if n > 0 {
+                prop_assert_eq!(sut[0], 0, "entry idom");
+            }
+            for b in 0..n {
+                if reach[b] {
+                    prop_assert_eq!(sut[b], naive[b], "block {} idom mismatch (n={})", b, n);
+                } else {
+                    prop_assert_eq!(sut[b], usize::MAX, "unreachable block {} must be MAX", b);
+                }
+            }
+            // dom tree children must be the exact inversion of idom (entry excluded)
+            let children = build_dom_tree_children(n, &sut);
+            for b in 1..n {
+                if sut[b] != usize::MAX && sut[b] != b {
+                    prop_assert!(children[sut[b]].contains(&b));
+                }
+            }
+            // reverse postorder visits each reachable block exactly once, entry first
+            let rpo = compute_reverse_postorder(n, &succ_adj);
+            prop_assert_eq!(rpo.len(), reach.iter().filter(|&&r| r).count());
+            if !rpo.is_empty() {
+                prop_assert_eq!(rpo[0], 0);
+            }
+        }
+    }
+
+    /// P11: dominance frontiers vs the set definition
+    /// DF(b) = { d : b dominates some pred of d AND b does not strictly dominate d }
+    /// (Cytron et al. 1991), computed from the cross-validated naive idom.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p11_frontiers_vs_definition(
+            n in 1usize..=8,
+            mut bits in vec(any::<u8>(), 1..=8),
+        ) {
+            let n = n.min(bits.len());
+            let bits = &mut bits[..n];
+            // exclude ALL edges into entry (any such edge puts entry in a cycle):
+            // known defect b5 — DF(entry) can never contain entry (see p11b below)
+            for b in bits.iter_mut() { *b &= !1; }
+            let succs = succs_from_bits(n, bits);
+            let preds = transpose(n, &succs);
+            let pred_adj = FlatAdj::from_vecs_usize(&preds);
+            let succ_adj = FlatAdj::from_vecs_usize(&succs);
+
+            let sut_idom = compute_dominators(n, &pred_adj, &succ_adj);
+            let sut_df = compute_dominance_frontiers(n, &pred_adj, &sut_idom);
+            let (reach, _dom, naive_idom) = naive_dominators(n, &succs);
+
+            let dominates = |d: usize, b: usize| -> bool {
+                let mut cur = b;
+                loop {
+                    if cur == d {
+                        return true;
+                    }
+                    if cur == 0 {
+                        return d == 0;
+                    }
+                    if naive_idom[cur] == usize::MAX {
+                        return false;
+                    }
+                    cur = naive_idom[cur];
+                }
+            };
+
+            for b in 0..n {
+                if !reach[b] {
+                    continue; // DF only meaningful for reachable blocks
+                }
+                let mut expected = std::collections::BTreeSet::new();
+                for d in 0..n {
+                    if !reach[d] {
+                        continue;
+                    }
+                    let has_dominated_pred = preds[d].iter().any(|&p| reach[p] && dominates(b, p));
+                    if has_dominated_pred && (d == b || !dominates(b, d)) {
+                        expected.insert(d);
+                    }
+                }
+                let got: std::collections::BTreeSet<usize> = sut_df[b].iter().copied().collect();
+                prop_assert_eq!(got, expected, "DF({}) mismatch (n={}, succs={:?})", b, n, succs);
+            }
+        }
+    }
+
+    /// P11b (RED WITNESS — bug b5): with an entry self-edge, the formal definition
+    /// DF_local(n) = {y in succ(n) : n does not strictly dominate y} puts the entry in
+    /// its own frontier (Cytron et al. 1991). The runner-walk formulation stops at
+    /// idom[entry] == entry and can never emit it, and the < 2 preds gate skips the
+    /// block entirely. Kept intentionally failing as the filed bug's witness.
+    #[test]
+    fn p11b_entry_selfloop_df() {
+        // direct self-edge form
+        let n = 1usize;
+        let succs: Vec<Vec<usize>> = vec![vec![0]]; // entry branches to itself
+        let preds = transpose(n, &succs);
+        let pred_adj = FlatAdj::from_vecs_usize(&preds);
+        let succ_adj = FlatAdj::from_vecs_usize(&succs);
+        let idom = compute_dominators(n, &pred_adj, &succ_adj);
+        let df = compute_dominance_frontiers(n, &pred_adj, &idom);
+        assert!(df[0].contains(&0),
+            "DF(entry) must contain entry for an entry self-loop (Cytron DF_local)");
+
+        // longer cycle form: 0 -> 1 -> {0, 1}; entry dominates its only pred 1
+        let succs: Vec<Vec<usize>> = vec![vec![1], vec![0, 1], vec![]];
+        let preds = transpose(3, &succs);
+        let pred_adj = FlatAdj::from_vecs_usize(&preds);
+        let succ_adj = FlatAdj::from_vecs_usize(&succs);
+        let idom = compute_dominators(3, &pred_adj, &succ_adj);
+        let df = compute_dominance_frontiers(3, &pred_adj, &idom);
+        assert_eq!(idom, vec![0, 0, usize::MAX]);
+        assert!(df[0].contains(&0),
+            "DF(entry) must contain entry when entry is in any cycle (Cytron DF_local)");
+        assert!(df[1].contains(&1), "DF(1) must contain 1 (self-loop)");
+    }
+
+    // silence unused warnings for helpers only used by generated inputs
+    #[allow(dead_code)]
+    fn _touch(_a: AddressSpace) {}
+}
+
+// Deterministic red regression witness (round 06, bug b4).
+#[cfg(test)]
+mod pbt_regression {
+    use super::*;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{BasicBlock, IrConst, Operand};
+
+    /// b4: build_cfg must return preds/succs as transposes of one graph; a
+    /// CondBranch with equal targets currently duplicates the predecessor entry.
+    #[test]
+    fn test_ir_analysis_regression_build_cfg_dup_preds() {
+        let mut func = IrFunction::new("f".to_string(), IrType::I32, vec![], false);
+        func.blocks.push(BasicBlock {
+            label: BlockId(0),
+            instructions: vec![],
+            terminator: Terminator::CondBranch {
+                cond: Operand::Const(IrConst::I32(1)),
+                true_label: BlockId(1),
+                false_label: BlockId(1),
+            },
+            source_spans: vec![],
+        });
+        func.blocks.push(BasicBlock {
+            label: BlockId(1),
+            instructions: vec![],
+            terminator: Terminator::Return(Some(Operand::Const(IrConst::I32(0)))),
+            source_spans: vec![],
+        });
+        let label_map = build_label_map(&func);
+        let (preds, succs) = build_cfg(&func, &label_map);
+        assert_eq!(succs.row(0).to_vec(), vec![1], "succs deduped");
+        assert_eq!(preds.row(1).to_vec(), vec![0],
+            "preds must mirror succs exactly (no duplicate pred entries)");
+    }
+}

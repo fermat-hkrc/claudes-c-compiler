@@ -1,95 +1,109 @@
-# PBT Campaign Report: src/frontend/sema (round 05)
+# PBT Campaign Report: src/ir (round 06)
 
 ## Summary
 
-**Verdict:** 5 confirmed SUT bugs — worst is high severity: `usual_arithmetic_conversion` types `unsigned long + long long` as SIGNED `LongLong` (C11 6.3.1.8 rule 5), so mixed 64-bit unsigned arithmetic compares/divides/shifts with wrong signedness; plus a global enum constant permanently clobbered by a function-local `enum { E = ... }` (silent wrong constants), an i64::MAX enum-value PANIC, an undo-log same-scope re-insert resurrection, and unsigned unary-minus not wrapping in const-eval.
+**Verdict:** 5 confirmed SUT bugs to fix — 2 high (IrConst unsigned-constant writers
+`cast_float_to_target`/`cast_long_double_to_target` and `coerce_to_with_src` violate
+the documented zero-extension storage convention, so any constant fold reading a U8/U16
+constant above its signed range through `to_i64()` silently gets a negative value),
+1 medium (`f64_to_f128_bytes`/`f64_to_x87_bytes` misencode every f64 subnormal by ~2^51),
+1 medium (`build_cfg` records duplicate predecessor entries, corrupting the preds/succs
+transpose invariant six passes build on), 1 low (dominance frontiers can never contain
+the entry block for itself; unreachable from today's C lowering but a definitional
+violation and future-pass hazard). 11 properties passing, 5 failing (each failing
+property serial-reconfirmed and backed by a red regression test).
 **Date:** 2026-10-05
 **Repository:** /home/shuhao/fermat-users/leo/github/claudes-c-compiler
-**Modules tested:** src/frontend/sema (analysis, type_checker, type_context, const_eval, builtins) + change-surface obligations in parser/preprocessor
-**Tests:** 15 properties + 5 deterministic regression witnesses + 3 KAT gates
-**Result:** 10 passing, 5 failing (all 5 triaged as SUT bugs b1–b5)
-**Change surface:** 3 changed functions, 2 with a property (parse_src → P14 failure-path; sut_tokens → P15 success+failure-injection), 1 skipped with reason (p9_split_first_word_contract — itself a round-04 proptest, re-executed in the probe run); 1 error-handling change with a failure-path property (sut_tokens via malformed-directive injection; parse_src via guaranteed-malformed mutations)
-**Coverage evidence:** file-level (symbol presence) — no line-level data: this machine has neither gcovr nor lcov, so no coverage instrumentation was active (see COVERAGE_STATUS.md). `coverage_gaps` reported the 3 change-surface symbols as NOT LINKED (its symbol probe cannot see `#[cfg(test)]`-nested Rust functions); all three were in fact executed: P14 calls parse_src directly, P15 calls sut_tokens directly, and round-04's p9 ran green in the probe (554-passing baseline).
-**Tier:** standard (30-min budget, ≥1000 generator runs per property, 1 coverage-driven sweep round — done)
+**Modules tested:** src/ir (ops.rs, constants.rs, analysis.rs, mem2reg/promote.rs, mem2reg/phi_eliminate.rs)
+**Tests:** 16 PBT properties (+4 KAT/red-regression deterministics) this round; full lib suite 578 passed / 35 failed / 11 ignored (baseline before this round: 567/30/11 — all 30 pre-existing failures are prior rounds' documented red witnesses; the 5 new failures are this round's bugs)
+**Result:** 11 passing, 5 failing → 5 bugs (b1–b5)
+**Change surface:** 11 changed functions, 0 with a property here — every one is a
+round-05 test artifact or frontend/sema function OUTSIDE this round's scope
+contract (src/ir), already covered and closed by round 05 (see
+pbt-out/rounds/06_ir/PLAN.md "Change surface" and COVERAGE.md); the 4
+error-handling changes among them carried round-05 failure-path properties
+(P14/P15 + round-05 bugs b1–b5).
+**Coverage evidence:** file-level (symbol presence) — no line-level coverage on this
+machine (no gcovr/lcov; build tree predates the campaign; no flags injected by hand).
+`coverage_gaps` returned only change-surface symbols: 7 NOT LINKED (known false
+negative of the symbol probe for #[cfg(test)]-nested Rust fns, documented in
+round-05 PLAN.md) and 4 "linked main (...)" scratch C files; no src/ir gap surfaced.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|--------------|
-| sema/type_checker.rs | 2 props + KAT + regression | b1 | differential (C11 model + gcc KAT), algebraic |
-| sema/analysis.rs | 4 props + KAT + 2 regressions | b2, b3 | differential (scope/enum models, -Wreturn-type rule model), negative_error |
-| sema/type_context.rs | 1 prop + regression | b4 | state_machine |
-| sema/const_eval.rs | 3 props + KAT | b5 | differential (C-semantics evaluator + gcc KAT), reference (SysV ABI) |
-| sema/builtins.rs | 2 props | — | differential (documented families), algebraic |
-| parser/parse.rs (change surface) | 1 prop | — | crash_only failure-path |
-| preprocessor/pbt_support.rs (change surface) | 1 prop | — | algebraic + failure-injection |
+| ir::ops | 5 (P1–P4, P4b) | 0 | algebraic (C11 division identity), negative_error, metamorphic (width), reference (IEEE 754 / two's complement) |
+| ir::constants | 5 (P5–P8) + 3 red regressions | 3 (b1, b2, b3) | differential (same-job writers), reference (IEEE 754 field decoder), reference (C11 6.3.1.2) |
+| ir::analysis | 4 (P9–P11, P11b) + 1 red regression | 2 (b4, b5) | invariant (transpose), reference (naive dominators dataflow, Cytron DF definition) |
+| ir::mem2reg | 2 (P12, P13) | 0 | structural invariants (SSA validity / phi completeness / elimination preservation) |
 
 ## Bugs Found
 
-### B1: `unsigned long + long long` typed as signed LongLong (C11 6.3.1.8 rule 5)
-**Formal:** ∀ t1,t2 ∈ CScalarTypes², op ∈ BinOps. expr_types[(t1 a; t2 b; int p = a op b;).init] = C11_uac(promote(t1), promote(t2), op)
-**Contract evidence:** inferred (C11 6.3.1.8 rule 5: same-width higher-rank signed type cannot represent all unsigned values → unsigned counterpart; gcc 9.4 semantics check on this box agrees)
-**Documentation conflict:** (none — the code comment at types.rs:1578 claims "The signed type has higher rank and can represent all values", which is exactly the unverified assumption; no spec excludes these operands)
+### B1: cast_float_to_target / cast_long_double_to_target break the U8/U16/U32 zero-extension storage convention
+**Formal:** ∀ ty ∈ {U8,U16,U32}, v ∈ [0, 2^bits(ty)): cast_float_to_target(v as f64, ty).to_i64() = v ∧ cast_long_double_to_target(v,bytes,ty).to_i64() = v (same as from_i64(v,ty).to_i64()).
+**Contract evidence:** documented — src/ir/constants.rs:437 "Store unsigned sub-64-bit types (U8, U16, U32) as I64 with zero-extended values to preserve unsigned semantics. Storing them in their native IrConst variants (I8, I16, I32) would cause to_i64() to sign-extend, turning e.g. U8(255) into -1 instead of 255." The function's own doc claims the correct outcome ("200.0 as u8 = 200").
+**Documentation conflict:** the author documents the convention the function then violates: the wrap `fv as u8` is bit-correct but the result is stored in the native variant the convention forbids. It does not declare the input invalid; the comment states the behavior IS handled ("= 200, not saturated"), which the code contradicts on read-back.
 **Severity:** high
-**Counterexample:** program `unsigned long a; long long b; int p = a + b;` — the initializer's annotated type is read from `expr_types`
-**Expected / Actual:** `ULongLong` / `LongLong`
-**Impact:** mixed size_t/unsigned-long ↔ long-long arithmetic is computed with signed semantics in sema annotations (and the shared `usual_arithmetic_conversion` downstream): comparisons against 0, division, and shifts of wrapped unsigned values all diverge from gcc.
-**Root cause:** src/common/types.rs:1576-1580 — final else branch returns the signed type on rank alone, without the size check.
-**Bug report:** bug_reports/b1_uac_unsigned_long_plus_long_long_signed.md
-**Repro seed:** `cc 48bbef9a3ec8b0f195fbbf057d5231a588f8505d53adc3f15dff5742b5eb6284` (proptest-regressions/frontend/sema/type_checker.txt)
-**Raw output:** `left: LongLong, right: ULongLong: src: unsigned long a; long long b; int p = a + b;`
+**Counterexample:** cast_float_to_target(200.0, IrType::U8) → IrConst::I8(-56) → to_i64() = -56
+**Expected / Actual:** Some(200) / Some(-56)
+**Impact:** constant folding / GVN / algebraic simplification read unsigned constants above the signed range (U8 > 127, U16 > 32767) as negative after any float→int constant cast — silent wrong folded values.
+**Root cause:** src/ir/constants.rs:277 `IrType::U8 => IrConst::I8(fv as u8 as i8)` (and U16/I16, in both cast functions) instead of the I64 zero-extended form used by from_i64 and narrowed_to.
+**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.md
+**Repro seed:** proptest persisted seed in proptest-regressions/src/ir/constants.rs (shrunk: ty_idx=0, raw=272865408)
+**Raw output:** `left: Some(-128), right: Some(128): cast_float_to_target(U8, 128) = I8(-128) reads back Some(-128)`
 
-### B2: function-local enum constant permanently clobbers the global one
-**Formal:** ∀ (g,l). analyze("enum { E = g; }; void f(void){ enum { E = l; } } enum { F = E + 0 };") ⇒ enum_constants[F] = g
-**Contract evidence:** documented src/frontend/sema/type_context.rs:376-378 — "Pop the top type-system scope frame and undo changes to enum_constants, struct_layouts, ctype_cache, and typedefs." (the pop fails to undo the shadowed enum constant)
-**Documentation conflict:** the doc on pop_scope promises the undo; the code has no `enums_shadowed` restore. The comment states the behavior IS handled — it is the contract the code violates (not a limitation notice).
+### B2: coerce_to_with_src early-return keeps the forbidden sign-extending variant for U8/U16 targets
+**Formal:** ∀ ty ∈ {U8,U16}, v ∈ (2^(bits-1), 2^bits): from_i64(v, signed(ty)).coerce_to(ty).to_i64() = v.
+**Contract evidence:** documented — same from_i64 convention comment (src/ir/constants.rs:437); narrowed_to (src/ir/constants.rs:579) implements the correct behavior, proving the two same-job writers disagree.
+**Documentation conflict:** (none beyond b1's convention comment; the early-return arm carries no comment claiming intent)
 **Severity:** high
-**Counterexample:** `enum { E = 1 }; void f(void) { enum { E = 2 }; } enum { F = E + 0 };` → `enum_constants["F"]`
-**Expected / Actual:** `1` / `2`
-**Impact:** silent wrong compile-time constants for every use of the global enumerator after any function that locally redefines the name; also the parser's own enum map is affected downstream.
-**Root cause:** insert_enum_scoped (type_context.rs:422) tracks only first-insert keys; TypeScopeFrame has no enums_shadowed list (typedefs/layouts/alignments all restore).
-**Bug report:** bug_reports/b2_enum_constant_scope_shadow_leak.md
-**Repro seed:** `cc 23805cb69dbbf1c75582a5c6cc72fbba3333394307828674ae4687785976d13d` (shrinks to g = 1, l = 2)
-**Raw output:** `left: Some(2), right: Some(1): enum constant F leaked inner E=2`
+**Counterexample:** IrConst::from_i64(200, IrType::I8).coerce_to(IrType::U8) → I8(-56) → to_i64() = -56
+**Expected / Actual:** Some(200) / Some(-56)
+**Impact:** the universal constant-to-instruction-type coercion step produces constants that read back negative for U8/U16 values above their signed range — same corruption class as b1 through the coercion path.
+**Root cause:** src/ir/constants.rs:384 `(IrConst::I8(_), IrType::I8 | IrType::U8) => return *self` (same for I16/U16) — the unsigned target must fall through to from_i64 normalization.
+**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.md
+**Repro seed:** proptest-regressions/src/ir/constants.rs (shrunk: kind=0, raw=0)
+**Raw output:** `left: Some(-128), right: Some(128): I8(-128).coerce_to(U8) = I8(-128) reads back -128`
 
-### B3: enum with explicit i64::MAX value panics with integer overflow
-**Formal:** ∀ variants ∈ VariantList. analyze("enum { A₀[=e₀], … }") ⇒ ∀i. enum_constants[Aᵢ] = eᵢ if explicit else prev+1 — no panic on any legal token stream
-**Contract evidence:** inferred (gcc 9.4 diagnoses "overflow in enumeration values" for the same input — a diagnostic, never a crash; README promises information gathering, not rejection-by-panic)
-**Documentation conflict:** (none)
+### B3: f64 subnormals are misencoded by f64_to_f128_bytes and f64_to_x87_bytes
+**Formal:** ∀ v ∈ finite f64 (incl. subnormals): ieee_decode_f128(f64_to_f128_bytes(v)) = v ∧ ieee_decode_x87(f64_to_x87_bytes(v)) = v.
+**Contract evidence:** documented — src/ir/constants.rs:50 "Convert an f64 value to IEEE 754 binary128 (quad-precision) encoding" — a faithful encoding preserves the value; both target formats represent every f64 exactly.
+**Documentation conflict:** (none — no comment addresses subnormals; the code's "Normal number" arm simply receives them)
 **Severity:** medium
-**Counterexample:** `enum { A = 9223372036854775807LL };`
-**Expected / Actual:** diagnostic like gcc / panic "attempt to add with overflow" at parser/types.rs:828 (`val + 1`); the sema-side counter (analysis.rs:717) has the same defect
-**Impact:** debug-build panic (crash on validly tokenized input); release builds silently wrap the counter to i64::MIN.
-**Root cause:** unchecked `+ 1` on the enum counter in both the parser's variant processing and sema's process_enum_variants.
-**Bug report:** bug_reports/b3_enum_counter_i64_max_overflow_panic.md
-**Repro seed:** deterministic — see regression test (panic reproducers have no shrunk seed)
-**Raw output:** `panicked at src/frontend/parser/types.rs:828:35: attempt to add with overflow`
+**Counterexample:** f64_to_f128_bytes(5e-324) decodes to 1.1125369292536e-308 (≈2^-1023) instead of 5e-324 (2^-1074)
+**Expected / Actual:** 5e-324 / 1.1125369292536e-308
+**Impact:** subnormal constants flowing into long-double data emission produce wrong bytes on ARM64/RISC-V (f128 emitted verbatim) and wrong x87 constants on x86.
+**Root cause:** src/ir/constants.rs:50/:82 — `exp11 == 0 && mantissa52 != 0` (subnormals) falls through to the normal path, which assumes an implicit integer bit the subnormal does not have.
+**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.md
+**Repro seed:** proptest-regressions/src/ir/constants.rs (shrunk: v=5e-324)
+**Raw output:** `Test failed: f128: v=0.0000…005 decoded=0.0000…011125369292536007`
 
-### B4: undo-log resurrects a same-scope re-inserted value after pop
-**Formal:** Automaton — states: layered scope maps; ops: Push/Pop/Insert{Typedef,Enum,Align,Layout,CacheInvalidate}; invariant: after each op every map equals the layered model
-**Contract evidence:** inferred (symmetry: pop_scope restores typedefs/alignments/layouts — the same guarantee class must hold when a key is re-inserted within one scope; README: undo-log exists so that "local struct definitions inside a function body do not overwrite global layouts")
-**Documentation conflict:** (none)
+### B4: build_cfg records duplicate predecessor entries for multi-target terminators with equal labels
+**Formal:** ∀ CFG F: ∀ i,b: multiplicity of edge (i→b) in succs equals its multiplicity in preds ∧ neither list contains duplicates.
+**Contract evidence:** documented — src/ir/analysis.rs:106 "Build predecessor and successor lists from the function's CFG. Returns (preds, succs) as flat adjacency lists (CSR format)." — one graph as a transpose pair; consumers named below count predecessors.
+**Documentation conflict:** (none — no comment claims duplicate preds are intended; the succs `contains` guards show dedup intent)
 **Severity:** medium
-**Counterexample:** ops `[push_scope, insert_typedef_alignment("kB",0), insert_typedef_alignment("kB",0), pop_scope]` → `typedef_alignments` still contains `kB`; pipeline shape: `void f(void){ typedef int T; typedef long T; }` leaks `T = long`
-**Expected / Actual:** `kB` absent after pop / `kB == Some(0)`
-**Impact:** same-scope redeclarations (accepted by design) leak their inner value past the function/block scope, poisoning later typedef/layout resolution.
-**Root cause:** insert records "shadowed" whenever the key exists in the flat map, even when the existing value came from THIS frame; pop then removes (added) and re-inserts (shadowed). Affects typedefs, alignments, layouts, ctype_cache.
-**Bug report:** bug_reports/b4_undolog_double_insert_resurrection.md
-**Repro seed:** `cc 43047567ca57c611113d8cbde5340dfea3f3c34c124872ba5bae7de054b959a1` (shrinks to [Push, Al(1, 0), Al(1, 0), Pop])
-**Raw output:** `right: None: typedef_alignments kB diverged at op #3 (Pop): ops=[Push, Al(1, 0), Al(1, 0), Pop]`
+**Counterexample:** block0: CondBranch{cond:1, true:L1, false:L1}; block1: Return → preds[1] = [0,0], succs[0] = [1]
+**Expected / Actual:** preds[1] = [0] / [0,0]
+**Impact:** six passes consume preds counts (if_convert.rs:305/386 diamond/merge gates, gvn.rs:439 join detection, mem2reg's DF join gate and phi-cost estimate); today's effects are masked but the invariant they build on is violated — latent correctness trap. C-level `case 1: case 2:` naturally produces duplicate switch labels reaching this path.
+**Root cause:** src/ir/analysis.rs:131-146 — `preds[f].push(i32)` runs unconditionally in the CondBranch/Switch/IndirectBranch arms while the succs push is `contains`-guarded.
+**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.md
+**Repro seed:** proptest-regressions/src/ir/analysis.rs
+**Raw output:** `Test failed: duplicate predecessor 2 in row 2`
 
-### B5: unary minus on unsigned constants does not wrap (SemaConstEval)
-**Formal:** ∀ e ∈ Expr. const_values[(int p = e;).init] == model_c_eval(e) under C11 6.5 semantics (unsigned ops wrap modulo 2^width)
-**Contract evidence:** inferred (C11 6.5.3.3p4: unsigned negation is modulo 2^n; gcc 9.4 folds `-((unsigned)(0 + -1))` to `1u` — verified by static assert on this box)
-**Documentation conflict:** the SIBLING BitNot arm documents the exact storage requirement and carries the fix-up ("For unsigned int operands (stored as I64 ...), the bitwise NOT must be truncated to 32 bits. Without this, ~0u produces I64(-1) ... instead of I64(0xFFFFFFFF)." const_eval.rs:110-125); the Neg arm lacks the analogous wrap — an internal-consistency contract the code itself asserts elsewhere. `(not independently verified for the Neg arm — no comment speaks to it; it is the absence of the sibling's documented discipline that is the defect)`
-**Severity:** medium
-**Counterexample:** `int p = -((unsigned)(0) + (-1));` → `const_values[p]`
-**Expected / Actual:** `1` / `-4294967295`
-**Impact:** enum values, array sizes, and static initializers built from negated unsigned constant expressions get negative values instead of the wrapped unsigned ones.
-**Root cause:** const_eval.rs UnaryOp::Neg negates the promoted I64-stored value without re-wrapping to the operand's unsigned width.
-**Bug report:** bug_reports/b5_unsigned_negation_const_eval_no_wrap.md
-**Repro seed:** deterministic — see regression test
-**Raw output:** `left: Some(-4294967295), right: Some(1): expr: (-((unsigned)(0) + (-1)))`
+### B5: dominance frontiers can never contain the entry block for itself (entry cycles)
+**Formal:** ∀ CFG F where entry participates in a cycle: entry ∈ DF(entry) (Cytron DF_local: y ∈ succ(n) ∧ n does not strictly dominate y).
+**Contract evidence:** documented — src/ir/analysis.rs:302 "DF(b) = set of blocks where b's dominance ends (join points)"; Cytron et al. TOPLAS 1991 §2.
+**Documentation conflict:** (none — no comment addresses the entry case; the ≥2-preds gate and runner-stop-at-idom[entry] are both silent on it)
+**Severity:** low (not reachable from today's C lowering: no in-tree producer creates edges into the entry block — lower_label_stmt always starts a fresh block; filed for the definitional violation and future-pass hazard, e.g. block merging redirecting a back edge into entry)
+**Counterexample:** single block, terminator Branch(entry) → DF(0) = {} but must contain 0 (witness p11b, both self-edge and 0→1→{0,1} cycle forms)
+**Expected / Actual:** DF(0) ∋ 0 / DF(0) = {}
+**Impact:** if a future pass creates an entry cycle, mem2reg would omit the entry phi for loop-carried variables → silent miscompile of the carried value.
+**Root cause:** src/ir/analysis.rs:307 `if preds.len(b) < 2 { continue; }` plus the runner walk stopping at idom[entry]==entry.
+**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.md
+**Repro seed:** deterministic witness (no seed needed)
+**Raw output:** `Test failed: DF(0) mismatch (n=1, succs=[[0]]) left: {} right: {0}`
 
 ## Design Caveats (if any)
 
@@ -99,42 +113,97 @@
 
 | File | Tests |
 |------|-------|
-| src/frontend/sema/type_checker.rs (mod pbt_tests + pbt_regression) | p1 (1024), p2 (1024), p1_kat_gcc, regression-b1 |
-| src/frontend/sema/analysis.rs (mod pbt_tests + pbt_regression) | p3 (1024), p5 (1024), p6 (1024), p12 (1024), p13 (1024), p6_kat, regressions-b2/b3 |
-| src/frontend/sema/type_context.rs (mod pbt_tests + pbt_regression) | p4 (1024), regression-b4 |
-| src/frontend/sema/const_eval.rs (mod pbt_tests + pbt_regression) | p7 (1024), p9 (1024), p8 (enumeration), p7_kat_gcc, regression-b5 |
-| src/frontend/sema/builtins.rs (mod pbt_tests) | p10 (1024), p11 (1024) |
-| src/frontend/parser/parse.rs (mod pbt_tests, extended) | p_r05_parse_src_failure_path (1024) |
-| src/frontend/preprocessor/pbt_support.rs (mod round05_tests) | p15_sut_tokens_markers_stripped (1024) |
+| src/ir/ops.rs (`mod pbt_tests`) | 5 (P1, P2, P3, P4, P4b) |
+| src/ir/constants.rs (`mod pbt_tests` + `mod pbt_regression`) | 5 + 3 red regressions |
+| src/ir/analysis.rs (`mod pbt_tests` + `mod pbt_regression`) | 4 (incl. red witness P11b) + 1 red regression |
+| src/ir/mem2reg/promote.rs (`mod pbt_tests`) | 1 (P12) |
+| src/ir/mem2reg/phi_eliminate.rs (`mod pbt_tests`) | 1 (P13) |
 
 ## Reproduction
 
-Whole suite (from scratch CWD):
+Whole suite (from the campaign scratch dir):
 ```bash
-cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
-PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib frontend::sema
+cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib ir::
 ```
-Bugs (one per line, copy-pasteable):
+Build (user contract, unchanged): `PATH="$HOME/.cargo/bin:$PATH" cargo check --lib` in
+/home/shuhao/fermat-users/leo/github/claudes-c-compiler (prebuilt SUT log:
+pbt-out/rounds/06_ir/build.log; this round's test compile:
+`cargo test --lib ir:: --no-run` → clean).
+
+Per bug (narrowed):
 ```bash
-cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::type_checker::pbt_regression::test_usual_arith_conversion_regression_ul_plus_ll
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::analysis::pbt_regression::test_enum_scope_regression_shadow_leak
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::analysis::pbt_regression::test_enum_regression_i64_max_counter_overflow
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::type_context::pbt_regression::test_typecontext_regression_double_insert_resurrection
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::const_eval::pbt_regression::test_const_eval_regression_unsigned_negation_no_wrap
+cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::constants::pbt_tests::p5_unsigned_repr_writer_differential          # b1
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::constants::pbt_tests::p6_coerce_to_unsigned_normalization          # b2
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::constants::pbt_tests::p7_f128_x87_encoding_roundtrip               # b3
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::analysis::pbt_tests::p9_build_cfg_transpose_consistency            # b4
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::analysis::pbt_tests::p11b_entry_selfloop_df                        # b5
 ```
-Property-level replays (shrunk counterexamples, proptest persistence):
-```bash
-cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/05_sema/run
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::type_checker::pbt_tests::p1_uac_binop_ctype
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::analysis::pbt_tests::p3_enum_variant_values
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::type_context::pbt_tests::p4_scope_undo_state_machine
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::analysis::pbt_tests::p5_enum_scope_shadow_restore
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::sema::const_eval::pbt_tests::p7_const_arith_c_semantics
-```
+Deterministic red regressions: `cargo test --lib ir::constants::pbt_regression` and
+`cargo test --lib ir::analysis::pbt_regression` (same workdir).
 
 ## Output Directories
 
-- pbt-out/rounds/05_sema/ — this round's artifacts: PLAN.md, PROPERTIES.md, report.json, COVERAGE.md, COVERAGE_STATUS.md, FUNCTION_INDEX.md, INVARIANTS.md, CHANGE_SURFACE.md, change-surface.json, build.log, dependencies.json, bug_reports/b1..b5 (.md), run/ (scratch CWD for all runs). The campaign summary REPORT.md itself lives at pbt-out/REPORT.md (close-out ledger location enforced by the harness).
-- pbt-out/ — top-level ledger holds this round's state: REPORT.md, REPORT.html, report.json, PLAN.md, PROPERTIES.md, COVERAGE.md, COVERAGE_STATUS.md, INVARIANTS.md, FUNCTION_INDEX.md (sema entries appended), plan.md, bug_reports/ (b1–b5 .md + auto-rendered .html)
-- Test code itself lives in the repository tree (inline `#[cfg(test)]` mods, rung 1)
+All artifacts under pbt-out/rounds/06_ir/ (this round's campaign output); this
+summary is the top-level close-out ledger pbt-out/REPORT.md:
+- pbt-out/rounds/06_ir/PLAN.md, PROPERTIES.md, FUNCTION_INDEX.md, CHANGE_SURFACE.md (harness-provided)
+- pbt-out/REPORT.md (this file) + pbt-out/REPORT.html (auto-rendered from report.json)
+- pbt-out/rounds/06_ir/COVERAGE.md, COVERAGE_STATUS.md, INVARIANTS.md
+- pbt-out/report.json (machine-readable; source of truth for REPORT.html)
+- pbt-out/rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.md (+ .html)
+- pbt-out/rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.md (+ .html)
+- pbt-out/rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.md (+ .html)
+- pbt-out/rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.md (+ .html)
+- pbt-out/rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.md (+ .html)
+- pbt-out/rounds/06_ir/run/probe.log (buildability probe), run/ (scratch CWD for all test runs)
+- Tests live in the repo tree (rung 1, inline modules) — see Test Files Created.
+
+## Coverage Report
+
+# PBT Coverage Status
+
+> Last updated: 2026-10-05 10:55 (campaign: coverage)
+> Files: 8/53 scanned (15%) | Functions: 22/834 total | PBT candidates: 22 | Tested: 22 (100%) | 12 pass, 7 fail, 3 other
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Total source files | 53 |
+| Files scanned | 8 / 53 (15%) |
+| Total functions (all files) | 834 |
+| PBT candidates (from FUNCTION_INDEX) | 22 |
+| **Tested (of PBT candidates)** | **22 / 22 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 12 / 7 / 3 |
+| **Overall (tested / all functions)** | **22 / 834 (3%)** |
+| Untested | 0 |
+| Skipped | 0 |
+
+## Module Breakdown
+
+| Module | Scanned | Tested | Skipped | Coverage |
+|--------|---------|--------|---------|----------|
+|  | 22 | 22 | 0 | 100% |
+
+## Oracle Type Distribution
+
+| Oracle Type | Total | Covered | Skipped | Coverage |
+|-------------|-------|---------|---------|----------|
+| unknown | 22 | 22 | 0 | 100% |
+
+## Recommended Focus
+
+> **Priority 1 — Fix failing tests**
+> These functions have failing PBT properties — fix before adding new tests.
+
+| Function | Source |
+|----------|--------|
+| IrConst::cast_float_to_target | constants.rs |
+| IrConst::cast_long_double_to_target | constants.rs |
+| IrConst::coerce_to_with_src / coerce_to | constants.rs |
+| f64_to_f128_bytes | constants.rs |
+| f64_to_x87_bytes | constants.rs |
+| build_cfg | analysis.rs |
+| compute_dominance_frontiers | analysis.rs |

@@ -20,17 +20,9 @@
 | compute_dominance_frontiers | analysis.rs | src/ir/analysis.rs (pbt_tests P11, P11b red) | cargo test --lib ir::analysis | FAIL — bug b5 (entry cycles; covered domain green) |
 | promote_allocas / promote_allocas_with_params | mem2reg/promote.rs | src/ir/mem2reg/promote.rs (pbt_tests P12) | cargo test --lib ir::mem2reg | pass (SSA validity + phi completeness) |
 | eliminate_phis | mem2reg/phi_eliminate.rs | src/ir/mem2reg/phi_eliminate.rs (pbt_tests P13) | cargo test --lib ir::mem2reg | pass (structural preservation) |
+| GlobalInit::byte_size / emitted_byte_size / for_each_ref | module.rs | (analyzed in scan; escape_string maps 1 char = 1 byte, chars()-count consistent with backend) | — | no property (verified consistent by reading; not filed) |
+| max_value_id / for_each_function | module.rs | exercised via P12/P13 | cargo test --lib ir::mem2reg | pass (indirect) |
 | IntrinsicOp::is_pure | intrinsics.rs | (none) | — | skipped: static classification list, no independent oracle (see PLAN.md) |
-| main (pbt-out/rounds/05_sema/run/negu.c) | negu.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| main (pbt-out/rounds/05_sema/run/ovf.c) | ovf.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| main (pbt-out/rounds/05_sema/run/uackat.c) | uackat.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| main (pbt-out/rounds/05_sema/run/uackat2.c) | uackat2.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| TShape::Leaf | src/frontend/parser/parse.rs | src/frontend/parser/parse.rs (round-05 P14 test helper) | cargo test --lib frontend::parser | covered by round 05 (outside this round's scope src/ir) |
-| is_line_marker | src/frontend/preprocessor/pbt_support.rs | src/frontend/preprocessor/pbt_support.rs (round-05 P15) | cargo test --lib frontend::preprocessor | covered by round 05 (outside this round's scope src/ir) |
-| sema_of | src/frontend/sema/analysis.rs | src/frontend/sema/analysis.rs (round-05 P3/P5 + red regressions) | cargo test --lib frontend::sema | covered by round 05 (bug witnesses re-executed in this round's probe baseline) |
-| normalize_atomic_size_suffix | src/frontend/sema/builtins.rs | src/frontend/sema/builtins.rs (round-05 properties) | cargo test --lib frontend::sema | covered by round 05 |
-| ctype_from_type_spec_with_derived | src/frontend/sema/const_eval.rs | src/frontend/sema/const_eval.rs (round-05 P7 + red regression) | cargo test --lib frontend::sema | covered by round 05 |
-| sema_of | src/frontend/sema/type_checker.rs | src/frontend/sema/type_checker.rs (round-05 P1 + red regression) | cargo test --lib frontend::sema | covered by round 05 |
-| layout | src/frontend/sema/type_context.rs | src/frontend/sema/type_context.rs (round-05 P4 state machine + red regression) | cargo test --lib frontend::sema | covered by round 05 |
+| — change-surface functions (frontend/sema etc.) | — | covered by round 05 (pbt-out/rounds/05_sema/PROPERTIES.md P1–P15, bugs b1–b5) | cargo test --lib frontend::sema | round-05 red witnesses re-executed as recorded in this round's probe baseline |
 
-Source file column: plain file names relative to src/ir/ for round-06 rows.
+Source file column: plain file names relative to src/ir/.

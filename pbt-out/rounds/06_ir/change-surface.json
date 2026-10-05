@@ -1,0 +1,163 @@
+{
+  "source": "commit:HEAD",
+  "files": [
+    "pbt-out/rounds/05_sema/run/bad1.c",
+    "pbt-out/rounds/05_sema/run/bad2.c",
+    "pbt-out/rounds/05_sema/run/negu.c",
+    "pbt-out/rounds/05_sema/run/ovf.c",
+    "pbt-out/rounds/05_sema/run/uackat.c",
+    "pbt-out/rounds/05_sema/run/uackat2.c",
+    "src/frontend/parser/parse.rs",
+    "src/frontend/preprocessor/pbt_support.rs",
+    "src/frontend/sema/analysis.rs",
+    "src/frontend/sema/builtins.rs",
+    "src/frontend/sema/const_eval.rs",
+    "src/frontend/sema/type_checker.rs",
+    "src/frontend/sema/type_context.rs"
+  ],
+  "functions": [
+    {
+      "name": "main",
+      "file": "pbt-out/rounds/05_sema/run/negu.c",
+      "line": 1,
+      "errorHandling": false,
+      "hunks": [
+        [
+          1,
+          1
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "main",
+      "file": "pbt-out/rounds/05_sema/run/ovf.c",
+      "line": 1,
+      "errorHandling": false,
+      "hunks": [
+        [
+          1,
+          2
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "main",
+      "file": "pbt-out/rounds/05_sema/run/uackat.c",
+      "line": 1,
+      "errorHandling": false,
+      "hunks": [
+        [
+          1,
+          9
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "main",
+      "file": "pbt-out/rounds/05_sema/run/uackat2.c",
+      "line": 1,
+      "errorHandling": false,
+      "hunks": [
+        [
+          1,
+          14
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "TShape::Leaf",
+      "file": "src/frontend/parser/parse.rs",
+      "line": 1971,
+      "errorHandling": false,
+      "hunks": [
+        [
+          1993,
+          2037
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "is_line_marker",
+      "file": "src/frontend/preprocessor/pbt_support.rs",
+      "line": 520,
+      "errorHandling": false,
+      "hunks": [
+        [
+          520,
+          576
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "sema_of",
+      "file": "src/frontend/sema/analysis.rs",
+      "line": 2032,
+      "errorHandling": true,
+      "hunks": [
+        [
+          2032,
+          2391
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "normalize_atomic_size_suffix",
+      "file": "src/frontend/sema/builtins.rs",
+      "line": 772,
+      "errorHandling": true,
+      "hunks": [
+        [
+          772,
+          918
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "ctype_from_type_spec_with_derived",
+      "file": "src/frontend/sema/const_eval.rs",
+      "line": 1223,
+      "errorHandling": true,
+      "hunks": [
+        [
+          1223,
+          1649
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "sema_of",
+      "file": "src/frontend/sema/type_checker.rs",
+      "line": 951,
+      "errorHandling": true,
+      "hunks": [
+        [
+          951,
+          1185
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "layout",
+      "file": "src/frontend/sema/type_context.rs",
+      "line": 514,
+      "errorHandling": false,
+      "hunks": [
+        [
+          514,
+          728
+        ]
+      ],
+      "role": "changed"
+    }
+  ]
+}

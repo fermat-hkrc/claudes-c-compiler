@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: coerce_to_with_src early-return keeps the forbidden sign-extending I8/I16 variant for U8/U16 targets</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: coerce_to_with_src early-return keeps the forbidden sign-extending I8/I16 variant for U8/U16 targets</h1>
+<p><span class="badge">high</span> <code>b2</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>coerce_to_with_src early-return keeps the forbidden sign-extending I8/I16 variant for U8/U16 targets</p>
+<table><tr><th>Expected behavior</th><td>I8(200 as i8).coerce_to(U8).to_i64() == Some(200)</td></tr><tr><th>Observed behavior</th><td>IrConst::I8(-56), to_i64() == Some(-56)</td></tr><tr><th>Impact assessment</th><td>the universal constant-to-instruction-type coercion step produces constants that read back negative through to_i64() for U8/U16 values above their signed range</td></tr><tr><th>Minimal counterexample</th><td><code>I8(200 as i8).coerce_to(U8) = I8(-56), to_i64() = -56 != 200</code></td></tr></table>
+<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>&quot;Store unsigned sub-64-bit types (U8, U16, U32) as I64 with zero-extended values to preserve unsigned semantics.&quot; — src/ir/constants.rs:437</code></p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>p6_coerce_to_unsigned_normalization (<code>p6</code>)</td></tr><tr><th>Formal property</th><td>forall ty in {U8,U16}, v in (2^(bits-1), 2^bits): from_i64(v, signed(ty)).coerce_to(ty).to_i64() == v</td></tr><tr><th>Oracle</th><td>differential</td></tr><tr><th>System under test</th><td>IrConst::coerce_to_with_src</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs:384</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib ir::constants</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::constants --no-run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib ir::constants::pbt_tests::p6_coerce_to_unsigned_normalization</code></pre>
+<p class="muted">Replay seed: proptest-regressions/ir/constants.txt (shrunk: kind=0, raw=0)</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Split the early-return arms: (I8(_), I8) may return *self but (I8(_), U8) must fall through to from_i64 normalization (same for I16/U16)</p>
+</section>
+</body>
+</html>

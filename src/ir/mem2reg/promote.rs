@@ -1348,3 +1348,259 @@ mod tests {
         assert!(has_alloca, "Alloca should NOT be promoted when used as =m inline asm output");
     }
 }
+
+// ── PBT properties (round 06) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::{AddressSpace, IrType};
+    use crate::ir::reexports::BasicBlock;
+    use proptest::prelude::*;
+    use proptest::collection::vec;
+
+    /// Build a random alloca-based IR function from plain data. k scalar allocas in
+    /// the entry block; per-block random load/store sequences (values used only within
+    /// their defining block, so the pre-promotion IR is well-formed); random CFG over
+    /// Branch / CondBranch (equal targets allowed) / Switch (duplicate labels allowed)
+    /// / Return.
+    #[allow(clippy::too_many_arguments)]
+    fn build_random_func(
+        n: usize, k: usize,
+        ops: &[Vec<(u8, u8, u8, i64)>],
+        terms: &[(u8, u32, u32)],
+    ) -> IrFunction {
+        let mut func = IrFunction::new("f".to_string(), IrType::I32, vec![], false);
+        let mut next: u32 = k as u32;
+        for bi in 0..n {
+            let mut insts: Vec<Instruction> = vec![];
+            let mut defined_here: Vec<u32> = vec![];
+            if bi == 0 {
+                for a in 0..k {
+                    insts.push(Instruction::Alloca {
+                        dest: Value(a as u32), ty: IrType::I32, size: 4, align: 4, volatile: false,
+                    });
+                }
+            }
+            if k > 0 {
+                for &(op, which, vsrc, cval) in &ops[bi] {
+                    let ptr = Value((which as usize % k) as u32);
+                    if op % 2 == 0 {
+                        let dest = Value(next);
+                        next += 1;
+                        insts.push(Instruction::Load { dest, ptr, ty: IrType::I32, seg_override: AddressSpace::Default });
+                        defined_here.push(dest.0);
+                    } else {
+                        let val = if vsrc % 3 == 0 && !defined_here.is_empty() {
+                            Operand::Value(Value(defined_here[(vsrc as usize) % defined_here.len()]))
+                        } else {
+                            Operand::Const(IrConst::I32(cval as i32))
+                        };
+                        insts.push(Instruction::Store { val, ptr, ty: IrType::I32, seg_override: AddressSpace::Default });
+                    }
+                }
+            }
+            let pick = |s: u32| -> Operand {
+                if defined_here.is_empty() {
+                    Operand::Const(IrConst::I32(1))
+                } else {
+                    Operand::Value(Value(defined_here[(s as usize) % defined_here.len()]))
+                }
+            };
+            let nn = n as u32;
+            let t = &terms[bi];
+            let term = match t.0 % 4 {
+                0 => Terminator::Return(Some(pick(t.1))),
+                1 => Terminator::Branch(BlockId(t.1 % nn)),
+                2 => Terminator::CondBranch {
+                    cond: pick(t.1),
+                    true_label: BlockId(t.1 % nn),
+                    false_label: BlockId(t.2 % nn),
+                },
+                _ => Terminator::Switch {
+                    val: pick(t.1),
+                    cases: vec![(1, BlockId(t.1 % nn)), (2, BlockId(t.2 % nn))],
+                    default: BlockId(t.1 % nn),
+                    ty: IrType::I32,
+                },
+            };
+            func.blocks.push(BasicBlock {
+                label: BlockId(bi as u32),
+                instructions: insts,
+                terminator: term,
+                source_spans: vec![],
+            });
+        }
+        func
+    }
+
+    /// P12: after mem2reg promotion the function must be proper SSA:
+    /// (a) no remaining use of any promoted alloca,
+    /// (b) every phi in a reachable block has exactly one incoming per unique
+    ///     REACHABLE predecessor edge (unreachable predecessors carry undef and are
+    ///     never renamed — dead code),
+    /// (c) every use of a value is dominated by its definition (phi uses counted at
+    ///     the incoming block),
+    /// (d) next_value_id is set and bounds every Value id.
+    /// Doc contract: "Insert phi nodes at iterated dominance frontiers of defining
+    /// blocks" (module doc step 5, a615b058); README: "yielding proper SSA form".
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p12_promote_yields_valid_ssa(
+            n in 1usize..=8,
+            k in 0usize..=4,
+            ops in vec(
+                vec((any::<u8>(), any::<u8>(), any::<u8>(), any::<i64>()), 0..=6),
+                1..=8),
+            terms in vec((any::<u8>(), any::<u32>(), any::<u32>()), 1..=8),
+        ) {
+            let n = n.min(ops.len()).min(terms.len());
+            let ops = &ops[..n];
+            let terms = &terms[..n];
+            let func = build_random_func(n, k, ops, terms);
+            // only allocas actually loaded/stored are promotable (unused allocas stay)
+            let promoted: std::collections::BTreeSet<u32> = (0..k as u32)
+                .filter(|&a| ops.iter().any(|blk| blk.iter().any(|&(op, which, _, _)| {
+                    op % 2 == 1 && k > 0 && (which as usize % k) as u32 == a
+                        || op % 2 == 0 && k > 0 && (which as usize % k) as u32 == a
+                })))
+                .collect();
+            let mut module = IrModule::new();
+            module.functions.push(func);
+            promote_allocas_with_params(&mut module);
+            let func = &module.functions[0];
+            let nb = func.blocks.len();
+            prop_assert_eq!(nb, n);
+
+            // (d) next_value_id bounds all ids (set when promotion ran; documented
+            // 0 = "not yet computed" when nothing was promoted)
+            let any_promotable_use = !promoted.is_empty() && ops.iter().any(|o| !o.is_empty());
+            if any_promotable_use {
+                prop_assert!(func.next_value_id > 0);
+            }
+
+            // original CFG: unique (deduped) predecessor sets + reachability
+            let label_to_idx: FxHashMap<BlockId, usize> =
+                func.blocks.iter().enumerate().map(|(i, b)| (b.label, i)).collect();
+            let mut preds_unique: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); nb];
+            let mut succs: Vec<Vec<usize>> = vec![vec![]; nb];
+            for (i, b) in func.blocks.iter().enumerate() {
+                let mut add_edge = |t: BlockId, preds_unique: &mut Vec<std::collections::BTreeSet<usize>>, succs: &mut Vec<Vec<usize>>| {
+                    if let Some(&ti) = label_to_idx.get(&t) {
+                        if !succs[i].contains(&ti) {
+                            succs[i].push(ti);
+                        }
+                        preds_unique[ti].insert(i);
+                    }
+                };
+                match &b.terminator {
+                    Terminator::Branch(t) => add_edge(*t, &mut preds_unique, &mut succs),
+                    Terminator::CondBranch { true_label, false_label, .. } => {
+                        add_edge(*true_label, &mut preds_unique, &mut succs);
+                        add_edge(*false_label, &mut preds_unique, &mut succs);
+                    }
+                    Terminator::Switch { cases, default, .. } => {
+                        add_edge(*default, &mut preds_unique, &mut succs);
+                        for (_, t) in cases { add_edge(*t, &mut preds_unique, &mut succs); }
+                    }
+                    _ => {}
+                }
+            }
+            let mut reach = vec![false; nb];
+            if nb > 0 {
+                let mut stack = vec![0usize];
+                reach[0] = true;
+                while let Some(u) = stack.pop() {
+                    for &s in &succs[u] {
+                        if !reach[s] { reach[s] = true; stack.push(s); }
+                    }
+                }
+            }
+
+            // (a) no promoted alloca is used anywhere anymore
+            for b in &func.blocks {
+                for used in b.terminator.used_values() {
+                    prop_assert!(!promoted.contains(&used), "terminator still uses alloca {}", used);
+                }
+                for inst in &b.instructions {
+                    for used in inst.used_values() {
+                        prop_assert!(!promoted.contains(&used), "{:?} still uses alloca {}", inst, used);
+                    }
+                    if let Instruction::Load { ptr, .. } | Instruction::Store { ptr, .. } = inst {
+                        prop_assert!(!promoted.contains(&ptr.0), "load/store of promoted alloca survived");
+                    }
+                }
+                let alloca_survived = b.instructions.iter().any(|i|
+                    matches!(i, Instruction::Alloca { dest, .. } if promoted.contains(&dest.0)));
+                prop_assert!(!alloca_survived, "promoted alloca instruction survived");
+            }
+
+            // dominators on the (unchanged) CFG for check (c)
+            let (preds_adj, succs_adj) = analysis::build_cfg(func, &label_to_idx);
+            let idom = analysis::compute_dominators(nb, &preds_adj, &succs_adj);
+            let dominates = |d: usize, x: usize| -> bool {
+                if x == d { return true; }
+                if x == 0 { return d == 0; }
+                let mut cur = x;
+                loop {
+                    let p = idom[cur];
+                    if p == usize::MAX || p == cur { return false; }
+                    if p == d { return true; }
+                    cur = p;
+                }
+            };
+
+            // def map
+            let mut def_block: FxHashMap<u32, usize> = FxHashMap::default();
+            for (bi, b) in func.blocks.iter().enumerate() {
+                for inst in &b.instructions {
+                    if let Some(v) = inst.dest() {
+                        if func.next_value_id > 0 {
+                            prop_assert!((v.0 as u64) < func.next_value_id as u64, "dest {} >= next_value_id {}", v.0, func.next_value_id);
+                        }
+                        def_block.insert(v.0, bi);
+                    }
+                }
+            }
+
+            // (b) + (c)
+            for (bi, b) in func.blocks.iter().enumerate() {
+                if !reach[bi] { continue; }
+                let expected_preds: std::collections::BTreeSet<usize> =
+                    preds_unique[bi].iter().copied().filter(|&p| reach[p]).collect();
+                for inst in &b.instructions {
+                    if let Instruction::Phi { incoming, .. } = inst {
+                        let labels: std::collections::BTreeSet<BlockId> =
+                            incoming.iter().map(|(_, l)| *l).collect();
+                        prop_assert_eq!(labels.len(), incoming.len(), "duplicate phi incoming labels in block {}", bi);
+                        let got: std::collections::BTreeSet<usize> =
+                            labels.iter().filter_map(|l| label_to_idx.get(l).copied()).collect();
+                        prop_assert!(got == expected_preds,
+                            "phi incoming {:?} != reachable preds {:?} of block {}", incoming, expected_preds, bi);
+                        for (op, from) in incoming {
+                            if let Operand::Value(v) = op {
+                                let from_idx = label_to_idx[from];
+                                let d = def_block.get(&v.0).copied()
+                                    .unwrap_or_else(|| panic!("phi incoming value {} undefined", v.0));
+                                prop_assert!(dominates(d, from_idx),
+                                    "phi use of {} (def block {}) not dominated at pred {}", v.0, d, from_idx);
+                            }
+                        }
+                    } else {
+                        for used in inst.used_values() {
+                            let d = def_block.get(&used).copied()
+                                .unwrap_or_else(|| panic!("use of undefined value {} in block {}", used, bi));
+                            prop_assert!(dominates(d, bi),
+                                "use of {} (def block {}) not dominated in block {}", used, d, bi);
+                        }
+                    }
+                }
+                for used in b.terminator.used_values() {
+                    let d = def_block.get(&used).copied()
+                        .unwrap_or_else(|| panic!("terminator use of undefined value {} in block {}", used, bi));
+                    prop_assert!(dominates(d, bi), "terminator use of {} (def {}) not dominated in block {}", used, d, bi);
+                }
+            }
+        }
+    }
+}

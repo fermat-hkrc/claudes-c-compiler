@@ -1,3 +1,17 @@
+572	open	Bug: encode_neon_movi encodes MSL as unshifted LSL #0
+571	open	Bug: encode_neon_movi truncates out-of-range 8-bit immediates
+570	open	Bug: encode_neon_movi ignores LSL #8 on .4h/.8h
+569	open	Bug: encode_neon_movi ignores surplus operands
+568	open	Bug: encode_neon_ext ignores mismatched source arrangements
+567	open	Bug: encode_neon_ext encodes invalid arrangements as 8B EXT
+566	open	Bug: encode_neon_ext masks an out-of-range EXT index instead of rejecting it
+565	open	Bug: encode_neon_ext encodes a GPR or bare-V dest as 8B EXT
+564	open	Bug: encode_neon_ext ignores a surplus fifth operand
+563	open	Bug: constant folding of unary minus on unsigned doesn't wrap — -((unsigned)(0) + (-1)) folds to -4294967295 instead of 1
+562	open	Bug: TypeContext undo-log resurrects same-scope double inserts — typedef int T; typedef long T; leaks T=long past the scope
+561	open	Bug: enum counter overflows and panics — enum { A = 9223372036854775807LL, B }; crashes (gcc: "overflow in enumeration values")
+560	open	Bug: shadowed enum constant leaks out of its scope — inner E=2 survives pop_scope and pollutes later file-level constants
+559	open	Bug: usual_arithmetic_conversion types unsigned long + long long as SIGNED LongLong (C11 6.3.1.8 requires ULongLong)
 558	open	Bug: encode_neon_umov accepts the wrong GPR width for UMOV
 557	open	Bug: encode_neon_umov encodes SP/WSP and FP names as the UMOV GPR dest
 556	open	Bug: encode_neon_umov masks an out-of-range lane index instead of rejecting it
