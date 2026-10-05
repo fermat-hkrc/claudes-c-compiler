@@ -1,8 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_mvni)
-> Files: 10/10 scanned (100%) | Functions: 111/289 total | PBT candidates: 111 | Tested: 111 (100%) | 1 pass, 110 fail
-> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED).
+> Last updated: 2026-10-05 (campaign: encode_cnt)
+> Files: 10/10 scanned (100%) | Functions: 112/289 total | PBT candidates: 112 | Tested: 112 (100%) | 0 pass, 112 fail
 
 ## Summary
 
@@ -11,10 +10,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 111 |
-| **Tested (of PBT candidates)** | **111 / 111 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 110 / 0 |
-| **Overall (tested / all functions)** | **111 / 289 (38%)** |
+| PBT candidates (from FUNCTION_INDEX) | 112 |
+| **Tested (of PBT candidates)** | **112 / 112 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 112 / 0 |
+| **Overall (tested / all functions)** | **112 / 289 (39%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -22,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 111 | 111 | 0 | 100% |
+|  | 112 | 112 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 108 | 108 | 0 | 100% |
+| unknown | 111 | 111 | 0 | 100% |
 
 ## File Coverage
 
@@ -41,7 +40,7 @@
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 25 | 25 | 100% | covered |
+| neon.rs | 68 | 27 | 27 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -161,3 +160,4 @@
 | encode_neon_umov | neon.rs |
 | encode_neon_ext | neon.rs |
 | encode_neon_movi | neon.rs |
+| encode_neon_mvni | neon.rs |

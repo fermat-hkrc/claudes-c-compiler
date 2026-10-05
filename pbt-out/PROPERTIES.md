@@ -1,305 +1,264 @@
-# Properties: encode_neon_mvni
+# Properties: encode_cnt
 
-## encode_neon_mvni_diff_llvm_mc
+## encode_cnt_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (README.md:12 gas-compatible assembler; ARM AdvSIMD modified immediate MVNI). State machine rejected (pure function, no lifecycle). Round-trip rejected (no in-tree MVNI decoder). encode_neon_movi rejected as same-job sibling (MOVI is the inverted-immediate dual with op=0 and extra 8B/16B/2D forms; not interchangeable). Domain is ARM-valid 4H/8H (imm 0-255, no shift), 2S/4S with LSL 0/8/16/24.
-- Doc contract: neon.rs:1331 "Encode NEON MVNI Vd.T, #imm (move bitwise NOT immediate to vector)." — asserted fingerprint 9cd14282
-- Seed: encode_neon_movi_pbt.rs llvm-mc differential
-- Formal: ∀ rd ∈ [0,31], T ∈ {4h,8h,2s,4s}, imm8 ∈ [0,255] (and LSL amount in {0,8,16,24} when T ∈ {2s,4s}). encode_neon_mvni([Vd.T, #imm8 {, lsl #n}]) = llvm-mc("mvni Vd.T, #imm8 {, lsl #n}")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
+- Rationale: Strongest applicable oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree CNT decoder). Sibling encode_neon_not / encode_neon_rbit rejected (same-job gate: different two-misc opcodes). README.md:12 claims gas-compatible textual assembly; llvm-mc provides the known-answer encoding. Weaker: metamorphic Rd/Rn, ARM-field invariant, negative_error.
+- Doc contract: neon.rs:24 "CNT Vd.<T>, Vn.<T>" — asserted fingerprint 6b96d8c8
+- Seed: neon.rs encode_neon_rbit KAT (same 8b/16b two-misc shape)
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {8b,16b}. encode_cnt([Vd.T, Vn.T]) = llvm-mc("cnt Vd.T, Vn.T")
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_mvni
+function: encoder.encode_cnt
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [v]
-  domain: { v: ARM-valid 4h/8h/2s-lsl/4s-lsl mvni }
+  vars: [rd, rn, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: {8b,16b} }
   relation:
     op: eq
-    lhs: encode_neon_mvni(v.ops())
-    rhs: llvm_mc(v.asm())
+    lhs: encode_cnt([RegArrangement(v{rd}, t), RegArrangement(v{rn}, t)])
+    rhs: llvm_mc("cnt v{rd}.{t}, v{rn}.{t}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  imm8: { gen: int, min: 0, max: 255, type: u32 }
-evidence: README.md:12 README.md:234 encoder/mod.rs:961 neon.rs:1331
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b"] }
+evidence: assembler/README.md:12; assembler/README.md:225; encoder/mod.rs:517; neon.rs:24-26
 ```
 
-## encode_neon_mvni_diff_h_lsl8
-- Tier: 2
-- Rationale: ARM and llvm-mc/gas accept `mvni Vd.{4h,8h}, #imm8, lsl #8` (cmode=1010). neon.rs:1374 only describes the no-shift encoding; it does not declare LSL #8 invalid. Parser emits Operand::Shift { kind: "lsl", amount: 8 }, so the form is caller-reachable.
-- Doc contract: neon.rs:1374 "MVNI 16-bit: cmode=1000, op=1" — other fingerprint ada06ff1
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_diff_h_lsl8
-- Formal: ∀ rd ∈ [0,31], T ∈ {4h,8h}, imm8 ∈ [0,255]. encode_neon_mvni([Vd.T, #imm8, lsl #8]) = llvm-mc("mvni Vd.T, #imm8, lsl #8")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_mvni([v0.4h, #0, lsl #8])
-- Bug report: pbt-out/bug_reports/encode_neon_mvni_h_lsl8.md
-
-```property
-function: encoder.encode_neon_mvni
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, t, imm8]
-  domain: { rd: 0..31, t: {4h,8h}, imm8: 0..255 }
-  relation:
-    op: eq
-    lhs: encode_neon_mvni([Vd.T, #imm8, lsl #8])
-    rhs: llvm_mc("mvni Vd.T, #imm8, lsl #8")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  imm8: { gen: int, min: 0, max: 255, type: u32 }
-evidence: README.md:12 ARM AdvSIMD MVNI cmode=1010 for H LSL #8 neon.rs:1374
-```
-
-## encode_neon_mvni_diff_s_msl
-- Tier: 2
-- Rationale: ARM and llvm-mc/gas accept `mvni Vd.{2s,4s}, #imm8, msl #{8,16}` (cmode=1100/1101). neon.rs:1358-1360 maps MSL #8 to cmode=1100 and MSL #16 to cmode=1101. Amounts other than {8,16} are a documented domain restriction (neon.rs:1361) and are not in this generator. Differential vs llvm-mc is the same-job reference used for the valid LSL domain.
-- Doc contract: neon.rs:1331 "Encode NEON MVNI Vd.T, #imm (move bitwise NOT immediate to vector)." — asserted fingerprint 9cd14282
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_diff_s_msl
-- Formal: ∀ rd ∈ [0,31], T ∈ {2s,4s}, imm8 ∈ [0,255], n ∈ {8,16}. encode_neon_mvni([Vd.T, #imm8, msl #n]) = llvm-mc("mvni Vd.T, #imm8, msl #n")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_neon_mvni
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, t, imm8, n]
-  domain: { rd: 0..31, t: {2s,4s}, imm8: 0..255, n: {8,16} }
-  relation:
-    op: eq
-    lhs: encode_neon_mvni([Vd.T, #imm8, msl #n])
-    rhs: llvm_mc("mvni Vd.T, #imm8, msl #n")
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  imm8: { gen: int, min: 0, max: 255, type: u32 }
-  n: { gen: int, min: 8, max: 16, type: u32 }
-evidence: README.md:12 ARM AdvSIMD MVNI MSL neon.rs:1358
-```
-
-## encode_neon_mvni_metamorphic_rd
+## encode_cnt_meta_rd_rn
 - Tier: 3
-- Rationale: ARM encoding places Rd in bits[4:0]; changing only the destination register must differ only in that field. Metamorphic over the valid domain. Stronger differential already covers the same inputs against llvm-mc.
-- Doc contract: neon.rs:1367 "MVNI: 0 Q 1 0 1111 00 abc cmode 01 defgh Rd  (op=1)" — asserted fingerprint ae056cdf
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_metamorphic_rd
-- Formal: ∀ v valid MVNI, rd2 ∈ [0,31]. (encode_neon_mvni(v with Rd=rd1) ⊕ encode_neon_mvni(v with Rd=rd2)) & ~0x1F = 0 ∧ encode_neon_mvni(v with Rd=rd2) & 0x1F = rd2
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
+- Rationale: Metamorphic field isolation: changing only Rd (resp. Rn) must differ only in bits[4:0] (resp. bits[9:5]). Stronger differential covers the full word; this pins the ARM register-field placement independently of llvm-mc availability on a given sample. State machine / round-trip rejected as above.
+- Doc contract: neon.rs:25 "Encoding: 0 Q 00 1110 size 10 0000 0101 10 Rn Rd" — asserted fingerprint 43332371
+- Seed: encode_neon_mvni_pbt.rs Rd-field metamorphic
+- Formal: ∀ rd1, rd2, rn1, rn2 ∈ {0..31}, T ∈ {8b,16b}. (encode_cnt(rd1,rn1,T) ⊕ encode_cnt(rd2,rn1,T)) & ~0x1F = 0 ∧ bits[4:0] equal rd. (encode_cnt(rd1,rn1,T) ⊕ encode_cnt(rd1,rn2,T)) & ~(0x1F<<5) = 0 ∧ bits[9:5] equal rn.
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_mvni
+function: encoder.encode_cnt
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [v, rd2]
-  domain: { v: ARM-valid mvni, rd2: 0..31 }
+  vars: [rd1, rd2, rn1, rn2, t]
+  domain: { rd1: u32_0_31, rd2: u32_0_31, rn1: u32_0_31, rn2: u32_0_31, t: {8b,16b} }
   relation:
-    op: eq
-    lhs: (encode_neon_mvni(v.ops()) ^ encode_neon_mvni(v.with_rd(rd2).ops())) & !0x1F
-    rhs: 0
+    op: holds
+    expr: ((encode_cnt(rd1,rn1,t) xor encode_cnt(rd2,rn1,t)) & ~0x1F) == 0 && ((encode_cnt(rd1,rn1,t) xor encode_cnt(rd1,rn2,t)) & ~(0x1F<<5)) == 0
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:1367 ARM AdvSIMD Rd field bits[4:0]
+  rn1: { gen: int, min: 0, max: 31, type: u32 }
+  rn2: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b"] }
+evidence: neon.rs:25 ARM two-misc layout; ARM ARM CNT
 ```
 
-## encode_neon_mvni_invariant_arm_fields
-- Tier: 4
-- Rationale: ARM AdvSIMD modified-immediate layout is an exact structural predicate on the success-path word: bit31=0, Q at bit30, op=1 at bit29, bits[28:24]=01111, abc/cmode/o2/bit10/defgh/Rd as specified. Weaker than differential; kept as an independent field-level check.
-- Doc contract: neon.rs:1367 "MVNI: 0 Q 1 0 1111 00 abc cmode 01 defgh Rd  (op=1)" — asserted fingerprint ae056cdf
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_invariant_arm_fields
-- Formal: ∀ v valid MVNI. let w = encode_neon_mvni(v). w[31]=0 ∧ w[30]=Q(T) ∧ w[29]=1 ∧ w[28:24]=01111 ∧ w[23]=0 ∧ w[22:19]=0 ∧ w[18:16]=abc ∧ w[15:12]=cmode(T,shift) ∧ w[11]=0 ∧ w[10]=1 ∧ w[9:5]=defgh ∧ w[4:0]=Rd
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
+## encode_cnt_inv_layout
+- Tier: 3
+- Rationale: Algebraic invariant from ARM Advanced SIMD two-register miscellaneous CNT: bit31=0, Q at bit30 = 1 iff T=16b, bits[29:24]=001110, size bits[23:22]=00, bits[21:16]=100000, bits[15:10]=010110, Rn at [9:5], Rd at [4:0]. Stronger differential already compares the whole word; this names the ARM fields.
+- Doc contract: neon.rs:25 "Encoding: 0 Q 00 1110 size 10 0000 0101 10 Rn Rd" — asserted fingerprint 43332371
+- Seed: (none)
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {8b,16b}. let w = encode_cnt([Vd.T,Vn.T]). w[31]=0 ∧ w[30]=(T=16b) ∧ w[29:24]=0b001110 ∧ w[23:22]=0 ∧ w[21:16]=0b100000 ∧ w[15:10]=0b010110 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_mvni
+function: encoder.encode_cnt
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [v]
-  domain: { v: ARM-valid mvni }
+  vars: [rd, rn, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: {8b,16b} }
   relation:
-    op: holds
-    expr: arm_mvni_fields(encode_neon_mvni(v.ops()), v)
+    op: eq
+    lhs: encode_cnt([Vd.T, Vn.T])
+    rhs: 0x0e205800 | (Q<<30) | (rn<<5) | rd
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  imm8: { gen: int, min: 0, max: 255, type: u32 }
-evidence: neon.rs:1367 ARM AdvSIMD modified immediate MVNI
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b"] }
+evidence: neon.rs:25; ARM ARM CNT two-register miscellaneous
 ```
 
-## encode_neon_mvni_neg_arity
+## encode_cnt_neg_arity
 - Tier: 4
-- Rationale: Documented arity contract neon.rs:1335 "mvni requires 2 operands". llvm-mc also rejects arity 0 and 1. Negative/error contract on the documented minimum.
-- Doc contract: neon.rs:1335 "mvni requires 2 operands" — domain-restriction fingerprint 2da05c6c
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_neg_arity
-- Formal: ∀ n ∈ {0,1}, ops with |ops|=n. encode_neon_mvni(ops) is Err ∧ llvm-mc rejects the corresponding assembly
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
+- Rationale: Documented error contract: neon.rs:28 "cnt requires 2 operands". llvm-mc and gas reject too-few-operands. Domain is arity 0 and 1.
+- Doc contract: neon.rs:28 "cnt requires 2 operands" — domain-restriction fingerprint 5189a0f0
+- Seed: encode_neon_mvni_pbt.rs arity negative
+- Formal: ∀ ops. |ops| < 2 ⇒ encode_cnt(ops) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_mvni
+function: encoder.encode_cnt
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, rd, t, imm8]
-  domain: { n: 0..1, rd: 0..31, t: 4h_8h_2s_4s, imm8: 0..255 }
+  vars: [n]
+  domain: { n: {0,1} }
   relation:
     op: throws
-    expr: encode_neon_mvni(ops_prefix(n))
-expected_error: String
+    expr: encode_cnt(ops_of_len(n))
 generators:
   n: { gen: int, min: 0, max: 1, type: usize }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:1335 README.md:12
+expected_error: String
+evidence: neon.rs:28
 ```
 
-## encode_neon_mvni_neg_extra_and_illegal_shift
+## encode_cnt_neg_extra
 - Tier: 4
-- Rationale: README.md:12 claims gas-compatible assembly. llvm-mc/gas reject a third non-shift operand, LSL amounts outside the ARM set, LSR, and a trailing extra after a valid shift. The function documents illegal 2s/4s LSL/MSL amounts (neon.rs:1355, 1361) but is silent on extra operands and on 4h/8h shifts other than the no-shift form.
-- Doc contract: neon.rs:1331 "Encode NEON MVNI Vd.T, #imm (move bitwise NOT immediate to vector)." — asserted fingerprint 9cd14282
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_neg_extra_and_illegal_shift
-- Formal: ∀ rd ∈ [0,31], T ∈ {4h,8h,2s,4s}, extra-or-illegal-shift operand. llvm-mc rejects asm ⇒ encode_neon_mvni(ops) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
+- Rationale: gas/llvm-mc reject a third operand (`unexpected characters following instruction` / `invalid operand`). README.md:12 claims gas-compatible assembly. encode_cnt checks `operands.len() < 2` only, so extra is accepted — keep in domain.
+- Doc contract: neon.rs:24 "CNT Vd.<T>, Vn.<T>" — asserted fingerprint 6b96d8c8
+- Seed: encode_neon_mvni_pbt.rs extra-operand negative
+- Formal: ∀ rd, rn, extra ∈ {0..31}, T ∈ {8b,16b}. llvm-mc("cnt Vd.T, Vn.T, Vextra.T") = Err ∧ encode_cnt([Vd.T, Vn.T, Vextra.T]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_mvni([v0.4h, #0, v0.4h]) is Ok
-- Bug report: pbt-out/bug_reports/encode_neon_mvni_extra_operand.md
+- Counterexample: rd=0, rn=0, extra=0, t="8b" — encode_cnt([v0.8b, v0.8b, v0.8b]) = Ok(Word(0x0e205800))
+- Bug report: pbt-out/bug_reports/encode_cnt_extra_operand.md
 
 ```property
-function: encoder.encode_neon_mvni
+function: encoder.encode_cnt
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, t, extra, kind]
-  domain: { rd: 0..31, t: 4h_8h_2s_4s, extra: extra_or_illegal_shift }
+  vars: [rd, rn, extra, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, extra: u32_0_31, t: {8b,16b} }
   relation:
     op: throws
-    expr: encode_neon_mvni(ops)
-expected_error: String
+    expr: encode_cnt([Vd.T, Vn.T, Vextra.T])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12 llvm-mc rejects extra/illegal shift
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b"] }
+expected_error: String
+evidence: assembler/README.md:12; llvm-mc/gas reject third operand
 ```
 
-## encode_neon_mvni_neg_imm_oor_invalid_t
+## encode_cnt_neg_invalid_t
 - Tier: 4
-- Rationale: llvm-mc/gas require imm8 in [0,255] (error: immediate must be an integer in range [0, 255]) and T in {4H,8H,2S,4S}. neon.rs:1379 documents unsupported arrangement as Err. README.md:12 gas-compat is the contract for the immediate range: out-of-range immediates must be rejected, not encoded.
-- Doc contract: neon.rs:1379 "mvni: unsupported arrangement" — domain-restriction fingerprint 77064454
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_neg_imm_oor_invalid_t
-- Formal: ∀ rd ∈ [0,31]. (imm ∉ [0,255] on a valid T, or T ∉ {4h,8h,2s,4s}). llvm-mc rejects asm ⇒ encode_neon_mvni(ops) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
+- Rationale: neon.rs:26 asserts "Only valid for .8b (Q=0) and .16b (Q=1)". ARM/llvm-mc/gas reject T in {4h,8h,2s,4s,2d,1d,4b,8d,2h,1s}. The comment is an asserted contract the code violates — keep illegal T in the generator.
+- Doc contract: neon.rs:26 "Only valid for .8b (Q=0) and .16b (Q=1)" — asserted fingerprint cdd2a4c1
+- Seed: encode_neon_rbit arrangement check; encode_neon_mvni invalid T
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {4h,8h,2s,4s,2d,1d,4b,8d,2h,1s}. llvm-mc("cnt Vd.T, Vn.T") = Err ∧ encode_cnt([Vd.T, Vn.T]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_mvni([v0.4h, #256]) is Ok
-- Bug report: pbt-out/bug_reports/encode_neon_mvni_imm_oor.md
+- Counterexample: rd=0, rn=0, t="4h" — encode_cnt([v0.4h, v0.4h]) = Ok(Word(0x0e205800))
+- Bug report: pbt-out/bug_reports/encode_cnt_invalid_t.md
 
 ```property
-function: encoder.encode_neon_mvni
+function: encoder.encode_cnt
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, kind]
-  domain: { rd: 0..31, kind: imm_oor_or_invalid_t }
+  vars: [rd, rn, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: {4h,8h,2s,4s,2d,1d,4b,8d,2h,1s} }
   relation:
     op: throws
-    expr: encode_neon_mvni(ops)
-expected_error: String
+    expr: encode_cnt([Vd.T, Vn.T])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12 neon.rs:1379 llvm-mc immediate range [0,255]
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["4h", "8h", "2s", "4s", "2d", "1d", "4b", "8d", "2h", "1s"] }
+expected_error: String
+evidence: neon.rs:26; ARM ARM CNT T in {8B,16B}; llvm-mc/gas reject
 ```
 
-## encode_neon_mvni_neg_documented_errors
+## encode_cnt_neg_mismatch_t
 - Tier: 4
-- Rationale: Sweep of documented error contracts the first batch did not keep executing after shrinking: neon.rs:1379 unsupported arrangement, neon.rs:1355 unsupported 2s/4s LSL amount, neon.rs:1361 unsupported MSL amount. These comments declare the inputs invalid (domain restriction). llvm-mc also rejects them.
-- Doc contract: neon.rs:1379 "mvni: unsupported arrangement" — domain-restriction fingerprint 77064454
-- Seed: encode_neon_movi_pbt.rs encode_neon_movi_neg_documented_errors
-- Formal: ∀ rd ∈ [0,31]. (T ∉ {4h,8h,2s,4s}) ∨ (T ∈ {2s,4s} ∧ LSL amount ∉ {0,8,16,24}) ∨ (T ∈ {2s,4s} ∧ MSL amount ∉ {8,16}). encode_neon_mvni(ops) is Err ∧ llvm-mc rejects asm
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
+- Rationale: ARM/llvm-mc/gas require matching T on Vd and Vn (`operand mismatch`). The comment neon.rs:24 "CNT Vd.<T>, Vn.<T>" names the same T. Source arrangement is ignored (`_arr_n`).
+- Doc contract: neon.rs:24 "CNT Vd.<T>, Vn.<T>" — asserted fingerprint 6b96d8c8
+- Seed: encode_neon_rbit mismatch arrangement
+- Formal: ∀ rd, rn ∈ {0..31}, Td ≠ Tn, {Td,Tn} ⊆ {8b,16b}. llvm-mc("cnt Vd.Td, Vn.Tn") = Err ∧ encode_cnt([Vd.Td, Vn.Tn]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, td="8b" — encode_cnt([v0.8b, v0.16b]) = Ok(Word(0x0e205800))
+- Bug report: pbt-out/bug_reports/encode_cnt_mismatch_t.md
+
+```property
+function: encoder.encode_cnt
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, td, tn]
+  domain: { rd: u32_0_31, rn: u32_0_31, td: {8b,16b}, tn: {8b,16b}, td != tn }
+  relation:
+    op: throws
+    expr: encode_cnt([Vd.Td, Vn.Tn])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  td: { gen: oneof, items: ["8b", "16b"] }
+  tn: { gen: oneof, items: ["8b", "16b"] }
+expected_error: String
+evidence: neon.rs:24; llvm-mc/gas operand mismatch
+```
+
+## encode_cnt_neg_gpr_bare_sp
+- Tier: 4
+- Rationale: gas/llvm-mc reject GPR dest/src, SP, bare V (no arrangement), and FP scalar d/s/q. README.md:12 claims gas-compatible assembly. get_neon_reg accepts Operand::Reg via parse_reg_num (x/w/d/s/q/v/h/b/sp).
+- Doc contract: neon.rs:24 "CNT Vd.<T>, Vn.<T>" — asserted fingerprint 6b96d8c8
+- Seed: encode_neon_rbit_bare_src / encode_neon_aes_sp_as_neon
+- Formal: ∀ kind ∈ {gpr-x, gpr-w, sp, bare-v, fp-d, fp-s, fp-q}, rd, rn ∈ {0..31}, T ∈ {8b,16b}. llvm-mc(asm(kind)) = Err ∧ encode_cnt(ops(kind)) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
+- Status: failing
+- Counterexample: rd=0, rn=0, t="8b", kind=0 — encode_cnt([Reg("x0"), Reg("x0")]) = Ok(Word(0x0e205800))
+- Bug report: pbt-out/bug_reports/encode_cnt_gpr_bare_sp.md
+
+```property
+function: encoder.encode_cnt
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [kind, rd, rn, t]
+  domain: { kind: {gpr-x, gpr-w, sp, bare-v, fp-d, fp-s, fp-q}, rd: u32_0_31, rn: u32_0_31, t: {8b,16b} }
+  relation:
+    op: throws
+    expr: encode_cnt(ops(kind, rd, rn, t))
+generators:
+  kind: { gen: int, min: 0, max: 6, type: u8 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b"] }
+expected_error: String
+evidence: assembler/README.md:12; llvm-mc/gas reject non-NEON-arranged operands
+```
+
+## encode_cnt_diff_alt_spellings
+- Tier: 2
+- Rationale: Sweep — llvm-mc accepts uppercase `V` register prefix; parse_reg_num lowercases. Differential vs llvm-mc on uppercase V with valid T. Arrangement stays lowercase (parser lowercases T before encode_cnt).
+- Doc contract: neon.rs:24 "CNT Vd.<T>, Vn.<T>" — asserted fingerprint 6b96d8c8
+- Seed: encode_neon_mvni / encode_neon_ext alt-spellings
+- Formal: ∀ rd, rn ∈ {0..31}, T ∈ {8b,16b}. encode_cnt([RegArrangement("V{rd}", T), RegArrangement("V{rn}", T)]) = llvm-mc("cnt V{rd}.T, V{rn}.T")
+- Test file: src/backend/arm/assembler/encoder/encode_cnt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_mvni
-oracle: negative_error
+function: encoder.encode_cnt
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, kind]
-  domain: { rd: 0..31, kind: invalid_t_or_illegal_s_shift }
+  vars: [rd, rn, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: {8b,16b} }
   relation:
-    op: throws
-    expr: encode_neon_mvni(ops)
-expected_error: String
+    op: eq
+    lhs: encode_cnt([RegArrangement(V{rd}, t), RegArrangement(V{rn}, t)])
+    rhs: llvm_mc("cnt V{rd}.{t}, V{rn}.{t}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  kind: { gen: int, min: 0, max: 2, type: u8 }
-evidence: neon.rs:1379 neon.rs:1355 neon.rs:1361
-```
-
-## encode_neon_mvni_neg_illegal_h_shift
-- Tier: 4
-- Rationale: llvm-mc/gas reject LSL amounts other than 0 or 8 on MVNI .4h/.8h. The 4h/8h path never inspects the shift operand. Isolated from the extra-operand shrink of encode_neon_mvni_neg_extra_and_illegal_shift.
-- Doc contract: neon.rs:1374 "MVNI 16-bit: cmode=1000, op=1" — other fingerprint ada06ff1
-- Seed: encode_neon_mvni_pbt.rs encode_neon_mvni_neg_extra_and_illegal_shift kind=1
-- Formal: ∀ rd ∈ [0,31], T ∈ {4h,8h}, imm8 ∈ [0,255], amt ∉ {0,8}. encode_neon_mvni([Vd.T, #imm8, lsl #amt]) is Err ∧ llvm-mc rejects asm
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_mvni([v0.4h, #0, lsl #32])
-- Bug report: pbt-out/bug_reports/encode_neon_mvni_illegal_h_shift.md
-
-```property
-function: encoder.encode_neon_mvni
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, t, imm8, amt]
-  domain: { rd: 0..31, t: 4h_8h, imm8: 0..255, amt: illegal_h_lsl }
-  relation:
-    op: throws
-    expr: encode_neon_mvni(ops)
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12 llvm-mc rejects illegal H LSL
-```
-
-## encode_neon_mvni_neg_lsr
-- Tier: 4
-- Rationale: ARM MVNI shift kinds are LSL and MSL only. llvm-mc/gas reject LSR. The 2s/4s path maps non-lsl/non-msl to cmode=0000.
-- Doc contract: neon.rs:1331 "Encode NEON MVNI Vd.T, #imm (move bitwise NOT immediate to vector)." — asserted fingerprint 9cd14282
-- Seed: encode_neon_mvni_pbt.rs encode_neon_mvni_neg_extra_and_illegal_shift kind=2
-- Formal: ∀ rd ∈ [0,31], T ∈ {2s,4s}, imm8 ∈ [0,255]. encode_neon_mvni([Vd.T, #imm8, lsr #8]) is Err ∧ llvm-mc rejects asm
-- Test file: src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_mvni([v0.4s, #0, lsr #8])
-- Bug report: pbt-out/bug_reports/encode_neon_mvni_lsr.md
-
-```property
-function: encoder.encode_neon_mvni
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, t, imm8]
-  domain: { rd: 0..31, t: 2s_4s, imm8: 0..255 }
-  relation:
-    op: throws
-    expr: encode_neon_mvni(ops)
-expected_error: String
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12 llvm-mc rejects LSR on MVNI
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: oneof, items: ["8b", "16b"] }
+evidence: assembler/README.md:12; parse_reg_num lowercases; llvm-mc accepts V prefix
 ```
