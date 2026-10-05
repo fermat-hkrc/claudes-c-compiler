@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_neon_scalar_two_misc)
+
+- Valid SQABS/SQNEG with matching B/H/S/D registers (b0–b31 / h / s / d) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). ARM mapping: SQABS U=0 opcode=00111; SQNEG U=1 opcode=00111.
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only U in bit 29; only opcode in bits[16:12]; only dest prefix in size bits[23:22] (1000 cases).
+- Success-path word: bits[31:30]=01, U at 29, bits[28:24]=11110, size at [23:22] from dest prefix (b=00, h=01, s=10, d=11), bits[21:17]=10000, opcode at [16:12], bits[11:10]=10, Rn at [9:5], Rd at [4:0] (1000 cases).
+- Arity 0–1 returns Err (1000 cases).
+- Imm/Mem/Label in either slot returns Err (1000 cases).
+- Dest prefix x/w/q/v returns Err (1000 cases, sweep).
+- Uppercase B/H/S/D prefix and SQABS/SQNEG mnemonic match llvm-mc (1000 cases).
+- Known-answer: `sqabs d0, d1` = 0x5ee07820; `sqneg d0, d1` = 0x7ee07820; `sqabs s0, s1` = 0x5ea07820; `sqabs h0, h1` = 0x5e607820; `sqabs b0, b1` = 0x5e207820; `sqabs d31, d31` = 0x5ee07bff; `sqneg b0, b1` = 0x7e207820; `SQABS D0, D1` = 0x5ee07820; `sqabs d15, d16` = 0x5ee07a0f; `sqneg s31, s0` = 0x7ea0781f.
+- Extra operand and dest/src class mismatch currently disagree with llvm-mc/gas (see bugs). Dest `sp` is treated as Sd.
+
+## Environment (encode_neon_scalar_two_misc)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD scalar two-register miscellaneous: 01 U 11110 size 10000 opcode 10 Rn Rd; dest/src same B/H/S/D; SQABS U=0 opcode=00111; SQNEG U=1 opcode=00111.
+- Dispatch: encoder/mod.rs:674-682 sqabs/sqneg => encode_neon_scalar_two_misc when dest is Operand::Reg, else encode_neon_two_misc (vector). Dispatcher currently passes SQNEG as U=0 opcode=01000 — properties feed the ARM/llvm-mc mapping into this function.
+- Sibling encode_neon_two_misc is not a same-job differential (vector Vd.T).
+- encode_neon_scalar_two_misc checks operands.len() < 2 only; extra ignored; dest size from starts_with b/h/s/d (sp starts with s); source is any Operand::Reg accepted by parse_reg_num.
+- parse_reg_num lowercases prefixes; maps sp/wsp/xzr/wzr to 31, lr to 30.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus neg_unsupported_dest (passing).
+- Two failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_scalar_two_misc_*.md.
+
 # Confirmed invariants (encode_neon_scalar_addp)
 
 - Valid ADDP Dd, Vn.2d with d0–d31 / v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

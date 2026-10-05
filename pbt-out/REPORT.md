@@ -1,87 +1,98 @@
-# PBT Campaign Report: encode_neon_scalar_addp
+# PBT Campaign Report: encode_neon_scalar_two_misc
 
 ## Summary
 
-**Verdict:** 2 medium: encode_neon_scalar_addp ignores a third operand and encodes non-D destinations / non-V source prefixes as scalar ADDP, so GNU-style `addp` that gas/llvm-mc reject still becomes a 32-bit word.
+**Verdict:** 2 medium: encode_neon_scalar_two_misc ignores a third operand and encodes mismatched dest/src SIMD class (including dest SP as Sd), so the GNU-style assembler emits words that gas/llvm-mc refuse.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_scalar_addp
+**Modules tested:** encode_neon_scalar_two_misc
 **Tests:** 9
 **Result:** 7 passing, 2 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (Rust cargo test is not the C++ reporter); it listed unrelated host binaries and claimed encode_neon_scalar_addp NOT LINKED. Cargo tests executed the production symbol (KAT + 9 properties). Sweep: manual arm audit plus diff_alt_spellings.
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus neg_unsupported_dest.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_scalar_addp | 9 | 2 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_scalar_two_misc | 9 | 2 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_scalar_addp silently encodes a third operand
+### B1: encode_neon_scalar_two_misc silently encodes a third operand
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}. llvm-mc("addp d{rd}, v{rn}.2d, d{extra}") fails ∧ encode_neon_scalar_addp([Dd, Vn.2d, extra]) = Err
-**Contract evidence:** documented neon.rs:1803 "scalar addp requires 2 operands"
-**Documentation conflict:** neon.rs:1803 "scalar addp requires 2 operands" — the comment states the arity IS two operands; the code implements only `len < 2`, so extra operands violate the documented contract rather than declaring extra invalid. (not independently verified)
+**Formal:** ∀ rd, rn, extra ∈ {0..31}, pfx ∈ {b,h,s,d}, is_neg ∈ bool. llvm-mc rejects three-operand form ⇒ encode_neon_scalar_two_misc([Rd,Rn,extra], U, 00111) = Err
+**Contract evidence:** inferred (README.md:12 GNU-style assembler contract + llvm-mc rejection of a third operand; encode() at encoder/mod.rs:674-682 passes extra operands through)
+**Documentation conflict:** neon.rs:1820 "scalar two-misc requires 2 operands" — min-arity domain restriction, not a declaration that extra operands are valid. (none as an exclusion of the extra-operand input)
 **Severity:** medium
-**Counterexample:** encode_neon_scalar_addp([Reg("d0"), RegArrangement { reg: "v0", arrangement: "2d" }, Reg("d0")])
-**Expected / Actual:** Err ("scalar addp requires 2 operands") / Ok(Word(0x5ef1b800))
-**Impact:** Invalid assembly such as `addp d0, v0.2d, d0` is assembled into a scalar ADDP word instead of an error. encode() currently routes only arity==2 into this helper.
-**Root cause:** neon.rs:1803 checks only `operands.len() < 2`, so arity 3+ is treated as a 2-operand encode using the first two operands
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1803`
+**Counterexample:** encode_neon_scalar_two_misc([Reg("b0"), Reg("b0"), Reg("b0")], 0, 0b00111)
+**Expected / Actual:** Err / Ok(Word(0x5e207800)) encoding `sqabs b0, b0`
+**Impact:** Invalid assembly such as `sqabs b0, b0, b0` is assembled into a scalar SQABS word instead of an error. encode() routes any non-RegArrangement dest into this helper with no arity maximum, so the witness is caller-reachable.
+**Root cause:** neon.rs:1820 checks only `operands.len() < 2`, so arity 3+ is treated as a 2-operand encode using the first two operands
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1820`
 ```rust
-    if operands.len() < 2 { return Err("scalar addp requires 2 operands".to_string()); }
+    if operands.len() < 2 { return Err("scalar two-misc requires 2 operands".to_string()); }
 ```
 **Suggested fix:** Reject any arity other than 2
 ```rust
-    if operands.len() != 2 { return Err("scalar addp requires 2 operands".to_string()); }
+    if operands.len() != 2 { return Err("scalar two-misc requires 2 operands".to_string()); }
 ```
-**Bug report:** bug_reports/encode_neon_scalar_addp_extra_operand.md
-**Repro seed:** cc 94cb64af59dacd9676418d6d37ebce4c2b4d5f5cfd85fcd686f0f08be1f94bd4
+**Bug report:** bug_reports/encode_neon_scalar_two_misc_extra_operand.md
+**Repro seed:** rd = 0, rn = 0, extra = 0, pfx = "b", is_neg = false
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_scalar_addp_pbt::encode_neon_scalar_addp_neg_extra_operand' (2493589) panicked at src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs:170:1:
-Test failed: 3 operands must Err (llvm-mc rejects addp d0, v0.2d, d0) at src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs:278.
-minimal failing input: rd = 0, rn = 0, extra = 0
+thread 'backend::arm::assembler::encoder::encode_neon_scalar_two_misc_pbt::encode_neon_scalar_two_misc_neg_extra_operand' (2502835) panicked at src/backend/arm/assembler/encoder/encode_neon_scalar_two_misc_pbt.rs:199:1:
+Test failed: 3 operands must Err (llvm-mc rejects sqabs b0, b0, b0) at src/backend/arm/assembler/encoder/encode_neon_scalar_two_misc_pbt.rs:347.
+minimal failing input: rd = 0, rn = 0, extra = 0, pfx = "b", is_neg = false
 	successes: 0
 	local rejects: 0
 	global rejects: 0
 ```
 
-### B2: encode_neon_scalar_addp encodes non-D dest and non-V source as scalar ADDP
+### B2: encode_neon_scalar_two_misc encodes mismatched dest/src SIMD class
 
-**Formal:** ∀ rd,rn ∈ {0..31}, pfx ∈ {s,h,b,x,w,q,v,sp,xzr,wsp,wzr,lr}. llvm-mc rejects addp with dest pfx (or source pfx.2d) ∧ encode_neon_scalar_addp on that operand vector = Err
-**Contract evidence:** documented neon.rs:1801 "NEON scalar ADDP: addp Dd, Vn.2d"; neon.rs:1805 "expected d register"
-**Documentation conflict:** neon.rs:1801 "NEON scalar ADDP: addp Dd, Vn.2d" states the form IS Dd, Vn.2d; neon.rs:1805 "expected d register" states dest is a d register. Neither declares s/x prefixes invalid as an input-domain restriction on parse_reg_num — they assert the required form, which the code violates. (not independently verified)
+**Formal:** ∀ rd, rn ∈ {0..31}, dest_pfx ∈ {b,h,s,d}, bad_pfx ∉ {dest_pfx} ∪ {valid matching}, is_neg ∈ bool, slot ∈ {dest, src}. llvm-mc rejects the mismatched-class form ⇒ encode_neon_scalar_two_misc = Err
+**Contract evidence:** documented neon.rs:1818 "NEON scalar two-reg misc: SQABS/SQNEG Hd,Hn / Sd,Sn / Dd,Dn" (matching pairs) plus ARM/llvm-mc same-class requirement
+**Documentation conflict:** neon.rs:1818 "NEON scalar two-reg misc: SQABS/SQNEG Hd,Hn / Sd,Sn / Dd,Dn" — states matching H/S/D pairs ARE the form (contract the code violates: source class is never checked; dest `sp` matches starts_with('s')). Mark (not independently verified) only as the body contradicts the comment.
 **Severity:** medium
-**Counterexample:** encode_neon_scalar_addp([Reg("s0"), RegArrangement { reg: "v0", arrangement: "2d" }]); also encode_neon_scalar_addp([Reg("d0"), RegArrangement { reg: "x0", arrangement: "2d" }])
-**Expected / Actual:** Err (non-D dest / non-V source) / Ok(Word(0x5ef1b800))
-**Impact:** Invalid assembly such as `addp s0, v0.2d` or caller-reachable `addp d0, x0.2d` is assembled into a scalar ADDP word. encode() sanitizes non-D dest but passes a non-V .2d source through.
-**Root cause:** neon.rs:1805 extracts Rd via parse_reg_num without requiring a D prefix; neon.rs:1808 extracts Rn via parse_reg_num on the arrangement register without requiring a V prefix
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1805`
+**Counterexample:** encode_neon_scalar_two_misc([Reg("h0"), Reg("b0")], 0, 0b00111)
+**Expected / Actual:** Err / Ok(Word(0x5e607800)) encoding as if `sqabs h0, h0`
+**Impact:** Invalid assembly such as `sqabs h0, b0` is assembled as SQABS H0, H0. Dest `sp` is packed as Sd (rd=31). encode() does not inspect register class beyond dest not being RegArrangement.
+**Root cause:** neon.rs:1822 extracts Rn via parse_reg_num with no class check; neon.rs:1823-1827 derives size from dest starts_with('b'|'h'|'s'|'d'), so `sp` is treated as Sd and a B source with an H dest is packed with size=H
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1822`
 ```rust
-    let rd = match &operands[0] { Operand::Reg(r) => parse_reg_num(r).ok_or("invalid reg")?, _ => return Err("expected d register".to_string()) };
+    let rn = match &operands[1] { Operand::Reg(r) => parse_reg_num(r).ok_or("invalid reg")?, _ => return Err("expected register".to_string()) };
+    let size = if rd_name.starts_with('b') { 0b00u32 }
+        else if rd_name.starts_with('h') { 0b01 }
+        else if rd_name.starts_with('s') { 0b10 }
+        else if rd_name.starts_with('d') { 0b11 }
+        else { return Err(format!("scalar two-misc: unsupported register type: {}", rd_name)); };
 ```
-**Suggested fix:** Require a D dest prefix and a V source prefix before packing
+**Suggested fix:** Require matching B/H/S/D prefixes on dest and source; reject aliases such as sp
 ```rust
-    let rd_name = r.to_lowercase();
-    if !rd_name.starts_with('d') {
-        return Err(format!("scalar addp requires Dd dest, got {r}"));
-    }
-    let rd = parse_reg_num(r).ok_or("invalid reg")?;
-    if !reg.to_lowercase().starts_with('v') {
-        return Err(format!("scalar addp requires Vn.2d source, got {reg}"));
+    let rn_name = match &operands[1] {
+        Operand::Reg(r) => r.to_lowercase(),
+        _ => return Err("expected register".to_string()),
+    };
+    let size = match rd_name.as_str() {
+        n if n.starts_with('b') && n[1..].parse::<u32>().ok().map_or(false, |v| v <= 31) => 0b00u32,
+        n if n.starts_with('h') && n[1..].parse::<u32>().ok().map_or(false, |v| v <= 31) => 0b01,
+        n if n.starts_with('s') && n[1..].parse::<u32>().ok().map_or(false, |v| v <= 31) => 0b10,
+        n if n.starts_with('d') && n[1..].parse::<u32>().ok().map_or(false, |v| v <= 31) => 0b11,
+        _ => return Err(format!("scalar two-misc: unsupported register type: {}", rd_name)),
+    };
+    if !rn_name.starts_with(&rd_name[..1]) {
+        return Err(format!("scalar two-misc: dest/src class mismatch: {} vs {}", rd_name, rn_name));
     }
 ```
-**Bug report:** bug_reports/encode_neon_scalar_addp_wrong_reg_class.md
-**Repro seed:** (shrunk by proptest to rd=0, rn=0, which=0, dest_pfx="s")
+**Bug report:** bug_reports/encode_neon_scalar_two_misc_wrong_reg_class.md
+**Repro seed:** rd = 0, rn = 0, dest_pfx = "b", bad = "h", is_neg = false, slot = 0
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_scalar_addp_pbt::encode_neon_scalar_addp_neg_wrong_reg_class' (2494598) panicked at src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs:170:1:
-Test failed: wrong register class which=0 must Err (llvm-mc rejects addp s0, v0.2d) at src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs:324.
-minimal failing input: rd = 0, rn = 0, which = 0, dest_pfx = "s", src_pfx = "s"
+thread 'backend::arm::assembler::encoder::encode_neon_scalar_two_misc_pbt::encode_neon_scalar_two_misc_neg_wrong_reg_class' (2503869) panicked at src/backend/arm/assembler/encoder/encode_neon_scalar_two_misc_pbt.rs:199:1:
+Test failed: wrong class slot=0 bad=h must Err (llvm-mc rejects sqabs h0, b0) at src/backend/arm/assembler/encoder/encode_neon_scalar_two_misc_pbt.rs:379.
+minimal failing input: rd = 0, rn = 0, dest_pfx = "b", bad = "h", is_neg = false, slot = 0
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -95,50 +106,39 @@ minimal failing input: rd = 0, rn = 0, which = 0, dest_pfx = "s", src_pfx = "s"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_scalar_addp_pbt.rs | 9 properties + 1 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_scalar_two_misc_pbt.rs | 9 properties + 1 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_scalar_two_misc_pbt` |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_scalar_addp -- --test-threads=1
+cargo test --lib encode_neon_scalar_two_misc -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_scalar_addp_neg_extra_operand -- --test-threads=1
+cargo test --lib encode_neon_scalar_two_misc_neg_extra_operand -- --test-threads=1
 ```
 
 B2 wrong register class:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_scalar_addp_neg_wrong_reg_class -- --test-threads=1
+cargo test --lib encode_neon_scalar_two_misc_neg_wrong_reg_class -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_scalar_addp_extra_operand.md
-- pbt-out/bug_reports/encode_neon_scalar_addp_extra_operand.html
-- pbt-out/bug_reports/encode_neon_scalar_addp_wrong_reg_class.md
-- pbt-out/bug_reports/encode_neon_scalar_addp_wrong_reg_class.html
+pbt-out/PLAN.md, pbt-out/PROPERTIES.md, pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/report.json, pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md, pbt-out/FUNCTION_INDEX.md, pbt-out/INVARIANTS.md, pbt-out/CHANGE_SURFACE.md, pbt-out/run/encode_neon_scalar_two_misc_test.log, pbt-out/run/encode_neon_scalar_two_misc_test2.log, pbt-out/run/sweep_unsupported_dest.log, pbt-out/bug_reports/encode_neon_scalar_two_misc_extra_operand.md, pbt-out/bug_reports/encode_neon_scalar_two_misc_extra_operand.html, pbt-out/bug_reports/encode_neon_scalar_two_misc_wrong_reg_class.md, pbt-out/bug_reports/encode_neon_scalar_two_misc_wrong_reg_class.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 22:07 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 145/289 total | PBT candidates: 145 | Tested: 145 (100%) | 0 pass, 145 fail
+> Last updated: 2026-10-05 22:28 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 146/289 total | PBT candidates: 146 | Tested: 146 (100%) | 0 pass, 146 fail
 
 ## Summary
 
@@ -147,10 +147,10 @@ cargo test --lib encode_neon_scalar_addp_neg_wrong_reg_class -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 145 |
-| **Tested (of PBT candidates)** | **145 / 145 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 145 / 0 |
-| **Overall (tested / all functions)** | **145 / 289 (50%)** |
+| PBT candidates (from FUNCTION_INDEX) | 146 |
+| **Tested (of PBT candidates)** | **146 / 146 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 146 / 0 |
+| **Overall (tested / all functions)** | **146 / 289 (51%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -158,13 +158,13 @@ cargo test --lib encode_neon_scalar_addp_neg_wrong_reg_class -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 145 | 145 | 0 | 100% |
+|  | 146 | 146 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 145 | 145 | 0 | 100% |
+| unknown | 146 | 146 | 0 | 100% |
 
 ## File Coverage
 
@@ -177,7 +177,7 @@ cargo test --lib encode_neon_scalar_addp_neg_wrong_reg_class -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 60 | 60 | 100% | covered |
+| neon.rs | 68 | 61 | 61 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -332,3 +332,4 @@ cargo test --lib encode_neon_scalar_addp_neg_wrong_reg_class -- --test-threads=1
 | encode_neon_faddp | neon.rs |
 | encode_neon_scalar_three_same | neon.rs |
 | encode_neon_scalar_addp | neon.rs |
+| encode_neon_scalar_two_misc | neon.rs |
