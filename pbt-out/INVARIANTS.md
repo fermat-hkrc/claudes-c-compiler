@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_neon_mls)
+
+- Valid MLS Vd.T, Vn.T, Vm.T with T in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16] (1000 cases).
+- Success-path 32-bit word: bit31=0, Q at bit30, U=1 at bit29, bits[28:24]=01110, size at [23:22], bit21=1, Rm at [20:16], bits[15:10]=100101, Rn at [9:5], Rd at [4:0].
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase MLS/V prefix with matching T matches llvm-mc (1000 cases).
+- Imm/Mem/Label at any slot returns Err (1000 cases).
+- Known-answer: `mls v0.8b, v1.8b, v2.8b` = 0x2e229420; `mls v0.16b, v1.16b, v2.16b` = 0x6e229420; `mls v0.4h, v1.4h, v2.4h` = 0x2e629420; `mls v0.8h, v1.8h, v2.8h` = 0x6e629420; `mls v0.2s, v1.2s, v2.2s` = 0x2ea29420; `mls v0.4s, v1.4s, v2.4s` = 0x6ea29420; `mls v31.8b, v31.8b, v31.8b` = 0x2e3f97ff; `mls v0.8b, v0.8b, v0.8b` = 0x2e209400; `mls v15.4s, v16.4s, v17.4s` = 0x6eb1960f.
+- Extra operand, mismatched T, reserved 1d/2d, and bare/GPR dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_mls)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same MLS: T in {8B,16B,4H,8H,2S,4S}; size:Q=11:x reserved; U=1; bits[15:10]=100101.
+- Dispatch: encoder/mod.rs:783 `"mls" => if RegLane then encode_neon_elem else encode_neon_mls(operands)` with operands passed through for the vector form.
+- encode_neon_mls has no operands.len() check; extra ignored; source arrangements discarded; neon_arr_to_q_size accepts 1d/2d as size=11.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus reserved T and non-register operands.
+- Four SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_mls_*.md.
+
+## Quirks (encode_neon_mls)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangements are discarded (see bugs).
+- 1d/2d dest T is encoded with size=11 (see bugs).
+- Operand::Reg source and x/w prefixes encode as V registers (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
 # Confirmed invariants (encode_neon_mla)
 
 - Valid MLA Vd.T, Vn.T, Vm.T with T in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

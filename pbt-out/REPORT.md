@@ -1,123 +1,126 @@
-# PBT Campaign Report: encode_neon_mla
+# PBT Campaign Report: encode_neon_mls
 
 ## Summary
 
-**Verdict:** 4 medium: encode_neon_mla silently encodes extra operands, mismatched T, reserved .1d/.2d, and bare-V/GPR as vector MLA, so invalid GNU-style assembly assembles instead of failing.
+**Verdict:** 4 medium: encode_neon_mls silently encodes extra operands, mismatched T, reserved .1d/.2d, and bare/GPR registers that llvm-mc/gas reject, so invalid GNU-style MLS assembles instead of failing.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_mla
-**Tests:** 10 properties + 1 KAT + 6 regression witnesses
-**Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function (encode_neon_mla), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust campaign; C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of encode_neon_mla body plus reserved-T / nonreg sweep.
-**Effort tier:** standard
+**Modules tested:** encode_neon_mls
+**Tests:** 10 properties (plus 1 KAT + 6 regression witnesses)
+**Result:** 6 passing, 4 failing (4 bugs)
+**Change surface:** 1 changed function (encode_neon_mls), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_neon_mls NOT LINKED). The cargo test --lib encode_neon_mls run executed the real symbol; sweep was a manual arm audit plus reserved-T and nonreg properties.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_mla | 10 properties (6 pass / 4 fail) | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_mls | 10 properties (6 pass / 4 fail) + 1 KAT + 6 regressions | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_mla ignores a fourth operand
+### B1: encode_neon_mls ignores a fourth operand
 
-**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, t ∈ {8b,16b,4h,8h,2s,4s}. llvm-mc rejects 4-operand MLA ⇒ encode_neon_mla([Vd.t,Vn.t,Vm.t,Vextra.t]) = Err
-**Contract evidence:** documented neon.rs:348 "Encode NEON MLA Vd.T, Vn.T, Vm.T (multiply-accumulate)" — three-operand form
-**Documentation conflict:** (none) — the comment states the three-operand form; it does not declare extra operands invalid, but the GNU/llvm-mc assembler contract does
+**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, t ∈ {8b,16b,4h,8h,2s,4s}. llvm-mc rejects 4-operand mls ⇒ encode_neon_mls([Vd.t,Vn.t,Vm.t,Vextra.t]) is Err
+**Contract evidence:** documented neon.rs:361 "Encode NEON MLS Vd.T, Vn.T, Vm.T (multiply-subtract)" — three operands; assembler README.md:12 gas-compatible
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_mla([v0.8b, v0.8b, v0.8b, v0.8b])
-**Expected / Actual:** Err / Ok(Word(0x0e209400))
-**Impact:** A typo or extra operand is silently dropped instead of failing the assemble
-**Root cause:** neon.rs:349-357 never checks operands.len(); get_neon_reg only reads indices 0..2
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:357`
+**Counterexample:** encode_neon_mls([v0.8b, v0.8b, v0.8b, v0.8b])
+**Expected / Actual:** Err / Ok(Word(0x2e209400))
+**Impact:** Invalid assembly `mls Vd.T, Vn.T, Vm.T, Vextra.T` is assembled as if the extra register were absent
+**Root cause:** neon.rs:369 returns Ok without checking operands.len(); get_neon_reg only reads indices 0..2
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:369`
 ```rust
     Ok(EncodeResult::Word(word))
 ```
 **Suggested fix:** Reject any operand count other than 3
 ```rust
 if operands.len() != 3 {
-    return Err("mla requires 3 operands".to_string());
+    return Err("mls requires 3 operands".to_string());
 }
 ```
-**Bug report:** bug_reports/encode_neon_mla_extra_operand.md
+**Bug report:** bug_reports/encode_neon_mls_extra_operand.md
 **Repro seed:** rd=0, rn=0, rm=0, extra=0, t=8b
 **Raw output:**
 ```text
-Test failed: 4 operands must Err (llvm-mc rejects mla v0.8b, v0.8b, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mla_pbt.rs:321.
+thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:303:1:
+Test failed: 4 operands must Err (llvm-mc rejects mls v0.8b, v0.8b, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:322.
 minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "8b"
 ```
 
-### B2: encode_neon_mla ignores source arrangement mismatch
+### B2: encode_neon_mls ignores source arrangement mismatch
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, td,tn,tm ∈ Arr. ¬(valid_mla(td) ∧ td=tn ∧ tn=tm) ⇒ llvm-mc rejects ∧ encode_neon_mla([Vd.td,Vn.tn,Vm.tm]) = Err
-**Contract evidence:** documented neon.rs:348 "Encode NEON MLA Vd.T, Vn.T, Vm.T (multiply-accumulate)" — matching T
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, td,tn,tm ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}. ¬(valid_mls(td) ∧ td=tn=tm) ∧ llvm-mc rejects ⇒ encode_neon_mls([Vd.td,Vn.tn,Vm.tm]) is Err
+**Contract evidence:** documented neon.rs:361 "Encode NEON MLS Vd.T, Vn.T, Vm.T (multiply-subtract)" — same T on all three
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_mla([v0.8b, v0.8b, v0.16b])
-**Expected / Actual:** Err / Ok(Word(0x0e209400))
-**Impact:** A width typo assembles as dest-only 8B MLA
-**Root cause:** neon.rs:351-352 discard Vn/Vm arrangements (`_`); only dest arr_d is consulted
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:351`
+**Counterexample:** encode_neon_mls([v0.8b, v0.16b, v0.8b])
+**Expected / Actual:** Err / Ok(Word(0x2e209400))
+**Impact:** A width typo such as `mls v0.8b, v0.16b, v0.8b` assembles as dest-only 8B MLS instead of failing
+**Root cause:** neon.rs:363 discards Vn arrangement (`_`); only dest arr_d is passed to neon_arr_to_q_size
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:363`
 ```rust
     let (rn, _) = get_neon_reg(operands, 1)?;
 ```
-**Suggested fix:** Require all three arrangements to be equal
+**Suggested fix:** Require all three arrangements to be equal and in the MLS T set
 ```rust
     let (rn, arr_n) = get_neon_reg(operands, 1)?;
     let (rm, arr_m) = get_neon_reg(operands, 2)?;
     if arr_d != arr_n || arr_n != arr_m {
-        return Err(format!("mla requires matching T, got {arr_d}/{arr_n}/{arr_m}"));
+        return Err(format!("mls requires matching T, got {arr_d}/{arr_n}/{arr_m}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_mla_mismatched_t.md
-**Repro seed:** rd=0, rn=0, rm=0, td=8b, tn=8b, tm=16b
+**Bug report:** bug_reports/encode_neon_mls_mismatched_t.md
+**Repro seed:** rd=0, rn=0, rm=0, td=8b, tn=16b, tm=8b
 **Raw output:**
 ```text
-Test failed: invalid/mismatched/reserved T must Err (ARM MLA T in {8B,16B,4H,8H,2S,4S} matching; llvm-mc rejects mla v0.8b, v0.8b, v0.16b) at src/backend/arm/assembler/encoder/encode_neon_mla_pbt.rs:349.
-minimal failing input: rd = 0, rn = 0, rm = 0, td = "8b", tn = "8b", tm = "16b"
+thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_invalid_t' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:330:1:
+Test failed: invalid/mismatched/reserved T must Err (ARM MLS T in {8B,16B,4H,8H,2S,4S} matching; llvm-mc rejects mls v0.8b, v0.16b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:350.
+minimal failing input: rd = 0, rn = 0, rm = 0, td = "8b", tn = "16b", tm = "8b"
 ```
 
-### B3: encode_neon_mla encodes reserved .1d/.2d
+### B3: encode_neon_mls encodes reserved .1d/.2d MLS
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, t ∈ {1d,2d}. llvm-mc rejects MLA Vd.t,Vn.t,Vm.t ⇒ encode_neon_mla([Vd.t,Vn.t,Vm.t]) = Err
-**Contract evidence:** inferred (ARM Advanced SIMD MLA (vector) T in {8B,16B,4H,8H,2S,4S}; size:Q=11:x reserved; llvm-mc rejects .1d/.2d)
-**Documentation conflict:** (none) — neon.rs:354 names the three-same layout but does not declare 1d/2d invalid
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, t ∈ {1d,2d}. llvm-mc rejects mls Vd.t,Vn.t,Vm.t ⇒ encode_neon_mls is Err
+**Contract evidence:** inferred (ARM Advanced SIMD three-same MLS T in {8B,16B,4H,8H,2S,4S}; size:Q=11:x reserved; llvm-mc rejects)
+**Documentation conflict:** (none) — neon.rs:365 documents the encoding layout but does not declare 1d/2d invalid
 **Severity:** medium
-**Counterexample:** encode_neon_mla([v0.1d, v0.1d, v0.1d])
-**Expected / Actual:** Err / Ok(Word(0x0ee09400))
-**Impact:** Reserved-size encodings that llvm-mc/gas reject are emitted; executing them is UNDEFINED
-**Root cause:** neon.rs:353 calls neon_arr_to_q_size, which maps 1d/2d to size=11, with no MLA-specific rejection
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:353`
+**Counterexample:** encode_neon_mls([v0.1d, v0.1d, v0.1d])
+**Expected / Actual:** Err / Ok(Word(0x2ee09400)) for .1d; Ok(Word(0x6ee09400)) for .2d
+**Impact:** `mls v0.1d` / `mls v0.2d` assemble to unallocated encodings; executing them is UNDEFINED
+**Root cause:** neon.rs:365 calls neon_arr_to_q_size, which maps 1d/2d to size=11, with no MLS-specific rejection
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:365`
 ```rust
     let (q, size) = neon_arr_to_q_size(&arr_d)?;
 ```
-**Suggested fix:** Reject size=11 (1d/2d) for vector MLA
+**Suggested fix:** Reject size=11 (1d/2d) for vector MLS
 ```rust
     let (q, size) = neon_arr_to_q_size(&arr_d)?;
     if size == 0b11 {
-        return Err(format!("MLA does not support arrangement {arr_d}"));
+        return Err(format!("MLS does not support arrangement {arr_d}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_mla_reserved_t.md
+**Bug report:** bug_reports/encode_neon_mls_reserved_t.md
 **Repro seed:** rd=0, rn=0, rm=0, t=1d
 **Raw output:**
 ```text
-Test failed: reserved MLA T=1d (ARM size:Q=11:x) must Err (llvm-mc rejects mla v0.1d, v0.1d, v0.1d) at src/backend/arm/assembler/encoder/encode_neon_mla_pbt.rs:512.
+thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_reserved_t' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:428:1:
+Test failed: reserved MLS T=1d (ARM size:Q=11:x) must Err (llvm-mc rejects mls v0.1d, v0.1d, v0.1d) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:513.
 minimal failing input: rd = 0, rn = 0, rm = 0, t = "1d"
 ```
 
-### B4: encode_neon_mla accepts bare V / GPR operands
+### B4: encode_neon_mls accepts bare V / GPR as NEON MLS operands
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, kind ∈ {0..4}. llvm-mc rejects GPR/bare/non-V prefix MLA ⇒ encode_neon_mla(kind) = Err
-**Contract evidence:** documented neon.rs:348 "Encode NEON MLA Vd.T, Vn.T, Vm.T (multiply-accumulate)" — V registers with arrangement
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, kind ∈ {0..4}. llvm-mc rejects the corresponding non-arrangement form ⇒ encode_neon_mls(ops_kind) is Err
+**Contract evidence:** documented neon.rs:361 "Encode NEON MLS Vd.T, Vn.T, Vm.T (multiply-subtract)" — arrangement operands
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_mla([v0.8b, Operand::Reg("v0"), v0.8b])
-**Expected / Actual:** Err / Ok(Word(0x0e209400))
-**Impact:** A missing arrangement or wrong register class is silently encoded as vector MLA
-**Root cause:** neon.rs:350-352 call get_neon_reg, which accepts Operand::Reg and x/w prefixes
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:351`
+**Counterexample:** encode_neon_mls([v0.8b, Operand::Reg("v0"), v0.8b])
+**Expected / Actual:** Err / Ok(Word(0x2e209400))
+**Impact:** `mls v0.8b, v0, v0.8b` and `mls x0.8b, v0.8b, v0.8b` assemble as vector MLS instead of failing
+**Root cause:** neon.rs:363 calls get_neon_reg, which accepts Operand::Reg (empty arrangement) and parse_reg_num maps x/w prefixes to the same 0..31 index
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:363`
 ```rust
     let (rn, _) = get_neon_reg(operands, 1)?;
 ```
@@ -128,11 +131,12 @@ minimal failing input: rd = 0, rn = 0, rm = 0, t = "1d"
         other => return Err(format!("expected NEON Vn.T at operand {idx}, got {:?}", other)),
     }
 ```
-**Bug report:** bug_reports/encode_neon_mla_gpr_or_bare.md
+**Bug report:** bug_reports/encode_neon_mls_gpr_or_bare.md
 **Repro seed:** rd=0, rn=0, rm=0, kind=1, fp_prefix=x
 **Raw output:**
 ```text
-Test failed: GPR/bare/non-arrangement kind=1 must Err (llvm-mc rejects mla v0.8b, v0, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mla_pbt.rs:418.
+thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_gpr_or_bare' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:358:1:
+Test failed: GPR/bare/non-arrangement kind=1 must Err (llvm-mc rejects mls v0.8b, v0, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:419.
 minimal failing input: rd = 0, rn = 0, rm = 0, kind = 1, fp_prefix = "x"
 ```
 
@@ -144,38 +148,39 @@ minimal failing input: rd = 0, rn = 0, rm = 0, kind = 1, fp_prefix = "x"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_mla_pbt.rs | 10 properties + 1 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs | 10 properties + 1 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_mls_pbt` registration |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_mla -- --test-threads=1
+cargo test --lib encode_neon_mls -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mla_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_mls_regression_extra_operand -- --test-threads=1
 ```
 
 B2 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mla_regression_mismatched_t -- --test-threads=1
+cargo test --lib test_encode_neon_mls_regression_mismatched_t -- --test-threads=1
 ```
 
 B3 reserved T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mla_regression_reserved_1d -- --test-threads=1
+cargo test --lib test_encode_neon_mls_regression_reserved_1d -- --test-threads=1
 ```
 
-B4 bare source:
+B4 bare src:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mla_regression_bare_src -- --test-threads=1
+cargo test --lib test_encode_neon_mls_regression_bare_src -- --test-threads=1
 ```
 
 ## Output Directories
@@ -186,27 +191,26 @@ cargo test --lib test_encode_neon_mla_regression_bare_src -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_neon_mla_extra_operand.md
-- pbt-out/bug_reports/encode_neon_mla_extra_operand.html
-- pbt-out/bug_reports/encode_neon_mla_mismatched_t.md
-- pbt-out/bug_reports/encode_neon_mla_mismatched_t.html
-- pbt-out/bug_reports/encode_neon_mla_reserved_t.md
-- pbt-out/bug_reports/encode_neon_mla_reserved_t.html
-- pbt-out/bug_reports/encode_neon_mla_gpr_or_bare.md
-- pbt-out/bug_reports/encode_neon_mla_gpr_or_bare.html
-- pbt-out/run/pbt.log
-- pbt-out/run/pbt2.log
-- pbt-out/run/kat.log
+- pbt-out/INVARIANTS.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_neon_mls_extra_operand.md
+- pbt-out/bug_reports/encode_neon_mls_extra_operand.html
+- pbt-out/bug_reports/encode_neon_mls_mismatched_t.md
+- pbt-out/bug_reports/encode_neon_mls_mismatched_t.html
+- pbt-out/bug_reports/encode_neon_mls_reserved_t.md
+- pbt-out/bug_reports/encode_neon_mls_reserved_t.html
+- pbt-out/bug_reports/encode_neon_mls_gpr_or_bare.md
+- pbt-out/bug_reports/encode_neon_mls_gpr_or_bare.html
+- pbt-out/run/encode_neon_mls_round1.log
+- pbt-out/run/encode_neon_mls_round2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 17:38 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 131/289 total | PBT candidates: 131 | Tested: 131 (100%) | 0 pass, 131 fail
+> Last updated: 2026-10-05 17:54 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 132/289 total | PBT candidates: 132 | Tested: 132 (100%) | 0 pass, 132 fail
 
 ## Summary
 
@@ -215,10 +219,10 @@ cargo test --lib test_encode_neon_mla_regression_bare_src -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 131 |
-| **Tested (of PBT candidates)** | **131 / 131 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 131 / 0 |
-| **Overall (tested / all functions)** | **131 / 289 (45%)** |
+| PBT candidates (from FUNCTION_INDEX) | 132 |
+| **Tested (of PBT candidates)** | **132 / 132 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 132 / 0 |
+| **Overall (tested / all functions)** | **132 / 289 (46%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -226,13 +230,13 @@ cargo test --lib test_encode_neon_mla_regression_bare_src -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 131 | 131 | 0 | 100% |
+|  | 132 | 132 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 131 | 131 | 0 | 100% |
+| unknown | 132 | 132 | 0 | 100% |
 
 ## File Coverage
 
@@ -245,7 +249,7 @@ cargo test --lib test_encode_neon_mla_regression_bare_src -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 46 | 46 | 100% | covered |
+| neon.rs | 68 | 47 | 47 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -386,3 +390,4 @@ cargo test --lib test_encode_neon_mla_regression_bare_src -- --test-threads=1
 | encode_neon_mul | neon.rs |
 | encode_neon_pmul | neon.rs |
 | encode_neon_mla | neon.rs |
+| encode_neon_mls | neon.rs |
