@@ -1,3 +1,23 @@
+# Confirmed invariants (encode_neon_addv)
+
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5] (1000 cases). Rd/Rn packing is correct even though opcode bits are not.
+- Arity 0–1 returns Err (1000 cases).
+- ARM ADDV success-path word (independent of SUT): 0 Q 0 01110 size 11000 11011 10 Rn Rd = 0x0e31b800 | (Q<<30) | (size<<22) | (Rn<<5) | Rd. Q/size from T: 8b=(0,00), 16b=(1,00), 4h=(0,01), 8h=(1,01), 4s=(1,10). llvm-mc KAT mapping matches this formula (`addv b0, v1.8b` = 0x0e31b820).
+- SUT currently disagrees with that word (`0b110111 << 10` vs opcode 11011 at [16:12] and 10 at [11:10]); extra operands, reserved 2s/1d/2d, and GPR dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_addv)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD across lanes (ADDV): dest Bd/Hd/Sd matching T; T in {8B,16B,4H,8H,4S}; size:Q=10:0 (2S) and size=11 reserved.
+- Dispatch: encoder/mod.rs:690 `"addv" => encode_neon_addv`.
+- Caller: codegen/intrinsics.rs:190 `addv b0, v0.8b`.
+- Sibling encode_neon_across / encode_neon_across_long are different opcodes, not same-job differentials. encode_neon_across uses the correct `(opcode << 12) | (0b10 << 10)` placement.
+- encode_neon_addv checks operands.len() < 2; extra ignored; dest type discarded (`let (rd, _)`); T filtered only by neon_arr_to_q_size (accepts 2s/1d/2d).
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the four-statement body.
+- Four SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_addv_*.md.
+
 # Confirmed invariants (encode_neon_bsl)
 
 - Valid BSL Vd.T, Vn.T, Vm.T with T in {8b,16b}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
