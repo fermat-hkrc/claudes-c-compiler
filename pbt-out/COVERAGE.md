@@ -105,3 +105,4 @@
 | encode_ldrs | load_store.rs | load_store.rs | cargo test --lib | 8 passing / 9 failing properties (plus 5 passing KAT + 11 failing regression witnesses; 9 bugs; sweep invalid-name passing) |
 | encode_neon_ldnr | neon.rs | neon.rs | cargo test --lib | 5 passing / 10 failing properties (plus 1 passing KAT + 12 failing regression witnesses; 7 bugs; sweep mixed-arr / ld3r differential) |
 | encode_neon_ld1r | neon.rs | encode_neon_ld1r_pbt.rs | cargo test --lib | 9 passing / 4 failing properties (plus 1 passing KAT + 6 failing regression witnesses; 4 bugs; sweep alt-spellings/invalid-name/mem-offset passing, extra/invalid-base/reg-post/bad-post-imm failing) |
+| encode_neon_ld_st_single | neon.rs | encode_neon_ld_st_single_pbt.rs | cargo test --lib | 7 passing / 7 failing properties (plus 1 passing KAT + 7 failing regression witnesses; 7 bugs; sweep mem-offset passing, extra/invalid-base/alt-spellings/index-oor/nonconsecutive/reg-post/bad-post-imm failing) |

@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_neon_ld_st_single)
+
+- Valid LD/ST single-structure (n in {1,2,3,4}, sz in {b,h,s,d}, in-range lane, consecutive wrapping v0–v31, Xn|SP base, no-offset and legal immediate post-index #n*esize) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.
+- Success-path word is ARM AdvSIMD load/store single structure: Q 0011010 L R Rm opcode S size Rn Rt. No-offset Rm=00000 bit23=0; imm post-index Rm=11111 bit23=1. L=1 load / 0 store. R=0 for 1,3; R=1 for 2,4. opcode 000/010/100 (.B/.H/.S|.D) for n<=2, 001/011/101 for n>=3; .D uses size=01 S=0.
+- Metamorphic: Rt+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; load vs store flips only L bit 22; n=1 vs n=2 flips only R bit 21 (1000 cases).
+- Fewer than 2 operands, non-RegListIndexed dest, non-Mem second operand, list length != n, unsupported size, invalid names (foo/v32/x32/r0/empty), and [Xn, #imm] always Err (1000 cases).
+- Known-answer: llvm-mc `st1 {v0.s}[0], [x3]` = 0x0d008060; `ld1 {v0.b}[0], [x1]` = 0x0d400020; `ld1 {v0.h}[0], [x1]` = 0x0d404020; `ld1 {v0.s}[0], [x1]` = 0x0d408020; `ld1 {v0.d}[0], [x1]` = 0x0d408420; `ld1 {v0.b}[15], [x1]` = 0x4d401c20; `ld2 {v0.s, v1.s}[0], [x3]` = 0x0d608060; `ld3 {v0.s, v1.s, v2.s}[0], [x3]` = 0x0d40a060; `ld4 {v0.s, v1.s, v2.s, v3.s}[0], [x3]` = 0x0d60a060; `st2 {v0.s, v1.s}[0], [x3]` = 0x0d208060; `ld1 {v0.s}[0], [x1], #4` = 0x0ddf8020; `ld1 {v0.s}[0], [sp]` = 0x0d4083e0; `ld1 {v31.d}[1], [x30]` = 0x4d4087df; `ld2 {v31.s, v0.s}[0], [x1]` = 0x0d60803f; `ld1 {v0.s}[0], [x1], x2` = 0x0dc28020.
+- Extra operand, W/XZR/x31/FP base, uppercase arrangement, out-of-range lane, non-consecutive lists, register post-index, and illegal post-index #imm currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_ld_st_single)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM AdvSIMD load/store single structure: Q 0011010 L R Rm opcode S size Rn Rt; no-offset Rm=00000; imm post-index Rm=11111 bit23=1; register post-index Rm=Xm bit23=1.
+- Dispatch: encoder/mod.rs:733-741 ld1-4/st1-4 => encode_neon_ld_st_dispatch; neon.rs:889-892 RegListIndexed => encode_neon_ld_st_single.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_ld_st_multi is multiple-structures (different first-operand kind). Sibling encode_neon_ld1r / encode_neon_ldnr are replicate class.
+- encode_neon_ld_st_single checks only operands.len() < 2 (extra ignored unless Imm); Mem { offset: 0 } only; MemPostIndex always Rm=11111 ignoring offset; parse_reg_num accepts w/d/s/q/v/h/b and maps xzr/x31/sp to 31; arrangement match is lowercase-only; index bits are masked with no range check; only regs[0] supplies Rt.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (alt-spellings / index-oor / nonconsecutive / register post-index / illegal #imm / Mem offset).
+- Seven failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_ld_st_single_*.md.
+
 # Confirmed invariants (encode_neon_ld1r)
 
 - Valid LD1R (T in {8b,16b,4h,8h,2s,4s,1d,2d}, v0–v31, Xn|SP base, no-offset and immediate post-index #esize) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
