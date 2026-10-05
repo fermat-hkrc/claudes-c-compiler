@@ -1,144 +1,145 @@
-# PBT Campaign Report: encode_cnt
+# PBT Campaign Report: encode_neon_not
 
 ## Summary
 
-**Verdict:** 2 high, 2 medium: encode_cnt silently encodes illegal CNT forms (extra operand, T∉{8b,16b}, mismatched T, GPR/SP/bare/FP) as CNT .8b 0x0e205800 instead of rejecting them.
+**Verdict:** 1 high: encode_neon_not encodes illegal arrangements (e.g. `not v0.4h, v0.4h`) as NOT .8b (0x2e205800), so callers assembling invalid SIMD NOT get a silently wrong instruction; plus 2 more high (mismatched T, GPR/SP/bare-V/FP) and 1 medium (extra operand ignored).
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_cnt
+**Modules tested:** encode_neon_not
 **Tests:** 9 properties (plus 4 KAT + 6 regression witnesses)
-**Result:** 5 passing, 4 bugs
-**Change surface:** 1 changed function (encode_cnt), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test; C++ reporter listed unrelated binaries and claimed NOT LINKED). encode_cnt executed via `cargo test --lib encode_cnt`.
-**Tier:** standard
+**Result:** 5 passing, 4 failing (4 bugs)
+**Change surface:** 1 changed function (encode_neon_not), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test tree was not C++-instrumented; the C++ reporter listed unrelated binaries and claimed NOT LINKED). The cargo test binary did execute encode_neon_not (9 properties, 1000 cases each on the passing set). Sweep round 1/1: uppercase-V alt-spellings (passing). Closed: tier round spent.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_cnt | 9 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_not | 9 properties (5 pass / 4 fail) + 4 KAT + 6 regressions | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_cnt ignores a third operand
+### B1: encode_neon_not ignores a third operand
 
-**Formal:** ∀ rd, rn, extra ∈ {0..31}, T ∈ {8b,16b}. llvm-mc("cnt Vd.T, Vn.T, Vextra.T") = Err ∧ encode_cnt([Vd.T, Vn.T, Vextra.T]) = Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; llvm-mc/gas reject a third operand)
-**Documentation conflict:** (none) — neon.rs:28 "cnt requires 2 operands" states a minimum, not an extra-operand exclusion
+**Formal:** ∀ rd, rn, extra ∈ {0..31}, T ∈ {8b,16b}. llvm-mc rejects "not Vd.T, Vn.T, Vextra.T" ⇒ encode_neon_not([Vd.T, Vn.T, Vextra.T]) = Err
+**Contract evidence:** inferred (signature takes a slice; neon.rs:607 asserts NOT Vd.T, Vn.T (two operands); README.md:12 gas-compatible assembly; llvm-mc/gas reject a third operand)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_cnt([v0.8b, v0.8b, v0.8b])
-**Expected / Actual:** Err / Ok(Word(0x0e205800))
-**Impact:** Invalid three-operand CNT is assembled as two-operand CNT, dropping the extra operand without a diagnostic
-**Root cause:** neon.rs:27 `if operands.len() < 2` ignores operands after the first two
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:27`
+**Counterexample:** encode_neon_not([v0.8b, v0.8b, v0.8b])
+**Expected / Actual:** Err / Ok(Word(0x2e205800))
+**Impact:** The assembler silently encodes `not Vd.T, Vn.T, Vextra.T` as `not Vd.T, Vn.T`, dropping the extra operand instead of diagnosing invalid assembly
+**Root cause:** neon.rs:609 uses `operands.len() < 2`, so extra operands after the first two are ignored
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:609`
 ```rust
     if operands.len() < 2 {
-        return Err("cnt requires 2 operands".to_string());
+        return Err("not requires 2 operands".to_string());
     }
 ```
-**Suggested fix:** Require exact arity 2
+**Suggested fix:** Reject arity other than 2
 ```rust
     if operands.len() != 2 {
-        return Err("cnt requires 2 operands".to_string());
+        return Err("not requires 2 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_cnt_extra_operand.md
-**Repro seed:** cc 57dc163b54f78d916c8e2440e5fc9116d14895f3aa905613c639dd58db8118b8
+**Bug report:** bug_reports/encode_neon_not_extra_operand.md
+**Repro seed:** cc 8c55d5df0fc521f697b2a99640d5cbac78f1d0738726e91041942b8508868ed7
 **Raw output:**
 ```text
-Test failed: extra operand must Err (llvm-mc rejects cnt v0.8b, v0.8b, v0.8b)
+Test failed: extra operand must Err (llvm-mc rejects not v0.8b, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_not_pbt.rs:258.
 minimal failing input: rd = 0, rn = 0, extra = 0, t = "8b"
 ```
 
-### B2: encode_cnt encodes illegal arrangements as CNT .8b
+### B2: encode_neon_not encodes illegal arrangements as NOT .8b
 
-**Formal:** ∀ rd, rn ∈ {0..31}, T ∈ {4h,8h,2s,4s,2d,1d,4b,8d,2h,1s}. llvm-mc("cnt Vd.T, Vn.T") = Err ∧ encode_cnt([Vd.T, Vn.T]) = Err
-**Contract evidence:** documented neon.rs:26 "Only valid for .8b (Q=0) and .16b (Q=1)"
-**Documentation conflict:** neon.rs:26 "Only valid for .8b (Q=0) and .16b (Q=1)" — states the behavior IS handled (illegal T out of domain); the code encodes them as Q=0. Contract the code violates.
+**Formal:** ∀ rd, rn ∈ {0..31}, T ∉ {8b,16b}. llvm-mc rejects "not Vd.T, Vn.T" ⇒ encode_neon_not([Vd.T, Vn.T]) = Err
+**Contract evidence:** inferred (ARM Advanced SIMD two-register miscellaneous NOT: T in {8B,16B} only; llvm-mc "invalid operand"; gas "operand mismatch"; README.md:225 lists not/mvn under NEON two-misc)
+**Documentation conflict:** (none) — neon.rs:607 asserts NOT Vd.T, Vn.T but does not name the T set; sibling encode_neon_rbit does check .8b/.16b
 **Severity:** high
-**Counterexample:** encode_cnt([v0.4h, v0.4h])
-**Expected / Actual:** Err / Ok(Word(0x0e205800))
-**Impact:** Illegal SIMD arrangements assemble as CNT .8b, emitting the wrong instruction
-**Root cause:** neon.rs:33 sets Q=1 only for `"16b"` and Q=0 for every other string
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:33`
+**Counterexample:** encode_neon_not([v0.4h, v0.4h])
+**Expected / Actual:** Err / Ok(Word(0x2e205800))
+**Impact:** `not v0.4h, v0.4h` (and 8h/2s/4s/2d/1d) is assembled as `not v0.8b, v0.8b`, emitting the wrong instruction instead of an error
+**Root cause:** neon.rs:615 sets Q=1 only for "16b" and Q=0 for every other arrangement, with no check that T is 8b or 16b
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:615`
 ```rust
-    let q: u32 = if arr_d == "16b" { 1 } else { 0 }; // .8b -> Q=0, .16b -> Q=1
+    let q: u32 = if arr_d == "16b" { 1 } else { 0 };
 ```
-**Suggested fix:** Reject T other than 8b/16b
+**Suggested fix:** Require T in {8b,16b} before encoding Q
 ```rust
     if arr_d != "8b" && arr_d != "16b" {
-        return Err(format!("cnt: unsupported arrangement .{}, expected .8b or .16b", arr_d));
+        return Err(format!("not: unsupported arrangement .{arr_d}, expected .8b or .16b"));
     }
     let q: u32 = if arr_d == "16b" { 1 } else { 0 };
 ```
-**Bug report:** bug_reports/encode_cnt_invalid_t.md
-**Repro seed:** (deterministic regression; proptest shrunk to t="4h")
+**Bug report:** bug_reports/encode_neon_not_invalid_t.md
+**Repro seed:** (none — shrinks to rd=0, rn=0, t="4h")
 **Raw output:**
 ```text
-Test failed: invalid T must Err (only .8b/.16b; llvm-mc rejects cnt v0.4h, v0.4h)
+Test failed: invalid T must Err (only .8b/.16b; llvm-mc rejects not v0.4h, v0.4h) at src/backend/arm/assembler/encoder/encode_neon_not_pbt.rs:278.
 minimal failing input: rd = 0, rn = 0, t = "4h"
 ```
 
-### B3: encode_cnt ignores a mismatched source arrangement
+### B3: encode_neon_not ignores a mismatched source arrangement
 
-**Formal:** ∀ rd, rn ∈ {0..31}, Td ≠ Tn, {Td,Tn} ⊆ {8b,16b}. llvm-mc("cnt Vd.Td, Vn.Tn") = Err ∧ encode_cnt([Vd.Td, Vn.Tn]) = Err
-**Contract evidence:** documented neon.rs:24 "CNT Vd.<T>, Vn.<T>"
-**Documentation conflict:** neon.rs:24 "CNT Vd.<T>, Vn.<T>" — names the same T on both operands; the code ignores source T. Contract the code violates.
-**Severity:** medium
-**Counterexample:** encode_cnt([v0.8b, v0.16b])
-**Expected / Actual:** Err / Ok(Word(0x0e205800))
-**Impact:** Mixed .8b/.16b CNT is encoded from dest T only; gas/llvm-mc reject it as operand mismatch
-**Root cause:** neon.rs:32 binds `_arr_n` and never compares it to dest
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:32`
+**Formal:** ∀ rd, rn ∈ {0..31}, Td ≠ Tn ∈ {8b,16b}. llvm-mc rejects "not Vd.Td, Vn.Tn" ⇒ encode_neon_not([Vd.Td, Vn.Tn]) = Err
+**Contract evidence:** inferred (neon.rs:607 NOT Vd.T, Vn.T uses one T; llvm-mc/gas reject mismatched arrangements)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_neon_not([v0.8b, v0.16b])
+**Expected / Actual:** Err / Ok(Word(0x2e205800))
+**Impact:** `not v0.8b, v0.16b` is assembled as `not v0.8b, v0.8b`, using only the destination arrangement
+**Root cause:** neon.rs:613 discards the source arrangement (`let (rn, _) = get_neon_reg(operands, 1)?`)
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:613`
 ```rust
-    let (rn, _arr_n) = get_neon_reg(operands, 1)?;
+    let (rn, _) = get_neon_reg(operands, 1)?;
 ```
-**Suggested fix:** Require matching arrangements
+**Suggested fix:** Require the source arrangement to match the destination
 ```rust
     let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    if arr_d != arr_n {
-        return Err(format!("cnt: arrangement mismatch .{arr_d} vs .{arr_n}"));
+    if arr_n != arr_d {
+        return Err(format!("not: arrangement mismatch .{arr_d} vs .{arr_n}"));
     }
 ```
-**Bug report:** bug_reports/encode_cnt_mismatch_t.md
-**Repro seed:** (deterministic regression; proptest shrunk to td="8b")
+**Bug report:** bug_reports/encode_neon_not_mismatch_t.md
+**Repro seed:** (none — shrinks to rd=0, rn=0, td="8b")
 **Raw output:**
 ```text
-Test failed: mismatched T must Err (llvm-mc rejects cnt v0.8b, v0.16b)
+Test failed: mismatched T must Err (llvm-mc rejects not v0.8b, v0.16b) at src/backend/arm/assembler/encoder/encode_neon_not_pbt.rs:299.
 minimal failing input: rd = 0, rn = 0, td = "8b"
 ```
 
-### B4: encode_cnt accepts GPR, SP, bare V, and FP scalar operands
+### B4: encode_neon_not accepts GPR, SP, bare V, and FP scalar operands
 
-**Formal:** ∀ kind ∈ {gpr-x, gpr-w, sp, bare-v, fp-d, fp-s, fp-q}, rd, rn ∈ {0..31}, T ∈ {8b,16b}. llvm-mc(asm(kind)) = Err ∧ encode_cnt(ops(kind)) = Err
-**Contract evidence:** inferred (README.md:12 gas-compatible; neon.rs:24 CNT Vd.<T>, Vn.<T> requires arranged NEON registers)
+**Formal:** ∀ kind ∈ {x-gpr, w-gpr, sp, bare-v, d-fp, s-fp, q-fp}. llvm-mc rejects the corresponding `not` ⇒ encode_neon_not(ops(kind)) = Err
+**Contract evidence:** inferred (neon.rs:607 NOT Vd.T, Vn.T; llvm-mc rejects `not x0, x0` / `not v0, v1` / `not sp, v0.8b`)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_cnt([Reg("x0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x0e205800))
-**Impact:** GPR/SP/bare-V/FP scalar CNT encodes as CNT v0.8b, mapping integer register numbers onto SIMD Rd/Rn
-**Root cause:** neon.rs:31-33 uses get_neon_reg which accepts Operand::Reg via parse_reg_num, then treats empty arrangement as Q=0
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:31`
+**Counterexample:** encode_neon_not([Reg("x0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x2e205800))
+**Impact:** `not x0, x0` (also `not sp, v0.8b`, `not v0, v1`, `not d0, d1`) encodes as NOT v0.8b, v0.8b, mapping GPRs/SP/bare V/FP scalars onto SIMD register numbers
+**Root cause:** neon.rs:612-615 calls get_neon_reg, which accepts Operand::Reg via parse_reg_num (x/w/d/s/q/v/h/b/sp), then treats the empty arrangement as Q=0
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:612`
 ```rust
     let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let (rn, _arr_n) = get_neon_reg(operands, 1)?;
+    let (rn, _) = get_neon_reg(operands, 1)?;
 
-    let q: u32 = if arr_d == "16b" { 1 } else { 0 }; // .8b -> Q=0, .16b -> Q=1
+    let q: u32 = if arr_d == "16b" { 1 } else { 0 };
 ```
 **Suggested fix:** Require RegArrangement with T in {8b,16b} on both operands
 ```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
     if arr_d != "8b" && arr_d != "16b" {
-        return Err(format!("cnt: unsupported arrangement .{arr_d}, expected .8b or .16b"));
+        return Err(format!("not: unsupported arrangement .{arr_d}, expected .8b or .16b"));
     }
     if arr_n != arr_d {
-        return Err(format!("cnt: arrangement mismatch .{arr_d} vs .{arr_n}"));
+        return Err(format!("not: arrangement mismatch .{arr_d} vs .{arr_n}"));
     }
 ```
-**Bug report:** bug_reports/encode_cnt_gpr_bare_sp.md
-**Repro seed:** (deterministic regression; proptest shrunk to kind=0, rd=0, rn=0)
+**Bug report:** bug_reports/encode_neon_not_gpr_bare_sp.md
+**Repro seed:** (none — shrinks to rd=0, rn=0, t="8b", kind=0)
 **Raw output:**
 ```text
-Test failed: non-arranged NEON / GPR / SP / FP must Err (llvm-mc rejects cnt x0, x0)
+Test failed: non-arranged NEON / GPR / SP / FP must Err (llvm-mc rejects not x0, x0) at src/backend/arm/assembler/encoder/encode_neon_not_pbt.rs:355.
 minimal failing input: rd = 0, rn = 0, t = "8b", kind = 0
 ```
 
@@ -150,70 +151,70 @@ minimal failing input: rd = 0, rn = 0, t = "8b", kind = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_cnt_pbt.rs | 9 properties + 4 KAT + 6 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_cnt_pbt` |
+| src/backend/arm/assembler/encoder/encode_neon_not_pbt.rs | 9 properties + 4 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_not_pbt` |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_cnt -- --test-threads=1
+cargo test --lib encode_neon_not -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_cnt_regression_extra_operand -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_not_regression_extra_operand -- --test-threads=1 --exact
 ```
 
 B2 invalid T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_cnt_regression_invalid_t -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_not_regression_invalid_t -- --test-threads=1 --exact
 ```
 
 B3 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_cnt_regression_mismatch_t -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_not_regression_mismatch_t -- --test-threads=1 --exact
 ```
 
 B4 GPR dest:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_cnt_regression_gpr_dest -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_not_regression_gpr_dest -- --test-threads=1 --exact
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/run/encode_cnt_pbt.log
-- pbt-out/run/encode_cnt_pbt_round2.log
-- pbt-out/bug_reports/encode_cnt_extra_operand.md
-- pbt-out/bug_reports/encode_cnt_extra_operand.html
-- pbt-out/bug_reports/encode_cnt_invalid_t.md
-- pbt-out/bug_reports/encode_cnt_invalid_t.html
-- pbt-out/bug_reports/encode_cnt_mismatch_t.md
-- pbt-out/bug_reports/encode_cnt_mismatch_t.html
-- pbt-out/bug_reports/encode_cnt_gpr_bare_sp.md
-- pbt-out/bug_reports/encode_cnt_gpr_bare_sp.html
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_neon_not_extra_operand.md
+- pbt-out/bug_reports/encode_neon_not_extra_operand.html
+- pbt-out/bug_reports/encode_neon_not_invalid_t.md
+- pbt-out/bug_reports/encode_neon_not_invalid_t.html
+- pbt-out/bug_reports/encode_neon_not_mismatch_t.md
+- pbt-out/bug_reports/encode_neon_not_mismatch_t.html
+- pbt-out/bug_reports/encode_neon_not_gpr_bare_sp.md
+- pbt-out/bug_reports/encode_neon_not_gpr_bare_sp.html
+- pbt-out/run/encode_neon_not_pbt.log
+- pbt-out/run/encode_neon_not_pbt2.log
+- proptest-regressions/backend/arm/assembler/encoder/encode_neon_not_pbt.txt (proptest failure seeds, written by the framework next to the crate)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 11:29 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 112/289 total | PBT candidates: 112 | Tested: 112 (100%) | 0 pass, 112 fail
+> Last updated: 2026-10-05 11:46 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 113/289 total | PBT candidates: 113 | Tested: 113 (100%) | 0 pass, 113 fail
 
 ## Summary
 
@@ -222,10 +223,10 @@ cargo test --lib test_encode_cnt_regression_gpr_dest -- --test-threads=1 --exact
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 112 |
-| **Tested (of PBT candidates)** | **112 / 112 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 112 / 0 |
-| **Overall (tested / all functions)** | **112 / 289 (39%)** |
+| PBT candidates (from FUNCTION_INDEX) | 113 |
+| **Tested (of PBT candidates)** | **113 / 113 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 113 / 0 |
+| **Overall (tested / all functions)** | **113 / 289 (39%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -233,13 +234,13 @@ cargo test --lib test_encode_cnt_regression_gpr_dest -- --test-threads=1 --exact
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 112 | 112 | 0 | 100% |
+|  | 113 | 113 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 112 | 112 | 0 | 100% |
+| unknown | 113 | 113 | 0 | 100% |
 
 ## File Coverage
 
@@ -252,7 +253,7 @@ cargo test --lib test_encode_cnt_regression_gpr_dest -- --test-threads=1 --exact
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 27 | 27 | 100% | covered |
+| neon.rs | 68 | 28 | 28 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -374,3 +375,4 @@ cargo test --lib test_encode_cnt_regression_gpr_dest -- --test-threads=1 --exact
 | encode_neon_movi | neon.rs |
 | encode_neon_mvni | neon.rs |
 | encode_cnt | neon.rs |
+| encode_neon_not | neon.rs |

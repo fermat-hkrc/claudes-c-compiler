@@ -1,7 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_cnt)
-> Files: 10/10 scanned (100%) | Functions: 112/289 total | PBT candidates: 112 | Tested: 112 (100%) | 0 pass, 112 fail
+> Last updated: 2026-10-05 (campaign: encode_neon_not, English)
+> Files: 10/10 scanned (100%) | Functions: 113/289 total | PBT candidates: 113 | Tested: 113 (100%) | 0 pass, 113 fail
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; C++ reporter claimed NOT LINKED. cargo test --lib encode_neon_not executed the SUT.
 
 ## Summary
 
@@ -10,10 +11,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 112 |
-| **Tested (of PBT candidates)** | **112 / 112 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 112 / 0 |
-| **Overall (tested / all functions)** | **112 / 289 (39%)** |
+| PBT candidates (from FUNCTION_INDEX) | 113 |
+| **Tested (of PBT candidates)** | **113 / 113 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 113 / 0 |
+| **Overall (tested / all functions)** | **113 / 289 (39%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +22,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 112 | 112 | 0 | 100% |
+| encode_neon_not | 1 | 1 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 111 | 111 | 0 | 100% |
+| differential / algebraic / negative_error | 9 | 9 | 0 | 100% |
 
 ## File Coverage
 
@@ -40,7 +41,7 @@
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 27 | 27 | 100% | covered |
+| neon.rs | 68 | 28 | 28 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -50,6 +51,7 @@
 
 | Function | Source |
 |----------|--------|
+| encode_neon_not | neon.rs |
 | encode_ubfx | bitfield.rs |
 | encode_ubfm | bitfield.rs |
 | encode_sbfx | bitfield.rs |
@@ -161,3 +163,4 @@
 | encode_neon_ext | neon.rs |
 | encode_neon_movi | neon.rs |
 | encode_neon_mvni | neon.rs |
+| encode_cnt | neon.rs |

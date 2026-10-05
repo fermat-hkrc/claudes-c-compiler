@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_not)
+
+- Valid NOT Vd.T, Vn.T with T in {8b,16b}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc canonicalizes `not` to `mvn`.
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff T=16b, bits[29:24]=101110, size bits[23:22]=00, bits[21:16]=100000, bits[15:10]=010110, Rn at [9:5], Rd at [4:0] = 0x2e205800 | (Q<<30) | (Rn<<5) | Rd. 8b vs 16b differs only in Q.
+- Arity 0–1 returns Err (1000 cases).
+- Uppercase V prefix with lowercase T matches llvm-mc (1000 cases).
+- Known-answer: `not v0.8b, v1.8b` = 0x2e205820; `not v0.16b, v1.16b` = 0x6e205820; `not v31.8b, v31.8b` = 0x2e205bff; `not v31.16b, v0.16b` = 0x6e20581f.
+- Extra operand, T∉{8b,16b}, mismatched T, and GPR/SP/bare-V/FP currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_not)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. Range/error contract: aarch64-linux-gnu-as (README claims gas).
+- ARM ARM Advanced SIMD two-register miscellaneous (NOT/MVN): 0 Q 10 1110 size=00 100000 010110 Rn Rd. T in {8B,16B} only. Q=1 iff T=16B.
+- Dispatch: encoder/mod.rs:692 `"not" => encode_neon_not`. encode_mvn routes vector MVN into encode_neon_not (caller, not same-job differential).
+- Sibling encode_cnt / encode_neon_rbit are different two-misc opcodes, not same-job differentials. encode_neon_rbit does check T in {8b,16b}; encode_neon_not does not.
+- encode_neon_not checks operands.len() < 2; extra ignored; source arrangement discarded; Q=1 iff arr_d=="16b" else 0 (no 8b check).
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (uppercase V alt-spellings).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_not_*.md.
+
 # Confirmed invariants (encode_cnt)
 
 - Valid CNT Vd.T, Vn.T with T in {8b,16b}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
