@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_scalar_three_same)
+
+- Valid ADD/SUB Dd, Dn, Dm with d0–d31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16]; add vs sub differs only in U bit 29 (1000 cases).
+- Success-path word: bits[31:30]=01, U at 29, bits[28:24]=11110, size at [23:22], bit21=1, Rm at [20:16], opcode at [15:11], bit10=1, Rn at [9:5], Rd at [4:0] for opcode 0..31 and size 0..3 (1000 cases).
+- Arity 0–2 returns Err (1000 cases).
+- Imm/Mem/Label in any slot returns Err (1000 cases).
+- Uppercase D prefix and uppercase ADD/SUB match llvm-mc (1000 cases).
+- Known-answer: `add d0, d1, d2` = 0x5ee28420; `sub d0, d1, d2` = 0x7ee28420; `add d31, d31, d31` = 0x5eff87ff; `add d0, d0, d0` = 0x5ee08400; `add d15, d16, d17` = 0x5ef1860f; `sub d31, d0, d1` = 0x7ee1841f.
+- Extra operand and non-D source currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_scalar_three_same)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD scalar three-same ADD/SUB: 01 U 11110 size 1 Rm opcode 1 Rn Rd; size=11 (D only); opcode=10000; U=0 ADD, U=1 SUB.
+- Dispatch: encoder/mod.rs:305-310 add/sub => encode_neon_scalar_three_same when is_neon_scalar_d_reg_op.
+- Sibling encode_neon_three_same / encode_neon_add_sub are vector forms, not same-job differentials.
+- encode_neon_scalar_three_same checks operands.len() < 3 only; extra ignored; any Operand::Reg accepted by parse_reg_num.
+- parse_reg_num lowercases prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus diff_alt_spellings.
+- Two failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_scalar_three_same_*.md.
+
 # Confirmed invariants (encode_neon_faddp)
 
 - Valid vector FADDP Vd.T, Vn.T, Vm.T with T in {2s,4s,2d}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

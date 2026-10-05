@@ -1,129 +1,82 @@
-# PBT Campaign Report: encode_neon_faddp
+# PBT Campaign Report: encode_neon_scalar_three_same
 
 ## Summary
 
-**Verdict:** 3 medium: encode_neon_faddp silently encodes a fourth operand, mismatched source arrangements, and scalar dest/source size mismatches that llvm-mc/gas reject, so invalid FADDP text becomes a 32-bit instruction.
+**Verdict:** 2 medium: encode_neon_scalar_three_same silently encodes a fourth operand (`add d0, d0, d0, d0`) and silently treats a non-D source as Dd (`add d0, s0, d0`), so invalid scalar ADD/SUB assembly becomes a 32-bit word instead of an error.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_faddp
-**Tests:** 9
-**Result:** 6 passing, 3 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED); the cargo lib tests did execute encode_neon_faddp. Tier: standard.
+**Modules tested:** encode_neon_scalar_three_same
+**Tests:** 8
+**Result:** 6 passing, 2 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and listed unrelated C++ binaries as NOT LINKED; cargo test --lib executed the real symbol (KAT plus 6 passing properties).
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_faddp | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_scalar_three_same | 8 | 2 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_faddp silently encodes a fourth operand
+### B1: encode_neon_scalar_three_same silently encodes a fourth operand
 
-**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {2s,4s,2d}. llvm-mc rejects "faddp Vd.T, Vn.T, Vm.T, Vextra.T" ⇒ encode_neon_faddp([Vd.T,Vn.T,Vm.T,Vextra.T]) is Err. Also ∀ n ∈ {0,1}. encode_neon_faddp(ops with n operands) is Err
-**Contract evidence:** documented neon.rs:1718 "faddp requires 2 or 3 operands"; README.md:12 gas-compatible assembly (llvm-mc rejects a fourth operand)
-**Documentation conflict:** neon.rs:1718 `"faddp requires 2 or 3 operands"` states the behavior IS handled (arity not in {2,3} is an error). The code contradicts it for arity ≥ 4. (not independently verified)
+**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, is_sub ∈ {false,true}. llvm-mc rejects "{add|sub} Dd, Dn, Dm, Dx" ∧ encode_neon_scalar_three_same([Dd,Dn,Dm,Dx], U, 10000, 11) = Err
+**Contract evidence:** documented neon.rs:1792 "scalar three-same requires 3 operands"
+**Documentation conflict:** neon.rs:1792 "scalar three-same requires 3 operands" — states the arity IS 3; the code only rejects arity below 3, so extras are accepted. The comment/error is the contract, not an input-domain exclusion of extra operands.
 **Severity:** medium
-**Counterexample:** encode_neon_faddp([v0.2s, v0.2s, v0.2s, v0.2s])
-**Expected / Actual:** Err / Ok(Word) encoding vector FADDP v0.2s, v0.2s, v0.2s
-**Impact:** Invalid assembly is assembled instead of rejected, so gas/llvm-mc-incompatible source produces a silent encoding
-**Root cause:** neon.rs:1687 uses `operands.len() >= 3` for the vector form, so arity 4+ is treated as a 3-operand vector encode; the "requires 2 or 3" error only fires for arity < 2
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1687`
+**Counterexample:** encode_neon_scalar_three_same([d0, d0, d0, d0], U=0, opcode=10000, size=11)
+**Expected / Actual:** Err / Ok(Word(0x5ee08400)) encoding add d0, d0, d0
+**Impact:** Invalid assembly such as add d0, d0, d0, d0 is assembled into a scalar ADD word instead of an error, so the GNU-style assembler emits machine code that gas/llvm-mc refuse
+**Root cause:** neon.rs:1792 checks only operands.len() < 3, so arity 4+ is treated as a 3-operand encode using the first three registers
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1792`
 ```rust
-    if operands.len() >= 3 {
+    if operands.len() < 3 { return Err("scalar three-same requires 3 operands".to_string()); }
 ```
-**Suggested fix:** Dispatch on exact arity 3 (vector) or 2 (scalar); reject anything else
+**Suggested fix:** Reject any arity other than 3
 ```rust
-    match operands.len() {
-        3 => { /* vector form */ }
-        2 => { /* scalar form */ }
-        _ => Err("faddp requires 2 or 3 operands".to_string()),
+    if operands.len() != 3 { return Err("scalar three-same requires 3 operands".to_string()); }
+```
+**Bug report:** bug_reports/encode_neon_scalar_three_same_extra_operand.md
+**Repro seed:** cc 54721bbbff3ca73801a36fb9e9db3a6b84d46c6530d062249e840a9b5986026b
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_scalar_three_same_pbt::encode_neon_scalar_three_same_neg_extra_operand' (2480918) panicked at src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs:182:1:
+Test failed: 4 operands must Err (llvm-mc rejects add d0, d0, d0, d0) at src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs:321.
+minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, is_sub = false
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+```
+
+### B2: encode_neon_scalar_three_same encodes non-D sources as Dd
+
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, slot ∈ {1,2}, pfx ∈ {s,h,b,x,w,q,v,sp,xzr}. dest is Dd ∧ source slot is non-D ∧ llvm-mc rejects the asm ∧ encode_neon_scalar_three_same(ops, U, 10000, 11) = Err
+**Contract evidence:** documented neon.rs:1789 "NEON scalar three-same: ADD/SUB Dd, Dn, Dm"
+**Documentation conflict:** neon.rs:1789 "NEON scalar three-same: ADD/SUB Dd, Dn, Dm" — asserts D registers; the code accepts any Operand::Reg parse_reg_num understands. The comment states the behavior IS handled as Dd/Dn/Dm, so this is documented-and-violated, not an exclusion.
+**Severity:** medium
+**Counterexample:** encode_neon_scalar_three_same([d0, s0, d0], U=0, opcode=10000, size=11)
+**Expected / Actual:** Err / Ok(Word(0x5ee08400)) encoding as if add d0, d0, d0
+**Impact:** Invalid assembly such as add d0, s0, d0 is assembled into a scalar ADD word. encode() routes here whenever dest is a d-register, so mixed-class sources are caller-reachable
+**Root cause:** neon.rs:1794 extracts Rn via parse_reg_num, which accepts s/h/b/x/w/q/v/sp prefixes and never checks that the register is a D register required by size=11 ADD/SUB
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1794`
+```rust
+    let rn = match &operands[1] { Operand::Reg(r) => parse_reg_num(r).ok_or("invalid reg")?, _ => return Err("expected register".to_string()) };
+```
+**Suggested fix:** Require a D-register prefix on every operand before packing
+```rust
+    if !r.to_lowercase().starts_with('d') {
+        return Err(format!("scalar three-same requires Dd, Dn, Dm, got {r}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_faddp_extra_operand.md
-**Repro seed:** cc a409152dfb73ee7721e22249c08d6ed4182c4e7645f5f6f1b794a8c53a3cdfdc
+**Bug report:** bug_reports/encode_neon_scalar_three_same_wrong_reg_class.md
+**Repro seed:** (none — deterministic shrunk input)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_faddp_pbt::encode_neon_faddp_neg_extra' (2471457) panicked at src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs:217:1:
-Test failed: extra operand must Err (llvm-mc rejects faddp v0.2s, v0.2s, v0.2s, v0.2s) at src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs:347.
-minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "2s", n = 0
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
-
-### B2: encode_neon_faddp ignores source arrangements
-
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {2s,4s,2d}. ¬(Td=Tn=Tm) ∧ llvm-mc rejects "faddp Vd.Td, Vn.Tn, Vm.Tm" ⇒ encode_neon_faddp([Vd.Td,Vn.Tn,Vm.Tm]) is Err
-**Contract evidence:** documented neon.rs:1682 "Vector form: FADDP Vd.T, Vn.T, Vm.T"; README.md:12 gas-compatible assembly
-**Documentation conflict:** neon.rs:1682 `"Vector form: FADDP Vd.T, Vn.T, Vm.T"` states one T for all three operands. The code contradicts it by encoding from dest T only. (not independently verified)
-**Severity:** medium
-**Counterexample:** encode_neon_faddp([v0.2d, v0.2s, v0.2s])
-**Expected / Actual:** Err / Ok(Word) encoding FADDP v0.2d (Q=1, sz=1 from dest T)
-**Impact:** Mismatched assembly is encoded as dest-T FADDP using source register numbers, dropping Vn/Vm arrangements
-**Root cause:** neon.rs:1691-1692 bind source arrangements as `_` and derive Q/sz only from dest T
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1691`
-```rust
-        let (rn, _) = get_neon_reg(operands, 1)?;
-        let (rm, _) = get_neon_reg(operands, 2)?;
-```
-**Suggested fix:** Require Vn and Vm arrangements to equal Vd.T
-```rust
-        let (rn, arr_n) = get_neon_reg(operands, 1)?;
-        let (rm, arr_m) = get_neon_reg(operands, 2)?;
-        if arr_n != arr_d || arr_m != arr_d {
-            return Err(format!("faddp: mismatched arrangement: {arr_d} vs {arr_n} vs {arr_m}"));
-        }
-```
-**Bug report:** bug_reports/encode_neon_faddp_mismatch_t.md
-**Repro seed:** (none — deterministic regression)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_faddp_pbt::encode_neon_faddp_neg_mismatch_t' (2472509) panicked at src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs:217:1:
-Test failed: mismatched T must Err (llvm-mc rejects faddp v0.2d, v0.2s, v0.2s) at src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs:392.
-minimal failing input: rd = 0, rn = 0, rm = 0, td = "2d", tn = "2s", tm = "2s"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
-
-### B3: encode_neon_faddp scalar form does not check dest size against source T
-
-**Formal:** ∀ inputs in {GPR triple, W dest + vector, SP dest, bare V triple, D dest + Vn.2S, S dest + Vn.2D, X dest + Vn.2S, S dest + Vn.4S}. llvm-mc rejects asm ⇒ encode_neon_faddp(ops) is Err
-**Contract evidence:** documented neon.rs:1684 "Scalar form: FADDP Sd, Vn.2S  or FADDP Dd, Vn.2D"; README.md:12 gas-compatible assembly
-**Documentation conflict:** neon.rs:1684 `"Scalar form: FADDP Sd, Vn.2S  or FADDP Dd, Vn.2D"` states dest size must match source T. The code contradicts it. (not independently verified)
-**Severity:** medium
-**Counterexample:** encode_neon_faddp([Reg("d0"), v0.2s])
-**Expected / Actual:** Err / Ok(Word) encoding SISD FADDP sz=0 Rd=0 (same as faddp s0, v0.2s)
-**Impact:** Dest D with .2S (and S with .2D, X with .2S) assembles as a different SISD FADDP than the text
-**Root cause:** neon.rs:1704 accepts any Operand::Reg whose parse_reg_num succeeds and sets sz only from the source arrangement
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1704`
-```rust
-            Operand::Reg(r) => parse_reg_num(r).ok_or("invalid dest reg")?,
-```
-**Suggested fix:** Require dest prefix s with source .2s, or dest prefix d with source .2d
-```rust
-        let dest = match &operands[0] {
-            Operand::Reg(r) => r,
-            _ => return Err("faddp scalar: expected register".to_string()),
-        };
-        let rd = parse_reg_num(dest).ok_or("invalid dest reg")?;
-        let prefix = dest.chars().next().unwrap_or(' ').to_ascii_lowercase();
-        let (rn, arr_n) = get_neon_reg(operands, 1)?;
-        let sz = match (prefix, arr_n.as_str()) {
-            ('s', "2s") => 0u32,
-            ('d', "2d") => 1,
-            _ => return Err(format!("faddp scalar: dest {dest} incompatible with source {arr_n}")),
-        };
-```
-**Bug report:** bug_reports/encode_neon_faddp_scalar_dest_size.md
-**Repro seed:** (none — deterministic regression)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_faddp_pbt::encode_neon_faddp_neg_gpr_bare_scalar_dest' (2471482) panicked at src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs:217:1:
-Test failed: non-arranged NEON / GPR / SP / dest-size mismatch must Err (llvm-mc rejects faddp d0, v0.2s) at src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs:453.
-minimal failing input: rd = 0, rn = 0, rm = 0, kind = 4
+thread 'backend::arm::assembler::encoder::encode_neon_scalar_three_same_pbt::encode_neon_scalar_three_same_neg_wrong_reg_class' (2481271) panicked at src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs:182:1:
+Test failed: non-D source slot=1 pfx=s must Err (llvm-mc rejects add d0, s0, d0) at src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs:352.
+minimal failing input: rd = 0, rn = 0, rm = 0, is_sub = false, slot = 1, pfx = "s"
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -137,32 +90,28 @@ minimal failing input: rd = 0, rn = 0, rm = 0, kind = 4
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs | 9 properties + 6 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_neon_scalar_three_same_pbt.rs | 8 properties + 1 KAT + 2 regression witnesses |
 
 ## Reproduction
 
-Valid-domain suite (passing KAT / differential / metamorphic / invariant / invalid-T / alt-spellings):
+Whole suite (includes two expected SUT failures):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_faddp -- --test-threads=1
+cargo test --lib encode_neon_scalar_three_same -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_faddp_neg_extra -- --test-threads=1
+cargo test --lib encode_neon_scalar_three_same -- --test-threads=1
+cargo test --lib encode_neon_scalar_three_same_neg_extra_operand -- --test-threads=1
 ```
 
-B2 mismatched T:
+B2 wrong register class:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_faddp_neg_mismatch_t -- --test-threads=1
-```
-
-B3 scalar dest size:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_faddp_neg_gpr_bare_scalar_dest -- --test-threads=1
+cargo test --lib encode_neon_scalar_three_same -- --test-threads=1
+cargo test --lib encode_neon_scalar_three_same_neg_wrong_reg_class -- --test-threads=1
 ```
 
 ## Output Directories
@@ -173,25 +122,22 @@ cargo test --lib encode_neon_faddp_neg_gpr_bare_scalar_dest -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_neon_faddp_extra_operand.md
-- pbt-out/bug_reports/encode_neon_faddp_extra_operand.html
-- pbt-out/bug_reports/encode_neon_faddp_mismatch_t.md
-- pbt-out/bug_reports/encode_neon_faddp_mismatch_t.html
-- pbt-out/bug_reports/encode_neon_faddp_scalar_dest_size.md
-- pbt-out/bug_reports/encode_neon_faddp_scalar_dest_size.html
-- pbt-out/run/encode_neon_faddp.log
-- pbt-out/run/encode_neon_faddp_regression.log
-- pbt-out/run/encode_neon_faddp_alt.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_neon_scalar_three_same_extra_operand.md
+- pbt-out/bug_reports/encode_neon_scalar_three_same_extra_operand.html
+- pbt-out/bug_reports/encode_neon_scalar_three_same_wrong_reg_class.md
+- pbt-out/bug_reports/encode_neon_scalar_three_same_wrong_reg_class.html
+- pbt-out/run/encode_neon_scalar_three_same_round1.log
+- pbt-out/run/encode_neon_scalar_three_same_round2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 21:28 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 143/289 total | PBT candidates: 143 | Tested: 143 (100%) | 0 pass, 143 fail
+> Last updated: 2026-10-05 21:48 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 144/289 total | PBT candidates: 144 | Tested: 144 (100%) | 0 pass, 144 fail
 
 ## Summary
 
@@ -200,10 +146,10 @@ cargo test --lib encode_neon_faddp_neg_gpr_bare_scalar_dest -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 143 |
-| **Tested (of PBT candidates)** | **143 / 143 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 143 / 0 |
-| **Overall (tested / all functions)** | **143 / 289 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 144 |
+| **Tested (of PBT candidates)** | **144 / 144 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 144 / 0 |
+| **Overall (tested / all functions)** | **144 / 289 (50%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -211,13 +157,13 @@ cargo test --lib encode_neon_faddp_neg_gpr_bare_scalar_dest -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 143 | 143 | 0 | 100% |
+|  | 144 | 144 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 143 | 143 | 0 | 100% |
+| unknown | 144 | 144 | 0 | 100% |
 
 ## File Coverage
 
@@ -230,7 +176,7 @@ cargo test --lib encode_neon_faddp_neg_gpr_bare_scalar_dest -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 58 | 58 | 100% | covered |
+| neon.rs | 68 | 59 | 59 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -383,3 +329,4 @@ cargo test --lib encode_neon_faddp_neg_gpr_bare_scalar_dest -- --test-threads=1
 | encode_neon_fcvtn | neon.rs |
 | encode_neon_bitwise_insert | neon.rs |
 | encode_neon_faddp | neon.rs |
+| encode_neon_scalar_three_same | neon.rs |
