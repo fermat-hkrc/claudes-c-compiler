@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_scalar_qshrn)
+
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only U in bit 29; only is_rounding in bits[15:10]; only dest/shift in bits[23:16] (1000 cases).
+- Arity 0–2 returns Err (1000 cases).
+- Shift 0, dest_esize+1, -1, 64, 255 returns Err (1000 cases).
+- Dest prefix x/w/q/v/d returns Err (1000 cases, sweep).
+- Imm/Mem/Label in dest or src slot returns Err (1000 cases, sweep).
+- Known-answer (llvm-mc connection): `sqshrn h0, s1, #1` = 0x5f1f9420; `sqshrn b0, h1, #1` = 0x5f0f9420; `sqshrn s0, d1, #1` = 0x5f3f9420; `sqshrn h0, s1, #16` = 0x5f109420; `sqshrn b0, h1, #8` = 0x5f089420; `sqshrn s0, d1, #32` = 0x5f209420; `sqrshrn h0, s1, #1` = 0x5f1f9c20; `uqshrn h0, s1, #1` = 0x7f1f9420; `uqrshrn h0, s1, #1` = 0x7f1f9c20; `sqshrn b31, h31, #8` = 0x5f0897ff; `sqshrn s15, d16, #17` = 0x5f2f960f; `SQSHRN H0, S1, #1` = 0x5f1f9420.
+- Valid-domain encoding currently disagrees with llvm-mc/gas (bit 28); extra operand and dest/src class mismatch currently disagree (see bugs).
+
+## Environment (encode_neon_scalar_qshrn)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD scalar shift by immediate (asisdshf): 01 U 11111 immh:immb opcode Rn Rd; dest/src B<-H / H<-S / S<-D; shift in 1..=dest_esize; SQSHRN U=0 opcode=100101; SQRSHRN U=0 opcode=100111; UQSHRN U=1 opcode=100101; UQRSHRN U=1 opcode=100111.
+- Dispatch: encoder/mod.rs:725-728 sqshrn => encode_neon_scalar_qshrn when dest is Operand::Reg, else encode_neon_qshrn (vector). uqshrn/sqrshrn/uqrshrn always go to encode_neon_qshrn.
+- Sibling encode_neon_qshrn is not a same-job differential (vector Vd.Tb).
+- encode_neon_scalar_qshrn checks operands.len() < 3 only; extra ignored; dest size from starts_with b/h/s (sp starts with s); source is any Operand::Reg accepted by parse_reg_num.
+- parse_reg_num lowercases prefixes; maps sp/wsp/xzr/wzr to 31, lr to 30.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus neg_unsupported_dest / neg_nonreg (passing).
+- Three failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_scalar_qshrn_*.md.
+
 # Confirmed invariants (encode_neon_scalar_two_misc)
 
 - Valid SQABS/SQNEG with matching B/H/S/D registers (b0–b31 / h / s / d) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). ARM mapping: SQABS U=0 opcode=00111; SQNEG U=1 opcode=00111.
