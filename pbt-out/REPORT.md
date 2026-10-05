@@ -1,140 +1,142 @@
-# PBT Campaign Report: encode_neon_add_sub
+# PBT Campaign Report: encode_neon_ushr
 
 ## Summary
 
-**Verdict:** 3 medium: encode_neon_add_sub silently encodes extra operands, mismatched/reserved T, and bare/GPR sources that llvm-mc and gas reject, so invalid NEON ADD/SUB becomes wrong machine code.
+**Verdict:** 4 medium: encode_neon_ushr accepts extra operands, mismatched arrangements, GPR destinations, and shift 0, so invalid USHR assembly is encoded instead of rejected.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_add_sub
-**Tests:** 9
-**Result:** 6 passing, 3 bugs
+**Modules tested:** encode_neon_ushr
+**Tests:** 10
+**Result:** 6 passing, 4 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (build tree not instrumented); C++ reporter listed unrelated binaries and claimed encode_neon_add_sub NOT LINKED. Cargo lib tests executed the symbol (KAT + 9 properties). Sweep round 1/1: manual arm audit plus alt-spellings and nonreg.
-
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_neon_ushr NOT LINKED). Manual arm audit of the function body plus alt-spellings/nonreg sweep.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_add_sub | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_ushr | 10 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_add_sub ignores a fourth operand
+### B1: encode_neon_ushr ignores a fourth operand
 
-**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. llvm-mc rejects 4-operand ADD/SUB ⇒ encode_neon_add_sub([Vd.T,Vn.T,Vm.T,Vextra.T], is_sub) = Err
-**Contract evidence:** documented neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T"
-**Documentation conflict:** neon.rs:1163 states the three-operand form ADD/SUB Vd.T, Vn.T, Vm.T — the comment is the contract the code violates by accepting a fourth operand. (not independently verified)
+**Formal:** ∀ rd,rn,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. llvm-mc rejects "ushr Vd.T, Vn.T, #shift, v{extra}.T" ⇒ encode_neon_ushr([Vd.T,Vn.T,#shift,Vextra.T]) = Err
+**Contract evidence:** documented neon.rs:1181 "ushr requires 3 operands"
+**Documentation conflict:** neon.rs:1181 "ushr requires 3 operands" states the instruction requires three operands; the check is `len < 3`, so extras are accepted. The comment is the contract the code violates.
 **Severity:** medium
-**Counterexample:** encode_neon_add_sub([v0.8b, v0.8b, v0.8b, v0.8b], is_sub=false)
-**Expected / Actual:** Err / Ok(Word(0x0e208400))
-**Impact:** Invalid assembly with a trailing operand is assembled as the three-operand form instead of diagnosed
-**Root cause:** neon.rs:1164-1167 reads only operands 0..2 via get_neon_reg and never checks operands.len()
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1164`
+**Counterexample:** encode_neon_ushr([v0.8b, v0.8b, #1, v0.8b])
+**Expected / Actual:** Err / Ok(Word) same as `ushr v0.8b, v0.8b, #1`
+**Impact:** Invalid four-operand USHR is assembled as three-operand USHR; extra text is silently dropped.
+**Root cause:** neon.rs:1180 checks `operands.len() < 3` only, so operands after the first three are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1180`
 ```rust
-pub(crate) fn encode_neon_add_sub(operands: &[Operand], is_sub: bool) -> Result<EncodeResult, String> {
-    let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let (rn, _) = get_neon_reg(operands, 1)?;
-    let (rm, _) = get_neon_reg(operands, 2)?;
+    if operands.len() < 3 {
+        return Err("ushr requires 3 operands".to_string());
+    }
 ```
 **Suggested fix:** Reject arity other than 3
 ```rust
     if operands.len() != 3 {
-        return Err("add/sub requires 3 operands".to_string());
+        return Err("ushr requires 3 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_add_sub_extra_operand.md
-**Repro seed:** cc 34296dadfc5978db9ff90f0747750242b22fcd62b9ed2e59e79338abbe5f4e20
+**Bug report:** bug_reports/encode_neon_ushr_extra_operand.md
+**Repro seed:** rd=0, rn=0, extra=0, t="8b", shift=1
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_add_sub_pbt::encode_neon_add_sub_neg_extra_operand' (2332177) panicked at src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs:221:1:
-Test failed: 4 operands must Err (llvm-mc rejects add v0.8b, v0.8b, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs:341.
-minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "8b", is_sub = false
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+Test failed: 4 operands must Err (llvm-mc rejects ushr v0.8b, v0.8b, #1, v0.8b)
+minimal failing input: rd = 0, rn = 0, extra = 0, t_shift = ("8b", 1)
 ```
 
-### B2: encode_neon_add_sub encodes mismatched and reserved arrangements
+### B2: encode_neon_ushr ignores a mismatched source arrangement
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}, is_sub ∈ {false,true}. ¬valid(Td,Tn,Tm) ∧ llvm-mc rejects ⇒ encode_neon_add_sub([Vd.Td,Vn.Tn,Vm.Tm], is_sub) = Err. valid iff Td=Tn=Tm ∈ {8b,16b,4h,8h,2s,4s,2d}
-**Contract evidence:** documented neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T"
-**Documentation conflict:** neon.rs:1163 states ADD/SUB Vd.T, Vn.T, Vm.T (same T) — the comment is the contract; reserved 1D is ARM-reserved, not excluded by an input-domain comment. (not independently verified)
+**Formal:** ∀ rd,rn ∈ {0..31}, Td,Tn ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}, shift ∈ [1, esize(Td) if valid else 1..64]. ¬(valid_ushr_t(Td) ∧ Td=Tn) ⇒ encode_neon_ushr([Vd.Td,Vn.Tn,#shift]) = Err ∧ llvm-mc rejects
+**Contract evidence:** documented neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_add_sub([v0.8b, v0.8b, v0.16b], is_sub=false)
-**Expected / Actual:** Err / Ok(Word(0x0e208400))
-**Impact:** Mismatched source T is ignored (encoded from dest T only); reserved .1d encodes size:Q=11:0
-**Root cause:** neon.rs:1166-1168 discards source arrangements and neon_arr_to_q_size accepts 1d
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1166`
+**Counterexample:** encode_neon_ushr([v0.8b, v0.16b, #1])
+**Expected / Actual:** Err / Ok(Word) same as `ushr v0.8b, v0.8b, #1`
+**Impact:** Mismatched dest/src arrangements are encoded using only dest T; gas/llvm-mc reject the same text.
+**Root cause:** neon.rs:1184 discards the source arrangement (`let (rn, _)`), so Vn.T is never compared with Vd.T.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1184`
 ```rust
     let (rn, _) = get_neon_reg(operands, 1)?;
-    let (rm, _) = get_neon_reg(operands, 2)?;
-    let (q, size) = neon_arr_to_q_size(&arr_d)?;
 ```
-**Suggested fix:** Require matching T in {8b,16b,4h,8h,2s,4s,2d}
+**Suggested fix:** Require matching arrangements
 ```rust
     let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    let (rm, arr_m) = get_neon_reg(operands, 2)?;
-    if arr_d != arr_n || arr_d != arr_m {
-        return Err(format!("add/sub arrangement mismatch: .{arr_d}, .{arr_n}, .{arr_m}"));
-    }
-    if !matches!(arr_d.as_str(), "8b" | "16b" | "4h" | "8h" | "2s" | "4s" | "2d") {
-        return Err(format!("unsupported add/sub arrangement: {arr_d}"));
+    if arr_n != arr_d {
+        return Err(format!("ushr arrangement mismatch: {} vs {}", arr_d, arr_n));
     }
 ```
-**Bug report:** bug_reports/encode_neon_add_sub_invalid_t.md
-**Repro seed:** (none saved; shrunk to td=8b, tn=8b, tm=16b)
+**Bug report:** bug_reports/encode_neon_ushr_mismatched_t.md
+**Repro seed:** rd=0, rn=0, td="8b", tn="16b", shift=1
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_add_sub_pbt::encode_neon_add_sub_neg_invalid_t' (2332199) panicked at src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs:221:1:
-Test failed: invalid/mismatched/reserved T must Err (ARM ADD/SUB T in {8B,16B,4H,8H,2S,4S,2D} matching; llvm-mc rejects add v0.8b, v0.8b, v0.16b) at src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs:367.
-minimal failing input: rd = 0, rn = 0, rm = 0, is_sub = false, td = "8b", tn = "8b", tm = "16b"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+Test failed: invalid/mismatched/reserved T must Err (ARM USHR T in {8B,16B,4H,8H,2S,4S,2D} matching; llvm-mc rejects ushr v0.8b, v0.16b, #1)
+minimal failing input: rd = 0, rn = 0, td = "8b", tn = "16b", shift = 1
 ```
 
-### B3: encode_neon_add_sub encodes bare V and GPR operands as NEON registers
+### B3: encode_neon_ushr accepts a shift of 0
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, kind ∈ {gpr_dest, bare_vn, x_rm, bare_vd, x_vd_arr}. llvm-mc rejects the corresponding asm ⇒ encode_neon_add_sub(ops(kind), is_sub) = Err
-**Contract evidence:** documented neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T"
-**Documentation conflict:** neon.rs:1163 states Vd.T, Vn.T, Vm.T — the comment is the contract the code violates by accepting Operand::Reg and xN.T. (not independently verified)
+**Formal:** ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ ℤ \ [1, esize(T)]. llvm-mc rejects "ushr Vd.T, Vn.T, #shift" ⇒ encode_neon_ushr([Vd.T,Vn.T,#shift]) = Err
+**Contract evidence:** inferred (ARM Advanced SIMD USHR shift in [1, esize]; llvm-mc "immediate must be an integer in range [1, 8]" for .8b; README.md:12 gas compatibility)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_add_sub([v0.8b, Reg("v0"), v0.8b], is_sub=false)
-**Expected / Actual:** Err / Ok(Word(0x0e208400))
-**Impact:** Bare V sources and GPR-prefixed arrangements encode as vN, so invalid assembly becomes a NEON ADD
-**Root cause:** get_neon_reg at neon.rs:14 accepts Operand::Reg and parse_reg_num maps x/w/d/s/q/v/h/b to 0–31; source arrangement is discarded
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:14`
+**Counterexample:** encode_neon_ushr([v0.8b, v0.8b, #0])
+**Expected / Actual:** Err / Ok(Word) with immh:immb=0 (reserved). Debug also panics at neon.rs:1192 when `16 - shift` underflows.
+**Impact:** Out-of-range shifts are masked into a (sometimes reserved) encoding instead of being rejected; debug builds can abort.
+**Root cause:** neon.rs:1192 computes `(16 - shift) & 0xF` with no range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1192`
 ```rust
-        Some(Operand::Reg(name)) => {
-            let num = parse_reg_num(name)
-                .ok_or_else(|| format!("invalid register: {}", name))?;
-            Ok((num, String::new()))
-        }
+        "8b" | "16b" => (16 - shift) & 0xF,
 ```
-**Suggested fix:** Require RegArrangement with a V register on every operand
+**Suggested fix:** Reject shift outside [1, esize] before encoding
 ```rust
-        Some(Operand::RegArrangement { reg, arrangement }) => {
-            if !reg.to_lowercase().starts_with('v') {
-                return Err(format!("expected NEON V register, got {reg}"));
+        "8b" | "16b" => {
+            if !(1..=8).contains(&shift) {
+                return Err(format!("ushr shift {} out of range [1, 8]", shift));
             }
-            let num = parse_reg_num(reg)
-                .ok_or_else(|| format!("invalid NEON register: {}", reg))?;
-            Ok((num, arrangement.clone()))
+            16 - shift
         }
-        other => Err(format!("expected NEON register at operand {}, got {:?}", idx, other)),
 ```
-**Bug report:** bug_reports/encode_neon_add_sub_bare_src.md
-**Repro seed:** cc f275616237b2718fb365df4cb6a6736d41af3e079c7f017a0f5393d9228384ea
+**Bug report:** bug_reports/encode_neon_ushr_shift_oob.md
+**Repro seed:** rd=0, rn=0, t="8b", shift=0
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_add_sub_pbt::encode_neon_add_sub_neg_gpr_or_bare' (2332187) panicked at src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs:221:1:
-Test failed: GPR/bare/non-arrangement kind=1 must Err (llvm-mc rejects add v0.8b, v0, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs:434.
-minimal failing input: rd = 0, rn = 0, rm = 0, is_sub = false, kind = 1, fp_prefix = "x"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+Test failed: shift 0 not in [1, 8] must Err (llvm-mc rejects ushr v0.8b, v0.8b, #0)
+minimal failing input: rd = 0, rn = 0, t_shift = ("8b", 0)
+```
+
+### B4: encode_neon_ushr accepts a GPR destination
+
+**Formal:** ∀ rd,rn ∈ {0..31}, kind ∈ {gpr_dest, bare_src, x_arr_dest, bare_dest, fp_dest}. llvm-mc rejects the corresponding ushr ⇒ encode_neon_ushr(ops(kind)) = Err
+**Contract evidence:** documented neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ushr([x0.8b, v0.8b, #1])
+**Expected / Actual:** Err / Ok(Word) encoded as `ushr v0.8b, v0.8b, #1`
+**Impact:** A GPR with a fake arrangement is treated as Vd; invalid assembly becomes a SIMD USHR.
+**Root cause:** neon.rs:1183 calls get_neon_reg, which accepts any parse_reg_num prefix including x/w.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1183`
+```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+```
+**Suggested fix:** Require a V-prefixed register on dest and src
+```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    if !operands_is_v_reg(operands, 0) {
+        return Err("ushr destination must be Vd.T".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_neon_ushr_gpr_dest.md
+**Repro seed:** rd=0, rn=0, kind=3, fp_prefix="x"
+**Raw output:**
+```text
+Test failed: GPR/bare/non-arrangement kind=3 must Err (llvm-mc rejects ushr x0.8b, v0.8b, #1)
+minimal failing input: rd = 0, rn = 0, kind = 3, fp_prefix = "x"
 ```
 
 ## Design Caveats
@@ -145,33 +147,39 @@ minimal failing input: rd = 0, rn = 0, rm = 0, is_sub = false, kind = 1, fp_pref
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs | 9 properties + 1 KAT + 5 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_neon_add_sub_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs | 10 properties + 1 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_ushr_pbt` |
 
 ## Reproduction
 
-Valid-domain suite (KAT + passing properties):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_add_sub -- --test-threads=1
+cargo test --lib encode_neon_ushr -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_add_sub_regression_extra_operand -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_ushr_regression_extra_operand -- --test-threads=1 --exact
 ```
 
 B2 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_add_sub_regression_mismatched_t -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_ushr_regression_mismatched_t -- --test-threads=1 --exact
 ```
 
-B3 bare source:
+B3 shift OOB:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_add_sub_regression_bare_src -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_ushr_regression_shift_oob -- --test-threads=1 --exact
+```
+
+B4 GPR dest:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_ushr_regression_gpr_dest -- --test-threads=1 --exact
 ```
 
 ## Output Directories
@@ -185,21 +193,23 @@ cargo test --lib test_encode_neon_add_sub_regression_bare_src -- --test-threads=
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_neon_add_sub_extra_operand.md
-- pbt-out/bug_reports/encode_neon_add_sub_extra_operand.html
-- pbt-out/bug_reports/encode_neon_add_sub_invalid_t.md
-- pbt-out/bug_reports/encode_neon_add_sub_invalid_t.html
-- pbt-out/bug_reports/encode_neon_add_sub_bare_src.md
-- pbt-out/bug_reports/encode_neon_add_sub_bare_src.html
-- pbt-out/run/encode_neon_add_sub_test.log
-- pbt-out/run/encode_neon_add_sub_regression.log
+- pbt-out/bug_reports/encode_neon_ushr_extra_operand.md
+- pbt-out/bug_reports/encode_neon_ushr_extra_operand.html
+- pbt-out/bug_reports/encode_neon_ushr_mismatched_t.md
+- pbt-out/bug_reports/encode_neon_ushr_mismatched_t.html
+- pbt-out/bug_reports/encode_neon_ushr_shift_oob.md
+- pbt-out/bug_reports/encode_neon_ushr_shift_oob.html
+- pbt-out/bug_reports/encode_neon_ushr_gpr_dest.md
+- pbt-out/bug_reports/encode_neon_ushr_gpr_dest.html
+- pbt-out/run/encode_neon_ushr.log
+- pbt-out/run/encode_neon_ushr_round2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 14:13 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 121/289 total | PBT candidates: 121 | Tested: 121 (100%) | 0 pass, 121 fail
+> Last updated: 2026-10-05 14:35 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 122/289 total | PBT candidates: 122 | Tested: 122 (100%) | 0 pass, 122 fail
 
 ## Summary
 
@@ -208,10 +218,10 @@ cargo test --lib test_encode_neon_add_sub_regression_bare_src -- --test-threads=
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 121 |
-| **Tested (of PBT candidates)** | **121 / 121 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 121 / 0 |
-| **Overall (tested / all functions)** | **121 / 289 (42%)** |
+| PBT candidates (from FUNCTION_INDEX) | 122 |
+| **Tested (of PBT candidates)** | **122 / 122 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 122 / 0 |
+| **Overall (tested / all functions)** | **122 / 289 (42%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -219,13 +229,13 @@ cargo test --lib test_encode_neon_add_sub_regression_bare_src -- --test-threads=
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 121 | 121 | 0 | 100% |
+|  | 122 | 122 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 121 | 121 | 0 | 100% |
+| unknown | 122 | 122 | 0 | 100% |
 
 ## File Coverage
 
@@ -238,7 +248,7 @@ cargo test --lib test_encode_neon_add_sub_regression_bare_src -- --test-threads=
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 36 | 36 | 100% | covered |
+| neon.rs | 68 | 37 | 37 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -369,3 +379,4 @@ cargo test --lib test_encode_neon_add_sub_regression_bare_src -- --test-threads=
 | encode_neon_eor3 | neon.rs |
 | encode_neon_pmull | neon.rs |
 | encode_neon_add_sub | neon.rs |
+| encode_neon_ushr | neon.rs |

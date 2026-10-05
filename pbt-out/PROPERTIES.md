@@ -1,283 +1,295 @@
-# Properties: encode_neon_add_sub
+# Properties: encode_neon_ushr
 
-## encode_neon_add_sub_diff_llvm_mc
+## encode_neon_ushr_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest applicable oracle is Differential vs llvm-mc (independent GNU-style assembler of the same textual assembly the SUT claims to accept). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree vector ADD/SUB decoder). Sibling encode_neon_three_same rejected (same-job gate: generic CMEQ/UQSUB encoder; opcode=10000 would copy this formula). encode_neon_scalar_three_same rejected (scalar Dd,Dn,Dm).
-- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_diff_llvm_mc_1q
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. encode_neon_add_sub([Vd.T,Vn.T,Vm.T], is_sub) = llvm-mc("add|sub Vd.T, Vn.T, Vm.T")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: Strongest applicable oracle is Differential vs llvm-mc (independent GNU-style assembler of the same textual assembly the SUT claims to accept). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree USHR decoder). Sibling encode_neon_shift_imm rejected (independence gate: near-copy of this body). encode_neon_sshr rejected (same-job gate: SSHR / U=0). encode_neon_shift_right rejected (generic shift-right opcode table).
+- Doc contract: neon.rs:1179 "Encode NEON USHR (unsigned shift right immediate)" — asserted fingerprint 42c4ff29
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_diff_llvm_mc
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_ushr([Vd.T, Vn.T, #shift]) = llvm-mc("ushr Vd.T, Vn.T, #shift")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: neon_t, is_sub: bool }
+  vars: [rd, rn, t, shift]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
   relation:
     op: eq
-    lhs: encode_neon_add_sub([Vd.T, Vn.T, Vm.T], is_sub)
-    rhs: llvm_mc(add_or_sub Vd.T, Vn.T, Vm.T)
+    lhs: encode_neon_ushr([Vd.T, Vn.T, Imm(shift)])
+    rhs: llvm_mc(ushr Vd.T, Vn.T, #shift)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
   t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  is_sub: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint 10d52c4c
 ```
 
-## encode_neon_add_sub_metamorphic_rd_rn_rm_u
+## encode_neon_ushr_metamorphic_rd_rn_q
 - Tier: 3
-- Rationale: ARM three-same layout isolates Rd[4:0], Rn[9:5], Rm[20:16], U[29]. Stronger differential is p1; this metamorphic check does not need llvm-mc and catches field-packing bugs.
-- Doc contract: neon.rs:1171 "ADD: 0 Q 0 01110 size 1 Rm 10000 1 Rn Rd" — asserted fingerprint ec6c59b1
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_metamorphic_rd_rn_rm_q
-- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}. changing only Rd (resp. Rn, Rm, is_sub) of encode_neon_add_sub on T=8b differs only in bits[4:0] (resp. [9:5], [20:16], bit 29)
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: ARM shift-by-immediate layout isolates Rd[4:0], Rn[9:5], Q[30]. Stronger differential is p1; this metamorphic check does not need llvm-mc and catches field-packing bugs. 8b vs 16b at the same shift must differ only in Q.
+- Doc contract: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd" — asserted fingerprint 726e0020
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_metamorphic_rd_rn_rm_u
+- Formal: ∀ rd1,rd2,rn1,rn2 ∈ {0..31}. changing only Rd (resp. Rn) of encode_neon_ushr on T=8b shift=1 differs only in bits[4:0] (resp. [9:5]); 8b vs 16b at the same rd,rn,shift=1 differs only in bit 30
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd1, rd2, rn1, rn2, rm1, rm2]
-  domain: { rd1: u32_0_31, rd2: u32_0_31, rn1: u32_0_31, rn2: u32_0_31, rm1: u32_0_31, rm2: u32_0_31 }
-  relation:
-    op: holds
-    expr: ((w(rd1,rn1,rm1,false) ^ w(rd2,rn1,rm1,false)) & !0x1Fu32) == 0 && ((w(rd1,rn1,rm1,false) ^ w(rd1,rn2,rm1,false)) & !(0x1Fu32 << 5)) == 0 && ((w(rd1,rn1,rm1,false) ^ w(rd1,rn1,rm2,false)) & !(0x1Fu32 << 16)) == 0 && ((w(rd1,rn1,rm1,false) ^ w(rd1,rn1,rm1,true)) & !(1u32 << 29)) == 0
+  vars: [rd1, rd2, rn1, rn2]
+  domain: { rd1: u32_0_31, rd2: u32_0_31, rn1: u32_0_31, rn2: u32_0_31 }
+  body: changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; 8b vs 16b differs only in Q bit 30
 generators:
   rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
   rn1: { gen: int, min: 0, max: 31, type: u32 }
   rn2: { gen: int, min: 0, max: 31, type: u32 }
-  rm1: { gen: int, min: 0, max: 31, type: u32 }
-  rm2: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:1171
+evidence: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd"
 ```
 
-## encode_neon_add_sub_invariant_arm_fields
+## encode_neon_ushr_invariant_arm_fields
 - Tier: 3
-- Rationale: Documented ARM layout on the success path. Weaker than differential; still pins Q/size/U/opcode independently of llvm-mc.
-- Doc contract: neon.rs:1171 "ADD: 0 Q 0 01110 size 1 Rm 10000 1 Rn Rd" — asserted fingerprint ec6c59b1; neon.rs:1172 "SUB: 0 Q 1 01110 size 1 Rm 10000 1 Rn Rd" — asserted fingerprint 8620efa7
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_invariant_arm_64bit_fields
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. let w = encode_neon_add_sub([Vd.T,Vn.T,Vm.T], is_sub). bit31(w)=0 ∧ Q(w)=q(T) ∧ U(w)=is_sub ∧ bits[28:24]=01110 ∧ size(w)=size(T) ∧ bit21=1 ∧ Rm=rm ∧ bits[15:11]=10000 ∧ bit10=1 ∧ Rn=rn ∧ Rd=rd
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: ARM Advanced SIMD shift-by-immediate USHR encoding is an exact structural predicate on the success-path word. Weaker than differential; pins bit layout even if llvm-mc is unavailable.
+- Doc contract: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd" — asserted fingerprint 726e0020
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_invariant_arm_fields
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. let w = encode_neon_ushr([Vd.T,Vn.T,#shift]). bit31(w)=0 ∧ Q(w)=Q(T) ∧ U(w)=1 ∧ bits[28:23](w)=011110 ∧ immh:immb(w)=2*esize(T)-shift ∧ bits[15:10](w)=000001 ∧ Rn(w)=rn ∧ Rd(w)=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: neon_t, is_sub: bool }
-  relation:
-    op: holds
-    expr: arm_three_same_add_sub_layout(encode_neon_add_sub([Vd.T,Vn.T,Vm.T], is_sub))
+  vars: [rd, rn, t, shift]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
+  body: ARM USHR fields of encode_neon_ushr word match Q(T), U=1, bits[28:23]=011110, immh:immb=2*esize-shift, opcode=000001, Rn, Rd
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
   t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  is_sub: { gen: bool }
-evidence: neon.rs:1171
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd"
 ```
 
-## encode_neon_add_sub_neg_arity
+## encode_neon_ushr_neg_arity
 - Tier: 4
-- Rationale: gas/llvm-mc reject fewer than 3 operands. README.md:11 same textual assembly as gas. Negative-error: arity 0–2 must Err. The function has no explicit arity check; get_neon_reg on a missing slot is the documented failure path.
-- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_arity
-- Formal: ∀ n ∈ {0,1,2}, rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}. llvm-mc rejects arity-n ADD/SUB ⇒ encode_neon_add_sub(ops[:n], is_sub) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: USHR is a three-operand instruction. llvm-mc / gas reject arity 0–2. The SUT documents "ushr requires 3 operands" at neon.rs:1181.
+- Doc contract: neon.rs:1181 "ushr requires 3 operands" — asserted fingerprint 33a152b7
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_arity
+- Formal: ∀ n ∈ {0,1,2}, rd,rn ∈ {0..31}. encode_neon_ushr(ops[:n]) = Err ∧ llvm-mc rejects the corresponding arity-n ushr
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, rd, rn, rm, is_sub]
-  domain: { n: 0..2, rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool }
+  vars: [n, rd, rn]
+  domain: { n: 0_2, rd: u32_0_31, rn: u32_0_31 }
   relation:
-    op: throws
-    expr: encode_neon_add_sub(ops.take(n), is_sub)
+    op: holds
+    lhs: encode_neon_ushr(ops.take(n)).is_err()
+expected_error: String
 generators:
   n: { gen: int, min: 0, max: 2, type: usize }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
+evidence: neon.rs:1181 "ushr requires 3 operands"
 ```
 
-## encode_neon_add_sub_neg_extra_operand
+## encode_neon_ushr_neg_extra_operand
 - Tier: 4
-- Rationale: llvm-mc/gas reject a fourth operand. README.md:11. Function currently ignores extra operands (no len check).
-- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_extra_operand
-- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. llvm-mc rejects 4-operand ADD/SUB ⇒ encode_neon_add_sub([Vd.T,Vn.T,Vm.T,Vextra.T], is_sub) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: gas/llvm-mc reject a fourth operand on USHR. README claims the assembler accepts the same textual assembly gas would consume, so extra operands must Err. The SUT only checks len < 3.
+- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_extra_operand
+- Formal: ∀ rd,rn,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. llvm-mc rejects "ushr Vd.T, Vn.T, #shift, v{extra}.T" ⇒ encode_neon_ushr([Vd.T,Vn.T,#shift,Vextra.T]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_add_sub([v0.8b, v0.8b, v0.8b, v0.8b], is_sub=false)
-- Bug report: bug_reports/encode_neon_add_sub_extra_operand.md
+- Counterexample: encode_neon_ushr([v0.8b, v0.8b, #1, v0.8b])
+- Bug report: pbt-out/bug_reports/encode_neon_ushr_extra_operand.md
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, extra, t, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, extra: u32_0_31, t: neon_t, is_sub: bool }
+  vars: [rd, rn, extra, t, shift]
+  domain: { rd: u32_0_31, rn: u32_0_31, extra: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
   relation:
-    op: throws
-    expr: encode_neon_add_sub([Vd.T,Vn.T,Vm.T,Vextra.T], is_sub)
+    op: holds
+    lhs: encode_neon_ushr([Vd.T, Vn.T, Imm(shift), Vextra.T]).is_err()
+expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
   t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  is_sub: { gen: bool }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint 10d52c4c
 ```
 
-## encode_neon_add_sub_neg_invalid_t
+## encode_neon_ushr_neg_invalid_t
 - Tier: 4
-- Rationale: ARM integer ADD/SUB T is {8B,16B,4H,8H,2S,4S,2D}; 1D reserved; arrangements must match. llvm-mc rejects reserved/mismatched T. Function uses only dest arrangement and neon_arr_to_q_size accepts 1d.
-- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_invalid_t
-- Formal: ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}, is_sub ∈ {false,true}. ¬valid(Td,Tn,Tm) ∧ llvm-mc rejects ⇒ encode_neon_add_sub([Vd.Td,Vn.Tn,Vm.Tm], is_sub) = Err. valid iff Td=Tn=Tm ∈ {8b,16b,4h,8h,2s,4s,2d}
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: ARM USHR vector form requires matching T in {8B,16B,4H,8H,2S,4S,2D}; 1D is reserved (immh encoding would collide with smaller esize); mismatched dest/src arrangements are invalid. llvm-mc rejects these. Source arrangement is discarded by the SUT.
+- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_invalid_t
+- Formal: ∀ rd,rn ∈ {0..31}, Td,Tn ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}, shift ∈ [1, esize(Td) if valid else 1..64]. ¬(valid_ushr_t(Td) ∧ Td=Tn) ⇒ encode_neon_ushr([Vd.Td,Vn.Tn,#shift]) = Err ∧ llvm-mc rejects
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_add_sub([v0.8b, v0.8b, v0.16b], is_sub=false)
-- Bug report: bug_reports/encode_neon_add_sub_invalid_t.md
+- Counterexample: encode_neon_ushr([v0.8b, v0.16b, #1])
+- Bug report: pbt-out/bug_reports/encode_neon_ushr_mismatched_t.md
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, td, tn, tm, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, td: any_t, tn: any_t, tm: any_t, is_sub: bool }
+  vars: [rd, rn, td, tn, shift]
+  domain: { rd: u32_0_31, rn: u32_0_31, td: any_neon_t, tn: any_neon_t, shift: 1_64 }
   relation:
-    op: throws
-    expr: encode_neon_add_sub([Vd.Td,Vn.Tn,Vm.Tm], is_sub)
+    op: holds
+    lhs: encode_neon_ushr([Vd.Td, Vn.Tn, Imm(shift)]).is_err()
+expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
   td: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
   tn: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
-  tm: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
-  is_sub: { gen: bool }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
 ```
 
-## encode_neon_add_sub_neg_gpr_or_bare
+## encode_neon_ushr_neg_shift_oob
 - Tier: 4
-- Rationale: gas/llvm-mc require Vd.T / Vn.T / Vm.T. GPR dest, bare V, and xN.T are rejected. parse_reg_num accepts x/w/d/s/q/v/h/b and maps them to 0–31.
-- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_gpr_or_bare
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, kind ∈ {gpr_dest, bare_vn, x_rm, bare_vd, x_vd_arr}. llvm-mc rejects the corresponding asm ⇒ encode_neon_add_sub(ops(kind), is_sub) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: ARM/llvm-mc require shift in [1, esize(T)]. Bounds must be sampled at 0, 1, esize, esize+1. The SUT masks (2*esize - shift) which wraps OOB shifts into a valid-looking immh:immb. i64 values that truncate to a valid u32 shift are also out of the documented domain.
+- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
+- Seed: neon.rs encode_neon_shift_imm_neg_shift_oob
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ ℤ \ [1, esize(T)]. llvm-mc rejects "ushr Vd.T, Vn.T, #shift" ⇒ encode_neon_ushr([Vd.T,Vn.T,#shift]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_add_sub([v0.8b, Reg(v0), v0.8b], is_sub=false)
-- Bug report: bug_reports/encode_neon_add_sub_bare_src.md
+- Counterexample: encode_neon_ushr([v0.8b, v0.8b, #0])
+- Bug report: pbt-out/bug_reports/encode_neon_ushr_shift_oob.md
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_sub, kind]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool, kind: 0..4 }
+  vars: [rd, rn, t, shift]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: not_in_1_esize }
   relation:
-    op: throws
-    expr: encode_neon_add_sub(ops(kind), is_sub)
+    op: holds
+    lhs: encode_neon_ushr([Vd.T, Vn.T, Imm(shift)]).is_err()
+expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
-  kind: { gen: int, min: 0, max: 4, type: u8 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
+  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
+  shift: { gen: int, min: -8, max: 128, type: i64 }
+evidence: llvm-mc "immediate must be an integer in range [1, esize]"
 ```
 
-## encode_neon_add_sub_diff_alt_spellings
+## encode_neon_ushr_neg_gpr_or_bare
+- Tier: 4
+- Rationale: gas/llvm-mc require Vd.T / Vn.T. GPR dest, bare V without arrangement, and xN.T are invalid. get_neon_reg accepts Operand::Reg and parse_reg_num accepts x/w prefixes, so these inputs are caller-reachable.
+- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_gpr_or_bare
+- Formal: ∀ rd,rn ∈ {0..31}, kind ∈ {gpr_dest, bare_src, x_arr_dest, bare_dest, fp_dest}. llvm-mc rejects the corresponding ushr ⇒ encode_neon_ushr(ops(kind)) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_ushr([x0.8b, v0.8b, #1])
+- Bug report: pbt-out/bug_reports/encode_neon_ushr_gpr_dest.md
+
+```property
+function: encoder.encode_neon_ushr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, kind]
+  domain: { rd: u32_0_31, rn: u32_0_31, kind: gpr_bare_kind }
+  relation:
+    op: holds
+    lhs: encode_neon_ushr(ops(kind)).is_err()
+expected_error: String
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  kind: { gen: int, min: 0, max: 4, type: u8 }
+evidence: neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
+```
+
+## encode_neon_ushr_diff_alt_spellings
 - Tier: 2
-- Rationale: Differential vs llvm-mc on uppercase mnemonic/V prefix (parser lowercases). Strengthens p1 past the canonical lowercase spelling.
-- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_diff_alt_spellings
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. encode_neon_add_sub([V{rd}.T, V{rn}.T, V{rm}.T], is_sub) = llvm-mc("ADD|SUB Vd.T, Vn.T, Vm.T")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: Sweep — README gas-compatibility plus parse_reg_num lowercasing V prefixes. Differential vs llvm-mc on uppercase mnemonic/V with lowercase T.
+- Doc contract: neon.rs:1179 "Encode NEON USHR (unsigned shift right immediate)" — asserted fingerprint 42c4ff29
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_diff_alt_spellings
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_ushr([Vd.T,Vn.T,#shift] with V prefix) = llvm-mc("USHR Vd.T, Vn.T, #shift")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, is_sub]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: neon_t, is_sub: bool }
+  vars: [rd, rn, t, shift]
+  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
   relation:
     op: eq
-    lhs: encode_neon_add_sub([Vrd.T, Vrn.T, Vrm.T], is_sub)
-    rhs: llvm_mc(ADD_or_SUB Vd.T, Vn.T, Vm.T)
+    lhs: encode_neon_ushr([V{rd}.T, V{rn}.T, Imm(shift)])
+    rhs: llvm_mc(USHR Vd.T, Vn.T, #shift)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
   t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  is_sub: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
+  shift: { gen: int, min: 1, max: 64, type: i64 }
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint 10d52c4c
 ```
 
-## encode_neon_add_sub_neg_nonreg
+## encode_neon_ushr_neg_nonreg
 - Tier: 4
-- Rationale: Sweep — Imm/Mem/Label at any operand slot must Err (get_neon_reg else-arm). llvm-mc rejects Imm/Mem/Label dest. Weaker than the GPR/bare property; covers the documented error path of non-register operands.
-- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
-- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_nonreg
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, kind ∈ {Imm,Mem,Label}, slot ∈ {0,1,2}. encode_neon_add_sub(ops with slot replaced by kind, is_sub) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
+- Rationale: Sweep — Imm/Mem/Label at a register slot must Err (get_neon_reg error contract). llvm-mc rejects non-register dest.
+- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
+- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_nonreg
+- Formal: ∀ rd,rn ∈ {0..31}, kind ∈ {Imm, Mem, Label}, slot ∈ {0,1}. encode_neon_ushr(ops with slot replaced by kind) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_add_sub
+function: encoder.encode_neon_ushr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_sub, kind, slot]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool, kind: 0..2, slot: 0..2 }
+  vars: [rd, rn, kind, slot]
+  domain: { rd: u32_0_31, rn: u32_0_31, kind: 0_2, slot: 0_1 }
   relation:
-    op: throws
-    expr: encode_neon_add_sub(ops_with_nonreg(kind, slot), is_sub)
+    op: holds
+    lhs: encode_neon_ushr(ops_with_nonreg).is_err()
+expected_error: String
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_sub: { gen: bool }
   kind: { gen: int, min: 0, max: 2, type: u8 }
-  slot: { gen: int, min: 0, max: 2, type: usize }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
+  slot: { gen: int, min: 0, max: 1, type: usize }
+evidence: neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
 ```
