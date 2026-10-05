@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_neon_elem)
+
+- Valid MUL/MLA/MLS/SQDMULH/SQRDMULH Vd.T, Vn.T, Vm.Ts[idx] with T in {4h,8h,2s,4s}, ARM-correct (U, opcode) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: bit31=0, Q at 30, U at 29, bits[28:24]=01111, size at [23:22] (01 for .h, 10 for .s), L at 21, M at 20, Rm[3:0] at [19:16], opcode at [15:12], H at 11, bit10=0, Rn at [9:5], Rd at [4:0] (1000 cases).
+- Rd/Rn isolation in bits[4:0]/[9:5]; U isolation at bit 29 (1000 cases).
+- Arity 0–2 always Err (1000 cases).
+- Dest arrangements 8b/16b/2d/1d/4b/empty always Err (1000 cases).
+- Uppercase V prefix matches llvm-mc (1000 cases).
+- Known-answer: `mul v0.4h, v1.4h, v2.h[2]` = 0x0f628020; `mla v0.8h, v1.8h, v15.h[7]` = 0x6f7f0820; `mls v0.2s, v1.2s, v31.s[3]` = 0x2fbf4820; `sqdmulh v0.4s, v1.4s, v2.s[1]` = 0x4fa2c020; `sqrdmulh v31.4h, v30.4h, v0.h[0]` = 0x0f40d3df.
+
+## Environment (encode_neon_elem)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD vector x indexed element (non-long): T in {4H,8H,2S,4S}; size=00/11 reserved; size=01 Rm v0-v15 index H:L:M 0..7; size=10 Rm v0-v31 (M=Rm[4]) index H:L 0..3. MUL U=0 opcode=1000; MLA U=1 opcode=0000; MLS U=1 opcode=0100; SQDMULH U=0 opcode=1100; SQRDMULH U=0 opcode=1101.
+- Dispatch: encoder/mod.rs:307-310 mul RegLane; encoder/mod.rs:782-787 sqdmulh/sqrdmulh; encoder/mod.rs:793-796 mla/mls (dispatcher currently passes u_bit=0 for MLA/MLS; properties call encode_neon_elem with ARM-correct U).
+- encode_neon_elem checks operands.len() < 3 only; source arrangement discarded; lane elem_size discarded; no index range check; half-word Rm is `rm & 0xF`; get_neon_reg accepts Operand::Reg (empty arrangement then fails neon_arr_to_q_size) and x/w prefixes on RegArrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep: unsupported-t/alt-spellings passing, index-oob/lane-elem failing.
+- Six SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_elem_*.md.
+
+## Quirks (encode_neon_elem)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- H-lane Rm v16-v31 is truncated to v0-v15 (see bugs).
+- X-prefixed RegArrangement dest encodes as V (see bugs).
+- Out-of-range index wraps via H:L:M bits (see bugs).
+- Lane elem_size is ignored (see bugs).
+- Bare Operand::Reg dest returns Err via empty arrangement (unlike encode_neon_elem_long).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus unsupported-t/alt-spellings/index-oob/lane-elem.
+
 # Confirmed invariants (encode_neon_elem_long)
 
 - Valid SMULL/UMULL/SMLAL/UMLAL/SMLSL/UMLSL/SQDMULL/SQDMLAL/SQDMLSL (+ `2`) Vd.{4s,2d}, Vn.{4h,8h,2s,4s}, Vm.{h,s}[idx] with ARM-correct (U, opcode, is_high) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

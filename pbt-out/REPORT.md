@@ -1,181 +1,202 @@
-# PBT Campaign Report: encode_neon_elem_long
+# PBT Campaign Report: encode_neon_elem
 
 ## Summary
 
-**Verdict:** 1 high: encode_neon_elem_long silently encodes `smull … v16.h[0]` as `v0.h[0]` (Rm truncated); plus 4 medium: extra operand ignored, dest arrangement ignored, GPR dest accepted, lane elem_size ignored.
+**Verdict:** 6 medium: encode_neon_elem silently encodes illegal GNU-style by-element MUL/MLA/MLS/SQDMULH/SQRDMULH (extra operand, mismatched T, H-lane Rm v16–v31, X-prefixed dest, out-of-range index, mismatched lane elem_size) instead of returning Err, so gas-rejected assembly becomes a 32-bit word.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_elem_long
-**Tests:** 12
-**Result:** 7 passing, 5 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed NOT LINKED against unrelated C++ binaries; cargo test --lib linked and executed encode_neon_elem_long (4 KAT + 7 passing properties).
+**Modules tested:** encode_neon_elem
+**Tests:** 12 properties (plus 2 KAT + 6 regression witnesses)
+**Result:** 6 passing, 6 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). cargo test --lib encode_neon_elem_pbt executed the symbol (2 KAT + 6 passing properties at 1000 cases).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_elem_long | 12 | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_elem | 12 properties (6 pass / 6 fail) + 2 KAT + 6 regression | 6 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_elem_long ignores a fourth operand
+### B1: encode_neon_elem ignores a fourth operand
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, valid (ta,tb,elem,idx,hi), extra operand. llvm-mc rejects mnem Vd.ta, Vn.tb, Vm.elem[idx], extra ⇒ encode_neon_elem_long([Vd.ta,Vn.tb,Vm.elem[idx],extra],...) = Err
-**Contract evidence:** inferred (README.md:12 GNU-style assembly; llvm-mc rejects a fourth operand)
-**Documentation conflict:** (none) — neon.rs:237 states a minimum of 3 operands and does not declare a maximum
+**Formal:** ∀ valid by-element triple + extra operand. llvm-mc rejects ⇒ encode_neon_elem(ops++[extra], U, opc) = Err
+**Contract evidence:** inferred (public wrapper encode() at encoder/mod.rs:307-310 / 793-796 passes operands through; llvm-mc/gas reject a fourth operand; README.md:12 GNU-style assembly)
+**Documentation conflict:** neon.rs:1592 "NEON by-element requires 3 operands" — the error fires only for len < 3; it does not declare extra invalid as an input-domain restriction (no maximum). Context, not an exclusion.
 **Severity:** medium
-**Counterexample:** encode_neon_elem_long([v0.4s, v0.4h, v0.h[0], v0.4s], u=0, opcode=0b1010, is_high=false)
-**Expected / Actual:** Err / Ok(Word) (fourth operand ignored)
-**Impact:** Illegal four-operand long by-element assembly is assembled as the three-operand form
-**Root cause:** neon.rs:236 checks only `operands.len() < 3`, then encodes
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:236`
+**Counterexample:** encode_neon_elem([v0.4h, v0.4h, v0.h[0], v0.4h], u=0, opcode=0b1000)
+**Expected / Actual:** Err / Ok(Word) — fourth operand ignored
+**Impact:** Illegal assembly such as `mul v0.4h, v0.4h, v0.h[0], v0.4h` becomes a valid 32-bit word
+**Root cause:** neon.rs:1592 checks only `operands.len() < 3` and then encodes, so any extra operand after the lane is dropped
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1592`
 ```rust
-    if operands.len() < 3 {
-        return Err("NEON elem-long requires 3 operands".to_string());
-    }
+    if operands.len() < 3 { return Err("NEON by-element requires 3 operands".to_string()); }
 ```
-**Suggested fix:** Reject when the operand count is not exactly 3
+**Suggested fix:** Reject when `operands.len() != 3`
 ```rust
     if operands.len() != 3 {
-        return Err("NEON elem-long requires 3 operands".to_string());
+        return Err("NEON by-element requires 3 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_elem_long_extra_operand.md
-**Repro seed:** cc 1e40101823349a70e495bafb7ead80283ab80286b71bc24dcfa82aead9bcb594
+**Bug report:** bug_reports/encode_neon_elem_extra_operand.md
+**Repro seed:** cc 1e1f2d8cf733a5a159408b23c6356532c0b57ee21a62c80fa4fd2013bb107840
 **Raw output:**
 ```text
-Test failed: extra operand must Err (llvm-mc rejects smull v0.4s, v0.4h, v0.h[0], v0.4s)
-minimal failing input: rd = 0, rn = 0, rm_raw = 0, extra = 0, idx_raw = 0, shape = ("4h", "4s", "h", 7, 15, false), insn = (0, 10, "smull")
+thread 'backend::arm::assembler::encoder::encode_neon_elem_pbt::test_encode_neon_elem_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs:597:5:
+mul v0.4h, v0.4h, v0.h[0], v0.4h must Err (llvm-mc/gas reject a fourth operand)
 ```
 
-### B2: encode_neon_elem_long ignores destination arrangement
+### B2: encode_neon_elem ignores a mismatched source arrangement
 
-**Formal:** ∀ rd,rn,rm, tb ∈ {4h,8h,2s,4s}, ta' ≠ mandated_ta(tb), idx in-range. llvm-mc rejects smull Vd.ta', Vn.tb, Vm.elem[idx] ⇒ encode_neon_elem_long([Vd.ta',Vn.tb,Vm.elem[idx]], 0, 0b1010, hi(tb)) = Err
-**Contract evidence:** inferred (ARM long by-element dest is the widened source; llvm-mc rejects mismatched Ta)
+**Formal:** ∀ T, T' ≠ T ∈ {8b,16b,4h,8h,2s,4s,2d,1d}. llvm-mc rejects mul Vd.T, Vn.T', Vm.Ts[idx] ⇒ encode_neon_elem([Vd.T, Vn.T', Vm.Ts[idx]], 0, 0b1000) = Err
+**Contract evidence:** inferred (ARM matching T; llvm-mc rejects; wrapper encode() passes operands through at encoder/mod.rs:307-310)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_elem_long([v0.8b, v0.4h, v0.h[0]], u=0, opcode=0b1010, is_high=false)
-**Expected / Actual:** Err / Ok(Word) (dest arrangement discarded)
-**Impact:** Illegal dest arrangement is encoded as if dest were the mandated .4s/.2d
-**Root cause:** neon.rs:239 binds dest arrangement as `_arr_d` and never checks it
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:239`
+**Counterexample:** encode_neon_elem([v0.4h, v0.8b, v0.h[0]], u=0, opcode=0b1000)
+**Expected / Actual:** Err / Ok(Word) — source arrangement discarded
+**Impact:** `mul v0.4h, v0.8b, v0.h[0]` encodes as a valid .4h by-element word
+**Root cause:** neon.rs:1594 binds source as `let (rn, _) = get_neon_reg(operands, 1)?`, discarding the source arrangement; Q/size come only from dest
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1594`
 ```rust
-    let (rd, _arr_d) = get_neon_reg(operands, 0)?;
+    let (rn, _) = get_neon_reg(operands, 1)?;
 ```
-**Suggested fix:** Require dest arrangement to be the widened form of the source (4h/8h → 4s, 2s/4s → 2d)
+**Suggested fix:** Compare source arrangement against dest and return Err on mismatch
 ```rust
-    let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let mandated = match arr_n.as_str() {
-        "4h" | "8h" => "4s",
-        "2s" | "4s" => "2d",
-        _ => unreachable!(),
-    };
-    if arr_d != mandated {
-        return Err(format!("elem-long dest arrangement {} does not match source {}", arr_d, arr_n));
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    if arr_n != arr_d {
+        return Err(format!("mismatched arrangement: dest {arr_d} src {arr_n}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_elem_long_mismatch_ta.md
+**Bug report:** bug_reports/encode_neon_elem_mismatch_t.md
 **Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: mismatched dest Ta must Err (llvm-mc rejects smull v0.8b, v0.4h, v0.h[0]; mandated Ta=4s)
-minimal failing input: rd = 0, rn = 0, rm_raw = 0, idx_raw = 0, shape = ("4h", "4s", "h", 7, 15, false), ta_wrong = "8b"
+thread 'backend::arm::assembler::encoder::encode_neon_elem_pbt::test_encode_neon_elem_regression_mismatch_t' panicked at src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs:606:5:
+mul v0.4h, v0.8b, v0.h[0] must Err (llvm-mc/gas require matching T)
 ```
 
-### B3: encode_neon_elem_long silently truncates H-lane Rm v16–v31 to v0–v15
+### B3: encode_neon_elem truncates H-lane Rm v16-v31 to v0-v15
 
-**Formal:** ∀ rd,rn ∈ {0..31}, rm ∈ {16..31}, idx ∈ {0..7}, tb ∈ {4h,8h}. llvm-mc rejects smull Vd.4s, Vn.tb, Vm.h[idx] ⇒ encode_neon_elem_long(...) = Err
-**Contract evidence:** inferred (ARM size=01 Rm is 4 bits / v0-v15; llvm-mc rejects v16.h[0]; README.md:12 GNU-style)
-**Documentation conflict:** neon.rs:289 "Limit Rm for half-word indexing (only v0-v15)" is the producing mask comment, not an input-domain restriction and not an admission that v16-v31 may be passed. Does not retire the fail.
-**Severity:** high
-**Counterexample:** encode_neon_elem_long([v0.4s, v0.4h, v16.h[0]], u=0, opcode=0b1010, is_high=false)
-**Expected / Actual:** Err / Ok(Word) with Rm field 0 (v16 & 0xF)
-**Impact:** `smull v0.4s, v0.4h, v16.h[0]` is assembled as `smull v0.4s, v0.4h, v0.h[0]` — wrong register, no error
-**Root cause:** neon.rs:287 masks `rm & 0xF` for half-word instead of rejecting rm > 15
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:287`
+**Formal:** ∀ rd,rn ∈ {0..31}, rm ∈ {16..31}, idx ∈ {0..7}, T ∈ {4h,8h}. llvm-mc rejects mul Vd.T, Vn.T, Vm.h[idx] ⇒ encode_neon_elem(...) = Err
+**Contract evidence:** inferred (ARM size=01 Rm v0-v15; llvm-mc rejects v16.h[0]; `rm & 0xF` is the producing mask, not an API exclusion)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_elem([v0.4h, v0.4h, v16.h[0]], u=0, opcode=0b1000)
+**Expected / Actual:** Err / Ok(Word) encoding Rm=v0
+**Impact:** `mul v0.4h, v0.4h, v16.h[0]` silently encodes as v0.h[0]
+**Root cause:** neon.rs:1605 masks half-word Rm with `rm & 0xF` instead of rejecting rm >= 16
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1605`
 ```rust
     let rm_enc = if size == 0b01 { rm & 0xF } else { rm & 0x1F };
 ```
-**Suggested fix:** Return Err when size=01 and rm > 15
+**Suggested fix:** Reject Rm v16-v31 when size is 01 (H)
 ```rust
     if size == 0b01 && rm > 15 {
-        return Err(format!("H-lane Rm v{} out of range (v0-v15)", rm));
+        return Err(format!("H-lane Rm v{rm} out of range (v0-v15)"));
     }
     let rm_enc = if size == 0b01 { rm & 0xF } else { rm & 0x1F };
 ```
-**Bug report:** bug_reports/encode_neon_elem_long_h_rm_hi.md
+**Bug report:** bug_reports/encode_neon_elem_h_rm_hi.md
 **Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: H-lane Rm v16-v31 must Err (ARM size=01 Rm v0-v15; llvm-mc rejects smull v0.4s, v0.4h, v16.h[0])
-minimal failing input: rd = 0, rn = 0, rm = 16, idx = 0, tb = "4h"
+thread 'backend::arm::assembler::encoder::encode_neon_elem_pbt::test_encode_neon_elem_regression_h_rm_hi' panicked at src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs:615:5:
+mul v0.4h, v0.4h, v16.h[0] must Err (ARM size=01 Rm v0-v15; llvm-mc rejects)
 ```
 
-### B4: encode_neon_elem_long accepts a GPR destination as a NEON register
+### B4: encode_neon_elem accepts an X-prefixed arranged destination as a V register
 
-**Formal:** ∀ kind ∈ {x-dest, w-dest, sp-dest, bare-v, x-arranged, non-lane-third, s-dest}. llvm-mc rejects the corresponding asm ⇒ encode_neon_elem_long(ops, 0, 0b1010, false) = Err
-**Contract evidence:** inferred (README.md:12 GNU-style; llvm-mc requires Vd.Ta)
+**Formal:** ∀ kind ∈ {x-dest, w-dest, sp-dest, bare-V, x-prefix arrangement, non-lane third, s-dest}. llvm-mc rejects ⇒ encode_neon_elem(ops, 0, 0b1000) = Err
+**Contract evidence:** inferred (GNU-style by-element requires Vd.T; llvm-mc rejects `mul x0.4h, ...`; parse_reg_num accepting x is not this function's contract)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_elem_long([x0, v0.4h, v0.h[0]], u=0, opcode=0b1010, is_high=false)
-**Expected / Actual:** Err / Ok(Word) with Rd=0
-**Impact:** `smull x0, v0.4h, v0.h[0]` is encoded as if dest were v0
-**Root cause:** neon.rs:239 extracts dest via get_neon_reg, which accepts Operand::Reg and x/w/s/sp prefixes
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:239`
+**Counterexample:** encode_neon_elem([x0.4h, v0.4h, v0.h[0]], u=0, opcode=0b1000)
+**Expected / Actual:** Err / Ok(Word) encoding Rd=0 as if dest were v0.4h
+**Impact:** `mul x0.4h, v0.4h, v0.h[0]` encodes as `mul v0.4h, ...`
+**Root cause:** neon.rs:1593 extracts dest via get_neon_reg → parse_reg_num, which accepts prefix x/w/d/s/q/h/b as well as v
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1593`
 ```rust
-    let (rd, _arr_d) = get_neon_reg(operands, 0)?;
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
 ```
-**Suggested fix:** Require dest to be Operand::RegArrangement with a `v` prefix
+**Suggested fix:** Require a `v` prefix on arranged NEON registers before encoding
 ```rust
-    let (rd, arr_d) = match operands.get(0) {
-        Some(Operand::RegArrangement { reg, arrangement }) if reg.to_lowercase().starts_with('v') => {
-            let num = parse_reg_num(reg).ok_or_else(|| format!("invalid NEON register: {}", reg))?;
-            (num, arrangement.clone())
-        }
-        other => return Err(format!("expected NEON Vd.Ta at operand 0, got {:?}", other)),
+    let dest_name = match &operands[0] {
+        Operand::RegArrangement { reg, .. } => reg,
+        _ => return Err("expected NEON register".to_string()),
     };
-```
-**Bug report:** bug_reports/encode_neon_elem_long_gpr_dest.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-Test failed: non-arranged NEON / GPR / SP / non-V prefix / non-lane third must Err (llvm-mc rejects smull x0, v0.4h, v0.h[0])
-minimal failing input: rd = 0, rn = 0, rm = 0, idx = 0, kind = 0
-```
-
-### B5: encode_neon_elem_long ignores the lane element size
-
-**Formal:** ∀ valid (ta,tb,elem,idx), wrong ≠ elem. llvm-mc rejects mnem Vd.ta, Vn.tb, Vm.wrong[idx] ⇒ encode_neon_elem_long(...) = Err
-**Contract evidence:** inferred (neon.rs:234 lane example v0.h[2]; llvm-mc requires lane elem size to match the source)
-**Documentation conflict:** (none) — `elem_size: _` is the producing bind, not a documented exclusion
-**Severity:** medium
-**Counterexample:** encode_neon_elem_long([v0.2d, v0.2s, v0.b[0]], u=0, opcode=0b1010, is_high=false)
-**Expected / Actual:** Err / Ok(Word) encoded as if the lane were v0.s[0]
-**Impact:** `smull v0.2d, v0.2s, v0.b[0]` is assembled as a .s-lane form
-**Root cause:** neon.rs:244 binds `elem_size: _` and never checks it against the source element size
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:244`
-```rust
-        Operand::RegLane { reg, elem_size: _, index } => {
-```
-**Suggested fix:** Require `elem_size` to be `"h"` when size=01 and `"s"` when size=10
-```rust
-        Operand::RegLane { reg, elem_size, index } => {
-            let rm = parse_reg_num(reg).ok_or("invalid NEON register")?;
-            (rm, elem_size.clone(), *index)
-        }
-    let want = if size == 0b01 { "h" } else { "s" };
-    if elem_size != want {
-        return Err(format!("elem-long lane size .{} does not match source", elem_size));
+    if !dest_name.to_lowercase().starts_with('v') {
+        return Err(format!("expected V register, got {dest_name}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_elem_long_lane_elem_mismatch.md
+**Bug report:** bug_reports/encode_neon_elem_x_prefix.md
+**Repro seed:** cc a86789e549634cbd2b9ab29ecdf1403a36128cd05ac44e8c49ff91fd558214cd
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_elem_pbt::test_encode_neon_elem_regression_x_prefix' panicked at src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs:631:5:
+mul x0.4h, v0.4h, v0.h[0] must Err (llvm-mc/gas require Vd)
+```
+
+### B5: encode_neon_elem wraps an out-of-range lane index instead of rejecting it
+
+**Formal:** ∀ T ∈ {4h,8h,2s,4s}, idx > imax(T). llvm-mc rejects mul Vd.T, Vn.T, Vm.Ts[idx] ⇒ encode_neon_elem(...) = Err
+**Contract evidence:** inferred (ARM H:L:M 0..7 / H:L 0..3; llvm-mc "vector lane must be an integer in range [0, 7]"; sibling encode_neon_elem_long range-checks)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_elem([v0.4h, v0.4h, v0.h[8]], u=0, opcode=0b1000)
+**Expected / Actual:** Err / Ok(Word) encoding index 0
+**Impact:** `mul v0.4h, v0.4h, v0.h[8]` silently encodes as index 0
+**Root cause:** neon.rs:1599-1603 takes only the bits that fit in H:L:M / H:L and never range-checks `index`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1599`
+```rust
+    let (h, l, m_bit) = match size {
+        0b01 => ((index >> 2) & 1, (index >> 1) & 1, index & 1),
+        0b10 => ((index >> 1) & 1, index & 1, (rm >> 4) & 1),
+        _ => return Err("unsupported element size for by-element".to_string()),
+    };
+```
+**Suggested fix:** Range-check index the same way encode_neon_elem_long does
+```rust
+            if index > 7 {
+                return Err(format!("element index {index} out of range for .h"));
+            }
+```
+**Bug report:** bug_reports/encode_neon_elem_index_oob.md
 **Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: lane elem_size b must match source s (llvm-mc rejects smull v0.2d, v0.2s, v0.b[0])
-minimal failing input: rd = 0, rn = 0, rm_raw = 0, idx_raw = 0, shape = ("2s", "2d", "s", 3, 31, false), wrong = "b"
+thread 'backend::arm::assembler::encoder::encode_neon_elem_pbt::encode_neon_elem_neg_index_oob' panicked at src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs:223:1:
+Test failed: index 8 out of range for .h must Err (llvm-mc rejects mul v0.4h, v0.4h, v0.h[8])
+```
+
+### B6: encode_neon_elem ignores RegLane elem_size
+
+**Formal:** ∀ T ∈ {4h,8h,2s,4s}, wrong ≠ Ts(T). llvm-mc rejects mul Vd.T, Vn.T, Vm.wrong[idx] ⇒ encode_neon_elem(...) = Err
+**Contract evidence:** inferred (llvm-mc rejects Vm.b[idx] for T=.4h; wrapper encode() passes RegLane through)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_elem([v0.4h, v0.4h, v0.b[0]], u=0, opcode=0b1000)
+**Expected / Actual:** Err / Ok(Word) — elem_size discarded
+**Impact:** `mul v0.4h, v0.4h, v0.b[0]` encodes as a valid .h-lane by-element word
+**Root cause:** neon.rs:1595-1596 matches `Operand::RegLane { reg, index, .. }`, dropping `elem_size`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1595`
+```rust
+        Operand::RegLane { reg, index, .. } => (parse_reg_num(reg).ok_or("invalid reg")?, *index),
+```
+**Suggested fix:** Bind and check elem_size against dest size
+```rust
+        Operand::RegLane { reg, elem_size, index } => {
+            let rm = parse_reg_num(reg).ok_or("invalid reg")?;
+            (rm, elem_size.clone(), *index)
+        }
+```
+**Bug report:** bug_reports/encode_neon_elem_lane_elem_mismatch.md
+**Repro seed:** (deterministic regression)
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_elem_pbt::encode_neon_elem_neg_lane_elem_mismatch' panicked at src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs:223:1:
+Test failed: lane elem_size b must match arrangement h (llvm-mc rejects mul v0.4h, v0.4h, v0.b[0])
 ```
 
 ## Design Caveats
@@ -186,45 +207,26 @@ minimal failing input: rd = 0, rn = 0, rm_raw = 0, idx_raw = 0, shape = ("2s", "
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_elem_long_pbt.rs | 12 properties + 4 KAT + 5 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_elem_long_pbt;` |
+| src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs | 12 properties + 2 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_elem_pbt;` |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_elem_long -- --test-threads=1
+cargo test --lib encode_neon_elem_pbt -- --test-threads=1
 ```
 
-B1 extra operand:
+Per-bug:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_elem_long_regression_extra_operand -- --test-threads=1
-```
-
-B2 dest arrangement:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_elem_long_regression_mismatch_ta -- --test-threads=1
-```
-
-B3 H-lane Rm:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_elem_long_regression_h_rm_hi -- --test-threads=1
-```
-
-B4 GPR dest:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_elem_long_regression_gpr_dest -- --test-threads=1
-```
-
-B5 lane elem_size:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_elem_long_regression_lane_elem_mismatch -- --test-threads=1
+cargo test --lib test_encode_neon_elem_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_elem_regression_mismatch_t -- --test-threads=1
+cargo test --lib test_encode_neon_elem_regression_h_rm_hi -- --test-threads=1
+cargo test --lib test_encode_neon_elem_regression_x_prefix -- --test-threads=1
+cargo test --lib test_encode_neon_elem_regression_index_oob -- --test-threads=1
+cargo test --lib test_encode_neon_elem_regression_lane_elem_mismatch -- --test-threads=1
 ```
 
 ## Output Directories
@@ -238,24 +240,25 @@ cargo test --lib test_encode_neon_elem_long_regression_lane_elem_mismatch -- --t
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_neon_elem_long_extra_operand.md
-- pbt-out/bug_reports/encode_neon_elem_long_extra_operand.html
-- pbt-out/bug_reports/encode_neon_elem_long_mismatch_ta.md
-- pbt-out/bug_reports/encode_neon_elem_long_mismatch_ta.html
-- pbt-out/bug_reports/encode_neon_elem_long_h_rm_hi.md
-- pbt-out/bug_reports/encode_neon_elem_long_h_rm_hi.html
-- pbt-out/bug_reports/encode_neon_elem_long_gpr_dest.md
-- pbt-out/bug_reports/encode_neon_elem_long_gpr_dest.html
-- pbt-out/bug_reports/encode_neon_elem_long_lane_elem_mismatch.md
-- pbt-out/bug_reports/encode_neon_elem_long_lane_elem_mismatch.html
-- pbt-out/run/ (cargo test CWD)
+- pbt-out/bug_reports/encode_neon_elem_extra_operand.md
+- pbt-out/bug_reports/encode_neon_elem_extra_operand.html
+- pbt-out/bug_reports/encode_neon_elem_mismatch_t.md
+- pbt-out/bug_reports/encode_neon_elem_mismatch_t.html
+- pbt-out/bug_reports/encode_neon_elem_h_rm_hi.md
+- pbt-out/bug_reports/encode_neon_elem_h_rm_hi.html
+- pbt-out/bug_reports/encode_neon_elem_x_prefix.md
+- pbt-out/bug_reports/encode_neon_elem_x_prefix.html
+- pbt-out/bug_reports/encode_neon_elem_index_oob.md
+- pbt-out/bug_reports/encode_neon_elem_index_oob.html
+- pbt-out/bug_reports/encode_neon_elem_lane_elem_mismatch.md
+- pbt-out/bug_reports/encode_neon_elem_lane_elem_mismatch.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 19:35 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 137/289 total | PBT candidates: 137 | Tested: 137 (100%) | 0 pass, 137 fail
+> Last updated: 2026-10-05 19:57 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 138/289 total | PBT candidates: 138 | Tested: 138 (100%) | 0 pass, 138 fail
 
 ## Summary
 
@@ -264,10 +267,10 @@ cargo test --lib test_encode_neon_elem_long_regression_lane_elem_mismatch -- --t
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 137 |
-| **Tested (of PBT candidates)** | **137 / 137 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 137 / 0 |
-| **Overall (tested / all functions)** | **137 / 289 (47%)** |
+| PBT candidates (from FUNCTION_INDEX) | 138 |
+| **Tested (of PBT candidates)** | **138 / 138 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 138 / 0 |
+| **Overall (tested / all functions)** | **138 / 289 (48%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -275,13 +278,13 @@ cargo test --lib test_encode_neon_elem_long_regression_lane_elem_mismatch -- --t
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 137 | 137 | 0 | 100% |
+|  | 138 | 138 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 137 | 137 | 0 | 100% |
+| unknown | 138 | 138 | 0 | 100% |
 
 ## File Coverage
 
@@ -294,7 +297,7 @@ cargo test --lib test_encode_neon_elem_long_regression_lane_elem_mismatch -- --t
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 52 | 52 | 100% | covered |
+| neon.rs | 68 | 53 | 53 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -441,3 +444,4 @@ cargo test --lib test_encode_neon_elem_long_regression_lane_elem_mismatch -- --t
 | encode_neon_logical | neon.rs |
 | encode_neon_cmp_zero | neon.rs |
 | encode_neon_elem_long | neon.rs |
+| encode_neon_elem | neon.rs |

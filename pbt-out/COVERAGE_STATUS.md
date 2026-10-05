@@ -1,33 +1,22 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_elem_long, English)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw
-> Files: 10/10 scanned | Functions: 289 total | PBT candidates: 137 | This campaign tested: encode_neon_elem_long
+> Last updated: 2026-10-05 (campaign: encode_neon_elem, English)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). cargo test --lib encode_neon_elem_pbt executed encode_neon_elem (2 KAT + 6 passing properties at 1000 cases).
 
 ## This campaign
 
 | Metric | Value |
 |--------|-------|
-| Target | encode_neon_elem_long (neon.rs:235) |
-| Properties | 12 (7 passing, 5 failing) |
-| KAT | 4 passing |
-| Regression witnesses | 5 failing (bugs) |
-| Bugs | 5 (1 high, 4 medium) |
-| Sweep | 1/1 round spent |
+| Target | encode_neon_elem (neon.rs:1591) |
+| Properties | 12 (6 passing / 6 failing) |
+| KAT | 2 passing |
+| Regression witnesses | 6 failing |
+| Bugs | 6 medium |
+| Sweep | 1/1 (unsupported-t / alt-spellings passing; index-oob / lane-elem failing) |
+| Tier | standard |
 
-## Summary
+## File Coverage (this campaign)
 
-| Metric | Value |
-|--------|-------|
-| Total source files | 10 |
-| Files scanned | 10 / 10 (100%) |
-| Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 137 |
-| **Tested this campaign** | encode_neon_elem_long |
-| Coverage evidence | file-level (symbol presence) |
-
-## File Coverage
-
-| Source File | Notes |
-|-------------|-------|
-| neon.rs | encode_neon_elem_long executed via cargo test --lib (KAT + properties) |
+| Source File | Function | Tested | Status |
+|-------------|----------|--------|--------|
+| neon.rs | encode_neon_elem | yes | 6 pass / 6 fail |
