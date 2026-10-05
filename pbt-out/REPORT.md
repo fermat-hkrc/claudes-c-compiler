@@ -1,149 +1,134 @@
-# PBT Campaign Report: encode_neon_two_misc_narrow
+# PBT Campaign Report: encode_dmb
 
 ## Summary
 
-**Verdict:** 1 high, 2 medium: encode_neon_two_misc_narrow discards the dest arrangement so `xtn v0.8h, v0.4s` encodes as XTN Vd.4H, silently accepts a third operand, and encodes a bare/GPR dest as Vd.8B — gas/llvm-mc reject all three.
+**Verdict:** 1 high, 3 medium: encode_dmb ignores Operand::Imm so `dmb #0` encodes as `dmb sy` (wrong barrier), and it silently encodes extra, omitted, and non-barrier operands as SY instead of rejecting them the way GNU as and llvm-mc do.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_two_misc_narrow
-**Tests:** 9
-**Result:** 6 passing, 3 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and listed unrelated C++ binaries as NOT LINKED; the SUT ran inside `cargo test --lib encode_neon_two_misc_narrow` (KAT + 1000-case properties).
+**Modules tested:** encode_dmb
+**Tests:** 8 properties (plus 3 KAT, 4 regression witnesses)
+**Result:** 4 passing, 4 bugs
+**Change surface:** 1 changed function (encode_dmb), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed encode_dmb NOT LINKED because it inspected unrelated C++ binaries. `cargo test --lib encode_dmb` executed the real production symbol (4 passing / 4 failing properties).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_two_misc_narrow | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_dmb | 8 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_two_misc_narrow silently encodes a third operand
+### B1: encode_dmb ignores Imm and encodes SY
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ valid (tb,ta,is_high,u,opc,mnem). llvm-mc rejects mnem||suffix || " v"||rd||"."||tb||", v"||rn||"."||ta||", v"||extra||"."||tb ∧ encode_neon_two_misc_narrow([Vd,Vn,Vextra], u, opc, is_high) is Err
-**Contract evidence:** documented neon.rs:207 "NEON two-reg narrow requires 2 operands"
-**Documentation conflict:** neon.rs:207 "NEON two-reg narrow requires 2 operands" states two operands are required; the body only rejects `len < 2`, so arity 3+ is accepted. The comment states the behavior IS handled (exactly 2), which the code violates.
-**Severity:** medium
-**Counterexample:** encode_neon_two_misc_narrow([v0.8b, v0.8h, v0.8b], u_bit=0, opcode=0b10010, is_high=false)
-**Expected / Actual:** Err / Ok(Word(0x0e212800))
-**Impact:** Invalid assembly such as `xtn v0.8b, v0.8h, v0.8b` is assembled into an XTN word instead of an error, so the GNU-style assembler emits machine code that gas/llvm-mc refuse.
-**Root cause:** neon.rs:207 checks only `operands.len() < 2`, so arity 3+ is treated as a 2-operand encode using the first two operands
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:207`
-```rust
-    if operands.len() < 2 {
-        return Err("NEON two-reg narrow requires 2 operands".to_string());
-    }
-```
-**Suggested fix:** Reject any arity other than 2
-```rust
-    if operands.len() != 2 {
-        return Err("NEON two-reg narrow requires 2 operands".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_neon_two_misc_narrow_extra_operand.md
-**Repro seed:** cc 4e956affd40e557380117bed6fa5827bbe3fc738be9282a288f7b19b8e680b41
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_two_misc_narrow_pbt::encode_neon_two_misc_narrow_neg_extra_operand' (2513865) panicked at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:423:1:
-Test failed: 3 operands must Err (llvm-mc rejects xtn v0.8b, v0.8h, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:444.
-minimal failing input: rd = 0, rn = 0, extra = 0, pair = (
-    "8b",
-    "8h",
-    false,
-), fam = (
-    "xtn",
-    0,
-    18,
-)
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
-
-### B2: encode_neon_two_misc_narrow accepts dest 8H with source 4S on XTN (Q=0)
-
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ tb,ta ∈ arrangements, ∀ is_high ∈ {false,true}, ∀ family. ¬valid_pair(tb,ta,is_high) ⇒ llvm-mc rejects the asm ∧ encode_neon_two_misc_narrow([Vd.tb, Vn.ta], u, opc, is_high) is Err
-**Contract evidence:** inferred (ARM XTN{2} Vd.Tb, Vn.Ta with Tb matching Ta and Q; neon.rs:202 names XTN/SQXTN/UQXTN; encode() at encoder/mod.rs:941-946 passes operands through)
-**Documentation conflict:** (none) — neon.rs:215 documents unsupported *source* arrangements only; dest arrangement is bound as `_arr_d` with no comment declaring dest unchecked
+**Formal:** ∀ crm ∈ {0,…,15}. encode_dmb([Imm(crm)]) = llvm-mc("dmb #" + crm) as Word
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as and llvm-mc encode `dmb #imm` for imm in 0..=15 as CRm=imm; parser.rs produces Operand::Imm for `#n`; encode() at mod.rs:964 passes operands through)
+**Documentation conflict:** (none) — encode_dmb has no rustdoc covering Imm; system.rs:25 "DMB: 0xD50330BF | (CRm << 8)" states the encoding formula but does not mention immediates
 **Severity:** high
-**Counterexample:** encode_neon_two_misc_narrow([v0.8h, v0.4s], u_bit=0, opcode=0b10010, is_high=false)
-**Expected / Actual:** Err / Ok(Word(0x0e612800))
-**Impact:** A mistyped dest arrangement is silently rewritten: `xtn v0.8h, v0.4s` encodes as XTN Vd.4H, Vn.4S instead of an assemble error.
-**Root cause:** neon.rs:210 binds dest arrangement as `_arr_d` and never checks it against Ta or is_high; size is taken only from the source arrangement
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:210`
+**Counterexample:** encode_dmb(&[Operand::Imm(0)])  (`dmb #0`)
+**Expected / Actual:** Word(0xd50330bf) / Word(0xd5033fbf)
+**Impact:** Valid GNU-style `dmb #imm` assembles as a full-system barrier. Requested CRm values 0–14 become SY, changing memory-ordering semantics.
+**Root cause:** system.rs:23 `_ => 0b1111` — Imm is not matched, so every immediate falls through to SY.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:23`
 ```rust
-    let (rd, _arr_d) = get_neon_reg(operands, 0)?;
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+        _ => 0b1111,
 ```
-**Suggested fix:** Require the ARM-mandated dest arrangement for (Ta, is_high)
+**Suggested fix:** Treat Imm in 0..=15 as CRm; reject immediates outside that range.
 ```rust
-    let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    let expected_tb = match (arr_n.as_str(), is_high) {
-        ("8h", false) => "8b",
-        ("8h", true) => "16b",
-        ("4s", false) => "4h",
-        ("4s", true) => "8h",
-        ("2d", false) => "2s",
-        ("2d", true) => "4s",
-        _ => return Err(format!("unsupported source arrangement for narrow: {}", arr_n)),
-    };
-    if arr_d != expected_tb {
-        return Err(format!("narrow: source {} requires dest {}", arr_n, expected_tb));
-    }
+        Some(Operand::Imm(n)) if (0..=15).contains(n) => *n as u32,
+        Some(Operand::Imm(n)) => return Err(format!("dmb immediate out of range: {}", n)),
 ```
-**Bug report:** bug_reports/encode_neon_two_misc_narrow_mismatched_tb_ta.md
-**Repro seed:** cc e2fc582b4808de07089af20711cca817c2706965e85a706f2572dfe348065989
+**Bug report:** bug_reports/encode_dmb_imm_ignored.md
+**Repro seed:** cc b237a050e3f0cc9e9ef0407f2594424cd2a7b9c9d331ee1871ff9d1b6d9d4c57
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_two_misc_narrow_pbt::encode_neon_two_misc_narrow_neg_mismatched_tb_ta' (2513885) panicked at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:452:1:
-Test failed: invalid/mismatched Tb/Ta must Err (ARM XTN Ta in {8H,4S,2D} with matching Tb; llvm-mc rejects xtn v0.8h, v0.4s) at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:473.
-minimal failing input: rd = 0, rn = 0, tb = "8h", ta = "4s", is_high = false, fam = (
-    "xtn",
-    0,
-    18,
-)
-	successes: 3
-	local rejects: 0
-	global rejects: 1
-		1 times at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:464:9: !is_valid_pair(tb, ta, is_high)
+Test failed: assertion failed: `(left == right)`
+  left: `3573759935`,
+ right: `3573756095`: SUT vs llvm-mc for dmb #0
+minimal failing input: crm = 0
 ```
 
-### B3: encode_neon_two_misc_narrow encodes a bare V dest as XTN Vd.8B
+### B2: encode_dmb ignores extra operands
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ kind ∈ {gpr-dest, bare-src, bare-dest, x-arrangement-dest, gpr-src}. llvm-mc rejects the asm ∧ encode_neon_two_misc_narrow(ops(kind), 0, 0b10010, false) is Err
-**Contract evidence:** inferred (ARM XTN dest is Vd.Tb; neon.rs:202 names XTN; llvm-mc/gas reject `xtn v0, v0.8h` and `xtn x0, v0.8h`; encode() passes operands through)
+**Formal:** ∀ name ∈ NamedDmb, ∀ extra ∈ Operand. llvm-mc("dmb " + name + ", …") is Err ⇒ encode_dmb([Barrier(name), extra]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as rejects `dmb sy, x0`; llvm-mc rejects extra operands)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_two_misc_narrow([Reg("v0"), v0.8h], u_bit=0, opcode=0b10010, is_high=false)
-**Expected / Actual:** Err / Ok(Word(0x0e212800))
-**Impact:** A dest without arrangement (or with a GPR prefix) is encoded as the corresponding V register, so a mistyped `xtn v0, v0.8h` silently becomes `xtn v0.8b, v0.8h`.
-**Root cause:** neon.rs:210 calls get_neon_reg which accepts Operand::Reg, then discards dest arrangement; encode_neon_two_misc_narrow never requires a V-prefixed arrangement dest
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:210`
+**Counterexample:** encode_dmb(&[Operand::Barrier("sy".into()), Operand::Reg("x0".into())])  (`dmb sy, x0`)
+**Expected / Actual:** Err / Ok(Word(0xd5033fbf))
+**Impact:** Extra operands are dropped; `dmb sy, x0` silently becomes `dmb sy`.
+**Root cause:** system.rs:7 `operands.first()` — only the first operand is examined; length is never checked.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:7`
 ```rust
-    let (rd, _arr_d) = get_neon_reg(operands, 0)?;
+    let option = match operands.first() {
 ```
-**Suggested fix:** Reject a destination that is not a V-prefixed RegArrangement
+**Suggested fix:** Reject a slice longer than one operand.
 ```rust
-    let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    match &operands[0] {
-        Operand::RegArrangement { reg, .. } if reg.to_ascii_lowercase().starts_with('v') => {}
-        _ => return Err("narrow: destination must be a V register with arrangement".to_string()),
+    if operands.len() > 1 {
+        return Err("dmb: extra operand".to_string());
     }
-    let _ = arr_d;
 ```
-**Bug report:** bug_reports/encode_neon_two_misc_narrow_bare_dest.md
-**Repro seed:** cc ea0e467b95a3a37895fdc601c1dfe696818f53261cde18f44bbf4347db492367
+**Bug report:** bug_reports/encode_dmb_extra_operand.md
+**Repro seed:** (deterministic; name = "sy", extra = Reg("x0"))
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_two_misc_narrow_pbt::encode_neon_two_misc_narrow_neg_gpr_or_bare' (2513879) panicked at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:481:1:
-Test failed: GPR/bare/non-arrangement kind=2 must Err (llvm-mc rejects xtn v0, v0.8h) at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:536.
-minimal failing input: rd = 0, rn = 0, kind = 2, fp_prefix = "x"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+Test failed: extra operand must Err (llvm-mc rejects dmb sy, x0)
+minimal failing input: name = "sy", extra = Reg("x0")
+```
+
+### B3: encode_dmb encodes omitted option as SY
+
+**Formal:** encode_dmb([]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as: "missing immediate expression at operand 1"; llvm-mc: "too few operands")
+**Documentation conflict:** (none) — ARM ARM lists the option as optional with default SY, but this assembler claims gas compatibility and gas requires an operand
+**Severity:** medium
+**Counterexample:** encode_dmb(&[])
+**Expected / Actual:** Err / Ok(Word(0xd5033fbf))
+**Impact:** A `dmb` with no operand, rejected by gas and llvm-mc, is encoded as a full-system barrier.
+**Root cause:** system.rs:23 `_ => 0b1111` — `operands.first()` is None and defaults CRm to SY.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:23`
+```rust
+        _ => 0b1111,
+```
+**Suggested fix:** Return Err when the operand list is empty.
+```rust
+        None => return Err("dmb requires a barrier option".to_string()),
+```
+**Bug report:** bug_reports/encode_dmb_empty_defaults_sy.md
+**Repro seed:** (deterministic; _n = 0)
+**Raw output:**
+```text
+Test failed: empty operands must Err (gas/llvm-mc reject omitted dmb option)
+minimal failing input: _n = 0
+```
+
+### B4: encode_dmb encodes non-barrier operands as SY
+
+**Formal:** ∀ op ∈ {Imm(n) | n ∉ 0..=15} ∪ {Reg, Mem, Cond, Shift, Label, …}. llvm-mc rejects the corresponding assembly ⇒ encode_dmb([op]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as / llvm-mc reject registers and `#imm` outside 0..=15)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_dmb(&[Operand::Imm(-1)])  (`dmb #-1`)
+**Expected / Actual:** Err / Ok(Word(0xd5033fbf))
+**Impact:** Invalid operands such as `dmb #-1` and `dmb x0` encode as `dmb sy` instead of an assembler error.
+**Root cause:** system.rs:23 `_ => 0b1111` — Imm, Reg, Mem, and every other non-Barrier/non-Symbol kind take the SY default.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:23`
+```rust
+        _ => 0b1111,
+```
+**Suggested fix:** Reject non-barrier kinds and immediates outside 0..=15.
+```rust
+        Some(Operand::Imm(n)) if (0..=15).contains(n) => *n as u32,
+        Some(Operand::Imm(n)) => return Err(format!("dmb immediate out of range: {}", n)),
+        Some(_) => return Err("dmb: invalid operand".to_string()),
+```
+**Bug report:** bug_reports/encode_dmb_wrong_kind_defaults_sy.md
+**Repro seed:** (deterministic; op = Imm(-1))
+**Raw output:**
+```text
+Test failed: non-named / out-of-range operand must Err, got Ok(Word(3573759935))
+minimal failing input: op = Imm(-1)
 ```
 
 ## Design Caveats
@@ -154,35 +139,39 @@ minimal failing input: rd = 0, rn = 0, kind = 2, fp_prefix = "x"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs | 9 properties + 2 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_dmb_pbt.rs | 8 properties, 3 KAT, 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_dmb_pbt` registration |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_two_misc_narrow -- --test-threads=1
+cargo test --lib encode_dmb -- --test-threads=1
 ```
 
-B1 extra operand:
+B1 (`dmb #0` encodes as SY):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_two_misc_narrow_neg_extra_operand -- --test-threads=1
-cargo test --lib test_encode_neon_two_misc_narrow_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_dmb_regression_imm_crm0 -- --test-threads=1 --nocapture
 ```
 
-B2 mismatched Tb/Ta:
+B2 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_two_misc_narrow_neg_mismatched_tb_ta -- --test-threads=1
-cargo test --lib test_encode_neon_two_misc_narrow_regression_mismatched_tb_ta -- --test-threads=1
+cargo test --lib test_encode_dmb_regression_extra_sy_x0 -- --test-threads=1 --nocapture
 ```
 
-B3 bare dest:
+B3 (empty operands):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_two_misc_narrow_neg_gpr_or_bare -- --test-threads=1
-cargo test --lib test_encode_neon_two_misc_narrow_regression_bare_dest -- --test-threads=1
+cargo test --lib test_encode_dmb_regression_empty -- --test-threads=1 --nocapture
+```
+
+B4 (Imm(-1)):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_dmb_regression_imm_neg1 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
@@ -193,35 +182,39 @@ cargo test --lib test_encode_neon_two_misc_narrow_regression_bare_dest -- --test
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
+- pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_neon_two_misc_narrow_extra_operand.md
-- pbt-out/bug_reports/encode_neon_two_misc_narrow_extra_operand.html
-- pbt-out/bug_reports/encode_neon_two_misc_narrow_mismatched_tb_ta.md
-- pbt-out/bug_reports/encode_neon_two_misc_narrow_mismatched_tb_ta.html
-- pbt-out/bug_reports/encode_neon_two_misc_narrow_bare_dest.md
-- pbt-out/bug_reports/encode_neon_two_misc_narrow_bare_dest.html
-- pbt-out/run/encode_neon_two_misc_narrow.log
+- pbt-out/bug_reports/encode_dmb_imm_ignored.md
+- pbt-out/bug_reports/encode_dmb_imm_ignored.html
+- pbt-out/bug_reports/encode_dmb_extra_operand.md
+- pbt-out/bug_reports/encode_dmb_extra_operand.html
+- pbt-out/bug_reports/encode_dmb_empty_defaults_sy.md
+- pbt-out/bug_reports/encode_dmb_empty_defaults_sy.html
+- pbt-out/bug_reports/encode_dmb_wrong_kind_defaults_sy.md
+- pbt-out/bug_reports/encode_dmb_wrong_kind_defaults_sy.html
+- pbt-out/run/encode_dmb_pbt.log
+- pbt-out/run/encode_dmb_regression.log
+- proptest-regressions/backend/arm/assembler/encoder/encode_dmb_pbt.txt (proptest shrunk-failure file, framework convention)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 23:20 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 148/289 total | PBT candidates: 148 | Tested: 148 (100%) | 0 pass, 148 fail
+> Last updated: 2026-10-05 23:36 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 149/307 total | PBT candidates: 149 | Tested: 149 (100%) | 0 pass, 149 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 10 |
-| Files scanned | 10 / 10 (100%) |
-| Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 148 |
-| **Tested (of PBT candidates)** | **148 / 148 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 148 / 0 |
-| **Overall (tested / all functions)** | **148 / 289 (51%)** |
+| Total source files | 11 |
+| Files scanned | 11 / 11 (100%) |
+| Total functions (all files) | 307 |
+| PBT candidates (from FUNCTION_INDEX) | 149 |
+| **Tested (of PBT candidates)** | **149 / 149 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 149 / 0 |
+| **Overall (tested / all functions)** | **149 / 307 (49%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -229,13 +222,13 @@ cargo test --lib test_encode_neon_two_misc_narrow_regression_bare_dest -- --test
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 148 | 148 | 0 | 100% |
+|  | 149 | 149 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 148 | 148 | 0 | 100% |
+| unknown | 149 | 149 | 0 | 100% |
 
 ## File Coverage
 
@@ -406,3 +399,4 @@ cargo test --lib test_encode_neon_two_misc_narrow_regression_bare_dest -- --test
 | encode_neon_scalar_two_misc | neon.rs |
 | encode_neon_scalar_qshrn | neon.rs |
 | encode_neon_two_misc_narrow | neon.rs |
+| encode_dmb | system.rs |

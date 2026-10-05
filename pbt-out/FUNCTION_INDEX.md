@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 148 | Excluded: 141
+> Total files: 11 | Total functions: 307 | PBT candidates: 149 | Excluded: 158
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -291,3 +291,21 @@
 | encode_rev16 | bitfield.rs | 196 | function | yes | - |
 | encode_rev32 | bitfield.rs | 205 | function | yes | - |
 | encode_crc32 | bitfield.rs | 226 | function | no | out of campaign scope |
+| encode_dmb | system.rs | 6 | function | yes | - |
+| encode_dsb | system.rs | 30 | function | no | out of campaign scope |
+| encode_mrs | system.rs | 54 | function | no | out of campaign scope |
+| sysreg_encoding | system.rs | 184 | function | no | out of campaign scope |
+| parse_numbered_sysreg | system.rs | 190 | function | no | out of campaign scope |
+| parse_generic_sysreg | system.rs | 241 | function | no | out of campaign scope |
+| encode_msr | system.rs | 262 | function | no | out of campaign scope |
+| encode_svc | system.rs | 389 | function | no | out of campaign scope |
+| encode_hvc | system.rs | 395 | function | no | out of campaign scope |
+| encode_ic | system.rs | 401 | function | no | out of campaign scope |
+| encode_smc | system.rs | 420 | function | no | out of campaign scope |
+| encode_at | system.rs | 426 | function | no | out of campaign scope |
+| encode_sys | system.rs | 448 | function | no | out of campaign scope |
+| encode_brk | system.rs | 471 | function | no | out of campaign scope |
+| encode_tlbi | system.rs | 477 | function | no | out of campaign scope |
+| encode_bti | system.rs | 542 | function | no | out of campaign scope |
+| encode_hint | system.rs | 554 | function | no | out of campaign scope |
+| encode_dc | system.rs | 564 | function | no | out of campaign scope |

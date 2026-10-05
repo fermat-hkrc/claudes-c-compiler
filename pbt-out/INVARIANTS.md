@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_dmb)
+
+- Named DMB options (sy/st/ld/ish/ishst/ishld/nsh/nshst/nshld/osh/oshst/oshld), including case folds, match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Barrier vs Symbol encodings are identical.
+- ARM DMB layout holds for named options: 0xD50330BF | (CRm << 8); bits[31:12]=0xD5033; bits[7:5]=101; bits[4:0]=11111; different names differ only in bits[11:8] (1000 cases).
+- Unknown Barrier/Symbol names return Err containing "unknown dmb option" (1000 cases).
+- Known-answer: `dmb sy` = 0xd5033fbf; `dmb ish` = 0xd5033bbf; llvm-mc `dmb #0` = 0xd50330bf (SUT disagrees).
+- Imm 0..=15, extra operands, empty slice, and non-barrier kinds currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_dmb)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). Cross-checked against GNU as (aarch64-linux-gnu-as).
+- ARM ARM DMB: 1101 0101 0000 0011 0011 CRm 101 11111. Named CRm as above; assembler also accepts #imm 0..=15 as CRm.
+- Dispatch: encoder/mod.rs:964 `"dmb" => encode_dmb(operands)`. Operands passed through unchanged.
+- Sibling encode_dsb is not a same-job differential (DSB op2=100 vs DMB op2=101).
+- encode_dmb matches only first-operand Barrier/Symbol names; unknown names Err; any other first-operand kind (including Imm and empty) silently encodes SY; extra operands ignored.
+- Parser: Barrier for the 12 names (parser.rs:1918-1923); Imm for `#n` and bare integers (parser.rs:1991, 2020).
+- Callers: codegen/atomics.rs:141-143 `dmb ishld`/`ishst`/`ish`; codegen/intrinsics.rs:78,81 `dmb ish`/`ishst`.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of named Barrier/Symbol, unknown Err, and `_ => 0b1111`.
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_dmb_*.md.
+
 # Confirmed invariants (encode_neon_two_misc_narrow)
 
 - Valid XTN/SQXTN/UQXTN/SQXTUN with matching Tb/Ta and 2-suffix Q variants matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). ARM mapping: XTN U=0 opcode=10010; SQXTN U=0 opcode=10100; UQXTN U=1 opcode=10100; SQXTUN U=1 opcode=10010; Ta in {8H,4S,2D}; Tb {8B/16B, 4H/8H, 2S/4S} from Q.
