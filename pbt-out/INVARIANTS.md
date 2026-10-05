@@ -1,3 +1,36 @@
+# Confirmed invariants (encode_neon_two_misc)
+
+- Valid matching-T ABS/NEG/CLS/CLZ/REV16/REV32/SQABS/SQNEG Vd.T, Vn.T with opcode-legal T, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; U in bit 29; 8b vs 16b differs only in Q bit 30 (1000 cases).
+- Success-path 32-bit word for matching-T: bit31=0, Q at bit30, U at bit29, bits[28:24]=01110, size at [23:22] from dest T, bits[21:17]=10000, opcode at [16:12], bits[11:10]=10, Rn at [9:5], Rd at [4:0].
+- Arity 0–1 returns Err (1000 cases).
+- Uppercase V prefix with lowercase T matches llvm-mc (1000 cases).
+- Imm/Mem/Label/GPR/bare-V at dest or src returns Err (1000 cases).
+- Known-answer: `abs v0.8b, v1.8b` = 0x0e20b820; `abs v0.16b, v1.16b` = 0x4e20b820; `abs v0.2d, v1.2d` = 0x4ee0b820; `neg v0.8b, v1.8b` = 0x2e20b820; `cls v0.8b, v1.8b` = 0x0e204820; `clz v0.8b, v1.8b` = 0x2e204820; `rev16 v0.8b, v1.8b` = 0x0e201820; `sqabs v0.8b, v1.8b` = 0x0e207820; `sqneg v0.2d, v1.2d` = 0x6ee07820; `neg v31.2d, v31.2d` = 0x6ee0bbff; llvm-mc `saddlp v0.4h, v1.8b` = 0x0e202820 (SUT disagrees).
+- Extra operand, mismatched T, reserved T (abs .1d, cls .2d), and pairwise-long size-from-dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_two_misc)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD two-register miscellaneous: matching-T ABS/NEG/SQABS/SQNEG T in {8B,16B,4H,8H,2S,4S,2D}; CLS/CLZ T in {8B,16B,4H,8H,2S,4S}; REV16 T in {8B,16B}; REV32 T in {8B,16B,4H,8H}; SADDLP/UADDLP/SADALP/UADALP dest Ta from source Tb, size from source esize.
+- Dispatch: encoder/mod.rs:324-326 neg; 616 abs; 618-628 cls/clz/rev16/rev32; 630-633 saddlp/uaddlp/sadalp/uadalp; 637-645 sqabs/sqneg.
+- encode_neon_two_misc does not check operands.len(); dest arrangement drives Q/size; source arrangement discarded.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / get_neon_reg other / alt spellings).
+
+## Quirks (encode_neon_two_misc)
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- neon_arr_to_q_size accepts 1d/2d; opcode-reserved T is encoded (see bugs).
+- Pairwise-long size comes from dest T, not source Tb (see bugs).
+- Operand::Reg dest/src with empty arrangement fails neon_arr_to_q_size (Err).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
+---
+
 # Confirmed invariants (encode_neon_shrn)
 
 - Valid SHRN/SHRN2/RSHRN/RSHRN2 Vd.Tb, Vn.Ta, #shift with Ta in {8h,4s,2d}, Tb mandated by (Ta, Q), shift in [1, dest_esize], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
