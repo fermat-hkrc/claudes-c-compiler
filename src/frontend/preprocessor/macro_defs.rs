@@ -1484,3 +1484,119 @@ mod itoa {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::frontend::preprocessor::pbt_support::tokens;
+    use crate::frontend::preprocessor::pbt_support::strip_line_markers;
+    use proptest::prelude::*;
+
+    fn pp_output(program: &str) -> Vec<String> {
+        let mut pp = crate::frontend::preprocessor::Preprocessor::new();
+        pp.set_filename("t.c");
+        let out = pp.preprocess(program);
+        tokens(&strip_line_markers(&out))
+    }
+
+    /// Independent C11 6.10.3.2 stringizer (reference from the standard
+    /// clause, not from the SUT body): leading/trailing white space deleted,
+    /// each white-space sequence between tokens becomes one space, a `\` is
+    /// inserted before each `"` and `\` of string/char literals (including
+    /// the delimiting `"` of string literals).
+    fn ref_stringify(a: &str) -> String {
+        let t = a.trim();
+        let b = t.as_bytes();
+        let mut out = String::new();
+        let mut i = 0;
+        let mut pending_space = false;
+        while i < b.len() {
+            let c = b[i];
+            if c == b' ' || c == b'\t' || c == b'\n' {
+                pending_space = !out.is_empty();
+                i += 1;
+                continue;
+            }
+            if pending_space {
+                out.push(' ');
+                pending_space = false;
+            }
+            if c == b'"' || c == b'\'' {
+                let q = c;
+                let start = i;
+                i += 1;
+                while i < b.len() {
+                    if b[i] == b'\\' && i + 1 < b.len() {
+                        i += 2;
+                    } else if b[i] == q {
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+                for &ch in &b[start..i] {
+                    if ch == b'"' || ch == b'\\' {
+                        out.push('\\');
+                    }
+                    out.push(ch as char);
+                }
+                continue;
+            }
+            out.push(c as char);
+            i += 1;
+        }
+        out
+    }
+
+    fn arg_chunk() -> impl Strategy<Value = String> {
+        prop_oneof![
+            4 => "[a-z]{1,5}",
+                        2 => "\"([a-z ]|\\\\\\\\|\\\\\")*\"",
+            1 => "( +|\t)",
+            1 => "'[a-z]'",
+            1 => Just(String::from("'\\\\'")),
+            1 => Just(String::from("'\\\"'")),
+        ]
+    }
+
+    /// P6: `#define S(x) #x` stringifies its raw argument exactly as
+    /// C11 6.10.3.2 prescribes.
+    #[test]
+    fn p6_stringify_matches_c11_reference() {
+        proptest!(ProptestConfig::with_cases(1024), |(
+            chunks in proptest::collection::vec(arg_chunk(), 1..6)
+        )| {
+            let arg = chunks.join("");
+            let program = format!("#define S(x) #x\nS({})\n", arg);
+            let expected = format!("\"{}\"", ref_stringify(&arg));
+            let got = pp_output(&program);
+            prop_assert_eq!(got, vec![expected]);
+        });
+    }
+
+    /// P7: token pasting concatenates the RAW operands into one token
+    /// (directly and through one level of indirection); an empty operand
+    /// pastes to nothing.
+    #[test]
+    fn p7_token_paste_concatenates_raw_operands() {
+        proptest!(ProptestConfig::with_cases(1024), |(
+            x in "[a-d]{1,4}",
+            y in "[e-h]{1,4}",
+            empty_case in proptest::bool::ANY,
+        )| {
+            let mut program = String::from("#define CAT2(a,b) a##b\n#define XCAT(a,b) CAT2(a,b)\n");
+            let mut expected = Vec::new();
+            expected.push(format!("{}{}", x, y));
+            program.push_str(&format!("CAT2({}, {})\n", x, y));
+            if empty_case {
+                expected.push(x.clone());
+                program.push_str(&format!("CAT2({},)\n", x));
+            }
+            expected.push(format!("{}{}", x, y));
+            program.push_str(&format!("XCAT({}, {})\n", x, y));
+            let got = pp_output(&program);
+            prop_assert_eq!(got, expected);
+        });
+    }
+}

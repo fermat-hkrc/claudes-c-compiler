@@ -8,3 +8,4 @@ cc 496cad94114cd1cb56d8af0d48507d8ec3ad70616f668129025757ee9c5681df # shrinks to
 cc efc478fd934cd5ee4969e7e8d42d89ed3ef11bae7b19ee4ad2abcab8a6bdf066 # shrinks to int_digits = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], exp = 0
 cc 739ad938c08cf7889c522d5ef5456e32c4c067d980ebe177b55f87585ab31176 # shrinks to toks = [("x", Identifier("x"))], seeds = [0]
 cc 5b65dbfc1fdfee5e47ffb184140f9e4605b0840c3996c0e5c3ae756f34b94307 # shrinks to digits = [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], base = 0
+cc 602999081b8fb47cbb430649447e073ff239c9c71f220bba36c74487ff92ebe1 # shrinks to cp_raw = 128

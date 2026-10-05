@@ -810,3 +810,153 @@ impl<'a> ExprParser<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::frontend::preprocessor::pbt_support::{arb_expr, ref_eval, render_expr, tokens, Expr};
+    use proptest::prelude::*;
+
+    /// Deterministic pseudo-random spacing driver: hash the case number.
+    fn spacer(seed: u64) -> impl FnMut() -> usize {
+        let mut s = seed;
+        move || {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((s >> 33) as usize)
+        }
+    }
+
+    /// P1: eval_const_expr agrees with an independent C99 6.10.1 reference
+    /// evaluator (intmax_t/uintmax_t semantics, documented in the module
+    /// README and the fn doc comment). Cases that leave the well-defined
+    /// domain (signed i64 overflow, /0, %0, shift count >= 64 or < 0) are
+    /// excluded — they are UB in #if expressions.
+    #[test]
+    fn p1_eval_const_expr_matches_reference() {
+        proptest!(ProptestConfig::with_cases(1024), |(e in arb_expr(3, vec![]), seed in any::<u64>())| {
+            let expected = match ref_eval(&e, &|_| None) {
+                Some((v, _)) => v != 0,
+                None => return Ok(()), // out of well-defined domain
+            };
+            let mut sp = spacer(seed);
+            let rendered = render_expr(&e, &mut sp);
+            let got = eval_const_expr(&rendered);
+            assert!(got == expected, "expr: {} expected: {} got: {}", rendered, expected, got);
+        });
+    }
+
+    /// P1 boundary matrix: documented numeric-literal typing edges, exact.
+    #[test]
+    fn p1b_eval_literal_boundaries() {
+        // decimal > i64::MAX becomes unsigned per conditionals.rs:272-274
+        assert!(eval_const_expr("18446744073709551615u > 0"));
+        // hex > i64::MAX implicitly unsigned
+        assert!(eval_const_expr("0xFFFFFFFFFFFFFFFF > 0"));
+        // same value signed: -1 < 0
+        assert!(eval_const_expr("-1 < 0"));
+        // -1u (unsigned) is NOT < 0 (C99 6.10.1 u-suffix rule)
+        assert!(!eval_const_expr("-1u < 0"));
+        assert!(eval_const_expr("-1u == 0xFFFFFFFFFFFFFFFF"));
+        // unsigned comparison across the sign bit
+        assert!(eval_const_expr("0xFFFFFFFFFFFFFFFFu == -1"));
+        assert!(eval_const_expr("9223372036854775807u < -9223372036854775807")); // u64 conv: rhs=9223372036854775809
+        // precedence (C grammar): 2+3*4 == 14, shifts bind looser than +,
+        // == binds looser than <, && looser than ||, ternary lowest
+        assert!(eval_const_expr("2 + 3 * 4 == 14"));
+        assert!(eval_const_expr("1 << 2 + 1 == 8"));
+        assert!(eval_const_expr("1 < 2 == 1"));
+        assert!(eval_const_expr("1 || 0 && 0"));
+        // right associativity of ternary
+        assert!(eval_const_expr("0 ? 1 : 0 ? 2 : 3 == 3"));
+        // division truncation toward zero (C99 6.5.5)
+        assert!(eval_const_expr("7 / 2 == 3"));
+        assert!(eval_const_expr("-7 / 2 == -3"));
+        assert!(eval_const_expr("-7 % 2 == -1"));
+    }
+
+    // ------------------------------------------------------------------
+    // P3: conditional stack state machine vs independent model.
+    // ------------------------------------------------------------------
+
+    #[derive(Clone, Debug)]
+    enum Item {
+        Line(usize),
+        Cond { arms: Vec<(bool, Vec<Item>)>, els: Vec<Item> },
+    }
+
+    fn arb_items(depth: u32, lines: usize) -> BoxedStrategy<Vec<Item>> {
+        let item = if depth == 0 {
+            (0usize..lines).prop_map(Item::Line).boxed()
+        } else {
+            prop_oneof![
+                3 => (0usize..lines).prop_map(Item::Line),
+                2 => (
+                    proptest::collection::vec(
+                        (proptest::bool::ANY, arb_items(depth - 1, lines)),
+                        1..=3
+                    ),
+                    arb_items(depth - 1, lines),
+                ).prop_map(|(arms, els)| Item::Cond { arms, els })
+            ]
+            .boxed()
+        };
+        proptest::collection::vec(item, 0..5).boxed()
+    }
+
+    /// Render the program and, in parallel, the expected per-line output:
+    /// (token the line must emit, whether the line is active content).
+    /// Directive lines and inactive content lines must come out blank.
+    fn render(items: &[Item], active: bool, src: &mut String, model: &mut Vec<(String, bool)>) {
+        for it in items {
+            match it {
+                Item::Line(i) => {
+                    let t = format!("L{i}");
+                    src.push_str(&t);
+                    src.push('\n');
+                    model.push((t, active));
+                }
+                Item::Cond { arms, els } => {
+                    let mut any = false;
+                    for (k, (c, body)) in arms.iter().enumerate() {
+                        src.push_str(if k == 0 { "#if " } else { "#elif " });
+                        src.push_str(if *c { "1" } else { "0" });
+                        src.push('\n');
+                        model.push((String::new(), false));
+                        let arm_active = active && *c && !any;
+                        render(body, arm_active, src, model);
+                        any = any || *c;
+                    }
+                    src.push_str("#else\n");
+                    model.push((String::new(), false));
+                    render(els, active && !any, src, model);
+                    src.push_str("#endif\n");
+                    model.push((String::new(), false));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn p3_conditional_stack_state_machine() {
+        proptest!(ProptestConfig::with_cases(1024), |(items in arb_items(4, 12))| {
+            let mut src = String::new();
+            let mut model: Vec<(String, bool)> = Vec::new();
+            render(&items, true, &mut src, &mut model);
+
+            let mut pp = crate::frontend::preprocessor::Preprocessor::new();
+            pp.set_filename("t.c");
+            let out = pp.preprocess(&src);
+            let out_lines: Vec<&str> = out.lines().collect();
+
+            prop_assert_eq!(out_lines.len(), model.len() + 1,
+                "program:\n{}out:\n{}", src, out);
+            for (k, (tok, active)) in model.iter().enumerate() {
+                let expected: Vec<String> = if *active { tokens(tok) } else { vec![] };
+                let got = tokens(out_lines[k + 1]);
+                prop_assert_eq!(got, expected,
+                    "line {} of program:\n{}out:\n{}", k + 1, src, out);
+            }
+            prop_assert!(pp.errors().is_empty());
+        });
+    }
+}

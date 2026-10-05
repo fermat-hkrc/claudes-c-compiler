@@ -1,0 +1,175 @@
+warning: unused variable: `reg`
+    --> src/backend/i686/codegen/peephole.rs:1607:33
+     |
+1607 |                 LineKind::Pop { reg } if depth > 0 => { depth -= 1; }
+     |                                 ^^^ help: try ignoring the field: `reg: _`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ccc` (lib test) generated 1 warning (run `cargo fix --lib -p ccc --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s
+     Running unittests src/lib.rs (target/debug/deps/ccc-405c0348f94fe50d)
+
+running 29 tests
+test frontend::lexer::scan::pbt_regression::probe_unknown_char_stack_crash ... ignored, B4 witness: aborts the test process (stack overflow, SIGABRT)
+test frontend::lexer::scan::pbt_regression::t1_line_markers ... ok
+test frontend::lexer::scan::pbt_regression::t3_pragma_synthetic_tokens ... ok
+test frontend::lexer::scan::pbt_regression::t4_octal_ellipsis ... ok
+test frontend::lexer::scan::pbt_regression::t2_unterminated_comment ... FAILED
+test frontend::lexer::scan::pbt_regression::test_lex_comment_regression_unterminated_leaks_last_byte ... FAILED
+test frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_exponent_truncation ... FAILED
+test frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_wide_mantissa_zero ... FAILED
+test frontend::lexer::scan::pbt_regression::test_lex_int_regression_u64_overflow_zero ... FAILED
+test frontend::lexer::scan::pbt_tests::kat_reference_gate ... ok
+test frontend::lexer::scan::pbt_tests::p12_surrogate_fallback_and_string_families ... ok
+test frontend::lexer::scan::pbt_tests::p11_imaginary_suffix_combinations ... ok
+test frontend::lexer::scan::pbt_tests::p6b_hex_float_huge_exponent ... FAILED
+test frontend::lexer::scan::pbt_tests::p2_keyword_table_reference ... ok
+test frontend::lexer::scan::pbt_tests::p8a_simple_escapes_table ... ok
+test frontend::lexer::scan::pbt_tests::p8d_multichar_packing ... ok
+test frontend::lexer::scan::pbt_tests::p7b_decimal_exact_up_to_u64 ... ok
+test frontend::lexer::scan::pbt_tests::p4_promotion_boundaries_exact ... ok
+test frontend::lexer::scan::pbt_regression::probe_unknown_char_stack_depth_safe ... ok
+test frontend::lexer::scan::pbt_tests::p7_int_overflow_wraparound ... FAILED
+test frontend::lexer::scan::pbt_tests::p6_hex_float_no_collapse ... FAILED
+test frontend::lexer::scan::pbt_tests::p8c_unicode_escapes ... FAILED
+test frontend::lexer::scan::pbt_tests::p11b_random_int_suffix_round_trip ... ok
+test frontend::lexer::scan::pbt_tests::p3_int_round_trip ... ok
+test frontend::lexer::scan::pbt_tests::p1_identifier_round_trip ... ok
+test frontend::lexer::scan::pbt_tests::p8b_octal_hex_escapes ... ok
+test frontend::lexer::scan::pbt_tests::p5_hex_float_exact ... ok
+test frontend::lexer::scan::pbt_tests::p10_fuzz_spans_and_termination ... ok
+test frontend::lexer::scan::pbt_tests::p9_whitespace_invariance ... ok
+
+failures:
+
+---- frontend::lexer::scan::pbt_regression::t2_unterminated_comment stdout ----
+
+thread 'frontend::lexer::scan::pbt_regression::t2_unterminated_comment' (2628808) panicked at src/frontend/lexer/scan.rs:1872:9:
+assertion `left == right` failed
+  left: [Int, Identifier("e"), Eof]
+ right: [Int, Eof]
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- frontend::lexer::scan::pbt_regression::test_lex_comment_regression_unterminated_leaks_last_byte stdout ----
+
+thread 'frontend::lexer::scan::pbt_regression::test_lex_comment_regression_unterminated_leaks_last_byte' (2628813) panicked at src/frontend/lexer/scan.rs:1937:9:
+assertion `left == right` failed
+  left: [Int, Identifier("e"), Eof]
+ right: [Int, Eof]
+
+---- frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_exponent_truncation stdout ----
+
+thread 'frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_exponent_truncation' (2628814) panicked at src/frontend/lexer/scan.rs:1918:43:
+got 1
+
+---- frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_wide_mantissa_zero stdout ----
+
+thread 'frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_wide_mantissa_zero' (2628815) panicked at src/frontend/lexer/scan.rs:1911:9:
+assertion `left == right` failed
+  left: FloatLiteral(0.0)
+ right: FloatLiteral(1.8446744073709552e19)
+
+---- frontend::lexer::scan::pbt_regression::test_lex_int_regression_u64_overflow_zero stdout ----
+
+thread 'frontend::lexer::scan::pbt_regression::test_lex_int_regression_u64_overflow_zero' (2628816) panicked at src/frontend/lexer/scan.rs:1931:9:
+assertion `left == right` failed
+  left: IntLiteral(0)
+ right: IntLiteral(1)
+
+---- frontend::lexer::scan::pbt_tests::p6b_hex_float_huge_exponent stdout ----
+
+thread 'frontend::lexer::scan::pbt_tests::p6b_hex_float_huge_exponent' (2628828) panicked at src/frontend/lexer/scan.rs:1493:13:
+lit="0x1p4294967296" gave 1
+
+---- frontend::lexer::scan::pbt_tests::p7_int_overflow_wraparound stdout ----
+
+thread 'frontend::lexer::scan::pbt_tests::p7_int_overflow_wraparound' (2628829) panicked at src/frontend/lexer/scan.rs:1504:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `0`, 
+ right: `1`: text="0x10000000000000001" at src/frontend/lexer/scan.rs:1529.
+minimal failing input: digits = [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+], base = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+
+---- frontend::lexer::scan::pbt_tests::p6_hex_float_no_collapse stdout ----
+
+thread 'frontend::lexer::scan::pbt_tests::p6_hex_float_no_collapse' (2628827) panicked at src/frontend/lexer/scan.rs:1470:5:
+Test failed: assertion failed: `(left != right)`
+  left: `0.0`,
+ right: `0.0`: nonzero literal collapsed to 0.0: lit="0x10000000000000000p0" at src/frontend/lexer/scan.rs:1483.
+minimal failing input: int_digits = [
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+], exp = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+
+---- frontend::lexer::scan::pbt_tests::p8c_unicode_escapes stdout ----
+proptest: Saving this and future failures in /home/shuhao/fermat-users/leo/github/claudes-c-compiler/proptest-regressions/frontend/lexer/scan.txt
+proptest: If this test was run on a CI system, you may wish to add the following line to your copy of the file.
+cc 602999081b8fb47cbb430649447e073ff239c9c71f220bba36c74487ff92ebe1
+
+thread 'frontend::lexer::scan::pbt_tests::p8c_unicode_escapes' (2628833) panicked at src/frontend/lexer/scan.rs:1583:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `StringLiteral("\u{80}")`, 
+ right: `StringLiteral("Â\u{80}")`: string lit="\"\\U00000080\"" at src/frontend/lexer/scan.rs:1624.
+minimal failing input: cp_raw = 128
+	successes: 59
+	local rejects: 0
+	global rejects: 0
+
+
+
+failures:
+    frontend::lexer::scan::pbt_regression::t2_unterminated_comment
+    frontend::lexer::scan::pbt_regression::test_lex_comment_regression_unterminated_leaks_last_byte
+    frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_exponent_truncation
+    frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_wide_mantissa_zero
+    frontend::lexer::scan::pbt_regression::test_lex_int_regression_u64_overflow_zero
+    frontend::lexer::scan::pbt_tests::p6_hex_float_no_collapse
+    frontend::lexer::scan::pbt_tests::p6b_hex_float_huge_exponent
+    frontend::lexer::scan::pbt_tests::p7_int_overflow_wraparound
+    frontend::lexer::scan::pbt_tests::p8c_unicode_escapes
+
+test result: FAILED. 19 passed; 9 failed; 1 ignored; 0 measured; 522 filtered out; finished in 0.40s
+
+error: test failed, to rerun pass `--lib`
+EXIT=101

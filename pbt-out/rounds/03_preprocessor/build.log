@@ -1,0 +1,11 @@
+    Checking ccc v0.1.0 (/home/shuhao/fermat-users/leo/github/claudes-c-compiler)
+warning: unused variable: `reg`
+    --> src/backend/i686/codegen/peephole.rs:1607:33
+     |
+1607 |                 LineKind::Pop { reg } if depth > 0 => { depth -= 1; }
+     |                                 ^^^ help: try ignoring the field: `reg: _`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ccc` (lib) generated 1 warning (run `cargo fix --lib -p ccc` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.20s

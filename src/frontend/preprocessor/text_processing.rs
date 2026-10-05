@@ -296,3 +296,187 @@ pub(super) fn split_first_word(s: &str) -> (&str, &str) {
         (s, "")
     }
 }
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ------------------------------------------------------------------
+    // P4: join_continued_lines vs independent GCC phase-2 splicer.
+    // ------------------------------------------------------------------
+
+    fn arb_line_body() -> impl Strategy<Value = String> {
+        proptest::collection::vec(
+            prop_oneof![
+                4 => "[A-Za-z0-9_]{1,6}",
+                2 => "( +|\t)",
+                1 => "[/]{1,2}",
+            ],
+            0..3,
+        )
+        .prop_map(|v| v.join(""))
+    }
+
+    fn arb_line_ending() -> impl Strategy<Value = String> {
+        prop_oneof![
+            7 => Just(String::new()),
+            2 => Just(String::from("\\")),
+            1 => Just(String::from("\\ \t")),
+            1 => Just(String::from("x\\")),
+        ]
+    }
+
+    /// Independent reference for phase 2 (the splice rule documented on the
+    /// fn): a line whose trailing-whitespace-stripped form ends with `\` is
+    /// spliced to the next line, dropping the backslash, any whitespace after
+    /// it, and the newline. Other lines pass through plus a newline.
+    fn splice_ref(src: &str, lines: &[String]) -> String {
+        // documented fast path: no backslash anywhere -> identity
+        if !src.contains('\\') {
+            return src.to_string();
+        }
+        let mut out = String::new();
+        let mut pending = false;
+        for line in lines {
+            let trimmed = line.trim_end();
+            if trimmed.ends_with('\\') {
+                out.push_str(&line[..trimmed.len() - 1]);
+                pending = true;
+            } else {
+                out.push_str(line);
+                out.push('\n');
+                pending = false;
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn p4_join_continued_lines_matches_reference_and_idempotent() {
+        proptest!(ProptestConfig::with_cases(1024), |(
+            body in arb_line_body(),
+            end in arb_line_ending(),
+            rest in proptest::collection::vec(
+                (arb_line_body(), arb_line_ending()), 0..4),
+        )| {
+            let mut lines = vec![format!("{}{}", body, end)];
+            for (b, e) in &rest {
+                lines.push(format!("{}{}", b, e));
+            }
+            let src = lines.join("\n");
+            let pp = Preprocessor::new();
+            let joined = pp.join_continued_lines(&src);
+            let src_lines: Vec<String> = src.lines().map(String::from).collect();
+            let expected = splice_ref(&src, &src_lines);
+            prop_assert_eq!(&joined, &expected);
+            let joined2 = pp.join_continued_lines(&joined);
+            prop_assert_eq!(&joined2, &joined);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // P5: strip_block_comments vs independent C11 phase-3 stripper.
+    // ------------------------------------------------------------------
+
+    fn comment_chunk() -> impl Strategy<Value = String> {
+        prop_oneof![
+            4 => "[A-Za-z0-9_]{1,5}",
+            2 => " ",
+            1 => "\n",
+            1 => "\"[a-z]{0,5}\"",
+            1 => "'[*]'",
+            1 => "/*c*/",
+            1 => "/*\nc*/",
+            1 => "/**/",
+            1 => "//c\n",
+            1 => "// it's quoted\n",
+            1 => "/",
+            1 => "[*]",
+        ]
+        .prop_map(|s: String| s)
+    }
+
+    /// Independent reference for C11 5.1.1.2 phase 3 (README contract):
+    /// each block comment becomes a single space; line comments are removed
+    /// through (not including) the newline; string/char literals are copied
+    /// verbatim; unterminated comments/literals scan to end of input.
+    fn strip_ref(s: &str) -> String {
+        let b = s.as_bytes();
+        let len = b.len();
+        let mut out = String::new();
+        let mut i = 0;
+        while i < len {
+            match b[i] {
+                b'"' | b'\'' => {
+                    let q = b[i];
+                    let start = i;
+                    i += 1;
+                    while i < len {
+                        if b[i] == b'\\' && i + 1 < len {
+                            i += 2;
+                        } else if b[i] == q {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    out.push_str(&s[start..i]);
+                }
+                b'/' if i + 1 < len && b[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < len && !(b[i] == b'*' && b[i + 1] == b'/') {
+                        i += 1;
+                    }
+                    i = (i + 2).min(len);
+                    out.push(' ');
+                }
+                b'/' if i + 1 < len && b[i + 1] == b'/' => {
+                    i += 2;
+                    while i < len && b[i] != b'\n' {
+                        i += 1;
+                    }
+                }
+                c => {
+                    out.push(c as char);
+                    i += 1;
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn p5_strip_block_comments_matches_reference_and_idempotent() {
+        proptest!(ProptestConfig::with_cases(1024), |(
+            chunks in proptest::collection::vec(comment_chunk(), 0..12)
+        )| {
+            let src: String = chunks.join("");
+            let (stripped, _) = Preprocessor::strip_block_comments(&src);
+            let expected = strip_ref(&src);
+            prop_assert_eq!(&stripped, &expected);
+            let (stripped2, _) = Preprocessor::strip_block_comments(&stripped);
+            prop_assert_eq!(&stripped2, &stripped);
+        });
+    }
+
+    /// P5b: literal-preservation law — every generated string literal in the
+    /// input appears verbatim in the stripped output.
+    #[test]
+    fn p5b_literals_preserved_verbatim() {
+        proptest!(ProptestConfig::with_cases(512), |(
+            pre in comment_chunk(),
+            lit_body in "[a-z ]{0,6}",
+            post in comment_chunk(),
+        )| {
+            let src = format!("{}\n\"{}\"{}", pre, lit_body, post);
+            let (stripped, _) = Preprocessor::strip_block_comments(&src);
+            prop_assert!(
+                stripped.contains(&format!("\"{}\"", lit_body)),
+                "src: {:?} out: {:?}",
+                src,
+                stripped
+            );
+        });
+    }
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: #error/#warning diagnostics carry an absolutized file path instead of the input filename</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: #error/#warning diagnostics carry an absolutized file path instead of the input filename</h1>
+<p><span class="badge">low</span> <code>b2</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>#error/#warning diagnostics carry an absolutized file path instead of the input filename</p>
+<table><tr><th>Expected behavior</th><td>errors()[0].file == &quot;t.c&quot; (the name given to set_filename, matching __FILE__)</td></tr><tr><th>Observed behavior</th><td>errors()[0].file == &quot;/home/shuhao/fermat-users/leo/github/claudes-c-compiler/t.c&quot; (absolutized include-stack entry)</td></tr><tr><th>Impact assessment</th><td>Every user-facing diagnostic printed by the driver (src/driver/pipeline.rs:388 formats err.file:line:col) shows a host-absolute path where gcc shows the input path, and contradicts __FILE__ (&quot;t.c&quot;) from the same run.</td></tr><tr><th>Minimal counterexample</th><td><code>set_filename(&quot;t.c&quot;); #error a at line 5 -&gt; errors()[0].file == &quot;/home/shuhao/fermat-users/leo/github/claudes-c-compiler/t.c&quot; (expected &quot;t.c&quot;)</code></td></tr></table>
+
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>#error/#warning diagnostic contract (active vs inactive branches) (<code>p10</code>)</td></tr><tr><th>Formal property</th><td>forall msg: after set_filename(t.c), preprocess with #error msg on active line L yields errors() == [(file=t.c, line=L, col=2)] and nothing from inactive branches</td></tr><tr><th>Oracle</th><td>negative_error</td></tr><tr><th>System under test</th><td>Preprocessor::errors</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/preprocessor/pipeline.rs:713</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/preprocessor/pipeline.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::preprocessor</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/03_preprocessor/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/03_preprocessor/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo check --lib
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::preprocessor::pipeline::pbt_regression::test_preprocess_regression_error_file_field</code></pre>
+<p class="muted">Replay seed: 91fb0a610d8dda313385f440f9d9cc9053400d990e8cb6a6e687579b1df43b6</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>current_file (pipeline.rs:649) should return self.filename when the include-stack top is the main file (or set_filename should remember the raw name alongside the make_absolute push at pipeline.rs:632).</p>
+</section>
+</body>
+</html>

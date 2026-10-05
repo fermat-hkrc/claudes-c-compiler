@@ -1,90 +1,66 @@
-# PBT Campaign Report: src/frontend/lexer (ccc C compiler) — round 02
+# PBT Campaign Report: src/frontend/preprocessor (round 03)
 
 ## Summary
 
-**Verdict:** 5 confirmed lexer bugs, worst is **high** — hex floating constants wider than 16 hex digits (e.g. `0x10000000000000000p0`, exactly 2^64) silently evaluate to **0.0** (`u64::from_str_radix(...).unwrap_or(0)` in `lex_hex_float`); plus silent-0 for every integer literal over u64::MAX, a hex-float exponent that truncates to i32 (`0x1p4294967296` → 1.0 instead of inf), a stack-overflow abort on ~4000 consecutive unknown non-ASCII bytes, and an unterminated block comment leaking its last byte as a phantom token.
+**Verdict:** 3 bugs need fixing — 2 medium (`-EMPTY-` glues to `--`, changing tokens fed to the parser; `, ## __VA_ARGS__` drops a comma for a supplied-but-empty variadic argument, changing call arity) and 1 low (`#error` diagnostics carry an absolutized path instead of the input filename).
 **Date:** 2026-10-05
 **Repository:** /home/shuhao/fermat-users/leo/github/claudes-c-compiler
-**Modules tested:** frontend::lexer (scan.rs, token.rs)
-**Tests:** 29 (15 ledger properties + KAT + deterministic documented-behavior tests + regression witnesses)
-**Result:** 20 passing, 8 failing (all 8 are the confirmed bugs' witnesses), 1 ignored (B4 process-abort witness)
-**Change surface:** (no change source given — whole-module campaign per scope `src/frontend/lexer`)
-**Coverage evidence:** file-level (symbol presence) — no line-level coverage on this machine (no gcovr/lcov, no profraw instrumentation; `coverage_gaps` reported every lexer symbol NOT LINKED, a false negative for Rust inline tests where the tests compile into the same binary — execution evidence is the test results themselves). Sweep round performed: README documented-behavior cross-check added P11/P12 (imaginary suffixes, surrogate fallback, string families), both passing.
-**Tier:** standard (≈30-min budget, ≥1000 generator runs — 1024 used, 1 sweep round, ≥1 metamorphic/differential — P9 metamorphic + reference oracles P2/P4/P5/P6/P7/P8).
+**Modules tested:** src/frontend/preprocessor (pipeline, conditionals, text_processing, macro_defs, expr_eval via pipeline, pragmas via sweep)
+**Tests:** 15 (13 properties + deterministic regression/KAT witnesses)
+**Result:** 12 passing, 3 failing (all 3 failures = confirmed SUT bugs B1–B3, serially reconfirmed with RUST_TEST_THREADS=1)
+**Change surface:** (no change source given — whole-module campaign on src/frontend/preprocessor)
+**Coverage evidence:** file-level (symbol presence) — no line-level data: this machine has neither gcovr nor lcov, and the coverage_gaps fallback probe found no preprocessor symbols in the inspected test binary (execution is nevertheless certain: the properties call these functions directly and earlier iterations panicked inside them). Sweep round 1 executed: added P11 (pragma table) and P9b (#line override) for the two documented surfaces the ledger had not yet driven.
+**Tier:** standard (properties per target 13, generator runs set explicitly to ≥1024 for P1/P3/P4/P5/P6/P7/P2 and 256–512 for the gcc-spawn/derivative-heavy ones, 2 differential oracles — P8 vs gcc 9.4 and P1 vs an independent C99 6.10.1 evaluator, 1 coverage-sweep round).
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
-|--------|-------|------|--------------|
-| frontend::lexer (scan.rs) | 27 | 5 | reference (5), algebraic.round_trip (2), metamorphic (1), crash_only (2) |
-| frontend::lexer (token.rs) | 2 (P2) | 0 | reference |
+|--------|-------|------|-------------|
+| conditionals.rs | P1, P1b, P3 | 0 | differential (independent C99 6.10.1 evaluator), state machine (independent stack model) |
+| text_processing.rs | P4, P5, P5b | 0 | algebraic round-trip/idempotence + independent phase-2/phase-3 reference |
+| macro_defs.rs | P6, P7 | 0 | reference (C11 6.10.3.2), algebraic metamorphic (## paste) |
+| pipeline.rs | P2, P8, P8b, P9, P9b, P10, P11, 2 regression | 3 (B1, B2, B3) | reference, differential (gcc 9.4), invariant, negative_error |
 
 ## Bugs Found
 
-### B1: Hex float literals wider than 64 bits silently evaluate to 0.0
-**Formal:** ∀ lit = 0x<hex 1..20 digits, ≥1 nonzero>p<−1000..1000>: value(lit) ≠ 0.0 ∧ ¬NaN
-**Contract evidence:** documented README:181 — "Hex floats follow the C99 format 0x<int>.<frac>p<exp> and are converted via: value = (int_part + frac_part) * 2^exp" — the shipped formula has no overflow carve-out, and `0x10000000000000000p0` (2^64) is exactly representable and warning-free in GCC.
-**Documentation conflict:** (none — no comment claims the collapse; `unwrap_or(0)` at scan.rs:242/244 is the producing statement with no purpose comment)
-**Severity:** high
-**Counterexample:** lex `0x10000000000000000p0` → `FloatLiteral(0.0)`
-**Expected / Actual:** FloatLiteral(18446744073709551616.0) / FloatLiteral(0.0)
-**Impact:** any program using a large hex-float constant silently compiles with 0.0 in its place — silent wrong-code.
-**Root cause:** scan.rs:242 (`u64::from_str_radix(int_hex, 16).unwrap_or(0)`), same for frac at :244.
-**Bug report:** bug_reports/lex_hex_float_wide_mantissa_zero.md
-**Repro seed:** (deterministic witness)
-**Raw output:** `Test failed: assertion failed: (left != right) left: 0.0, right: 0.0: nonzero literal collapsed to 0.0: lit="0x10000000000000000p0"`
-
-### B2: Hex float exponent truncated to i32 / parse-overflow aliases to exponent 0
-**Formal:** ∀ e ∈ {2^31, 2^32, 2^64, 10^20, negations}: value("0x1p"+e) = inf (e>0) / 0.0 (e<0)
-**Contract evidence:** inferred (IEEE-754 overflow/underflow semantics of the README:181 formula; GCC accepts these literals with a range warning and yields inf/0)
-**Documentation conflict:** (none)
+### B1: `, ## __VA_ARGS__` deletes the comma for a supplied-but-empty variadic argument
+**Formal:** ∀ program `#define VAC(fmt, ...) g(fmt, ## __VA_ARGS__)`: tokens(preprocess(`VAC(a, )`)) == tokens(gcc -E -P(`VAC(a, )`)) — falsified.
+**Contract evidence:** inferred (module README's "GCC Compatibility Posture"; the GNU extension's documented example `DBG("hello")` → `fprintf(stderr, "hello")` covers only the ABSENT case; gcc 9.4 keeps the comma for the SUPPLIED-empty case, verified empirically)
+**Documentation conflict:** README: "when `__VA_ARGS__` is empty and appears to the right of `##` preceded by a comma, the comma is removed" — the text does not distinguish absent from supplied-empty; gcc does. Does not declare the input invalid, so the finding stands; severity unaffected.
 **Severity:** medium
-**Counterexample:** lex `0x1p4294967296` → `FloatLiteral(1.0)`; also `0x1p-4294967296` → 1.0 (expected 0.0)
-**Expected / Actual:** FloatLiteral(inf) / FloatLiteral(1.0)
-**Impact:** pathological-but-valid constants silently mis-evaluate.
-**Root cause:** scan.rs:249 `(2.0_f64).powi(exp as i32)` (i64→i32 wrap) and scan.rs:235 `exp_str.parse().unwrap_or(0)`.
-**Bug report:** bug_reports/lex_hex_float_exponent_truncation.md
-**Repro seed:** (deterministic witness)
-**Raw output:** `assertion failed: v.is_infinite() — got 1.0` (`0x1p4294967296`)
+**Counterexample:** `VAC(a, )` — fmt argument `a` plus one explicitly supplied empty variadic argument.
+**Expected / Actual:** tokens `[g ( a , )]` / `[g ( a )]`
+**Impact:** silently changes expansion arity for wrapper/generated code calling variadic macros with an explicit empty last argument.
+**Root cause:** macro_defs.rs:856 — `get_va_args` (macro_defs.rs:1121) collapses "argument supplied but empty" into the same `""` as "absent", and the `##` handler deletes the comma on `va_args.is_empty()`.
+**Bug report:** bug_reports/preprocessor_va_args_empty_argument_comma.md
+**Repro seed:** c7181e76815e7dc40cd26a6bb5266921f7b0666afb675d8c1aa910811cb95e93
+**Raw output:** `left: ["g", "(", "a", ")"], right: ["g", "(", "a", ",", ")"]` (SUT vs gcc -E -P)
 
-### B3: Integer literals larger than u64::MAX silently evaluate to 0 (all bases)
-**Formal:** ∀ base ∈ {hex,bin,oct}, digits 1..20: u64_payload(tokenize(render(digits,base))) = u128(digits) mod 2^64
-**Contract evidence:** inferred (GCC/Clang wraparound accumulation keeps the value mod 2^64 with a diagnostic; ccc's lexer has no diagnostic channel, so `.unwrap_or(0)` is silent data loss — and 0 is wrong under every candidate convention: mod gives 1, saturation gives u64::MAX for `0x10000000000000001`)
-**Documentation conflict:** (none — README:191 only describes the happy path "parses via u64::from_str_radix(s, 2)")
-**Severity:** medium
-**Counterexample:** lex `0x10000000000000001` → `IntLiteral(0)`; decimal probes: `18446744073709551616` → 0, `99999999999999999999` → 0
-**Expected / Actual:** IntLiteral(1) / IntLiteral(0)
-**Impact:** oversized constants (hash/mask tables) silently become 0.
-**Root cause:** scan.rs:199 (hex), :286 (bin), :314 (oct), :371 (dec) — `.unwrap_or(0)`.
-**Bug report:** bug_reports/lex_int_u64_overflow_zero.md
-**Repro seed:** (deterministic witness)
-**Raw output:** `Test failed: left: 0, right: 1: text="0x10000000000000001"`
+### B2: `#error`/`#warning` diagnostics report an absolutized file path
+**Formal:** ∀ msg: after `set_filename("t.c")`, `preprocess` with `#error msg` on active line L yields errors() == [(file="t.c", line=L, col=2)] — falsified at the file field.
+**Contract evidence:** inferred (signature: `set_filename(name)` names the file; `__FILE__` in the same run expands to `"t.c"`; driver pipeline.rs:388 formats `err.file:line:col: error:` gcc-style)
+**Documentation conflict:** README side-channel table promises diagnostics with "file/line/col" for "GCC-compatible `file:line:col: error:` output formatting"; the code returns the absolutized include-stack top instead. (not independently verified)
+**Severity:** low
+**Counterexample:** `Preprocessor::new(); set_filename("t.c"); preprocess("#error boom\n")`
+**Expected / Actual:** `errors()[0].file == "t.c"` / `== "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/t.c"`
+**Impact:** every user-visible diagnostic prints a host-absolute path and contradicts `__FILE__` for the same line.
+**Root cause:** pipeline.rs:649 `current_file()` returns `include_stack.last()`, which `set_filename` (pipeline.rs:632) pushes as `make_absolute(path)`.
+**Bug report:** bug_reports/preprocessor_error_file_absolutized.md
+**Repro seed:** 91fb0a610d8dda313385f440f9d9cc9053400d990e8cb6a6e687579b1df43b6
+**Raw output:** `left: "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/t.c", right: "t.c"`
 
-### B4: Stack overflow (process abort) on a run of unknown non-ASCII characters
-**Formal:** ∀ n ≥ 1: tokenize("ÿ"×n) terminates and ends with Eof
-**Contract evidence:** inferred (the in-code comment at scan.rs:1167 says "skip … and continue tokenizing" — continuation, not per-character recursion; `tokenize` must terminate for any `&str` it accepts)
-**Documentation conflict:** scan.rs:1167 "Non-ASCII or unknown character: skip any remaining bytes of a multi-byte UTF-8 sequence (including PUA-encoded bytes from non-UTF-8 source files) and continue tokenizing." — states the intent (skip and continue); the recursion at :1173 violates the termination half of that intent. `(not independently verified: the code recurses once per character rather than continuing — verified by the crash itself)`
+### B3: empty object-like macro expansion glues adjacent operator tokens
+**Formal:** ∀ op ∈ {-, +, /, <, =}: tokens(preprocess(`#define EMPTY` + `<op>EMPTY<op>`)) == tokens(gcc -E -P(same)) — falsified for `-EMPTY-`.
+**Contract evidence:** inferred (the anti-paste guard's own documented purpose, README "would_paste_tokens inserts protective spaces between adjacent tokens that would otherwise form unintended multi-character tokens"; gcc emits `- -`)
+**Documentation conflict:** (none — the guard documents the intent; macro_defs.rs:253's empty-expansion early return bypasses it)
 **Severity:** medium
-**Counterexample:** `"\u{00FF}".repeat(4000)` → `fatal runtime error: stack overflow, aborting` (SIGABRT); 2000 passes (2 MiB thread stack)
-**Expected / Actual:** tokenize terminates, ends with Eof / process aborts
-**Impact:** robustness/DoS — ~3 KB of non-ASCII garbage outside comments/strings crashes the compiler.
-**Root cause:** scan.rs:1173 `return self.next_token();` in `lex_punctuation`'s unknown-char branch — one stack frame pair per character.
-**Bug report:** bug_reports/lex_punctuation_stack_overflow.md
-**Repro seed:** (deterministic witness; test kept `#[ignore]`d because it aborts the process)
-**Raw output:** `thread 'frontend::lexer::scan::pbt_regression::probe_unknown_char_stack_crash' has overflowed its stack / fatal runtime error: stack overflow, aborting`
-
-### B5: Unterminated block comment leaks its last byte as a token
-**Formal:** ∀ s ending in an unterminated `/*`: every byte after the comment start is consumed (tokenize(s) = tokens-before-comment ++ [Eof])
-**Contract evidence:** documented README:158-160 — "Ignored by the lexer: … Block comments (`/*` to `*/`)" — a comment's bytes are ignored input, none may become a token
-**Documentation conflict:** (none — no comment admits the leak; the loop bound at scan.rs:110 is the producing statement)
-**Severity:** medium
-**Counterexample:** lex `int /* gone` → `[Int, Identifier("e"), Eof]`
-**Expected / Actual:** [Int, Eof] / [Int, Identifier("e"), Eof]
-**Impact:** a file ending in `/* TODO` injects a phantom identifier `O` into the token stream — confusing downstream parser errors or silently-altered parses.
-**Root cause:** scan.rs:110 block-comment loop `while self.pos + 1 < self.input.len()` stops one byte short when no `*/` appears.
-**Bug report:** bug_reports/lex_comment_unterminated_leaks_last_byte.md
-**Repro seed:** (deterministic witness)
-**Raw output:** `left: [Int, Identifier("e"), Eof]  right: [Int, Eof]`
+**Counterexample:** line `-EMPTY-` after `#define EMPTY`.
+**Expected / Actual:** tokens `[-, -]` / `[--]`
+**Impact:** `-` `-` becomes `--`, `+`+`+` becomes `++`, `/`+`/` becomes a `//` comment — silent token mutation in lexer input.
+**Root cause:** macro_defs.rs:253 `append_with_paste_guard` returns before the trailing-edge guard when `expanded.is_empty()`.
+**Bug report:** bug_reports/preprocessor_empty_macro_token_glue.md
+**Repro seed:** (deterministic KAT)
+**Raw output:** `assertion 'left == right' failed: line: -EMPTY-  left: ["--"] right: ["-", "-"]`
 
 ## Design Caveats (if any)
 
@@ -94,28 +70,26 @@
 
 | File | Tests |
 |------|-------|
-| src/frontend/lexer/scan.rs — `mod pbt_tests` | 16 (P1..P12 + KAT gate) |
-| src/frontend/lexer/scan.rs — `mod pbt_regression` | 13 (T1–T4, safe/crash depth probes, B1/B2/B3/B5 regression witnesses) |
+| src/frontend/preprocessor/pbt_support.rs (new, #[cfg(test)]) | shared oracle support (C tokenizer, independent C99 6.10.1 evaluator, gcc -E runner) |
+| src/frontend/preprocessor/conditionals.rs (inline pbt_tests) | P1, P1b, P3 |
+| src/frontend/preprocessor/text_processing.rs (inline pbt_tests) | P4, P5, P5b |
+| src/frontend/preprocessor/macro_defs.rs (inline pbt_tests) | P6, P7 |
+| src/frontend/preprocessor/pipeline.rs (inline pbt_tests / pbt_kat / pbt_sweep / pbt_regression) | P2, P8, P8b, P9, P9b, P10, P11 + 2 regression witnesses |
+| src/frontend/preprocessor/mod.rs | +2 lines (`#[cfg(test)] mod pbt_support`) |
 
 ## Reproduction
 
-Whole suite (from scratch CWD so runners write nothing into the workspace):
 ```bash
-cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/02_lexer/run
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::lexer
+cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/03_preprocessor/run
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::preprocessor                      # 12 pass, 3 fail
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib frontend::preprocessor   # serial reconfirmation
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::preprocessor::pipeline::pbt_regression::test_preprocess_regression_va_args_empty_arg_keeps_comma   # B1
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::preprocessor::pipeline::pbt_regression::test_preprocess_regression_error_file_field                 # B2
+PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::preprocessor::pipeline::pbt_kat::p8b_empty_macro_paste_guard_kat                                        # B3
 ```
-Per bug (each deterministic, no seed needed):
-```bash
-cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/02_lexer/run
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_wide_mantissa_zero        # B1
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_exponent_truncation      # B2
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::lexer::scan::pbt_regression::test_lex_int_regression_u64_overflow_zero             # B3
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::lexer::scan::pbt_regression::probe_unknown_char_stack_crash -- --ignored --exact   # B4 (aborts — isolated)
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib frontend::lexer::scan::pbt_regression::test_lex_comment_regression_unterminated_leaks_last_byte # B5
-```
+Build command (user contract, unchanged): `PATH="$HOME/.cargo/bin:$PATH" cargo check --lib` (run in /home/shuhao/fermat-users/leo/github/claudes-c-compiler) — succeeded before the campaign (rounds/03_preprocessor/build.log); the test target compiles under `cargo test --lib` with the same toolchain.
 
 ## Output Directories
 
-- `pbt-out/` — canonical campaign set: this `REPORT.md`, auto-rendered `REPORT.html` (from `report.json`), `PROPERTIES.md`, `PLAN.md`, `COVERAGE.md`, `COVERAGE_STATUS.md`, `report.json`, `bug_reports/<slug>.md` + `<slug>.html` (one per confirmed bug).
-- `pbt-out/rounds/02_lexer/` — round archive: `PLAN.md`, `PROPERTIES.md`, `COVERAGE.md`, `COVERAGE_STATUS.md`, `INVARIANTS.md`, `FUNCTION_INDEX.md`, `CHANGE_SURFACE.md`, `dependencies.json`, `guards.jsonl`, `build.log`, `bug_reports/*.md`, `run/` (scratch CWD).
-- `proptest-regressions/` — framework-managed seed files at repo root (only pre-existing round-01 entries; this round's counterexamples all shrank to deterministic witnesses, no persisted seeds).
+- pbt-out/rounds/03_preprocessor/: PLAN.md, PROPERTIES.md, REPORT.md (round copy of this report), report.json, COVERAGE.md, COVERAGE_STATUS.md, FUNCTION_INDEX.md, INVARIANTS.md, build.log, probe.log, run/ (scratch: gcc differential cases, witnesses w1.c/l1.c/vac.c), bug_reports/ (3 .md)
+- pbt-out/ (canonical, refreshed for round 03): REPORT.md (this file), REPORT.html, PROPERTIES.md, PLAN.md, COVERAGE.md, COVERAGE_STATUS.md, report.json, bug_reports/*.md + *.html

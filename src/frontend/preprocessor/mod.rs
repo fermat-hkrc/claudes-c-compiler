@@ -8,5 +8,7 @@ mod expr_eval;
 pub(crate) mod predefined_macros;
 mod pragmas;
 mod text_processing;
+#[cfg(test)]
+mod pbt_support;
 
 pub(crate) use pipeline::Preprocessor;

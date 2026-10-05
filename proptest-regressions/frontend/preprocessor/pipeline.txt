@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 91fb0a610d8dda313385f440f9d9cc9053400d990e8cb6a6e687579b1df43b6e # shrinks to pre = [], msg = "a", wmsg = " "
+cc c7181e76815e7dc40cd26a6bb5266921f7b0666afb675d8c1aa910811cb95e93 # shrinks to lines = ["VAC(a, )"]
+cc 24bff0a5ca925078ea35ef2315279f3c15fed60e28f0bcfd982190a364d2b1c0 # shrinks to defs = [], e = Un("!", Un("!", Num(9223372036854775808, false))), seed = 0

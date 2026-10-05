@@ -1,3 +1,22 @@
+537	open	Bug: encode_neon_ld_st_multi rejects uppercase arrangement specifiers that gas/llvm-mc accept
+536	open	Bug: encode_neon_ld_st_multi encodes LD2/ST2/LD3/ST3/LD4/ST4 with .1d, which llvm-mc/gas reject
+535	open	Bug: encode_neon_ld_st_multi encodes an illegal post-index immediate as the legal #imm form
+534	open	Bug: encode_neon_ld_st_multi accepts W, XZR, x31, and FP bases
+533	open	Bug: encode_neon_ld_st_multi ignores a surplus non-post-index operand
+532	open	Bug: encode_neon_ld_st_multi ignores non-consecutive registers and encodes from the first only
+531	open	Bug: encode_neon_ld_st_multi encodes LD2/ST2/LD3/ST3/LD4/ST4 with the wrong list length
+530	open	Bug: unterminated block comment leaks its last byte as a token — "int /* gone" lexes as [Int, Identifier("e"), Eof]
+529	open	Bug: run of unknown non-ASCII characters recurses per character in lex_punctuation — stack overflow (SIGABRT) at ~4000 chars
+528	open	Bug: 17-hex-digit integer literal silently lexes to 0 instead of wrapping mod 2^64 (GCC: 1)
+527	open	Bug: lexer hex-float exponent truncated to i32 — 0x1p4294967296 lexes as 1.0 instead of inf, 0x1p-4294967296 as 1.0 instead of 0.0
+526	open	Bug: lexer hex-float literal with a full 64-bit mantissa evaluates to 0.0 — 0x10000000000000000p0 (2^64) → 0.0
+525	open	Bug: encode_neon_ld_st_single accepts a non-consecutive register list
+524	open	Bug: encode_neon_ld_st_single accepts illegal post-index immediates
+523	open	Bug: encode_neon_ld_st_single accepts an out-of-range lane index
+522	open	Bug: encode_neon_ld_st_single rejects uppercase arrangement (V0.B)
+521	open	Bug: encode_neon_ld_st_single accepts W, XZR, x31, and FP bases
+520	open	Bug: encode_neon_ld_st_single ignores a surplus operand
+519	open	Bug: encode_neon_ld_st_single encodes register post-index as no-offset
 518	open	Bug: __builtin_bswap32 constant folding stores sign-extended I32 instead of zero-extended U32
 517	open	Bug: f128_bytes_to_f64 truncates instead of round-to-nearest — long-double constants up to 1 ulp low on ARM64/RISC-V
 516	open	Bug: f64_to_x87_bytes_simple mis-encodes subnormal doubles — 5e-324 decodes back as +0.0
@@ -516,3 +535,6 @@
 3	open	Bug: float-to-unsigned casts store U8/U16 as signed I8/I16, so to_i64() sign-extends
 2	open	Bug: cast_float_to_target panics on f64 subnormals when targeting F128
 1	closed	Double-check found bugs
+540	open	Bug: #error diagnostics report the absolutized file path instead of the filename the caller set
+539	open	Bug: empty-bodied macro expansion glues adjacent tokens — -EMPTY- becomes "--"
+538	open	Bug: g(fmt, ## __VA_ARGS__) with an explicitly empty trailing argument drops the comma

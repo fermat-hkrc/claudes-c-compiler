@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 34c9be09f5d1dbf0862518169c19a5a2dabd5ec8c34611529e8e6c5cf32533cf # shrinks to e = Num(9223372036854775808, false), seed = 0
+cc 7abc083fcb950b7c9d8c126054eeab213c2085c3663ed00d07eb17bf54ae3ece # shrinks to items = [Cond { arms: [(false, [])], els: [Cond { arms: [(false, [])], els: [Cond { arms: [(false, [])], els: [Line(0)] }, Cond { arms: [(false, [Line(0)])], els: [] }] }] }, Line(0)]
+cc de9248b00d41210b2f2ee9ac816572377f97d9e7b8c9bda4a441f7e9a4fbc57f # shrinks to e = Bin("<", Bin("<<", Num(4611686018427387904, false), Bin("/", Num(260, true), Num(131, false))), Num(0, false)), seed = 0

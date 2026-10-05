@@ -966,3 +966,394 @@ impl Default for Preprocessor {
 }
 
 
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::frontend::preprocessor::pbt_support::{
+        gcc_tokens, render_expr, strip_line_markers, tokens, arb_expr, Expr, ref_eval,
+    };
+    use proptest::prelude::*;
+
+    pub(super) fn new_pp() -> Preprocessor {
+        let mut pp = Preprocessor::new();
+        pp.set_filename("t.c");
+        pp
+    }
+
+    fn resolve_defined(e: &Expr, defined: &dyn Fn(&str) -> bool) -> Expr {
+        match e {
+            Expr::Defined(n) => Expr::Num(defined(n) as u64, false),
+            Expr::Un(o, a) => Expr::Un(o, Box::new(resolve_defined(a, defined))),
+            Expr::Bin(o, a, b) => Expr::Bin(o, Box::new(resolve_defined(a, defined)), Box::new(resolve_defined(b, defined))),
+            Expr::Tern(c, t, f) => Expr::Tern(
+                Box::new(resolve_defined(c, defined)),
+                Box::new(resolve_defined(t, defined)),
+                Box::new(resolve_defined(f, defined)),
+            ),
+            other => other.clone(),
+        }
+    }
+
+    /// P2: the full #if pipeline (resolve_defined → expand → resolve →
+    /// idents→0 → evaluate) selects the branch the independent C99 6.10.1
+    /// reference evaluator says it must.
+    #[test]
+    fn p2_if_pipeline_selects_reference_branch() {
+        let names: Vec<String> = vec!["M0", "M1", "M2"].into_iter().map(String::from).collect();
+        let undefs: Vec<String> = vec!["U0", "U1"].into_iter().map(String::from).collect();
+        let plain = arb_expr(2, names.clone());
+        let with_undef = arb_expr(2, [names.clone(), undefs.clone()].concat());
+        let def_part = |names: &Vec<String>| proptest::sample::select(names.clone()).prop_map(|n| Expr::Defined(n));
+        let expr_strategy = prop_oneof![
+            4 => with_undef,
+            2 => (def_part(&names), plain.clone())
+                .prop_map(|(d, p)| Expr::Bin("&&", Box::new(d), Box::new(p))),
+            2 => (def_part(&names), def_part(&names), plain)
+                .prop_map(|(d1, d2, p)| Expr::Bin(
+                    "||",
+                    Box::new(Expr::Bin("&&", Box::new(d1), Box::new(d2))),
+                    Box::new(p),
+                )),
+            1 => proptest::sample::select(undefs.clone()).prop_map(Expr::Defined),
+        ];
+        proptest!(ProptestConfig::with_cases(1024), |(
+            defs in proptest::collection::vec(
+                (proptest::sample::select(vec!["M0","M1","M2"]), -1000i64..1000i64), 0..3),
+            e in expr_strategy,
+            seed in any::<u64>(),
+        )| {
+            // resolve duplicate defines: last one wins (documented redefinition)
+            let mut env: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+            let mut defines = String::new();
+            for (n, v) in &defs {
+                env.insert(n.to_string(), *v);
+                defines.push_str(&format!("#define {} {}\n", n, v));
+            }
+            let env_ref = |n: &str| -> Option<i64> { Some(env.get(n).copied().unwrap_or(0)) };
+            let resolved = resolve_defined(&e, &|n| env.contains_key(n));
+            let expected = match ref_eval(&resolved, &env_ref) {
+                Some((v, _)) => v != 0,
+                None => return Ok(()), // UB domain (signed overflow etc.)
+            };
+            let mut sp = seed;
+            let mut spacer = move || {
+                sp = sp.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                ((sp >> 33) as usize)
+            };
+            let rendered = render_expr(&e, &mut spacer);
+            let program = format!("{}#if {}\nKEEP\n#else\nDROP\n#endif\n", defines, rendered);
+            let mut pp = new_pp();
+            let out = pp.preprocess(&program);
+            let toks = tokens(&strip_line_markers(&out));
+            let has_keep = toks.iter().any(|t| t == "KEEP");
+            let has_drop = toks.iter().any(|t| t == "DROP");
+            prop_assert!(has_keep == expected && has_drop == !expected,
+                "expr: {} defs: {} expected: {} out: {:?}", rendered, defines, expected, toks);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // P8: preprocess token stream == gcc -E -P on generated macro programs.
+    // ------------------------------------------------------------------
+
+    fn op_char() -> impl Strategy<Value = String> {
+        proptest::sample::select(vec![
+            "-", "+", "/", "=", "<", ">", "!", "&", "|", ":", "?", "%", "~", "^", "*", ".",
+        ])
+        .prop_map(|s: &str| s.to_string())
+    }
+
+    fn call_arg() -> impl Strategy<Value = String> {
+        prop_oneof![
+            4 => "[a-t]{1,4}",
+            2 => "[0-9]{1,3}",
+            1 => "\"[a-z ]{0,4}\"",
+        ]
+    }
+
+    fn invocation() -> impl Strategy<Value = String> {
+        let ident = "[a-d]{1,3}";
+        prop_oneof![
+            2 => (call_arg()).prop_map(|a| format!("ID({})", a)),
+            3 => (ident.clone(), proptest::sample::select(vec!["u", "L", "1", ""]), )
+                .prop_map(|(x, y)| format!("CATV({}, {})", x, y)),
+            2 => (call_arg(), call_arg()).prop_map(|(a, b)| format!("TWO({}, {})", a, b)),
+            2 => (call_arg(), proptest::collection::vec(call_arg(), 0..2))
+                .prop_map(|(a, rest)| {
+                    let mut s = format!("VAF({}, ", a);
+                    if rest.is_empty() { s.push_str(")"); } else {
+                        s.push_str(&rest.join(", "));
+                        s.push(')');
+                    }
+                    s
+                }),
+            2 => (call_arg(), proptest::collection::vec(call_arg(), 0..2))
+                .prop_map(|(a, rest)| {
+                    let mut s = format!("VAC({}, ", a);
+                    if rest.is_empty() { s.push_str(")"); } else {
+                        s.push_str(&rest.join(", "));
+                        s.push(')');
+                    }
+                    s
+                }),
+        ]
+    }
+
+    fn use_chunk() -> impl Strategy<Value = String> {
+        prop_oneof![
+            3 => "[a-t]{1,5}",
+            2 => "[0-9]{1,3}",
+            1 => "\"[a-z ]{0,5}\"",
+            3 => op_char(),
+            2 => proptest::sample::select(vec!["EMPTY", "OBJ", "ID", "CATV", "TWO", "VAF", "VAC"])
+                .prop_map(|s: &str| s.to_string()),
+            3 => invocation(),
+        ]
+    }
+
+    fn use_line() -> impl Strategy<Value = String> {
+        proptest::collection::vec(use_chunk(), 1..7).prop_map(|v| v.join(""))
+    }
+
+    pub(super) const MACRO_PRELUDE: &str = "#define EMPTY\n\
+        #define ID(x) x\n\
+        #define CATV(a,b) a##b\n\
+        #define TWO(a,b) ((a)+(b))\n\
+        #define VAF(fmt, ...) f(fmt, __VA_ARGS__)\n\
+        #define VAC(fmt, ...) g(fmt, ## __VA_ARGS__)\n\
+        #define OBJ 7\n";
+
+    #[test]
+    fn p8_preprocess_token_stream_matches_gcc() {
+        proptest!(ProptestConfig::with_cases(256), |(
+            lines in proptest::collection::vec(use_line(), 1..6)
+        )| {
+            let program = format!("{}{}\n", MACRO_PRELUDE, lines.join("\n"));
+            let expected = match gcc_tokens(&program) {
+                Ok(t) => t,
+                Err(_) => return Ok(()), // ill-formed C: out of domain
+            };
+            let mut pp = new_pp();
+            let out = pp.preprocess(&program);
+            let got = tokens(&strip_line_markers(&out));
+            prop_assert_eq!(got, expected);
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // P9: line-number preservation and __LINE__ correctness.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn p9_line_count_and___line__() {
+        fn line_chunk() -> impl Strategy<Value = String> {
+            prop_oneof![
+                4 => "[a-z]{1,5}",
+                2 => "[0-9]{1,3}",
+                1 => Just("__LINE__".to_string()),
+                1 => Just("+".to_string()),
+            ]
+        }
+        proptest!(ProptestConfig::with_cases(512), |(
+            lines in proptest::collection::vec(
+                proptest::collection::vec(line_chunk(), 1..4), 1..10)
+        )| {
+            let src: Vec<String> = lines.iter().map(|c| c.join(" ")).collect();
+            let program = src.join("\n");
+            let mut pp = new_pp();
+            let out = pp.preprocess(&program);
+            let out_lines: Vec<&str> = out.lines().collect();
+            // line 1 is the `# 1 "t.c"` marker; then one line per source line
+            prop_assert_eq!(out_lines.len(), src.len() + 1,
+                "out: {:?}", out);
+            for (k, src_line) in src.iter().enumerate() {
+                let expected: Vec<String> = src_line
+                    .split_whitespace()
+                    .map(|w| if w == "__LINE__" { (k + 1).to_string() } else { w.to_string() })
+                    .collect();
+                let got = tokens(out_lines[k + 1]);
+                prop_assert_eq!(got, expected,
+                    "line {} of {:?} -> {:?}", k + 1, src_line, out_lines[k + 1]);
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------
+    // P10: #error / #warning diagnostic contract.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn p10_error_warning_diagnostics_active_vs_inactive() {
+        proptest!(ProptestConfig::with_cases(256), |(
+            pre in proptest::collection::vec("[a-z]{1,4}", 0..3),
+            msg in "[a-z ]{1,10}",
+            wmsg in "[a-z ]{1,10}",
+        )| {
+            let mut program = String::new();
+            for p in &pre {
+                program.push_str(p);
+                program.push('\n');
+            }
+            let err_line = pre.len() + 1;
+            program.push_str("#if 0\n#error inactive\n#warning inactive\n#endif\n");
+            let _ = err_line;
+            let err_line = pre.len() + 5;
+            let warn_line = err_line + 1;
+            program.push_str(&format!("#error {}\n", msg));
+            program.push_str(&format!("#warning {}\n", wmsg));
+
+            let mut pp = new_pp();
+            let _ = pp.preprocess(&program);
+
+            prop_assert_eq!(pp.errors().len(), 1, "errors: {:?}", pp.errors());
+            let e = &pp.errors()[0];
+            prop_assert_eq!(&e.file, "t.c");
+            prop_assert_eq!(e.line, err_line);
+            prop_assert_eq!(e.col, 2);
+            let want_err = format!("#error {}", msg);
+            prop_assert_eq!(&e.message, &want_err);
+
+            prop_assert_eq!(pp.warnings().len(), 1, "warnings: {:?}", pp.warnings());
+            let w = &pp.warnings()[0];
+            prop_assert_eq!(&w.file, "t.c");
+            prop_assert_eq!(w.line, warn_line);
+            prop_assert_eq!(w.col, 2);
+            let want_warn = format!("#warning {}", wmsg);
+            prop_assert_eq!(&w.message, &want_warn);
+        });
+    }
+}
+
+#[cfg(test)]
+mod pbt_kat {
+    use super::pbt_tests::{new_pp, MACRO_PRELUDE};
+    use crate::frontend::preprocessor::pbt_support::{gcc_tokens, strip_line_markers, tokens};
+
+    /// KAT companions for P8: empty-macro expansion must not glue adjacent
+    /// operator tokens (gcc emits a separating space, producing two tokens).
+    #[test]
+    fn p8b_empty_macro_paste_guard_kat() {
+        for line in ["-EMPTY-", "+EMPTY+", "/EMPTY/", "<EMPTY<", "=EMPTY=", "1 EMPTY 2"] {
+            let program = format!("{}{}\n", MACRO_PRELUDE, line);
+            let expected = gcc_tokens(&program).expect("gcc ok");
+            let mut pp = new_pp();
+            let out = pp.preprocess(&program);
+            let got = tokens(&strip_line_markers(&out));
+            assert_eq!(got, expected, "line: {}", line);
+        }
+    }
+}
+
+#[cfg(test)]
+mod pbt_sweep {
+    use super::*;
+    use crate::frontend::preprocessor::pbt_support::{strip_line_markers, tokens};
+    use proptest::prelude::*;
+
+    /// P11 (sweep): documented pragma contracts (README "Pragma Handling"
+    /// table): pack(N)/pack()/pack(push,N)/pack(push)/pack(pop) synthetic
+    /// tokens, #pragma weak / weak alias side channel, push_macro/pop_macro
+    /// round-trip, #pragma redefine_extname side channel.
+    #[test]
+    fn p11_pragma_contracts() {
+        let op = prop_oneof![
+            3 => (1u8..=16).prop_map(|n| (format!("#pragma pack({})", n), format!("__ccc_pack_set_{}", n))),
+            2 => Just(("#pragma pack()".to_string(), "__ccc_pack_reset".to_string())),
+            2 => (1u8..=16).prop_map(|n| (format!("#pragma pack(push, {})", n), format!("__ccc_pack_push_{}", n))),
+            1 => Just(("#pragma pack(push)".to_string(), "__ccc_pack_push_only".to_string())),
+            1 => Just(("#pragma pack(pop)".to_string(), "__ccc_pack_pop".to_string())),
+        ];
+        proptest!(ProptestConfig::with_cases(512), |(
+            ops in proptest::collection::vec(op, 1..6),
+            sym in "[a-z]{2,5}",
+            alias in "[a-z]{2,5}",
+            old in "[a-z]{2,5}",
+            new in "[a-z]{2,5}",
+        )| {
+            let mut program = String::new();
+            let mut expected_tokens = Vec::new();
+            for (line, tok) in &ops {
+                program.push_str(line);
+                program.push('\n');
+                expected_tokens.push(tok.clone());
+                expected_tokens.push(";".to_string());
+            }
+            program.push_str(&format!("#pragma weak {}\n", sym));
+            program.push_str(&format!("#pragma weak {} = {}\n", sym, alias));
+            program.push_str(&format!("#pragma redefine_extname {} {}\n", old, new));
+            program.push_str(&format!("#define {} 1\n#pragma push_macro(\"{}\")\n#undef {}\n#pragma pop_macro(\"{}\")\n{}\n",
+                old, old, old, old, old));
+
+            let mut pp = Preprocessor::new();
+            pp.set_filename("t.c");
+            let out = pp.preprocess(&program);
+            let got = tokens(&strip_line_markers(&out));
+            // pack/visibility synthetic tokens survive (C mode); the last line
+            // expands the restored macro definition to 1
+            let mut want = expected_tokens;
+            want.push("1".to_string());
+            prop_assert_eq!(got, want);
+            prop_assert!(pp.weak_pragmas.contains(&(sym.clone(), None)));
+            prop_assert!(pp.weak_pragmas.contains(&(sym.clone(), Some(alias.clone()))));
+            prop_assert!(pp.redefine_extname_pragmas.contains(&(old.clone(), new.clone())));
+        });
+    }
+
+    /// P9b (sweep): documented #line override — "__LINE__ ... Respects #line
+    /// overrides": after `#line N`, __LINE__ on the following line is N, and
+    /// increments by 1 per source line.
+    #[test]
+    fn p9b_line_directive_overrides() {
+        proptest!(ProptestConfig::with_cases(256), |(
+            target in 1u32..1000,
+            gap in 0usize..4,
+        )| {
+            let mut program = format!("#line {}\n", target);
+            for _ in 0..gap {
+                program.push_str("pad\n");
+            }
+            program.push_str("__LINE__\n");
+            let mut pp = Preprocessor::new();
+            pp.set_filename("t.c");
+            let out = pp.preprocess(&program);
+            // C11 6.10.4: the line AFTER #line N is line N (gcc-verified KAT)
+            let want = (target + gap as u32).to_string();
+            let got = tokens(&strip_line_markers(&out));
+            let mut want_all: Vec<String> = vec!["pad".to_string(); gap];
+            want_all.push(want);
+            prop_assert_eq!(got, want_all);
+        });
+    }
+}
+
+#[cfg(test)]
+mod pbt_regression {
+    use crate::frontend::preprocessor::pbt_support::{strip_line_markers, tokens};
+    use super::Preprocessor;
+
+    /// Regression (B1, round 03): `, ## __VA_ARGS__` must delete the comma
+    /// only when the variadic arguments are ABSENT — a supplied-but-empty
+    /// argument keeps it (gcc 9.4: VAC(a, ) -> g(a,) ; VAC(a) -> g(a)).
+    #[test]
+    fn test_preprocess_regression_va_args_empty_arg_keeps_comma() {
+        let mut pp = Preprocessor::new();
+        pp.set_filename("t.c");
+        let out = pp.preprocess("#define VAC(fmt, ...) g(fmt, ## __VA_ARGS__)\nVAC(a, )\n");
+        assert_eq!(tokens(&strip_line_markers(&out)), vec!["g", "(", "a", ",", ")"]);
+    }
+
+    /// Regression (B2, round 03): the #error diagnostic's file field must be
+    /// the filename given to set_filename ("t.c", matching __FILE__ and gcc's
+    /// `t.c:1:2: error:` format), not the absolutized include-stack path.
+    #[test]
+    fn test_preprocess_regression_error_file_field() {
+        let mut pp = Preprocessor::new();
+        pp.set_filename("t.c");
+        pp.preprocess("#error boom\n");
+        assert_eq!(pp.errors().len(), 1);
+        assert_eq!(pp.errors()[0].file, "t.c");
+        assert_eq!(pp.errors()[0].line, 1);
+        assert_eq!(pp.errors()[0].col, 2);
+    }
+}

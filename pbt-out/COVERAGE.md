@@ -1,39 +1,46 @@
-# PBT Coverage Status — round 02 (src/frontend/lexer)
+# PBT Coverage Status — round 03 (src/frontend/preprocessor)
 
-Round 02 campaign set (canonical): this file plus `REPORT.md`, `PROPERTIES.md`, `PLAN.md`,
+Round 03 campaign set (canonical): this file plus `REPORT.md`, `PROPERTIES.md`, `PLAN.md`,
 `report.json` at `pbt-out/`; round archive with FUNCTION_INDEX / INVARIANTS / build.log /
-bug_reports under `pbt-out/rounds/02_lexer/`. (Round 01 = `src/common`, see `rounds/01_common/`.)
+bug_reports under `pbt-out/rounds/03_preprocessor/`. (Round 01 = `src/common`, round 02 =
+`src/frontend/lexer`, archives under `rounds/`.)
 
 | Function | Source file | Test file | Test target | Notes |
 |----------|-------------|-----------|-------------|-------|
-| Lexer::tokenize | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P1, P3, P9, P10 + all) |
-| Lexer::next_token | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (via tokenize, all properties) |
-| Lexer::skip_whitespace_and_comments | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | FAIL→B5 via P9/T2 (unterminated comment leaks last byte) |
-| Lexer::is_line_marker | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (T1 line markers) |
-| Lexer::lex_number | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (dispatch via P3/P4/P5/P7) |
-| Lexer::lex_hex_number | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | FAIL→B3 via P7 (0x…17 digits → 0) |
-| Lexer::lex_hex_float | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | FAIL→B1 (P6a) and B2 (P6b); exact domain passes (P5) |
-| Lexer::lex_binary_number | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | FAIL→B3 via P7 (binary arm) |
-| Lexer::lex_octal_number | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P3/P4/P7/T4 incl. ellipsis special case) |
-| Lexer::finish_int_literal | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P3/P4/P11) |
-| Lexer::lex_decimal_number | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | FAIL→B3 (decimal >u64 → 0, probe); ≤u64 passes (p7b) |
-| Lexer::parse_float_suffix | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P11 imaginary combos) |
-| Lexer::make_float_token | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P5/P8 float paths) |
-| Lexer::parse_int_suffix | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P3/P4/P11/P11b random suffix compositions) |
-| Lexer::make_int_token | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P3 round-trip + P4 exact boundary matrix, LP64) |
-| Lexer::lex_string | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P8/P9/P12 escapes, u8 equivalence) |
-| Lexer::lex_wide_string | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P12 code-point storage) |
-| Lexer::lex_char16_string | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P12) |
-| Lexer::lex_wide_char | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P8c/P12 incl. surrogate fallback) |
-| Lexer::lex_char | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P8a-d; multichar int-typed packing matches GCC) |
-| Lexer::lex_escape_char | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P8a/P8b full documented table) |
-| Lexer::lex_unicode_escape | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P8c/P12 incl. U+FFFD fallback) |
-| Lexer::lex_identifier | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P1 round-trip) |
-| Lexer::lex_punctuation | scan.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | FAIL→B4 via P13 (stack overflow at ~4000 unknown chars; safe depths pass) |
-| Display::fmt (TokenKind) | token.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P2 canonical Display check) |
-| TokenKind::from_keyword | token.rs | src/frontend/lexer/scan.rs | cargo test --lib frontend::lexer | pass (P2 gnu/strict differential) |
+| Preprocessor::preprocess | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | FAIL→B1 via P8, B3 via P8b; passes P2/P9/P11 |
+| Preprocessor::preprocess_source | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (via P2/P3/P9/P11) |
+| Preprocessor::process_directive | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (P3/P9b/P10/P11) |
+| Preprocessor::handle_if / handle_elif | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (P2, P3) |
+| Preprocessor::handle_define / handle_undef / handle_ifdef | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (P2/P3/P11) |
+| Preprocessor::handle_line_directive | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (P9b, gcc-verified C11 6.10.4) |
+| Preprocessor::errors / warnings | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | FAIL→B2 via P10 (file field absolutized) |
+| Preprocessor::current_file | pipeline.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | FAIL→B2 (root cause site) |
+| Preprocessor::handle_pragma (dispatch) | pragmas.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (P11 pack/weak/redefine_extname/push_macro/pop_macro) |
+| ConditionalStack::{push_if,handle_elif,handle_else,handle_endif,is_active} | conditionals.rs | src/frontend/preprocessor/conditionals.rs | cargo test --lib frontend::preprocessor | pass (P3 state machine, 1024 cases) |
+| evaluate_condition | conditionals.rs | src/frontend/preprocessor/conditionals.rs | cargo test --lib frontend::preprocessor | pass (via P2) |
+| eval_const_expr / tokenize_expr / ExprParser::* | conditionals.rs | src/frontend/preprocessor/conditionals.rs | cargo test --lib frontend::preprocessor | pass (P1 1024 cases vs independent C99 6.10.1 reference + P1b matrix) |
+| expand_condition_macros | conditionals.rs | src/frontend/preprocessor/conditionals.rs | cargo test --lib frontend::preprocessor | pass (via P2) |
+| resolve_defined_in_expr | expr_eval.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (P2 defined()/defined X forms) |
+| replace_remaining_idents_with_zero | expr_eval.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (P2 undefined idents → 0) |
+| Preprocessor::join_continued_lines / find_continuation_backslash | text_processing.rs | src/frontend/preprocessor/text_processing.rs | cargo test --lib frontend::preprocessor | pass (P4, 1024 cases + idempotence) |
+| Preprocessor::strip_block_comments | text_processing.rs | src/frontend/preprocessor/text_processing.rs | cargo test --lib frontend::preprocessor | pass (P5 differential + idempotence, P5b literals) |
+| MacroTable::expand_line / expand_line_reuse / expand_text | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass via P6/P7/P8 grammar; B3 witness on empty-body path |
+| MacroTable::expand_identifier / expand_macro_invocation | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (via P6/P7/P8) |
+| MacroTable::expand_function_macro | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (via P7/P8) incl. `body_ended_with_func_ident` |
+| MacroTable::handle_stringify_and_paste | macro_defs.rs | src/frontend/preprocessor/macro_defs.rs | cargo test --lib frontend::preprocessor | FAIL→B1 (empty-variadic comma); stringify/paste paths pass (P6/P7) |
+| MacroTable::append_with_paste_guard | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | FAIL→B3 via P8b (empty expansion skips guard) |
+| MacroTable::substitute_params | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (via P6/P7/P8) |
+| MacroTable::parse_macro_args | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (via P7/P8 incl. empty args, literals with commas) |
+| stringify_arg | macro_defs.rs | src/frontend/preprocessor/macro_defs.rs | cargo test --lib frontend::preprocessor | pass (P6 vs C11 6.10.3.2 reference, 1024 cases) |
+| parse_define | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (all P8/P11 programs define macros) |
+| MacroTable::get_va_args / get_named_va_args | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | FAIL→B1 root-cause site (VAF/VAC invocations in P8) |
+| would_paste_tokens / extract_trailing_ident / contains_standalone_ident | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (via P7/P8 paste paths) |
+| MacroTable CRUD (define/undefine/is_defined/get/set_line/set_file) | macro_defs.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (fixtures of every property) |
+| has_unbalanced_parens / split_first_word / strip_line_comment | text_processing.rs | src/frontend/preprocessor/pipeline.rs | cargo test --lib frontend::preprocessor | pass (via preprocess paths) |
 
-Excluded (see rounds/02_lexer/FUNCTION_INDEX.md): Lexer::new (constructor, exercised by every
-test), set_gnu_extensions (exercised in P2), peek_next, parse_simple_float_suffix (via callers),
-try_pragma_pack_token / try_pragma_visibility_token (T3 deterministic), hex_digit_val,
-Token::new, Token::is_eof (trivial).
+Excluded (see rounds/03_preprocessor/FUNCTION_INDEX.md): includes.rs filesystem resolvers
+(handle_include, handle_include_next, resolve_include_path*, read_c_source_file, inject_* —
+live-filesystem integration, no hermetic oracle; pure helpers clean_path /
+normalize_include_path / detect_include_guard / make_absolute not directly driven this round),
+builtin_macros.rs / predefined_macros.rs static loaders and config setters (fixtures only),
+utils.rs char predicates and literal-copy helpers (exercised via the expansion properties).
