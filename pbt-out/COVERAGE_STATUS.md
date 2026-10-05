@@ -1,26 +1,23 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05
-> Campaign: encode_neon_sshr (standard)
+> Last updated: 2026-10-05 (campaign: encode_neon_shl)
 > Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw
+> Files: neon.rs in scope | Function under test: encode_neon_shl | Properties: 10 (6 passing, 4 failing)
 
-## This campaign
+## Summary
 
 | Metric | Value |
 |--------|-------|
-| Target | encode_neon_sshr |
+| Target function | encode_neon_shl |
+| Source | neon.rs:1231 |
 | Properties | 10 |
 | Passing | 6 |
-| Failing | 4 |
-| Bugs | 4 |
-| Sweep | 1/1 (alt-spellings + nonreg; both passing) |
+| Failing (bugs) | 4 |
+| Sweep round | 1/1 spent (alt-spellings + nonreg, both passing) |
+| Coverage evidence | file-level (symbol presence) |
 
-## Function
+## File Coverage
 
-| Function | Source file | Tested | Notes |
-|----------|-------------|--------|-------|
-| encode_neon_sshr | neon.rs | yes | 6 passing / 4 failing; 4 medium bugs |
-
-## Sweep
-
-coverage_gaps had no LLVM profraw. Manual arm audit of encode_neon_sshr: arity Err, get_neon_reg, get_imm, neon_arr_to_q_size, match T, Ok Word driven. Added alt-spellings differential and Imm/Mem/Label negative-error (both passing). Closed: tier round spent.
+| Source File | Funcs | Candidates | Tested this campaign | Status |
+|-------------|-------|------------|----------------------|--------|
+| neon.rs | 68 | encode_neon_shl | encode_neon_shl | covered |
