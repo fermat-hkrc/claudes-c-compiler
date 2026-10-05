@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_across)
+
+- Valid UMAXV/UMINV/SMAXV/SMINV with dest Bd/Hd/Sd matching T in {8b,16b,4h,8h,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5] (1000 cases).
+- Flipping U differs only in bit 29; changing opcode differs only in bits[16:12] (1000 cases).
+- Success-path word: bit31=0, Q at bit30, U at bit29, bits[28:24]=01110, size at [23:22], bits[21:17]=11000, opcode at [16:12], bits[11:10]=10, Rn at [9:5], Rd at [4:0]. Q/size from T: 8b=(0,00), 16b=(1,00), 4h=(0,01), 8h=(1,01), 4s=(1,10). Known-answer: `umaxv b0, v1.8b` = 0x2e30a820; `uminv b0, v1.8b` = 0x2e31a820; `smaxv b0, v1.8b` = 0x0e30a820; `sminv b0, v1.8b` = 0x0e31a820; `umaxv s0, v1.4s` = 0x6eb0a820; `smaxv s0, v1.4s` = 0x4eb0a820.
+- Arity 0–1 returns Err (1000 cases).
+- Uppercase mnemonic/V/B/H/S prefix with lowercase T matches llvm-mc (1000 cases).
+- Extra operand, reserved 2s/1d/2d, and GPR dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_across)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD across lanes (UMAXV/UMINV/SMAXV/SMINV): dest Bd/Hd/Sd matching T; T in {8B,16B,4H,8H,4S}; size:Q=10:0 (2S) and size=11 reserved.
+- Dispatch: encoder/mod.rs:693-696 umaxv/uminv/smaxv/sminv => encode_neon_across(operands, U, opcode).
+- Sibling encode_neon_addv / encode_neon_across_long are different opcodes, not same-job differentials. encode_neon_across uses the correct `(opcode << 12) | (0b10 << 10)` placement.
+- encode_neon_across checks operands.len() < 2; extra ignored; dest type discarded (`let (rd, _)`); T filtered only by neon_arr_to_q_size (accepts 2s/1d/2d).
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus uppercase alt-spellings.
+- Three SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_across_*.md.
+
 # Confirmed invariants (encode_neon_addv)
 
 - Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5] (1000 cases). Rd/Rn packing is correct even though opcode bits are not.
