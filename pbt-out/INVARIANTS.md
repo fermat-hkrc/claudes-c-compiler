@@ -1,3 +1,38 @@
+# Confirmed invariants (encode_neon_shrn)
+
+- Valid SHRN/SHRN2/RSHRN/RSHRN2 Vd.Tb, Vn.Ta, #shift with Ta in {8h,4s,2d}, Tb mandated by (Ta, Q), shift in [1, dest_esize], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; SHRN vs SHRN2 differs only in Q bit 30; SHRN vs RSHRN differs only in bits[15:10] (1000 cases).
+- Success-path 32-bit word: bit31=0, Q at bit30, U=0 at bit29, bits[28:23]=011110, immh:immb at [22:16] = source_esize-shift, bits[15:10]=100001 (SHRN) or 100011 (RSHRN), Rn at [9:5], Rd at [4:0]. dest_esize: 8h→8, 4s→16, 2d→32.
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase mnemonic/V prefix with lowercase T matches llvm-mc (1000 cases).
+- Imm/Mem/Label at dest/src/imm slots returns Err (1000 cases).
+- Unsupported source Ta in {8b,16b,4h,2s,1d,1q} returns Err (1000 cases).
+- Known-answer: `shrn v0.8b, v1.8h, #1` = 0x0f0f8420; `shrn v0.8b, v1.8h, #8` = 0x0f088420; `shrn2 v0.16b, v1.8h, #1` = 0x4f0f8420; `shrn v0.4h, v1.4s, #1` = 0x0f1f8420; `shrn v0.4h, v1.4s, #16` = 0x0f108420; `shrn2 v0.8h, v1.4s, #16` = 0x4f108420; `shrn v0.2s, v1.2d, #1` = 0x0f3f8420; `shrn v0.2s, v1.2d, #32` = 0x0f208420; `shrn2 v0.4s, v1.2d, #1` = 0x4f3f8420; `rshrn v0.8b, v1.8h, #1` = 0x0f0f8c20; `rshrn2 v0.16b, v1.8h, #8` = 0x4f088c20; `shrn v31.8b, v31.8h, #8` = 0x0f0887ff; `shrn v0.8b, v0.8h, #1` = 0x0f0f8400; `shrn v15.4h, v16.4s, #9` = 0x0f17860f.
+- Extra operand, mismatched dest Tb, bare V dest, and i64 shift truncated via `as u32` currently disagree with llvm-mc/gas (see bugs). Shift 0 and dest_esize+1 are rejected by the half_bits check.
+
+## Environment (encode_neon_shrn)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD shift-by-immediate SHRN/RSHRN: Ta in {8H,4S,2D}; Tb 8B/16B, 4H/8H, 2S/4S; shift in [1, dest_esize]; U=0; opcode 100001/100011; immh != 0000; immh:immb = source_esize - shift.
+- Dispatch: encoder/mod.rs:648-651 `shrn`/`shrn2`/`rshrn`/`rshrn2` => encode_neon_shrn.
+- Sibling encode_neon_qshrn is saturating (same-job gate fails). encode_neon_sqshrun is signed-to-unsigned saturating. encode_neon_scalar_qshrn is scalar. encode_neon_three_diff_narrow is ADDHN/SUBHN.
+- encode_neon_shrn checks operands.len() < 3; extra ignored; dest arrangement discarded; shift is `get_imm as u32` then range-checked against half_bits = source/2.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / get_neon_reg other / alt spellings / unsupported Ta).
+
+## Quirks (encode_neon_shrn)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Destination arrangement is discarded (see bugs).
+- Shift is `get_imm as u32` before the range check; values congruent to a valid shift modulo 2^32 encode (see bugs). Shift 0 and dest_esize+1 are rejected.
+- Operand::Reg dest and x/w prefixes encode as V registers (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
+---
+
 # Confirmed invariants (encode_neon_sri)
 
 - Valid SRI Vd.T, Vn.T, #shift with T in {8b,16b,4h,8h,2s,4s,2d}, shift in [1, esize(T)], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

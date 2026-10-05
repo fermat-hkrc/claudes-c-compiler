@@ -1,165 +1,173 @@
-# PBT Campaign Report: encode_neon_sri
+# PBT Campaign Report: encode_neon_shrn
 
 ## Summary
 
-**Verdict:** 4 medium: encode_neon_sri silently encodes a fourth operand, mismatched dest/src arrangements, out-of-range `#0` shifts (reserved immh=0000; debug overflow on negatives), and a bare `Vn` source — all rejected by llvm-mc/gas.
+**Verdict:** 4 medium: encode_neon_shrn silently accepts invalid GNU-style SHRN/RSHRN (fourth operand, mismatched dest Tb, bare V dest, i64 shift truncated to a legal #1), so gas/llvm-mc-rejected assembly is encoded as a different legal instruction.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_sri
-**Tests:** 10
-**Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function (encode_neon_sri), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test; C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of the encode_neon_sri body plus 1000-case properties covering arity / get_neon_reg / get_imm / neon_arr_to_q_size / match T / Ok Word.
+**Modules tested:** encode_neon_shrn
+**Tests:** 11
+**Result:** 7 passing, 4 bugs
+**Change surface:** 1 changed function (encode_neon_shrn), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_neon_shrn NOT LINKED). Manual arm audit of the function body plus three sweep properties (alt-spellings, nonreg, unsupported source).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_sri | 10 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_shrn | 11 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_sri ignores a fourth operand
+### B1: encode_neon_shrn ignores a fourth operand
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_sri([Vd.T, Vn.T, #shift, Vextra.T]) = Err ∧ llvm-mc rejects the matching 4-operand asm
-**Contract evidence:** inferred (signature / neon.rs:1284 names exactly three operands SRI Vd.T, Vn.T, #shift; README.md:12 gas-compatible; llvm-mc rejects a fourth operand)
+**Formal:** ∀ rd,rn,extra ∈ [0,31], Ta ∈ {8h,4s,2d}, is_high ∈ {0,1}, opcode ∈ {100001,100011}, shift ∈ [1, dest_esize(Ta)]. encode_neon_shrn([Vd.Tb, Vn.Ta, #shift, Vextra.Tb], opcode, is_high) = Err ∧ llvm-mc(4-operand) = Err
+**Contract evidence:** inferred (ARM SHRN is a 3-operand instruction; README.md:12 gas compatibility; llvm-mc rejects a fourth operand)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_sri([v0.8b, v0.8b, #1, v0.8b])
-**Expected / Actual:** Err / Ok(Word) same as `sri v0.8b, v0.8b, #1`
-**Impact:** The assembler silently encodes `sri Vd.T, Vn.T, #shift, extra` as three-operand SRI, dropping the extra operand instead of diagnosing invalid assembly
-**Root cause:** neon.rs:1286 checks `operands.len() < 3` only, so extra operands after the first three are ignored
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1286`
+**Counterexample:** encode_neon_shrn([v0.8b, v0.8h, #1, v0.8b], opcode=0b100001, is_high=false)
+**Expected / Actual:** Err / Ok(Word) same as `shrn v0.8b, v0.8h, #1`
+**Impact:** Invalid assembly with a trailing operand is silently encoded instead of diagnosed
+**Root cause:** neon.rs:1437 checks `operands.len() < 3` only, so extra operands after the first three are ignored
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1437`
 ```rust
-    if operands.len() < 3 {
-        return Err("sri requires 3 operands".to_string());
-    }
+    if operands.len() < 3 { return Err("shrn/rshrn requires 3 operands".to_string()); }
 ```
 **Suggested fix:** Reject arity other than 3
 ```rust
     if operands.len() != 3 {
-        return Err("sri requires 3 operands".to_string());
+        return Err("shrn/rshrn requires 3 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_sri_extra_operand.md
-**Repro seed:** cc 5f625bb1c70efd9d4ab4aa106a98f0e7cf5bdcc0f6c4e5bd37ae3685b02c5204
+**Bug report:** bug_reports/encode_neon_shrn_extra_operand.md
+**Repro seed:** cc 872bcb3b6a9a03cbe965e0ecb7dc25a9f559225bdf5e947ee29baf88366eb0df
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_sri_pbt::encode_neon_sri_neg_extra_operand' (2357942) panicked at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:267:1:
-Test failed: 4 operands must Err (llvm-mc rejects sri v0.8b, v0.8b, #1, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:370.
-minimal failing input: rd = 0, rn = 0, extra = 0, t_shift = (
-    "8b",
+thread 'backend::arm::assembler::encoder::encode_neon_shrn_pbt::encode_neon_shrn_neg_extra_operand' (2365137) panicked at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:393:1:
+Test failed: 4 operands must Err (llvm-mc rejects shrn v0.8b, v0.8h, #1, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:419.
+minimal failing input: rd = 0, rn = 0, extra = 0, ta_shift = (
+    "8h",
     1,
-)
+), is_high = false, opcode = 33
 	successes: 0
 	local rejects: 0
 	global rejects: 0
 ```
 
-### B2: encode_neon_sri encodes mismatched dest/src arrangements
+### B2: encode_neon_shrn ignores destination arrangement Tb
 
-**Formal:** ∀ rd,rn ∈ {0..31}, Td,Tn arrangements, shift ∈ [1,64]. (Td ≠ Tn ∨ Td ∉ {8b,16b,4h,8h,2s,4s,2d}) ⇒ encode_neon_sri([Vd.Td, Vn.Tn, #shift]) = Err ∧ llvm-mc rejects
-**Contract evidence:** inferred (neon.rs:1284 SRI Vd.T, Vn.T matching T; ARM SRI T in {8B,16B,4H,8H,2S,4S,2D}; llvm-mc rejects sri v0.2s, v0.8b, #1)
+**Formal:** ∀ rd,rn ∈ [0,31], Tb,Ta arrangements, shift ∈ [1,64], is_high, opcode. (Tb,Ta,is_high) not a valid SHRN pair ⇒ encode_neon_shrn = Err ∧ llvm-mc = Err
+**Contract evidence:** inferred (ARM SHRN Ta in {8H,4S,2D} with matching Tb 8B/16B, 4H/8H, 2S/4S; README.md:12 gas compatibility; llvm-mc rejects `shrn v0.8b, v0.2d, #1`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_sri([v0.2s, v0.8b, #1])
-**Expected / Actual:** Err / Ok(Word) encoded from dest arrangement `.2s` only
-**Impact:** Invalid assembly `sri v0.2s, v0.8b, #1` is encoded as if both were `.2s`
-**Root cause:** neon.rs:1290 discards the source arrangement (`let (rn, _) = get_neon_reg(operands, 1)?`), so Tn is never compared to Td
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1290`
+**Counterexample:** encode_neon_shrn([v0.8b, v0.2d, #1], opcode=0b100001, is_high=false)
+**Expected / Actual:** Err / Ok(Word) encoded as if dest were v0.2s
+**Impact:** Wrong-arrangement SHRN is silently accepted and encoded as a different legal instruction
+**Root cause:** neon.rs:1438 discards the destination arrangement (`let (rd, _)`), so Q comes only from is_high and esize only from the source
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1438`
 ```rust
-    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rd, _) = get_neon_reg(operands, 0)?;
 ```
-**Suggested fix:** Require the source arrangement to match the dest arrangement
+**Suggested fix:** Require Tb to match Ta and Q
 ```rust
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    if arr_n != arr_d {
-        return Err(format!("sri arrangement mismatch: .{} vs .{}", arr_d, arr_n));
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    let expected_tb = match (arr_n.as_str(), is_high) {
+        ("8h", false) => "8b",
+        ("8h", true) => "16b",
+        ("4s", false) => "4h",
+        ("4s", true) => "8h",
+        ("2d", false) => "2s",
+        ("2d", true) => "4s",
+        _ => return Err(format!("shrn: unsupported source: {}", arr_n)),
+    };
+    if arr_d != expected_tb {
+        return Err(format!("shrn: dest arrangement {} does not match source {}", arr_d, arr_n));
     }
 ```
-**Bug report:** bug_reports/encode_neon_sri_mismatched_t.md
-**Repro seed:** (none — first-case shrink)
+**Bug report:** bug_reports/encode_neon_shrn_mismatched_dest_tb.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_sri_pbt::encode_neon_sri_neg_invalid_t' (2357977) panicked at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:267:1:
-Test failed: invalid/mismatched/reserved T must Err (ARM SRI T in {8B,16B,4H,8H,2S,4S,2D} matching; llvm-mc rejects sri v0.2s, v0.8b, #1) at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:396.
-minimal failing input: rd = 0, rn = 0, td = "2s", tn = "8b", shift = 1
+thread 'backend::arm::assembler::encoder::encode_neon_shrn_pbt::encode_neon_shrn_neg_invalid_arrangement' (2365167) panicked at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:427:1:
+Test failed: invalid/mismatched Ta/Tb must Err (ARM SHRN Ta in {8H,4S,2D} with matching Tb; llvm-mc rejects shrn v0.8b, v0.2d, #1) at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:451.
+minimal failing input: rd = 0, rn = 0, tb = "8b", ta = "2d", shift = 1, is_high = false, opcode = 33
 	successes: 0
 	local rejects: 0
 	global rejects: 0
 ```
 
-### B3: encode_neon_sri encodes out-of-range shift immediates
+### B3: encode_neon_shrn truncates i64 shift via `as u32`
 
-**Formal:** ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∉ [1, esize(T)]. encode_neon_sri([Vd.T, Vn.T, #shift]) = Err
-**Contract evidence:** inferred (ARM SRI shift in [1, esize]; llvm-mc "immediate must be an integer in range [1, 8]" for .8b; README.md:12 gas-compatible)
+**Formal:** ∀ rd,rn ∈ [0,31], Ta ∈ {8h,4s,2d}, is_high, opcode, shift ∉ [1, dest_esize(Ta)]. encode_neon_shrn = Err ∧ (shift in a llvm-mc-representable range ⇒ llvm-mc = Err)
+**Contract evidence:** inferred (Operand::Imm is i64; ARM SHRN shift in [1, dest_esize]; llvm-mc "immediate must be an integer in range [1, 8]" for .8b; gas "immediate value out of range")
+**Documentation conflict:** (none) — neon.rs:1444 range-checks after the truncation, so the author's check never sees the original i64
+**Severity:** medium
+**Counterexample:** encode_neon_shrn([v0.8b, v0.8h, #4294967297], opcode=0b100001, is_high=false)
+**Expected / Actual:** Err / Ok(Word) of shift #1
+**Impact:** An out-of-range immediate congruent to a legal shift modulo 2^32 is silently rewritten to that legal shift
+**Root cause:** neon.rs:1440 truncates the i64 immediate to u32 before the range check at neon.rs:1444
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1440`
+```rust
+    let shift = get_imm(operands, 2)? as u32;
+```
+**Suggested fix:** Range-check the i64 immediate before narrowing
+```rust
+    let shift_i = get_imm(operands, 2)?;
+    if shift_i < 1 || shift_i > half_bits as i64 {
+        return Err(format!("shrn: shift {} out of range", shift_i));
+    }
+    let shift = shift_i as u32;
+```
+**Bug report:** bug_reports/encode_neon_shrn_shift_i64_trunc.md
+**Repro seed:** cc 516b13a6d692f623bcbabff1e554424250a9347e6bd21b311d26a1d62aa0c43e
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_shrn_pbt::encode_neon_shrn_neg_shift_oob' (2365184) panicked at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:459:1:
+Test failed: shift 4294967297 not in [1, 8] must Err (llvm-mc rejects shrn v0.8b, v0.8h, #4294967297) at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:482.
+minimal failing input: rd = 0, rn = 0, ta_shift = (
+    "8h",
+    4294967297,
+), is_high = false, opcode = 33
+	successes: 1
+	local rejects: 0
+	global rejects: 0
+```
+
+### B4: encode_neon_shrn accepts a bare V dest without arrangement
+
+**Formal:** ∀ rd,rn ∈ [0,31], kind ∈ {bare dest, bare src, GPR dest arrangement, GPR src, scalar dest}. encode_neon_shrn(kind) = Err ∧ llvm-mc(kind) = Err
+**Contract evidence:** inferred (ARM SHRN dest is Vd.Tb; README.md:12 gas compatibility; llvm-mc rejects `shrn v0, v0.8h, #1`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_sri([v0.8b, v0.8b, #0])
-**Expected / Actual:** Err / Ok(Word) with reserved immh=0000
-**Impact:** `sri v0.8b, v0.8b, #0` is assembled instead of diagnosed. Negative shifts overflow-panic in debug at `16 - shift`.
-**Root cause:** neon.rs:1296-1301 computes `(2*esize - shift) & mask` with no range check
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1297`
+**Counterexample:** encode_neon_shrn([Reg("v0"), v0.8h, #1], opcode=0b100001, is_high=false)
+**Expected / Actual:** Err / Ok(Word) same as `shrn v0.8b, v0.8h, #1`
+**Impact:** Bare-V or GPR-prefixed dest is silently encoded as a NEON vector register
+**Root cause:** get_neon_reg (neon.rs:14-17) accepts Operand::Reg with an empty arrangement, and encode_neon_shrn (neon.rs:1438) discards dest arrangement
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:14`
 ```rust
-        "8b" | "16b" => (16 - shift) & 0xF,
-        "4h" | "8h" => (32 - shift) & 0x1F,
-        "2s" | "4s" => (64 - shift) & 0x3F,
-        "2d" => (128 - shift) & 0x7F,
-```
-**Suggested fix:** Reject shift outside [1, esize] before encoding
-```rust
-        "8b" | "16b" if (1..=8).contains(&shift) => (16 - shift) & 0xF,
-        "4h" | "8h" if (1..=16).contains(&shift) => (32 - shift) & 0x1F,
-        "2s" | "4s" if (1..=32).contains(&shift) => (64 - shift) & 0x3F,
-        "2d" if (1..=64).contains(&shift) => (128 - shift) & 0x7F,
-        "8b" | "16b" | "4h" | "8h" | "2s" | "4s" | "2d" => {
-            return Err(format!("sri shift {} out of range for {}", shift, arr_d));
+        Some(Operand::Reg(name)) => {
+            let num = parse_reg_num(name)
+                .ok_or_else(|| format!("invalid register: {}", name))?;
+            Ok((num, String::new()))
         }
 ```
-**Bug report:** bug_reports/encode_neon_sri_shift_oob.md
-**Repro seed:** (none — first-case shrink)
+**Suggested fix:** Require RegArrangement at the dest slot
+```rust
+    let (rd, arr_d) = match &operands[0] {
+        Operand::RegArrangement { reg, arrangement } => {
+            (parse_reg_num(reg).ok_or_else(|| format!("invalid NEON register: {}", reg))?, arrangement.clone())
+        }
+        other => return Err(format!("expected NEON register with arrangement at operand 0, got {:?}", other)),
+    };
+```
+**Bug report:** bug_reports/encode_neon_shrn_bare_dest.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_sri_pbt::encode_neon_sri_neg_shift_oob' (2357992) panicked at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:267:1:
-Test failed: shift 0 not in [1, 8] must Err (llvm-mc rejects sri v0.8b, v0.8b, #0) at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:420.
-minimal failing input: rd = 0, rn = 0, t_shift = (
-    "8b",
-    0,
-)
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
-
-### B4: encode_neon_sri accepts a bare V source without arrangement
-
-**Formal:** ∀ rd,rn ∈ {0..31}, kind ∈ {Reg dest, bare V src, bare V dest, xN.8b dest, xN src}. encode_neon_sri(kind) = Err ∧ llvm-mc rejects the matching asm
-**Contract evidence:** inferred (neon.rs:1284 SRI Vd.T, Vn.T; README.md:12 gas-compatible; llvm-mc rejects sri v0.8b, v0, #1)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_sri([v0.8b, Reg(v0), #1])
-**Expected / Actual:** Err / Ok(Word) same as `sri v0.8b, v0.8b, #1`
-**Impact:** `sri v0.8b, v0, #1` is encoded as `sri v0.8b, v0.8b, #1`. GPR destinations written as `x0.8b` are treated as `v0.8b`.
-**Root cause:** get_neon_reg accepts Operand::Reg and returns an empty arrangement, which encode_neon_sri then discards (`let (rn, _)`)
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1290`
-```rust
-    let (rn, _) = get_neon_reg(operands, 1)?;
-```
-**Suggested fix:** Require RegArrangement with a v-prefix on both operands
-```rust
-    let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    if arr_n.is_empty() {
-        return Err("sri requires Vn.T arrangement".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_neon_sri_gpr_or_bare.md
-**Repro seed:** (none — first-case shrink)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_neon_sri_pbt::encode_neon_sri_neg_gpr_or_bare' (2357969) panicked at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:267:1:
-Test failed: GPR/bare/non-arrangement kind=1 must Err (llvm-mc rejects sri v0.8b, v0, #1) at src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs:486.
-minimal failing input: rd = 0, rn = 0, kind = 1, fp_prefix = "x"
+thread 'backend::arm::assembler::encoder::encode_neon_shrn_pbt::encode_neon_shrn_neg_gpr_or_bare' (2365156) panicked at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:492:1:
+Test failed: GPR/bare/non-arrangement kind=2 must Err (llvm-mc rejects shrn v0, v0.8h, #1) at src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs:552.
+minimal failing input: rd = 0, rn = 0, kind = 2, fp_prefix = "x"
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -173,72 +181,69 @@ minimal failing input: rd = 0, rn = 0, kind = 1, fp_prefix = "x"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_sri_pbt.rs | 10 properties + 1 KAT + 4 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_sri_pbt;` |
+| src/backend/arm/assembler/encoder/encode_neon_shrn_pbt.rs | 11 properties + 1 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_shrn_pbt` |
 
 ## Reproduction
-
-Serial reconfirmation: all four property failures reproduced with `--test-threads=1` (the recorded run).
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_sri -- --test-threads=1
+cargo test --lib encode_neon_shrn -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_sri_regression_extra_operand -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_shrn_regression_extra_operand -- --test-threads=1 --exact
 ```
 
-B2 mismatched T:
+B2 mismatched dest Tb:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_sri_regression_mismatched_t -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_shrn_regression_mismatched_dest_tb -- --test-threads=1 --exact
 ```
 
-B3 shift OOB:
+B3 i64 shift trunc:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_sri_regression_shift_oob -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_shrn_regression_shift_i64_trunc -- --test-threads=1 --exact
 ```
 
-B4 bare src:
+B4 bare dest:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_sri_regression_bare_src -- --test-threads=1 --exact
+cargo test --lib test_encode_neon_shrn_regression_bare_dest -- --test-threads=1 --exact
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/report.json
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_neon_shrn_extra_operand.md
+- pbt-out/bug_reports/encode_neon_shrn_extra_operand.html
+- pbt-out/bug_reports/encode_neon_shrn_mismatched_dest_tb.md
+- pbt-out/bug_reports/encode_neon_shrn_mismatched_dest_tb.html
+- pbt-out/bug_reports/encode_neon_shrn_shift_i64_trunc.md
+- pbt-out/bug_reports/encode_neon_shrn_shift_i64_trunc.html
+- pbt-out/bug_reports/encode_neon_shrn_bare_dest.md
+- pbt-out/bug_reports/encode_neon_shrn_bare_dest.html
 - pbt-out/CHANGE_SURFACE.md
-- pbt-out/run/encode_neon_sri.log
-- pbt-out/run/encode_neon_sri_sweep.log
-- pbt-out/bug_reports/encode_neon_sri_extra_operand.md
-- pbt-out/bug_reports/encode_neon_sri_extra_operand.html
-- pbt-out/bug_reports/encode_neon_sri_mismatched_t.md
-- pbt-out/bug_reports/encode_neon_sri_mismatched_t.html
-- pbt-out/bug_reports/encode_neon_sri_shift_oob.md
-- pbt-out/bug_reports/encode_neon_sri_shift_oob.html
-- pbt-out/bug_reports/encode_neon_sri_gpr_or_bare.md
-- pbt-out/bug_reports/encode_neon_sri_gpr_or_bare.html
+- pbt-out/build.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 15:32 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 125/289 total | PBT candidates: 125 | Tested: 125 (100%) | 0 pass, 125 fail
+> Last updated: 2026-10-05 15:57 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 126/289 total | PBT candidates: 126 | Tested: 126 (100%) | 0 pass, 126 fail
 
 ## Summary
 
@@ -247,10 +252,10 @@ cargo test --lib test_encode_neon_sri_regression_bare_src -- --test-threads=1 --
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 125 |
-| **Tested (of PBT candidates)** | **125 / 125 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 125 / 0 |
-| **Overall (tested / all functions)** | **125 / 289 (43%)** |
+| PBT candidates (from FUNCTION_INDEX) | 126 |
+| **Tested (of PBT candidates)** | **126 / 126 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 126 / 0 |
+| **Overall (tested / all functions)** | **126 / 289 (44%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -258,13 +263,13 @@ cargo test --lib test_encode_neon_sri_regression_bare_src -- --test-threads=1 --
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 125 | 125 | 0 | 100% |
+|  | 126 | 126 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 125 | 125 | 0 | 100% |
+| unknown | 126 | 126 | 0 | 100% |
 
 ## File Coverage
 
@@ -277,7 +282,7 @@ cargo test --lib test_encode_neon_sri_regression_bare_src -- --test-threads=1 --
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 40 | 40 | 100% | covered |
+| neon.rs | 68 | 41 | 41 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -412,3 +417,4 @@ cargo test --lib test_encode_neon_sri_regression_bare_src -- --test-threads=1 --
 | encode_neon_sshr | neon.rs |
 | encode_neon_shl | neon.rs |
 | encode_neon_sri | neon.rs |
+| encode_neon_shrn | neon.rs |

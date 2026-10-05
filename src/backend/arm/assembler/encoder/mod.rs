@@ -64,6 +64,8 @@ mod encode_neon_sshr_pbt;
 mod encode_neon_shl_pbt;
 #[cfg(test)]
 mod encode_neon_sri_pbt;
+#[cfg(test)]
+mod encode_neon_shrn_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
