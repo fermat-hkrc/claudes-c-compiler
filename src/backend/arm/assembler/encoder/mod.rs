@@ -22,6 +22,8 @@ mod neon;
 mod encode_neon_ld1r_pbt;
 #[cfg(test)]
 mod encode_neon_ld_st_single_pbt;
+#[cfg(test)]
+mod encode_neon_ld_st_multi_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

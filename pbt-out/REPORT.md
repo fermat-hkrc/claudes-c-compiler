@@ -1,294 +1,240 @@
-# PBT Campaign Report: encode_neon_ld_st_single
+# PBT Campaign Report: encode_neon_ld_st_multi
 
 ## Summary
 
-**Verdict:** 1 high, 5 medium, 1 low: encode_neon_ld_st_single silently drops register post-index (emits no-offset instead of Rm=Xm), ignores extra operands, accepts W/XZR/FP bases, wraps out-of-range lanes, ignores illegal post-index #imm, rejects uppercase V0.B, and accepts non-consecutive lists.
+**Verdict:** 1 high and 5 medium and 1 low: encode_neon_ld_st_multi silently encodes illegal LD2/3/4 list lengths and non-consecutive register lists as if they were the first register's consecutive form, so a caller that round-trips GNU assembly through this encoder gets the wrong vectors; extra operands, W/XZR/FP bases, illegal post-index immediates, .1d on LD2/3/4, and uppercase arrangements also disagree with llvm-mc/gas.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_ld_st_single
-**Tests:** 14 properties (plus 1 KAT + 7 regression witnesses)
+**Modules tested:** encode_neon_ld_st_multi
+**Tests:** 14 properties + 1 KAT + 7 regression witnesses
 **Result:** 7 passing, 7 bugs
-**Change surface:** 1 changed function (encode_neon_ld_st_single), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported NOT LINKED); cargo test --lib executed the symbol (KAT + 14 properties). Sweep round 1/1: manual arm audit added alt-spellings, index-oor, nonconsecutive, register post-index, illegal post-imm, and [Xn,#imm]. Closed: tier round spent.
-**Tier:** standard
+**Change surface:** 1 changed function (encode_neon_ld_st_multi), 1 with a property, 0 error-handling changes
+**Coverage evidence:** none — coverage_gaps reported no .gcda/.profraw (the cargo test tree was configured before this campaign; the C++ reporter listed unrelated binaries). File-level fallback incorrectly claimed encode_neon_ld_st_multi is NOT LINKED. Manual evidence: `cargo test --lib encode_neon_ld_st_multi` executed the production symbol.
+**Effort tier:** standard (5–8 properties, ≥1000 cases, one strengthening/sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_ld_st_single | 14 | 7 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_neon_ld_st_multi | 14 | 7 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: extra operand ignored
+### B1: LD2/ST2/LD3/ST3/LD4/ST4 encoded with the wrong list length
 
-**Formal:** ∀ valid (n,sz,idx,rt,rn,load), extra ∈ {Cond, Shift, Label, RegArrangement}. encode_neon_ld_st_single([list, mem, extra], load, n) is Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; llvm-mc/gas reject a surplus operand)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_ld_st_single([RegListIndexed({v0.b}[0]), Mem{x0,0}, Cond("eq")], false, 1)
-**Expected / Actual:** Err / Ok(Word(0x0d000000))
-**Impact:** A malformed line with a trailing junk operand is assembled as a valid st1 instead of being rejected.
-**Root cause:** neon.rs:905 only rejects operands.len() < 2; extra non-Imm operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:905`
-```rust
-    if operands.len() < 2 {
-        return Err(format!("ld/st{} single element requires at least 2 operands", num_structs));
-    }
-```
-**Suggested fix:** Reject operands.len() > 2 unless operands[2] is a legal post-index Imm or Rm.
-```rust
-    if operands.len() > 2 {
-        match &operands[2] {
-            Operand::Imm(_) | Operand::Reg(_) => {}
-            _ => return Err("unexpected extra operand".to_string()),
-        }
-    }
-```
-**Bug report:** bug_reports/encode_neon_ld_st_single_extra_operand.md
-**Repro seed:** n=1, sz=b, idx=0, rt=0, rn=0, load=false, extra_kind=0
-**Raw output:**
-```text
-st1 {v0.b}[0], [x0], eq must Err
-```
-
-### B2: W/XZR/x31/FP base accepted
-
-**Formal:** ∀ base ∈ {w0,w31,wsp,xzr,x31,s0,d0,v0,q0}. encode_neon_ld_st_single([list, Mem(base)], load, n) is Err
-**Contract evidence:** inferred (README.md:12; llvm-mc rejects W/XZR/x31/FP base)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_ld_st_single([RegListIndexed({v0.b}[0]), Mem{base:"w0", offset:0}], false, 1)
-**Expected / Actual:** Err / Ok(Word) encoded as [x0]
-**Impact:** Invalid bases assemble as Xn or SP, producing the wrong addressing mode.
-**Root cause:** neon.rs:931 calls parse_reg_num with no Xn|SP check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:931`
-```rust
-            let rn = parse_reg_num(base).ok_or_else(|| format!("invalid base register: {}", base))?;
-```
-**Suggested fix:** Require a 64-bit X register or SP, and reject xzr/x31.
-```rust
-            if !is_64bit_reg(base) || base.eq_ignore_ascii_case("xzr") || base.eq_ignore_ascii_case("x31") {
-                return Err(format!("invalid base register: {}", base));
-            }
-```
-**Bug report:** bug_reports/encode_neon_ld_st_single_invalid_base.md
-**Repro seed:** n=1, sz=b, idx=0, rt=0, load=false, base=w0
-**Raw output:**
-```text
-st1 {v0.b}[0], [w0] must Err
-```
-
-### B3: uppercase arrangement rejected
-
-**Formal:** ∀ n ∈ {1,2,3,4}, sz ∈ {b,h,s,d}, idx ∈ [0,max(sz)], rt,rn ∈ 0..30, load ∈ {0,1}. encode_neon_ld_st_single([{Vrt.SZ..}[idx], [Xrn]], load, n) = llvm-mc(`ldN|stN {Vrt.SZ..}[idx], [Xrn]`)
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; llvm-mc accepts V0.B)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_ld_st_single([RegListIndexed({V0.B}[0]), Mem{base:"X0", offset:0}], false, 1)
-**Expected / Actual:** Ok(Word(0x0d000000)) / Err("unsupported element size for ld/st single: B")
-**Impact:** Valid gas assembly with uppercase arrangement is rejected.
-**Root cause:** neon.rs:960 matches elem_size only as lowercase "b"/"h"/"s"/"d".
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:960`
-```rust
-    let (opcode, s_bit, q_bit, size_field) = match elem_size.as_str() {
-        "b" => {
-```
-**Suggested fix:** Lowercase the arrangement before the match.
-```rust
-    let elem_size = elem_size.to_ascii_lowercase();
-```
-**Bug report:** bug_reports/encode_neon_ld_st_single_alt_spellings.md
-**Repro seed:** n=1, sz=b, idx=0, rt=0, rn=0, load=false
-**Raw output:**
-```text
-st1 {V0.B}[0], [X0] must encode: "unsupported element size for ld/st single: B"
-```
-
-### B4: out-of-range lane index accepted
-
-**Formal:** ∀ n ∈ {1,2,3,4}, sz ∈ {b,h,s,d}, idx > max_lane(sz). encode_neon_ld_st_single([{Vt.sz..}[idx], [Xn]], load, n) is Err
-**Contract evidence:** inferred (llvm-mc "vector lane must be an integer in range")
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_neon_ld_st_single([RegListIndexed({v0.b}[16]), Mem{x0,0}], false, 1)
-**Expected / Actual:** Err / Ok(Word) with index bits masked to lane 0
-**Impact:** A typo in the lane index silently stores/loads a different element.
-**Root cause:** neon.rs:964-967 mask index bits with no range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:964`
-```rust
-            let q = (index >> 3) & 1;
-            let s = (index >> 2) & 1;
-            let sz = index & 3;
-```
-**Suggested fix:** Reject index above the documented lane maximum for the element size.
-```rust
-            if index > 15 {
-                return Err(format!("vector lane must be in range [0, 15], got {}", index));
-            }
-```
-**Bug report:** bug_reports/encode_neon_ld_st_single_index_oor.md
-**Repro seed:** n=1, sz=b, rt=0, rn=0, load=false, over=1 (idx=16)
-**Raw output:**
-```text
-st1 {v0.b}[16], [x0] must Err
-```
-
-### B5: non-consecutive register list accepted
-
-**Formal:** ∀ n ∈ {2,3,4}, sz ∈ {b,h,s,d}, idx ∈ [0,max(sz)], list not consecutive-wrapping. encode_neon_ld_st_single([list, [Xn]], load, n) is Err
-**Contract evidence:** documented limitation neon.rs:918 "TODO: validate that registers in the list are consecutive (ARM ISA requirement)"
-**Documentation conflict:** neon.rs:918 "TODO: validate that registers in the list are consecutive (ARM ISA requirement)" — admits a gap on an input the API accepts; this entry stays, severity one step down.
-**Severity:** low (documented by the author)
-**Counterexample:** encode_neon_ld_st_single([RegListIndexed({v0.b, v2.b}[0]), Mem{x0,0}], false, 2)
-**Expected / Actual:** Err / Ok(Word) using only v0 as Rt
-**Impact:** A non-sequential list encodes as if the missing registers were consecutive, storing/loading the wrong vectors.
-**Root cause:** neon.rs:918 TODO; the encoder reads only regs[0] for Rt and arrangement.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:918`
-```rust
-    // TODO: validate that registers in the list are consecutive (ARM ISA requirement)
-```
-**Suggested fix:** After the length check, require wrapping consecutiveness of the named registers.
-```rust
-    for i in 1..regs.len() {
-        let prev = parse_reg_num(reg_name(&regs[i - 1])).ok_or("invalid register in list")?;
-        let cur = parse_reg_num(reg_name(&regs[i])).ok_or("invalid register in list")?;
-        if cur != (prev + 1) % 32 {
-            return Err("registers must be sequential".to_string());
-        }
-    }
-```
-**Bug report:** bug_reports/encode_neon_ld_st_single_nonconsecutive.md
-**Repro seed:** n=2, sz=b, idx=0, rt=0, rn=0, load=false
-**Raw output:**
-```text
-st2 {v0.b, v2.b}[0], [x0] must Err
-```
-
-### B6: register post-index encoded as no-offset
-
-**Formal:** ∀ n ∈ {1,2,3,4}, sz ∈ {b,h,s,d}, idx ∈ [0,max(sz)], rt,rn,rm ∈ 0..30, load ∈ {0,1}. encode_neon_ld_st_single([list, [Xn], Xm], load, n) = llvm-mc(`ldN|stN {..}[idx], [Xn], Xm`)
-**Contract evidence:** inferred (README.md:235 with post-index; ARM Rm=Xm bit23=1; llvm-mc `ld1 {v0.s}[0], [x1], x2` = 0x0dc28020)
-**Documentation conflict:** neon.rs:903 "TODO: add post-index form [Xn], #imm" — known limitation on the immediate form; register post-index is the same addressing class and is not excluded.
+**Formal:** ∀ n∈{1,2,3,4}. unsupported T | invalid name ∈{foo,v32,x32,r0,ε} | LD1 n_regs∉{1,2,3,4} | LD2/3/4 n_regs≠n ⇒ encode_neon_ld_st_multi = Err
+**Contract evidence:** inferred (llvm-mc/gas reject `ld2 {v0.16b}, [x0]`; neon.rs:1043 comment names "LD2/ST2: 2 reg=1000")
+**Documentation conflict:** neon.rs:1043 "LD2/ST2: 2 reg=1000" names the 2-register opcode; it does not declare other lengths invalid / out of domain. The mismatch is a missing check, not a documented exclusion.
 **Severity:** high
-**Counterexample:** encode_neon_ld_st_single([RegListIndexed({v0.s}[0]), Mem{x1,0}, Reg("x2")], true, 1)
-**Expected / Actual:** Ok(Word(0x0dc28020)) / Ok(Word(0x0d408020))
-**Impact:** Requested post-index writeback is dropped; the emitted instruction does not update Xn.
-**Root cause:** neon.rs:933-936 only promotes operands[2] when it is Imm; a trailing Reg is dropped. The post-index encoder always writes Rm=11111.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:933`
+**Counterexample:** encode_neon_ld_st_multi([RegList({v0.16b}), Mem{x0,0}], is_load=true, num_structs=2)
+**Expected / Actual:** Err / Ok(Word(0x4c408000))
+**Impact:** A 1-register list is assembled as LD2, so the wrong number of structures is loaded.
+**Root cause:** neon.rs:1056-1058 assigns a fixed opcode for num_structs∈{2,3,4} and never checks num_regs.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1056`
 ```rust
-            let pi = if operands.len() > 2 {
-                match &operands[2] {
-                    Operand::Imm(off) => Some(*off),
-                    _ => None,
-                }
-            } else {
-                None
-            };
+        2 => 0b1000u32,
+        3 => 0b0100,
+        4 => 0b0000,
 ```
-**Suggested fix:** Treat a trailing GPR as register post-index and encode Rm=Xm with bit23=1.
+**Suggested fix:** Require num_regs == num_structs for n in {2,3,4}.
 ```rust
-                    Operand::Reg(rm) => Some(PostIndex::Reg(parse_reg_num(rm).ok_or("invalid Rm")?)),
+        2 if num_regs == 2 => 0b1000u32,
+        3 if num_regs == 3 => 0b0100,
+        4 if num_regs == 4 => 0b0000,
+        2 | 3 | 4 => return Err(format!("ld{}/st{}: expected {} registers, got {}", num_structs, num_structs, num_structs, num_regs)),
 ```
-**Bug report:** bug_reports/encode_neon_ld_st_single_reg_post.md
-**Repro seed:** n=1, sz=b, idx=0, rt=0, rn=0, rm=0, load=false (property); regression ld1 {v0.s}[0], [x1], x2
-**Raw output:**
-```text
-assertion `left == right` failed: ld1 {v0.s}[0], [x1], x2 must be 0x0dc28020
-  left: 222330912
-  right: 230850592
-```
+**Bug report:** bug_reports/encode_neon_ld_st_multi_wrong_reg_count.md
+**Repro seed:** cc 826492188fd82275f92f3667941628350006fa5556d2932409ff349c894a1138
+**Raw output:** Test failed: ld2 with 1 regs must Err (llvm-mc rejects wrong vector count). minimal failing input: n = 2, wrong_len = 1, t_idx = 0, name_idx = 0, rn = 0
 
-### B7: illegal post-index immediate accepted
+### B2: Surplus non-post-index operand ignored
 
-**Formal:** ∀ n ∈ {1,2,3,4}, sz ∈ {b,h,s,d}, imm ≠ n*esize(sz). encode_neon_ld_st_single([list, MemPostIndex(Xn, imm)], load, n) is Err
-**Contract evidence:** inferred (README.md:235; llvm-mc rejects illegal post-index #imm)
-**Documentation conflict:** neon.rs:903 "TODO: add post-index form [Xn], #imm" — the body already encodes the form but ignores the immediate value; the TODO does not declare illegal #imm valid.
+**Formal:** ∀ valid no-offset ops, extra∈{Cond,Shift,RegArrangement,Label}. encode_neon_ld_st_multi(ops++[extra], load, n) = Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembler; llvm-mc rejects `st1 {v0.8b}, [x0], eq`)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_ld_st_single([RegListIndexed({v0.b}[0]), MemPostIndex{x0, 0}], false, 1)
-**Expected / Actual:** Err / Ok(Word) with Rm=11111
-**Impact:** A wrong writeback amount is assembled as the legal n*esize post-index encoding.
-**Root cause:** neon.rs:994 binds Some(_offset) and ignores the value.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:994`
+**Counterexample:** encode_neon_ld_st_multi([RegList({v0.8b}), Mem{x0,0}, Cond("eq")], is_load=false, num_structs=1)
+**Expected / Actual:** Err / Ok(Word(0x0c007000)) encoded as `st1 {v0.8b}, [x0]`
+**Impact:** A trailing token is dropped and a valid instruction is emitted.
+**Root cause:** neon.rs:1083 `_ => {}` ignores a third operand that is not Imm or Reg, then falls through to no-offset encoding.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1083`
 ```rust
-    if let Some(_offset) = post_index {
-        // Post-index form: Q 0011011 L R 11111 opcode S size Rn Rt
-        // (Rm=11111 means immediate post-index, the amount is implicit from element size)
-        let word = (q_bit << 30) | (0b0011011 << 23) | (l_bit << 22) | (r_bit << 21)
-            | (0b11111 << 16) | (opcode << 13) | (s_bit << 12) | (size_field << 10) | (rn << 5) | rt;
+            _ => {}
 ```
-**Suggested fix:** Require offset == num_structs * esize before encoding Rm=11111.
+**Suggested fix:** Return Err for any extra operand that is not a post-index Imm or Xm.
 ```rust
-        let legal = (num_structs as i64) * esize_of(&elem_size);
-        if offset != legal {
-            return Err(format!("post-index immediate must be #{}, got #{}", legal, offset));
+            other => return Err(format!("ld{}/st{}: unexpected extra operand {:?}", num_structs, num_structs, other)),
+```
+**Bug report:** bug_reports/encode_neon_ld_st_multi_extra_operand.md
+**Repro seed:** (deterministic regression)
+**Raw output:** st1 {v0.8b}, [x0], eq must Err
+
+### B3: W/XZR/x31/FP accepted as the memory base
+
+**Formal:** ∀ n,T,rt,load, base∈{w0,w31,wsp,xzr,x31,s0,d0,v0,q0}. encode_neon_ld_st_multi(list, Mem{base}, load, n) = Err
+**Contract evidence:** inferred (ARM base is Xn|SP; llvm-mc rejects W/XZR/x31/FP)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ld_st_multi([RegList({v0.8b}), Mem{base:"w0", offset:0}], is_load=false, num_structs=1)
+**Expected / Actual:** Err / Ok(Word(0x0c007000)) encoded as `[x0]`
+**Impact:** A W or FP base is silently rewritten as Xn; xzr/x31 become SP.
+**Root cause:** neon.rs:1032 calls parse_reg_num, which accepts w/d/s/q/v/h/b and maps xzr/x31 to 31, with no Xn|SP check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1032`
+```rust
+            let r = parse_reg_num(base).ok_or_else(|| format!("invalid base register: {}", base))?;
+```
+**Suggested fix:** Reject a base that is not an X register or SP.
+```rust
+            if !base.eq_ignore_ascii_case("sp") && !base.to_ascii_lowercase().starts_with('x')
+                || base.eq_ignore_ascii_case("xzr") || base.eq_ignore_ascii_case("x31") {
+                return Err(format!("ld{}/st{}: base must be Xn or SP, got {}", num_structs, num_structs, base));
+            }
+```
+**Bug report:** bug_reports/encode_neon_ld_st_multi_invalid_base.md
+**Repro seed:** (deterministic regression)
+**Raw output:** st1 {v0.8b}, [w0] must Err
+
+### B4: Uppercase arrangement rejected while llvm-mc/gas accept it
+
+**Formal:** ∀ valid inputs. encode_neon_ld_st_multi(RegList({Vrt.T_upper..}), Mem[XN], load, n) = llvm-mc(uppercase spelling)
+**Contract evidence:** inferred (README.md:12 accepts the same textual assembly that GCC's gas would consume)
+**Documentation conflict:** (none)
+**Severity:** low
+**Counterexample:** encode_neon_ld_st_multi([RegList({V0.8B}), Mem{X0,0}], is_load=true, num_structs=1)
+**Expected / Actual:** Ok(Word(0x0c407000)) / Err("unsupported NEON arrangement: 8B")
+**Impact:** Uppercase GCC assembly cannot be consumed.
+**Root cause:** neon.rs:1028 passes the arrangement to neon_arr_to_q_size, whose match arms are lowercase-only.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1028`
+```rust
+    let (q, size) = neon_arr_to_q_size(&arr)?;
+```
+**Suggested fix:** Case-fold the arrangement before lookup.
+```rust
+    let (q, size) = neon_arr_to_q_size(&arr.to_ascii_lowercase())?;
+```
+**Bug report:** bug_reports/encode_neon_ld_st_multi_uppercase_arrangement.md
+**Repro seed:** (deterministic regression)
+**Raw output:** left: Err("unsupported NEON arrangement: 8B") right: Ok(205549568)
+
+### B5: Non-consecutive register list encoded from the first register only
+
+**Formal:** ∀ n∈{2,3,4}, T∈valid(n), rt∈0..28, rn∈0..30, load∈𝔹. list with regs[1] skipped ⇒ encode_neon_ld_st_multi = Err
+**Contract evidence:** inferred (llvm-mc "registers must be sequential"; ARM ISA consecutive wrapping lists)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_neon_ld_st_multi([RegList({v0.8b, v2.8b}), Mem{x0,0}], is_load=false, num_structs=2)
+**Expected / Actual:** Err / Ok(Word(0x0c008000)) encoded as st2 from v0 (implies v1)
+**Impact:** The second listed register is dropped; the wrong pair is stored.
+**Root cause:** neon.rs:1016-1022 reads only regs[0] for Rt; later registers are never checked.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1016`
+```rust
+            let (first_reg, arrangement) = match &regs[0] {
+                Operand::RegArrangement { reg, arrangement } => {
+                    (parse_reg_num(reg).ok_or("invalid reg")?, arrangement.clone())
+                }
+                _ => return Err(format!("ld{}/st{}: expected RegArrangement in list", num_structs, num_structs)),
+            };
+            (first_reg, arrangement, regs.len() as u32)
+```
+**Suggested fix:** Require each subsequent list entry to be (first+i) mod 32 with the same arrangement.
+```rust
+            for (i, r) in regs.iter().enumerate().skip(1) {
+                match r {
+                    Operand::RegArrangement { reg, arrangement: a } => {
+                        let num = parse_reg_num(reg).ok_or("invalid reg")?;
+                        if num != (first_reg + i as u32) % 32 || a != &arrangement {
+                            return Err("ld/st multi: registers must be sequential".into());
+                        }
+                    }
+                    _ => return Err("ld/st multi: expected RegArrangement in list".into()),
+                }
+            }
+```
+**Bug report:** bug_reports/encode_neon_ld_st_multi_nonconsecutive.md
+**Repro seed:** (deterministic regression)
+**Raw output:** st2 {v0.8b, v2.8b}, [x0] must Err
+
+### B6: Illegal post-index immediate encoded as the legal #imm form
+
+**Formal:** ∀ valid inputs, bad≠legal_imm. encode_neon_ld_st_multi(RegList, MemPostIndex(Xn, #bad), load, n) = Err
+**Contract evidence:** inferred (ARM immediate post-index amount is implicit n_regs*(Q?16:8); llvm-mc rejects other #imm)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ld_st_multi([RegList({v0.8b}), MemPostIndex{x0, 0}], is_load=false, num_structs=1)
+**Expected / Actual:** Err / Ok(Word(0x0c9f7000)) encoded as `[x0], #8`
+**Impact:** A wrong writeback amount is assembled as the legal one.
+**Root cause:** neon.rs:1064 binds `_imm` and always writes Rm=11111.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1064`
+```rust
+    if let Some(_imm) = post_index {
+        // Post-index with immediate: use Rm=11111 (0x1F)
+        let word = ((q << 30) | (0b001100 << 24) | (1 << 23) | (l_bit << 22)) | (0b11111 << 16) | (opcode << 12) | (size << 10) | (rn << 5) | rt;
+```
+**Suggested fix:** Require the immediate to equal n_regs * (if q==1 {16} else {8}).
+```rust
+    if let Some(imm) = post_index {
+        let legal = n_regs as i64 * if q == 1 { 16 } else { 8 };
+        if imm != legal {
+            return Err(format!("ld{}/st{}: post-index #{} != #{}", num_structs, num_structs, imm, legal));
         }
 ```
-**Bug report:** bug_reports/encode_neon_ld_st_single_bad_post_imm.md
-**Repro seed:** n=1, sz=b, idx=0, rt=0, rn=0, load=false, imm=0
-**Raw output:**
-```text
-st1 {v0.b}[0], [x0], #0 must Err
+**Bug report:** bug_reports/encode_neon_ld_st_multi_bad_post_imm.md
+**Repro seed:** (deterministic regression)
+**Raw output:** st1 {v0.8b}, [x0], #0 must Err
+
+### B7: .1d accepted for LD2/ST2/LD3/ST3/LD4/ST4
+
+**Formal:** ∀ n∈{2,3,4}, rt,rn,load. encode_neon_ld_st_multi(RegList({v.1d}×n), Mem[Xn], load, n) = Err
+**Contract evidence:** inferred (llvm-mc rejects `ld2 {v0.1d, v1.1d}, [x0]`; .1d is LD1/ST1-only)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ld_st_multi([RegList({v0.1d, v1.1d}), Mem{x0,0}], is_load=false, num_structs=2)
+**Expected / Actual:** Err / Ok(Word(0x0c008c00))
+**Impact:** An undocumented/unpredictable encoding is emitted for a form gas rejects.
+**Root cause:** neon.rs:1028 uses neon_arr_to_q_size which accepts "1d" for every mnemonic; no check that Q=0 size=11 is illegal for n≥2.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1028`
+```rust
+    let (q, size) = neon_arr_to_q_size(&arr)?;
 ```
+**Suggested fix:** Reject .1d when num_structs is 2, 3, or 4.
+```rust
+    if num_structs >= 2 && q == 0 && size == 0b11 {
+        return Err(format!("ld{}/st{}: .1d is not a valid arrangement", num_structs, num_structs));
+    }
+```
+**Bug report:** bug_reports/encode_neon_ld_st_multi_1d_ldn.md
+**Repro seed:** (deterministic regression)
+**Raw output:** st2 {v0.1d, v1.1d}, [x0] must Err
 
 ## Design Caveats
 
-(none)
+(none)}
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_ld_st_single_pbt.rs | 14 properties + 1 KAT + 7 regressions |
+| src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs | 14 properties + 1 KAT + 7 regressions |
+| src/backend/arm/assembler/encoder/mod.rs | one additive `#[cfg(test)] mod encode_neon_ld_st_multi_pbt;` |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_ld_st_single -- --test-threads=1
+cargo test --lib encode_neon_ld_st_multi -- --test-threads=1
 ```
 
-B1 extra operand:
+Per-bug regressions:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ld_st_single_regression_extra_operand -- --test-threads=1
-```
-
-B2 invalid base:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ld_st_single_regression_w_base -- --test-threads=1
-```
-
-B3 alt spellings:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ld_st_single_regression_alt_spellings -- --test-threads=1
-```
-
-B4 index OOR:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ld_st_single_regression_index_oor -- --test-threads=1
-```
-
-B5 nonconsecutive:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ld_st_single_regression_nonconsecutive -- --test-threads=1
-```
-
-B6 register post-index:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ld_st_single_regression_reg_post -- --test-threads=1
-```
-
-B7 illegal post-imm:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_ld_st_single_regression_bad_post_imm -- --test-threads=1
+cargo test --lib test_encode_neon_ld_st_multi_regression_ld2_one_reg -- --test-threads=1
+cargo test --lib test_encode_neon_ld_st_multi_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_ld_st_multi_regression_w_base -- --test-threads=1
+cargo test --lib test_encode_neon_ld_st_multi_regression_uppercase_arr -- --test-threads=1
+cargo test --lib test_encode_neon_ld_st_multi_regression_nonconsecutive -- --test-threads=1
+cargo test --lib test_encode_neon_ld_st_multi_regression_bad_post_imm -- --test-threads=1
+cargo test --lib test_encode_neon_ld_st_multi_regression_1d_ld2 -- --test-threads=1
 ```
 
 ## Output Directories
@@ -299,33 +245,33 @@ cargo test --lib test_encode_neon_ld_st_single_regression_bad_post_imm -- --test
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/run/encode_neon_ld_st_single_round1.log
-- pbt-out/run/encode_neon_ld_st_single_round2.log
-- pbt-out/bug_reports/encode_neon_ld_st_single_extra_operand.md
-- pbt-out/bug_reports/encode_neon_ld_st_single_extra_operand.html
-- pbt-out/bug_reports/encode_neon_ld_st_single_invalid_base.md
-- pbt-out/bug_reports/encode_neon_ld_st_single_invalid_base.html
-- pbt-out/bug_reports/encode_neon_ld_st_single_alt_spellings.md
-- pbt-out/bug_reports/encode_neon_ld_st_single_alt_spellings.html
-- pbt-out/bug_reports/encode_neon_ld_st_single_index_oor.md
-- pbt-out/bug_reports/encode_neon_ld_st_single_index_oor.html
-- pbt-out/bug_reports/encode_neon_ld_st_single_nonconsecutive.md
-- pbt-out/bug_reports/encode_neon_ld_st_single_nonconsecutive.html
-- pbt-out/bug_reports/encode_neon_ld_st_single_reg_post.md
-- pbt-out/bug_reports/encode_neon_ld_st_single_reg_post.html
-- pbt-out/bug_reports/encode_neon_ld_st_single_bad_post_imm.md
-- pbt-out/bug_reports/encode_neon_ld_st_single_bad_post_imm.html
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
+- pbt-out/run/encode_neon_ld_st_multi_round1.log
+- pbt-out/run/encode_neon_ld_st_multi_round2.log
+- pbt-out/run/encode_neon_ld_st_multi_regressions.log
+- pbt-out/bug_reports/encode_neon_ld_st_multi_wrong_reg_count.md
+- pbt-out/bug_reports/encode_neon_ld_st_multi_extra_operand.md
+- pbt-out/bug_reports/encode_neon_ld_st_multi_invalid_base.md
+- pbt-out/bug_reports/encode_neon_ld_st_multi_uppercase_arrangement.md
+- pbt-out/bug_reports/encode_neon_ld_st_multi_nonconsecutive.md
+- pbt-out/bug_reports/encode_neon_ld_st_multi_bad_post_imm.md
+- pbt-out/bug_reports/encode_neon_ld_st_multi_1d_ldn.md
+- pbt-out/bug_reports/encode_neon_ld_st_multi_wrong_reg_count.html
+- pbt-out/bug_reports/encode_neon_ld_st_multi_extra_operand.html
+- pbt-out/bug_reports/encode_neon_ld_st_multi_invalid_base.html
+- pbt-out/bug_reports/encode_neon_ld_st_multi_uppercase_arrangement.html
+- pbt-out/bug_reports/encode_neon_ld_st_multi_nonconsecutive.html
+- pbt-out/bug_reports/encode_neon_ld_st_multi_bad_post_imm.html
+- pbt-out/bug_reports/encode_neon_ld_st_multi_1d_ldn.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 08:36 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 104/289 total | PBT candidates: 104 | Tested: 104 (100%) | 0 pass, 104 fail
+> Last updated: 2026-10-05 09:04 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 105/289 total | PBT candidates: 105 | Tested: 105 (100%) | 0 pass, 105 fail
 
 ## Summary
 
@@ -334,10 +280,10 @@ cargo test --lib test_encode_neon_ld_st_single_regression_bad_post_imm -- --test
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 104 |
-| **Tested (of PBT candidates)** | **104 / 104 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 104 / 0 |
-| **Overall (tested / all functions)** | **104 / 289 (36%)** |
+| PBT candidates (from FUNCTION_INDEX) | 105 |
+| **Tested (of PBT candidates)** | **105 / 105 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 105 / 0 |
+| **Overall (tested / all functions)** | **105 / 289 (36%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -345,13 +291,13 @@ cargo test --lib test_encode_neon_ld_st_single_regression_bad_post_imm -- --test
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 104 | 104 | 0 | 100% |
+|  | 105 | 105 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 104 | 104 | 0 | 100% |
+| unknown | 105 | 105 | 0 | 100% |
 
 ## File Coverage
 
@@ -364,7 +310,7 @@ cargo test --lib test_encode_neon_ld_st_single_regression_bad_post_imm -- --test
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 19 | 19 | 100% | covered |
+| neon.rs | 68 | 20 | 20 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -478,3 +424,4 @@ cargo test --lib test_encode_neon_ld_st_single_regression_bad_post_imm -- --test
 | encode_neon_ldnr | neon.rs |
 | encode_neon_ld1r | neon.rs |
 | encode_neon_ld_st_single | neon.rs |
+| encode_neon_ld_st_multi | neon.rs |
