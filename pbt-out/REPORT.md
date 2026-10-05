@@ -1,113 +1,122 @@
-# PBT Campaign Report: encode_neon_fcvtl
+# PBT Campaign Report: encode_neon_fcvtn
 
 ## Summary
 
-**Verdict:** 1 high, 2 medium: encode_neon_fcvtl accepts dest `.2s` and ignores source arrangement so invalid FCVTL encodes as a different valid instruction; it also silently drops a third operand and encodes an X-prefixed dest as V.
+**Verdict:** 1 high, 2 medium: encode_neon_fcvtn accepts dest `.8b` and source `.2s` so invalid FCVTN encodes as a different valid instruction; it also silently drops a third operand and encodes a bare V dest as `Vd.4H`.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_fcvtl
+**Modules tested:** encode_neon_fcvtn
 **Tests:** 9
 **Result:** 6 passing, 3 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). The cargo test run executed encode_neon_fcvtl via encode_neon_fcvtl_pbt.rs.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). The cargo test run executed encode_neon_fcvtn via encode_neon_fcvtn_pbt.rs.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_fcvtl | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_fcvtn | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_fcvtl ignores a third operand
+### B1: encode_neon_fcvtn ignores a third operand
 
-**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ valid (ta,tb,is_high). llvm-mc rejects "fcvtl{2} Vd.ta, Vn.tb, Vextra.ta" ⇒ encode_neon_fcvtl([Vd.ta,Vn.tb,Vextra.ta], is_high) is Err
+**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ valid (tb,ta,is_high). llvm-mc("fcvtn{2} Vd.tb, Vn.ta, Ve.tb") = Err ∧ encode_neon_fcvtn([Vd.tb,Vn.ta,Ve.tb], is_high) = Err
 **Contract evidence:** documented src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume"
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_fcvtl([v0.4s, v0.4h, v0.4s], is_high=false)
-**Expected / Actual:** Err / Ok(Word(0x0e217800))
-**Impact:** Trailing junk after FCVTL is silently dropped, so a mistyped extra register does not fail the assemble
-**Root cause:** neon.rs:1641–1642 read only operands[0] and operands[1]; there is no maximum-arity check
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1641`
+**Counterexample:** encode_neon_fcvtn([v0.4h, v0.4s, v0.4h], is_high=false)
+**Expected / Actual:** Err / Ok(Word(0x0e216800))
+**Impact:** Trailing junk after FCVTN is silently dropped, so a mistyped extra register does not fail the assemble
+**Root cause:** neon.rs:1653–1654 read only operands[0] and operands[1]; there is no maximum-arity check
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1653`
 ```rust
-    let (rd, arr_d) = get_neon_reg(operands, 0)?;
-    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rd, _) = get_neon_reg(operands, 0)?;
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
 ```
 **Suggested fix:** Reject anything other than exactly 2 operands
 ```rust
     if operands.len() != 2 {
-        return Err("fcvtl requires 2 operands".to_string());
+        return Err("fcvtn requires 2 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_fcvtl_extra_operand.md
-**Repro seed:** rd = 0, rn = 0, extra = 0, pair = ("4s", "4h", false)
-**Raw output:** Test failed: 3 operands must Err (llvm-mc rejects fcvtl v0.4s, v0.4h, v0.4s)
+**Bug report:** bug_reports/encode_neon_fcvtn_extra_operand.md
+**Repro seed:** rd = 0, rn = 0, extra = 0, pair = ("4h", "4s", false)
+**Raw output:** Test failed: 3 operands must Err (llvm-mc rejects fcvtn v0.4h, v0.4s, v0.4h) at src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs:348.
+minimal failing input: rd = 0, rn = 0, extra = 0, pair = (
+    "4h",
+    "4s",
+    false,
+)
 
-### B2: encode_neon_fcvtl accepts dest 2S and ignores source arrangement
+### B2: encode_neon_fcvtn accepts dest 8B and source 2S
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ ta,tb ∈ arrangements, ∀ is_high ∈ {false,true}. (ta,tb,is_high) ∉ ARM FCVTL pairs ⇒ llvm-mc rejects the asm ∧ encode_neon_fcvtl([Vd.ta,Vn.tb], is_high) is Err
-**Contract evidence:** documented neon.rs:1638 "FCVTL: half→single or single→double widening float convert"
-**Documentation conflict:** neon.rs:1638 states half→single or single→double (dest 4S or 2D). The code at neon.rs:1643 also accepts dest "2s". The comment does not declare dest 2S valid — it states the conversions FCVTL performs. Dest 2S is a contract the code violates, not an input-domain restriction.
+**Formal:** ∀ rd,rn ∈ {0..31}, ∀ tb,ta ∈ NEON arrangements, ∀ is_high ∈ {false,true}. ¬valid_pair(tb,ta,is_high) ⇒ llvm-mc rejects ∧ encode_neon_fcvtn([Vd.tb,Vn.ta], is_high) = Err
+**Contract evidence:** inferred (ARM FCVTN admits only Ta in {4S,2D} with matching Tb {4H/8H, 2S/4S}; README.md:12 gas-compatible assembly)
+**Documentation conflict:** neon.rs:1651 "FCVTN: single→half or double→single narrowing float convert" states the conversions, not arrangement counts. neon.rs:1656 "fcvtn: unsupported source:" is the `_` arm of a match that explicitly accepts "2s". Neither comment declares dest 8B or source 2S invalid / out of domain.
 **Severity:** high
-**Counterexample:** encode_neon_fcvtl([v0.2s, v0.8b], is_high=false)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** Invalid assembly encodes as a different valid FCVTL (sz from dest only), producing wrong machine code instead of an assemble error
-**Root cause:** neon.rs:1642 discards the source arrangement; neon.rs:1643 matches dest "2s" as sz=0
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1642`
+**Counterexample:** encode_neon_fcvtn([v0.8b, v0.2s], is_high=false)
+**Expected / Actual:** Err / Ok(Word(0x0e216800))
+**Impact:** Invalid assembly encodes as a different valid FCVTN (sz from source only, dest discarded), producing wrong machine code instead of an assemble error
+**Root cause:** neon.rs:1653 discards the dest arrangement; neon.rs:1655 matches source "2s" as sz=0
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1653`
 ```rust
-    let (rn, _) = get_neon_reg(operands, 1)?;
-    let sz = match arr_d.as_str() { "4s" | "2s" => 0u32, "2d" => 1,
-        _ => return Err(format!("fcvtl: unsupported dest: {}", arr_d)), };
-```
-**Suggested fix:** Accept only dest 4s/2d and require the ARM-mandated source arrangement
-```rust
+    let (rd, _) = get_neon_reg(operands, 0)?;
     let (rn, arr_n) = get_neon_reg(operands, 1)?;
-    let sz = match arr_d.as_str() {
+    let sz = match arr_n.as_str() { "4s" | "2s" => 0u32, "2d" => 1,
+        _ => return Err(format!("fcvtn: unsupported source: {}", arr_n)), };
+```
+**Suggested fix:** Accept only source 4s/2d and require the ARM-mandated dest arrangement
+```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    let sz = match arr_n.as_str() {
         "4s" => 0u32,
         "2d" => 1,
-        _ => return Err(format!("fcvtl: unsupported dest: {}", arr_d)),
+        _ => return Err(format!("fcvtn: unsupported source: {}", arr_n)),
     };
-    let expected_tb = match (arr_d.as_str(), is_high) {
+    let expected_tb = match (arr_n.as_str(), is_high) {
         ("4s", false) => "4h",
         ("4s", true) => "8h",
         ("2d", false) => "2s",
         ("2d", true) => "4s",
-        _ => return Err(format!("fcvtl: unsupported dest: {}", arr_d)),
+        _ => return Err(format!("fcvtn: unsupported source: {}", arr_n)),
     };
-    if arr_n != expected_tb {
-        return Err(format!("fcvtl: dest {} requires source {}", arr_d, expected_tb));
+    if arr_d != expected_tb {
+        return Err(format!("fcvtn: source {} requires dest {}", arr_n, expected_tb));
     }
 ```
-**Bug report:** bug_reports/encode_neon_fcvtl_mismatched_ta_tb.md
-**Repro seed:** rd = 0, rn = 0, ta = "2s", tb = "8b", is_high = false
-**Raw output:** Test failed: invalid/mismatched Ta/Tb must Err (ARM FCVTL Ta in {4S,2D} with matching Tb; llvm-mc rejects fcvtl v0.2s, v0.8b)
+**Bug report:** bug_reports/encode_neon_fcvtn_mismatched_ta_tb.md
+**Repro seed:** rd = 0, rn = 0, tb = "8b", ta = "2s", is_high = false
+**Raw output:** Test failed: invalid/mismatched Tb/Ta must Err (ARM FCVTN Ta in {4S,2D} with matching Tb; llvm-mc rejects fcvtn v0.8b, v0.2s) at src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs:375.
+minimal failing input: rd = 0, rn = 0, tb = "8b", ta = "2s", is_high = false
 
-### B3: encode_neon_fcvtl encodes an X-prefixed destination as a V register
+### B3: encode_neon_fcvtn encodes a bare V dest as FCVTN Vd.4H
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ kind ∈ {bare-fp-dest, bare-v-src, bare-v-dest, x-prefixed-dest-arr, x-src}. llvm-mc rejects the corresponding asm ⇒ encode_neon_fcvtl(ops, false) is Err
-**Contract evidence:** documented src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume"
+**Formal:** ∀ rd,rn ∈ {0..31}, ∀ kind ∈ GPR/bare/non-V. llvm-mc rejects the corresponding asm ∧ encode_neon_fcvtn(ops(kind), false) = Err
+**Contract evidence:** inferred (ARM FCVTN dest is Vd.Tb; README.md:12 gas-compatible assembly; llvm-mc rejects `fcvtn v0, v0.4s`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_fcvtl([RegArrangement{reg:"x0", arrangement:"4s"}, v0.4h], is_high=false)
-**Expected / Actual:** Err / Ok(Word) identical to `fcvtl v0.4s, v0.4h`
-**Impact:** A GPR-prefixed arrangement dest is encoded as the corresponding V register
-**Root cause:** neon.rs:1641 calls get_neon_reg; parse_reg_num accepts the 'x' prefix; encode_neon_fcvtl never requires a V prefix
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1641`
+**Counterexample:** encode_neon_fcvtn([Reg("v0"), v0.4s], is_high=false)
+**Expected / Actual:** Err / Ok(Word(0x0e216800))
+**Impact:** A dest without arrangement is encoded as the corresponding V register, so a mistyped `fcvtn v0, v0.4s` silently becomes `fcvtn v0.4h, v0.4s`
+**Root cause:** neon.rs:1653 calls get_neon_reg which accepts Operand::Reg, then discards dest arrangement
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1653`
 ```rust
-    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    let (rd, _) = get_neon_reg(operands, 0)?;
 ```
-**Suggested fix:** Reject a destination whose register name is not V-prefixed
+**Suggested fix:** Reject a destination that is not a V-prefixed RegArrangement
 ```rust
     match &operands[0] {
         Operand::RegArrangement { reg, .. } if reg.to_ascii_lowercase().starts_with('v') => {}
-        _ => return Err("fcvtl: destination must be a V register with arrangement".to_string()),
+        _ => return Err("fcvtn: destination must be a V register with arrangement".to_string()),
     }
 ```
-**Bug report:** bug_reports/encode_neon_fcvtl_gpr_dest.md
-**Repro seed:** rd = 0, rn = 0, kind = 3, fp_prefix = "x"
-**Raw output:** Test failed: GPR/bare/non-arrangement kind=3 must Err (llvm-mc rejects fcvtl x0.4s, v0.4h)
+**Bug report:** bug_reports/encode_neon_fcvtn_bare_dest.md
+**Repro seed:** rd = 0, rn = 0, kind = 2, fp_prefix = "x"
+**Raw output:** Test failed: GPR/bare/non-arrangement kind=2 must Err (llvm-mc rejects fcvtn v0, v0.4s) at src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs:438.
+minimal failing input: rd = 0, rn = 0, kind = 2, fp_prefix = "x"
 
 ## Design Caveats
 
@@ -117,59 +126,60 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_fcvtl_pbt.rs | 9 properties + 2 KAT + 4 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_neon_fcvtl_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs | 9 properties + 2 KAT + 4 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtl -- --test-threads=1
+cargo test --lib encode_neon_fcvtn -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtl_neg_extra_operand -- --test-threads=1
+cargo test --lib encode_neon_fcvtn_neg_extra_operand -- --test-threads=1
 ```
 
-B2 mismatched Ta/Tb:
+B2 mismatched arrangements:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtl_neg_mismatched_ta_tb -- --test-threads=1
+cargo test --lib encode_neon_fcvtn_neg_mismatched_ta_tb -- --test-threads=1
 ```
 
-B3 GPR dest:
+B3 bare dest:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_fcvtl_neg_gpr_or_bare -- --test-threads=1
+cargo test --lib encode_neon_fcvtn_neg_gpr_or_bare -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_neon_fcvtl_extra_operand.md
-- pbt-out/bug_reports/encode_neon_fcvtl_extra_operand.html
-- pbt-out/bug_reports/encode_neon_fcvtl_mismatched_ta_tb.md
-- pbt-out/bug_reports/encode_neon_fcvtl_mismatched_ta_tb.html
-- pbt-out/bug_reports/encode_neon_fcvtl_gpr_dest.md
-- pbt-out/bug_reports/encode_neon_fcvtl_gpr_dest.html
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/report.json — machine-readable report
+- pbt-out/bug_reports/encode_neon_fcvtn_extra_operand.md
+- pbt-out/bug_reports/encode_neon_fcvtn_extra_operand.html
+- pbt-out/bug_reports/encode_neon_fcvtn_mismatched_ta_tb.md
+- pbt-out/bug_reports/encode_neon_fcvtn_mismatched_ta_tb.html
+- pbt-out/bug_reports/encode_neon_fcvtn_bare_dest.md
+- pbt-out/bug_reports/encode_neon_fcvtn_bare_dest.html
+- pbt-out/FUNCTION_INDEX.md — merged function index
+- pbt-out/CHANGE_SURFACE.md — change surface
+- src/backend/arm/assembler/encoder/encode_neon_fcvtn_pbt.rs — harness
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 20:37 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 140/289 total | PBT candidates: 140 | Tested: 140 (100%) | 0 pass, 140 fail
+> Last updated: 2026-10-05 20:53 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 141/289 total | PBT candidates: 141 | Tested: 141 (100%) | 0 pass, 141 fail
 
 ## Summary
 
@@ -178,10 +188,10 @@ cargo test --lib encode_neon_fcvtl_neg_gpr_or_bare -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 140 |
-| **Tested (of PBT candidates)** | **140 / 140 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 140 / 0 |
-| **Overall (tested / all functions)** | **140 / 289 (48%)** |
+| PBT candidates (from FUNCTION_INDEX) | 141 |
+| **Tested (of PBT candidates)** | **141 / 141 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 141 / 0 |
+| **Overall (tested / all functions)** | **141 / 289 (49%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -189,13 +199,13 @@ cargo test --lib encode_neon_fcvtl_neg_gpr_or_bare -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 140 | 140 | 0 | 100% |
+|  | 141 | 141 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 140 | 140 | 0 | 100% |
+| unknown | 141 | 141 | 0 | 100% |
 
 ## File Coverage
 
@@ -208,7 +218,7 @@ cargo test --lib encode_neon_fcvtl_neg_gpr_or_bare -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 55 | 55 | 100% | covered |
+| neon.rs | 68 | 56 | 56 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -358,3 +368,4 @@ cargo test --lib encode_neon_fcvtl_neg_gpr_or_bare -- --test-threads=1
 | encode_neon_elem | neon.rs |
 | encode_neon_float_elem | neon.rs |
 | encode_neon_fcvtl | neon.rs |
+| encode_neon_fcvtn | neon.rs |
