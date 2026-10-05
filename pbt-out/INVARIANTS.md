@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_two_misc_narrow)
+
+- Valid XTN/SQXTN/UQXTN/SQXTUN with matching Tb/Ta and 2-suffix Q variants matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). ARM mapping: XTN U=0 opcode=10010; SQXTN U=0 opcode=10100; UQXTN U=1 opcode=10100; SQXTUN U=1 opcode=10010; Ta in {8H,4S,2D}; Tb {8B/16B, 4H/8H, 2S/4S} from Q.
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only is_high in bit 30; only U in bit 29; only opcode in bits[16:12] (1000 cases).
+- Success-path word: bit31=0, Q at 30, U at 29, bits[28:24]=01110, size at [23:22] from Ta (8h=00, 4s=01, 2d=10), bits[21:17]=10000, opcode at [16:12], bits[11:10]=10, Rn at [9:5], Rd at [4:0] (1000 cases).
+- Arity 0–1 returns Err (1000 cases).
+- Imm/Mem/Label in dest or src slot returns Err (1000 cases, sweep).
+- Uppercase mnemonic and V-prefix registers match llvm-mc (1000 cases).
+- Known-answer (llvm-mc connection): `xtn v0.8b, v1.8h` = 0x0e212820; `xtn2 v0.16b, v1.8h` = 0x4e212820; `xtn v0.4h, v1.4s` = 0x0e612820; `xtn v0.2s, v1.2d` = 0x0ea12820; `xtn2 v0.4s, v1.2d` = 0x4ea12820; `sqxtn v0.8b, v1.8h` = 0x0e214820; `uqxtn v0.8b, v1.8h` = 0x2e214820; `sqxtun v0.8b, v1.8h` = 0x2e212820; `xtn v31.8b, v31.8h` = 0x0e212bff; `xtn v0.8b, v0.8h` = 0x0e212800; `xtn v15.4h, v16.4s` = 0x0e612a0f.
+- Extra operand, dest-arrangement mismatch, and bare/GPR dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_two_misc_narrow)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD two-register miscellaneous (asimdmisc): 0 Q U 01110 size 10000 opcode 10 Rn Rd.
+- Dispatch: encoder/mod.rs:676-677 sqxtun/sqxtun2; mod.rs:941-946 uqxtn/uqxtn2/sqxtn/sqxtn2/xtn/xtn2. Operands passed through unchanged.
+- Sibling encode_neon_two_misc / encode_neon_fcvtn / encode_neon_xtl are not same-job differentials.
+- encode_neon_two_misc_narrow checks operands.len() < 2 only; dest arrangement discarded (`_arr_d`); size from source 8h/4s/2d; Q from is_high; get_neon_reg accepts Operand::Reg.
+- parse_reg_num lowercases prefixes; maps sp/wsp/xzr/wzr to 31, lr to 30.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus neg_nonreg (passing).
+- Three failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_two_misc_narrow_*.md.
+
 # Confirmed invariants (encode_neon_scalar_qshrn)
 
 - Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only U in bit 29; only is_rounding in bits[15:10]; only dest/shift in bits[23:16] (1000 cases).

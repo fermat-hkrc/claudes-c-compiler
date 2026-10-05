@@ -1,114 +1,149 @@
-# PBT Campaign Report: encode_neon_scalar_qshrn
+# PBT Campaign Report: encode_neon_two_misc_narrow
 
 ## Summary
 
-**Verdict:** 1 high: encode_neon_scalar_qshrn packs every valid scalar SQSHRN as the vector SQSHRN2 encoding (bit 28 clear: 0x4f0f9400 vs llvm-mc 0x5f0f9400), so assembled objects disagree with gas and execute the wrong instruction class; plus 2 medium: extra operand ignored, dest/src class pairing not checked.
+**Verdict:** 1 high, 2 medium: encode_neon_two_misc_narrow discards the dest arrangement so `xtn v0.8h, v0.4s` encodes as XTN Vd.4H, silently accepts a third operand, and encodes a bare/GPR dest as Vd.8B — gas/llvm-mc reject all three.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_scalar_qshrn
-**Tests:** 10
-**Result:** 5 passing, 5 failing properties, 3 unique defects (encoding counted once)
+**Modules tested:** encode_neon_two_misc_narrow
+**Tests:** 9
+**Result:** 6 passing, 3 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit plus sweep of documented dest x/w/q/v/d and Imm/Mem/Label paths.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and listed unrelated C++ binaries as NOT LINKED; the SUT ran inside `cargo test --lib encode_neon_two_misc_narrow` (KAT + 1000-case properties).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_scalar_qshrn | 10 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_two_misc_narrow | 9 | 3 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_scalar_qshrn packs scalar SQSHRN as vector SQSHRN2
+### B1: encode_neon_two_misc_narrow silently encodes a third operand
 
-**Formal:** ∀ rd,rn ∈ {0..31}, ∀ (vd,vn,esize) ∈ {(b,h,8),(h,s,16),(s,d,32)}, ∀ shift ∈ {1..esize}, ∀ u ∈ {0,1}, ∀ round ∈ {false,true}. encode_neon_scalar_qshrn([Reg(vd||rd), Reg(vn||rn), Imm(shift)], u, round) = Word(llvm-mc(mnem(u,round) || " " || vd||rd || ", " || vn||rn || ", #" || shift))
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; ARM asisdshf 01 U 11111; llvm-mc 15.0.6 `sqshrn b0, h0, #1` = 0x5f0f9400)
-**Documentation conflict:** neon.rs:1848 "01 U 11110 immh:immb opcode 1 Rn Rd" restates the producing packing (vector-style 11110) rather than declaring scalar input invalid or admitting a limitation on accepted input. ARM/llvm-mc scalar encodings use bits[31:24]=01 U 11111.
-**Severity:** high
-**Counterexample:** encode_neon_scalar_qshrn([Reg("b0"), Reg("h0"), Imm(1)], u_bit=0, is_rounding=false)
-**Expected / Actual:** 0x5f0f9400 / 0x4f0f9400
-**Impact:** Every successful scalar SQSHRN/SQRSHRN/UQSHRN/UQRSHRN is emitted as the vector Q=1 encoding. Assembled objects disagree with gas/llvm-mc and execute the wrong instruction class. encode() routes non-RegArrangement `sqshrn` dest into this helper.
-**Root cause:** neon.rs:1849 ORs vector asimdshf fixed bits `(0b011110 << 23)` onto `(0b01 << 30)`, leaving bit 28 = 0; ARM scalar asisdshf needs bits[28:24]=11111
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1849`
-```rust
-    let word = (0b01 << 30) | (u_bit << 29) | (0b011110 << 23) | ((immhb >> 3) << 19) | ((immhb & 7) << 16)
-        | (opcode_bits << 10) | (rn << 5) | rd;
-```
-**Suggested fix:** Place scalar asisdshf fixed bits at [28:24]=11111
-```rust
-    let word = (0b01 << 30) | (u_bit << 29) | (0b11111 << 24) | ((immhb >> 3) << 19) | ((immhb & 7) << 16)
-        | (opcode_bits << 10) | (rn << 5) | rd;
-```
-**Bug report:** bug_reports/encode_neon_scalar_qshrn_asisdshf_bit28.md
-**Repro seed:** cc e6eeee35cb96efd2430f8574b661459cebb5b0fdd1cf7e3a68110087c18f5194
-**Raw output:**
-```text
-Test failed: assertion failed: `(left == right)`
-  left: `1326420992`,
- right: `1594856448`: mismatch for sqshrn b0, h0, #1
-minimal failing input: rd = 0, rn = 0, case = ("b", "h", 8, 1), u = 0, round = false
-```
-
-### B2: encode_neon_scalar_qshrn silently encodes a fourth operand
-
-**Formal:** ∀ valid 3-operand scalar-qshrn ops, ∀ extra Operand::Reg. llvm-mc rejects asm with a fourth operand ⇒ encode_neon_scalar_qshrn(ops||[extra], u, round) is Err
-**Contract evidence:** documented neon.rs:1836 "scalar qshrn requires 3 operands"
-**Documentation conflict:** neon.rs:1836 "scalar qshrn requires 3 operands" states the instruction needs 3 operands; the check is only `len < 3`, so arity 4+ is accepted. The comment/error does not declare extra operands valid.
+**Formal:** ∀ rd,rn,extra ∈ {0..31}, ∀ valid (tb,ta,is_high,u,opc,mnem). llvm-mc rejects mnem||suffix || " v"||rd||"."||tb||", v"||rn||"."||ta||", v"||extra||"."||tb ∧ encode_neon_two_misc_narrow([Vd,Vn,Vextra], u, opc, is_high) is Err
+**Contract evidence:** documented neon.rs:207 "NEON two-reg narrow requires 2 operands"
+**Documentation conflict:** neon.rs:207 "NEON two-reg narrow requires 2 operands" states two operands are required; the body only rejects `len < 2`, so arity 3+ is accepted. The comment states the behavior IS handled (exactly 2), which the code violates.
 **Severity:** medium
-**Counterexample:** encode_neon_scalar_qshrn([Reg("b0"), Reg("h0"), Imm(1), Reg("b0")], 0, false)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** Invalid assembly such as `sqshrn b0, h0, #1, b0` is assembled into a word that gas/llvm-mc refuse.
-**Root cause:** neon.rs:1836 checks only `operands.len() < 3`, so arity 4+ is treated as a 3-operand encode using the first three operands
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1836`
+**Counterexample:** encode_neon_two_misc_narrow([v0.8b, v0.8h, v0.8b], u_bit=0, opcode=0b10010, is_high=false)
+**Expected / Actual:** Err / Ok(Word(0x0e212800))
+**Impact:** Invalid assembly such as `xtn v0.8b, v0.8h, v0.8b` is assembled into an XTN word instead of an error, so the GNU-style assembler emits machine code that gas/llvm-mc refuse.
+**Root cause:** neon.rs:207 checks only `operands.len() < 2`, so arity 3+ is treated as a 2-operand encode using the first two operands
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:207`
 ```rust
-    if operands.len() < 3 { return Err("scalar qshrn requires 3 operands".to_string()); }
-```
-**Suggested fix:** Reject any arity other than 3
-```rust
-    if operands.len() != 3 { return Err("scalar qshrn requires 3 operands".to_string()); }
-```
-**Bug report:** bug_reports/encode_neon_scalar_qshrn_extra_operand.md
-**Repro seed:** (deterministic; shrunk to rd=0, rn=0, extra=0, b<-h #1)
-**Raw output:**
-```text
-Test failed: 4 operands must Err (llvm-mc rejects sqshrn b0, h0, #1, b0)
-minimal failing input: rd = 0, rn = 0, extra = 0, case = ("b", "h", 8, 1), u = 0, round = false
-```
-
-### B3: encode_neon_scalar_qshrn ignores dest/src scalar class pairing
-
-**Formal:** ∀ dest ∈ {b,h,s}, ∀ src_pfx such that (dest,src) is not a mandated pair, ∀ rd,rn,shift,u,round. llvm-mc rejects mnem dest||rd, src||rn, #shift ⇒ encode_neon_scalar_qshrn is Err
-**Contract evidence:** inferred (ARM/llvm-mc mandated B<-H / H<-S / S<-D; neon.rs:1834 names `sqshrn Hd,Sn,#shift / sqshrn Sd,Dn,#shift`)
-**Documentation conflict:** neon.rs:1834 "NEON scalar SQSHRN: sqshrn Hd,Sn,#shift / sqshrn Sd,Dn,#shift" names the valid H<-S and S<-D pairs (body also accepts B<-H). It does not declare mismatched pairs valid. llvm-mc rejects `sqshrn b0, s0, #8`.
-**Severity:** medium
-**Counterexample:** encode_neon_scalar_qshrn([Reg("b0"), Reg("s0"), Imm(8)], 0, false)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** Invalid assembly such as `sqshrn b0, s0, #8` is assembled instead of an error.
-**Root cause:** neon.rs:1838 accepts any Operand::Reg for the source; only dest prefix selects element size
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1838`
-```rust
-    let rn = match &operands[1] { Operand::Reg(r) => parse_reg_num(r).ok_or("invalid reg")?, _ => return Err("expected register".to_string()); };
-```
-**Suggested fix:** Require the source prefix to match the dest narrowing pair (B<-H, H<-S, S<-D)
-```rust
-    let (rn, rn_name) = match &operands[1] { Operand::Reg(r) => (parse_reg_num(r).ok_or("invalid reg")?, r.to_lowercase()), _ => return Err("expected register".to_string()) };
-    let want_src = match rd_name.chars().next() {
-        Some('b') => 'h',
-        Some('h') => 's',
-        Some('s') => 'd',
-        _ => return Err(format!("scalar qshrn: unsupported dest: {}", rd_name)),
-    };
-    if !rn_name.starts_with(want_src) {
-        return Err(format!("scalar qshrn: source {} incompatible with dest {}", rn_name, rd_name));
+    if operands.len() < 2 {
+        return Err("NEON two-reg narrow requires 2 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_scalar_qshrn_wrong_reg_class.md
-**Repro seed:** (deterministic; shrunk to rd=0, rn=0, vd=b, src=s, #8)
+**Suggested fix:** Reject any arity other than 2
+```rust
+    if operands.len() != 2 {
+        return Err("NEON two-reg narrow requires 2 operands".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_neon_two_misc_narrow_extra_operand.md
+**Repro seed:** cc 4e956affd40e557380117bed6fa5827bbe3fc738be9282a288f7b19b8e680b41
 **Raw output:**
 ```text
-Test failed: wrong class src=s must Err (llvm-mc rejects sqshrn b0, s0, #8)
-minimal failing input: rd = 0, rn = 0, vd = "b", src = "s", u = 0, round = false
+thread 'backend::arm::assembler::encoder::encode_neon_two_misc_narrow_pbt::encode_neon_two_misc_narrow_neg_extra_operand' (2513865) panicked at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:423:1:
+Test failed: 3 operands must Err (llvm-mc rejects xtn v0.8b, v0.8h, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:444.
+minimal failing input: rd = 0, rn = 0, extra = 0, pair = (
+    "8b",
+    "8h",
+    false,
+), fam = (
+    "xtn",
+    0,
+    18,
+)
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+```
+
+### B2: encode_neon_two_misc_narrow accepts dest 8H with source 4S on XTN (Q=0)
+
+**Formal:** ∀ rd,rn ∈ {0..31}, ∀ tb,ta ∈ arrangements, ∀ is_high ∈ {false,true}, ∀ family. ¬valid_pair(tb,ta,is_high) ⇒ llvm-mc rejects the asm ∧ encode_neon_two_misc_narrow([Vd.tb, Vn.ta], u, opc, is_high) is Err
+**Contract evidence:** inferred (ARM XTN{2} Vd.Tb, Vn.Ta with Tb matching Ta and Q; neon.rs:202 names XTN/SQXTN/UQXTN; encode() at encoder/mod.rs:941-946 passes operands through)
+**Documentation conflict:** (none) — neon.rs:215 documents unsupported *source* arrangements only; dest arrangement is bound as `_arr_d` with no comment declaring dest unchecked
+**Severity:** high
+**Counterexample:** encode_neon_two_misc_narrow([v0.8h, v0.4s], u_bit=0, opcode=0b10010, is_high=false)
+**Expected / Actual:** Err / Ok(Word(0x0e612800))
+**Impact:** A mistyped dest arrangement is silently rewritten: `xtn v0.8h, v0.4s` encodes as XTN Vd.4H, Vn.4S instead of an assemble error.
+**Root cause:** neon.rs:210 binds dest arrangement as `_arr_d` and never checks it against Ta or is_high; size is taken only from the source arrangement
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:210`
+```rust
+    let (rd, _arr_d) = get_neon_reg(operands, 0)?;
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+```
+**Suggested fix:** Require the ARM-mandated dest arrangement for (Ta, is_high)
+```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    let (rn, arr_n) = get_neon_reg(operands, 1)?;
+    let expected_tb = match (arr_n.as_str(), is_high) {
+        ("8h", false) => "8b",
+        ("8h", true) => "16b",
+        ("4s", false) => "4h",
+        ("4s", true) => "8h",
+        ("2d", false) => "2s",
+        ("2d", true) => "4s",
+        _ => return Err(format!("unsupported source arrangement for narrow: {}", arr_n)),
+    };
+    if arr_d != expected_tb {
+        return Err(format!("narrow: source {} requires dest {}", arr_n, expected_tb));
+    }
+```
+**Bug report:** bug_reports/encode_neon_two_misc_narrow_mismatched_tb_ta.md
+**Repro seed:** cc e2fc582b4808de07089af20711cca817c2706965e85a706f2572dfe348065989
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_two_misc_narrow_pbt::encode_neon_two_misc_narrow_neg_mismatched_tb_ta' (2513885) panicked at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:452:1:
+Test failed: invalid/mismatched Tb/Ta must Err (ARM XTN Ta in {8H,4S,2D} with matching Tb; llvm-mc rejects xtn v0.8h, v0.4s) at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:473.
+minimal failing input: rd = 0, rn = 0, tb = "8h", ta = "4s", is_high = false, fam = (
+    "xtn",
+    0,
+    18,
+)
+	successes: 3
+	local rejects: 0
+	global rejects: 1
+		1 times at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:464:9: !is_valid_pair(tb, ta, is_high)
+```
+
+### B3: encode_neon_two_misc_narrow encodes a bare V dest as XTN Vd.8B
+
+**Formal:** ∀ rd,rn ∈ {0..31}, ∀ kind ∈ {gpr-dest, bare-src, bare-dest, x-arrangement-dest, gpr-src}. llvm-mc rejects the asm ∧ encode_neon_two_misc_narrow(ops(kind), 0, 0b10010, false) is Err
+**Contract evidence:** inferred (ARM XTN dest is Vd.Tb; neon.rs:202 names XTN; llvm-mc/gas reject `xtn v0, v0.8h` and `xtn x0, v0.8h`; encode() passes operands through)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_two_misc_narrow([Reg("v0"), v0.8h], u_bit=0, opcode=0b10010, is_high=false)
+**Expected / Actual:** Err / Ok(Word(0x0e212800))
+**Impact:** A dest without arrangement (or with a GPR prefix) is encoded as the corresponding V register, so a mistyped `xtn v0, v0.8h` silently becomes `xtn v0.8b, v0.8h`.
+**Root cause:** neon.rs:210 calls get_neon_reg which accepts Operand::Reg, then discards dest arrangement; encode_neon_two_misc_narrow never requires a V-prefixed arrangement dest
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:210`
+```rust
+    let (rd, _arr_d) = get_neon_reg(operands, 0)?;
+```
+**Suggested fix:** Reject a destination that is not a V-prefixed RegArrangement
+```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+    match &operands[0] {
+        Operand::RegArrangement { reg, .. } if reg.to_ascii_lowercase().starts_with('v') => {}
+        _ => return Err("narrow: destination must be a V register with arrangement".to_string()),
+    }
+    let _ = arr_d;
+```
+**Bug report:** bug_reports/encode_neon_two_misc_narrow_bare_dest.md
+**Repro seed:** cc ea0e467b95a3a37895fdc601c1dfe696818f53261cde18f44bbf4347db492367
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_neon_two_misc_narrow_pbt::encode_neon_two_misc_narrow_neg_gpr_or_bare' (2513879) panicked at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:481:1:
+Test failed: GPR/bare/non-arrangement kind=2 must Err (llvm-mc rejects xtn v0, v0.8h) at src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs:536.
+minimal failing input: rd = 0, rn = 0, kind = 2, fp_prefix = "x"
+	successes: 0
+	local rejects: 0
+	global rejects: 0
 ```
 
 ## Design Caveats
@@ -119,32 +154,62 @@ minimal failing input: rd = 0, rn = 0, vd = "b", src = "s", u = 0, round = false
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_scalar_qshrn_pbt.rs | 10 properties + 1 KAT + 3 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_neon_scalar_qshrn_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_neon_two_misc_narrow_pbt.rs | 9 properties + 2 KAT + 5 regression witnesses |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_scalar_qshrn -- --test-threads=1
-cargo test --lib encode_neon_scalar_qshrn_diff_llvm_mc -- --test-threads=1
-cargo test --lib test_encode_neon_scalar_qshrn_regression_asisdshf_bit28 -- --test-threads=1
-cargo test --lib encode_neon_scalar_qshrn_neg_extra_operand -- --test-threads=1
-cargo test --lib test_encode_neon_scalar_qshrn_regression_extra_operand -- --test-threads=1
-cargo test --lib encode_neon_scalar_qshrn_neg_wrong_reg_class -- --test-threads=1
-cargo test --lib test_encode_neon_scalar_qshrn_regression_wrong_reg_class -- --test-threads=1
+cargo test --lib encode_neon_two_misc_narrow -- --test-threads=1
+```
+
+B1 extra operand:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_neon_two_misc_narrow_neg_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_two_misc_narrow_regression_extra_operand -- --test-threads=1
+```
+
+B2 mismatched Tb/Ta:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_neon_two_misc_narrow_neg_mismatched_tb_ta -- --test-threads=1
+cargo test --lib test_encode_neon_two_misc_narrow_regression_mismatched_tb_ta -- --test-threads=1
+```
+
+B3 bare dest:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_neon_two_misc_narrow_neg_gpr_or_bare -- --test-threads=1
+cargo test --lib test_encode_neon_two_misc_narrow_regression_bare_dest -- --test-threads=1
 ```
 
 ## Output Directories
 
-pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/PROPERTIES.md, pbt-out/PLAN.md, pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md, pbt-out/report.json, pbt-out/INVARIANTS.md, pbt-out/FUNCTION_INDEX.md, pbt-out/bug_reports/encode_neon_scalar_qshrn_asisdshf_bit28.md, pbt-out/bug_reports/encode_neon_scalar_qshrn_asisdshf_bit28.html, pbt-out/bug_reports/encode_neon_scalar_qshrn_asisdshf_fields.md, pbt-out/bug_reports/encode_neon_scalar_qshrn_asisdshf_fields.html, pbt-out/bug_reports/encode_neon_scalar_qshrn_asisdshf_alt_spellings.md, pbt-out/bug_reports/encode_neon_scalar_qshrn_asisdshf_alt_spellings.html, pbt-out/bug_reports/encode_neon_scalar_qshrn_extra_operand.md, pbt-out/bug_reports/encode_neon_scalar_qshrn_extra_operand.html, pbt-out/bug_reports/encode_neon_scalar_qshrn_wrong_reg_class.md, pbt-out/bug_reports/encode_neon_scalar_qshrn_wrong_reg_class.html, pbt-out/run/encode_neon_scalar_qshrn.log
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_neon_two_misc_narrow_extra_operand.md
+- pbt-out/bug_reports/encode_neon_two_misc_narrow_extra_operand.html
+- pbt-out/bug_reports/encode_neon_two_misc_narrow_mismatched_tb_ta.md
+- pbt-out/bug_reports/encode_neon_two_misc_narrow_mismatched_tb_ta.html
+- pbt-out/bug_reports/encode_neon_two_misc_narrow_bare_dest.md
+- pbt-out/bug_reports/encode_neon_two_misc_narrow_bare_dest.html
+- pbt-out/run/encode_neon_two_misc_narrow.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 23:02 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 147/289 total | PBT candidates: 147 | Tested: 147 (100%) | 0 pass, 147 fail
+> Last updated: 2026-10-05 23:20 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 148/289 total | PBT candidates: 148 | Tested: 148 (100%) | 0 pass, 148 fail
 
 ## Summary
 
@@ -153,10 +218,10 @@ pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/PROPERTIES.md, pbt-out/PLAN.md, 
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 147 |
-| **Tested (of PBT candidates)** | **147 / 147 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 147 / 0 |
-| **Overall (tested / all functions)** | **147 / 289 (51%)** |
+| PBT candidates (from FUNCTION_INDEX) | 148 |
+| **Tested (of PBT candidates)** | **148 / 148 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 148 / 0 |
+| **Overall (tested / all functions)** | **148 / 289 (51%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -164,13 +229,13 @@ pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/PROPERTIES.md, pbt-out/PLAN.md, 
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 147 | 147 | 0 | 100% |
+|  | 148 | 148 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 147 | 147 | 0 | 100% |
+| unknown | 148 | 148 | 0 | 100% |
 
 ## File Coverage
 
@@ -183,7 +248,7 @@ pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/PROPERTIES.md, pbt-out/PLAN.md, 
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 62 | 62 | 100% | covered |
+| neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -340,3 +405,4 @@ pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/PROPERTIES.md, pbt-out/PLAN.md, 
 | encode_neon_scalar_addp | neon.rs |
 | encode_neon_scalar_two_misc | neon.rs |
 | encode_neon_scalar_qshrn | neon.rs |
+| encode_neon_two_misc_narrow | neon.rs |
