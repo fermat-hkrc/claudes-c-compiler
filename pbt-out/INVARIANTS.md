@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_ins)
+
+- Valid INS (general) Vd.Ts[i], Wn|Xn|WZR|XZR with Ts in {b,h,s,d}, i in [0, imax(Ts)], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Wn for B/H/S, Xn for D.
+- Valid INS (element) Vd.Ts[di], Vn.Ts[si] with matching Ts and in-range lanes matches llvm-mc (1000 cases).
+- Changing only Rd differs only in bits[4:0]; changing only Rn differs only in bits[9:5] (1000 cases).
+- Success-path general word: bit31=0, bit30=1, bit29=0, bits[28:21]=01110000, imm5 at [20:16], bits[15:10]=000111, Rn at [9:5], Rd at [4:0]. Element form: bit29=1, bit15=0, imm4 at [14:11], bit10=1.
+- Uppercase V/W/X spellings match llvm-mc (1000 cases).
+- Arity 0/1 and invalid dest names (v32/foo/empty/v) return Err (1000 cases).
+- Known-answer: `ins v0.b[0], w1` = 0x4e011c20; `ins v0.h[0], w1` = 0x4e021c20; `ins v0.s[0], w1` = 0x4e041c20; `ins v0.d[0], x1` = 0x4e081c20; `ins v0.b[15], w1` = 0x4e1f1c20; `ins v31.d[1], x30` = 0x4e181fdf; `ins v0.b[0], wzr` = 0x4e011fe0; `ins v0.b[0], v1.b[0]` = 0x6e010420; `ins v0.h[3], v2.h[1]` = 0x6e0e1440; `ins v0.d[1], v4.d[0]` = 0x6e180480.
+- Extra operand, out-of-range lane, wrong GPR width, SP/WSP, FP-as-GPR, and mismatched element sizes currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_neon_ins)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. llvm-mc accepts `ins` and disassembles it as `mov` (INS alias).
+- ARM ARM Advanced SIMD INS (general): 0 1 0 01110 000 imm5 000111 Rn Rd. INS (element): 0 1 1 01110 000 imm5 0 imm4 1 Rn Rd.
+- Dispatch: encoder/mod.rs:679 `"ins" => encode_neon_ins`.
+- Sibling encode_neon_dup / encode_neon_umov are different opcodes, not same-job differentials.
+- encode_neon_ins checks operands.len() < 2; extra ignored; index bits masked; parse_reg_num accepts w/x/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31; `_src_size` discarded.
+- Parser lowercases elem_size (parser.rs:1945) so uppercase Ts is not caller-reachable; register names keep original case and parse_reg_num lowercases.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. Co-generate (ts, index) — independent 0..=15 with prop_assume vs imax(d)=1 exhausts global rejects.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (arity / alt-spellings).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_ins_*.md.
+
 # Confirmed invariants (encode_neon_tbx)
 
 - Valid vector TBX with Ta in {8b,16b}, Vd/Vm in v0–v31, 1–4 consecutive wrapping table registers all .16B matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
