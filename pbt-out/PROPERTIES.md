@@ -1,430 +1,314 @@
-# Properties: encode_neon_elem
+# Properties: encode_neon_float_elem
 
-## encode_neon_elem_diff_llvm_mc
-- Tier: 5
-- Rationale: Strongest evidenced oracle is Differential vs llvm-mc. README.md:12 claims GNU-style assembly; README.md:231 lists mul/mla/mls/sqdmulh/sqrdmulh with lane index; neon.rs:1590 asserts the ARM vector-x-indexed-element layout. State machine rejected (pure function). Round-trip rejected (no in-tree by-element decoder). Sibling encode_neon_elem_long / encode_neon_mul / encode_neon_mla / encode_neon_mls / encode_neon_float_elem rejected (same-job gate: widening / vector / FP).
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:250 llvm-mc differential
-- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {4h,8h,2s,4s}, idx ∈ [0, imax(T)], (U,opc,mnem) ∈ ARM_ELEM_TABLE. (T=4h∨T=8h ⇒ rm≤15) ⇒ encode_neon_elem([Vd.T,Vn.T,Vm.Ts[idx]], U, opc) = llvm-mc(mnem Vd.T, Vn.T, Vm.Ts[idx])
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_neon_float_elem_diff_llvm_mc
+- Tier: 2
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (LLVM 15.0.6) on the GNU-style assembly the assembler claims to accept. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree FP by-element decoder). Sibling encode_neon_elem / encode_neon_float_three_same / encode_fp_arith rejected (same-job gate: integer by-element, vector three-same, and scalar FMUL are different encoding classes).
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:227 encode_neon_elem_diff_llvm_mc
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, idx ∈ {0..imax(T)}, (U,opc,mnem) ∈ {(0,0b1001,fmul),(0,0b0001,fmla),(0,0b0101,fmls),(1,0b1001,fmulx)}. encode_neon_float_elem([Vd.T, Vn.T, Vm.Ts[idx]], U, opc) = llvm-mc("-triple=aarch64 -show-encoding", "mnem Vd.T, Vn.T, Vm.Ts[idx]") where imax(2s)=imax(4s)=3, imax(2d)=1, Ts is s for 2s/4s and d for 2d
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_float_elem([v0.2s, v0.2s, v0.s[0]], U=0, opc=0b1001) = 0x0f009000, llvm-mc("fmul v0.2s, v0.2s, v0.s[0]") = 0x0f809000 (bit 23 clear)
+- Bug report: pbt-out/bug_reports/encode_neon_float_elem_size_bit23.md
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, idx, t, insn]
+  vars: [rd, rn, rm, t, idx, u, opcode, mnem]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: v0_v31_or_v0_v15
-    idx: 0_imax_T
-    t: fourh_eighth_twos_fours
-    insn: ARM_ELEM_TABLE
+    rd: v0..v31
+    t: 2s|4s|2d
   relation:
     op: eq
-    lhs: encode_neon_elem(ops, insn.u, insn.opcode)
+    lhs: encode_neon_float_elem(ops, u, opcode)
     rhs: llvm_mc(asm)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
-evidence: README.md:12 README.md:231 neon.rs:1590 encoder/mod.rs:307-310
+  idx: { gen: int, min: 0, max: 3, type: u32 }
+evidence: README.md:12 README.md:231 encoder/mod.rs:456-459 encoder/mod.rs:534-545
 ```
 
-## encode_neon_elem_meta_rd_rn_u
-- Tier: 4
-- Rationale: Algebraic metamorphic isolation of Rd/Rn/U fields from ARM layout neon.rs:1590. Stronger Differential is the sibling success-path property; this checks field independence without llvm-mc. Round-trip rejected (no decoder).
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:271 Rd/Rn/U isolation
-- Formal: ∀ rd1,rd2,rn1,rn2,rm,idx,T,opc. valid(T,rm,idx) ⇒ (encode(rd1,rn1,U=0) ⊕ encode(rd2,rn1,U=0)) & ~0x1F = 0 ∧ (encode(rd1,rn1,U=0) ⊕ encode(rd1,rn2,U=0)) & ~(0x1F<<5) = 0 ∧ encode(rd1,rn1,U=0) ⊕ encode(rd1,rn1,U=1) = 1<<29
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_meta_rd_rn_u
+- Tier: 4c
+- Rationale: ARM layout isolates Rd at bits[4:0], Rn at bits[9:5], U at bit 29. Stronger differential is the primary property; this metamorphic checks field isolation independently of llvm-mc availability on a given input. Round-trip rejected (no decoder).
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:246 encode_neon_elem_meta_rd_rn_u
+- Formal: ∀ rd1,rd2,rn1,rn2,rm ∈ {0..31}, T ∈ {2s,4s,2d}, idx ∈ {0..imax(T)}, opc ∈ {0b0001,0b0101,0b1001}. let w11=encode(rd1,rn1,U=0), w21=encode(rd2,rn1,U=0), w12=encode(rd1,rn2,U=0), wu=encode(rd1,rn1,U=1). (w11 ⊕ w21) ∧ ¬0x1F = 0 ∧ w11[4:0]=rd1 ∧ w21[4:0]=rd2 ∧ (w11 ⊕ w12) ∧ ¬(0x1F≪5) = 0 ∧ w11[9:5]=rn1 ∧ w12[9:5]=rn2 ∧ (w11 ⊕ wu) = 1≪29
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd1, rd2, rn1, rn2, rm, idx, t, opcode]
+  vars: [rd1, rd2, rn1, rn2, rm, t, idx, opcode]
   domain:
-    rd1: v0_v31
-    rd2: v0_v31
-    rn1: v0_v31
-    rn2: v0_v31
-    rm: constrained
-    idx: constrained
-    t: fourh_eighth_twos_fours
-    opcode: ARM_ELEM_OPCODES
-  body: (w11 ^ w21) & !0x1F == 0 && (w11 ^ w12) & !(0x1F << 5) == 0 && (w11 ^ w_u1) == (1 << 29)
+    rd1: v0..v31
+  relation:
+    op: holds
+    expr: rd_rn_u_isolated(w11, w21, w12, wu, rd1, rd2, rn1, rn2)
 generators:
   rd1: { gen: int, min: 0, max: 31, type: u32 }
-  rd2: { gen: int, min: 0, max: 31, type: u32 }
-  rn1: { gen: int, min: 0, max: 31, type: u32 }
-  rn2: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
-  opcode: { gen: int, min: 0, max: 15, type: u32 }
-evidence: neon.rs:1590
+  opcode: { gen: int, min: 1, max: 9, type: u32 }
+evidence: ARM ARM Advanced SIMD vector x indexed element field layout
 ```
 
-## encode_neon_elem_inv_layout
-- Tier: 4
-- Rationale: Algebraic invariant of the ARM vector-x-indexed-element word. neon.rs:1590 documents 0 Q U 01111 size L M Rm opcode H 0 Rn Rd. Stronger Differential is the sibling success-path property.
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:307 layout invariant
-- Formal: ∀ rd,rn,rm,idx,T,U,opc. valid(T,rm,idx) ⇒ let w = encode(...) in w[31]=0 ∧ w[30]=Q(T) ∧ w[29]=U ∧ w[28:24]=01111 ∧ w[23:22]=size(T) ∧ w[21]=L ∧ w[20]=M ∧ w[19:16]=Rm[3:0] ∧ w[15:12]=opc ∧ w[11]=H ∧ w[10]=0 ∧ w[9:5]=Rn ∧ w[4:0]=Rd
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_neon_float_elem_inv_layout
+- Tier: 4d
+- Rationale: ARM Advanced SIMD vector x indexed element (FP) packing is an exact structural predicate independent of llvm-mc: bit31=0, Q from T, U, bits[28:24]=01111, size=10 for S / 11 for D, L/M/H from index and Rm[4], Rm[4:0], opcode, bit10=0, Rn, Rd. Stronger differential covers end-to-end agreement; this pins each field. Not guessed from the SUT body (the body shifts sz to bit 22 only).
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:282 encode_neon_elem_inv_layout
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, idx ∈ {0..imax(T)}, U ∈ {0,1}, opc ∈ {0b0001,0b0101,0b1001}. let w=encode_neon_float_elem([Vd.T,Vn.T,Vm.Ts[idx]],U,opc). w[31]=0 ∧ w[30]=Q(T) ∧ w[29]=U ∧ w[28:24]=0b01111 ∧ w[23:22]=size(T) ∧ w[21]=L ∧ w[20]=M ∧ w[19:16]=rm[4:0] ∧ w[15:12]=opc ∧ w[11]=H ∧ w[10]=0 ∧ w[9:5]=rn ∧ w[4:0]=rd where size(2s)=size(4s)=0b10, size(2d)=0b11, Q(4s)=Q(2d)=1, Q(2s)=0, and (H,L,M) follow ARM S=H:L / D=H,L=0,M=Rm[4]
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_float_elem([v0.2s, v0.2s, v0.s[0]], U=0, opc=0b0001) has bits[23:22]=00, ARM size for S is 10
+- Bug report: pbt-out/bug_reports/encode_neon_float_elem_size_layout.md
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, idx, t, u, opcode]
+  vars: [rd, rn, rm, t, idx, u, opcode]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: constrained
-    idx: constrained
-    t: fourh_eighth_twos_fours
-    u: 0_1
-    opcode: ARM_ELEM_OPCODES
-  body: layout_holds(w, rd, rn, rm, idx, t, u, opcode)
+    rd: v0..v31
+  relation:
+    op: holds
+    expr: arm_fp_by_element_layout(w, rd, rn, rm, t, idx, u, opcode)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
   u: { gen: int, min: 0, max: 1, type: u32 }
-  opcode: { gen: int, min: 0, max: 15, type: u32 }
-evidence: neon.rs:1590
+evidence: ARM ARM Advanced SIMD vector x indexed element FP size 10/11
 ```
 
-## encode_neon_elem_neg_arity
-- Tier: 3
-- Rationale: Negative/error contract. neon.rs:1592 returns Err("NEON by-element requires 3 operands") when operands.len() < 3. Documented minimum arity; does not declare a maximum (extra is a separate property).
-- Doc contract: neon.rs:1592 "NEON by-element requires 3 operands" — domain-restriction fingerprint 4b60f4a7
-- Seed: encode_neon_elem_long_pbt.rs:341 arity
-- Formal: ∀ n ∈ {0,1,2}, ops with |ops|=n. encode_neon_elem(ops, U, opc) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_neg_arity
+- Tier: 4e
+- Rationale: Documented domain restriction: neon.rs:1615 requires 3 operands. Inputs with 0..2 operands must Err. llvm-mc also rejects under-arity FMUL/FMLA/FMLS by-element.
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:322 encode_neon_elem_neg_arity
+- Formal: ∀ n ∈ {0,1,2}, ops with |ops|=n (prefix of a valid Vd.T, Vn.T, Vm.Ts[idx] triple). encode_neon_float_elem(ops, U, opc) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [n, rd, rn, t]
   domain:
-    n: 0_2
-    rd: v0_v31
-    rn: v0_v31
-    t: fourh_eighth_twos_fours
+    n: 0..2
   relation:
-    op: holds
-    expr: encode_neon_elem(ops_of_len(n), 0, 8).is_err()
+    op: throws
+    expr: encode_neon_float_elem(ops_of_len(n), 0, 0b1001)
 generators:
   n: { gen: int, min: 0, max: 2, type: usize }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: neon.rs:1592
+evidence: neon.rs:1615
 ```
 
-## encode_neon_elem_neg_extra
-- Tier: 3
-- Rationale: Negative/error vs llvm-mc/gas. README.md:12 GNU-style assembly; llvm-mc rejects a fourth operand. neon.rs:1592 documents a minimum of 3 operands, not a maximum — extra is still invalid assembly. Contract inferred from the public assembler (wrapper encode() passes operands through at mod.rs:307-310 / 793-796).
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:361 extra operand
-- Formal: ∀ valid by-element triple + extra operand. llvm-mc rejects ⇒ encode_neon_elem(ops++[extra], U, opc) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_neg_extra
+- Tier: 4e
+- Rationale: The documented arity comment states a minimum of 3, not a maximum; gas/llvm-mc reject a fourth operand on FMUL/FMLA/FMLS by-element. README.md:12 claims gas compatibility, so extra operands must Err. The producing len less than 3 check is not Doc evidence that extras are allowed.
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:340 encode_neon_elem_neg_extra
+- Formal: ∀ valid (rd,rn,rm,T,idx,U,opc,mnem) and extra ∈ {0..31}. llvm-mc(mnem Vd.T, Vn.T, Vm.Ts[idx], Ve.T) is Err ∧ encode_neon_float_elem([Vd.T,Vn.T,Vm.Ts[idx],Ve.T], U, opc) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_elem([v0.4h, v0.4h, v0.h[0], v0.4h], u=0, opcode=0b1000) → Ok(Word); llvm-mc rejects `mul v0.4h, v0.4h, v0.h[0], v0.4h`
-- Bug report: bug_reports/encode_neon_elem_extra_operand.md
+- Counterexample: encode_neon_float_elem([v0.2s, v0.2s, v0.s[0], v0.2s], U=0, opc=0b1001) = Ok(Word) while llvm-mc rejects "fmul v0.2s, v0.2s, v0.s[0], v0.2s"
+- Bug report: pbt-out/bug_reports/encode_neon_float_elem_extra_operand.md
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, idx, extra, t, insn]
+  vars: [rd, rn, rm, extra, t, idx, u, opcode, mnem]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: constrained
-    idx: constrained
-    extra: v0_v31
-    t: fourh_eighth_twos_fours
-    insn: ARM_ELEM_TABLE
+    extra: v0..v31
   relation:
-    op: holds
-    expr: encode_neon_elem(ops_plus_extra, insn.u, insn.opcode).is_err()
+    op: throws
+    expr: encode_neon_float_elem([vd, vn, vm_lane, extra], u, opcode)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: README.md:12 llvm-mc rejects fourth operand encoder/mod.rs:307-310
+evidence: README.md:12 llvm-mc rejects fourth operand
 ```
 
-## encode_neon_elem_neg_mismatch_t
-- Tier: 3
-- Rationale: Negative/error vs llvm-mc/gas. ARM requires Vd.T and Vn.T to match; llvm-mc rejects mismatched source arrangement. SUT-boundary: encode() passes operands through; wrapper does not sanitize arrangements.
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:395 mismatch Ta
-- Formal: ∀ T, T' ≠ T ∈ {8b,16b,4h,8h,2s,4s,2d,1d}. llvm-mc rejects mul Vd.T, Vn.T', Vm.Ts[idx] ⇒ encode_neon_elem([Vd.T, Vn.T', Vm.Ts[idx]], 0, 0b1000) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_neg_mismatch_t
+- Tier: 4e
+- Rationale: ARM and llvm-mc require dest and source arrangements to match (Vd.T, Vn.T). A mismatched Vn arrangement must Err. The SUT discarding source arrangement is not a contract.
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:372 encode_neon_elem_neg_mismatch_t
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, T' ≠ T, idx ∈ {0..imax(T)}. llvm-mc("fmul Vd.T, Vn.T', Vm.Ts[idx]") is Err ∧ encode_neon_float_elem([Vd.T, Vn.T', Vm.Ts[idx]], 0, 0b1001) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_elem([v0.4h, v0.8b, v0.h[0]], u=0, opcode=0b1000) → Ok(Word); llvm-mc rejects `mul v0.4h, v0.8b, v0.h[0]`
-- Bug report: bug_reports/encode_neon_elem_mismatch_t.md
+- Counterexample: encode_neon_float_elem([v0.4s, v0.8b, v0.s[0]], U=0, opc=0b1001) = Ok(Word) while llvm-mc rejects "fmul v0.4s, v0.8b, v0.s[0]"
+- Bug report: pbt-out/bug_reports/encode_neon_float_elem_mismatch_t.md
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, idx, t, t_wrong]
+  vars: [rd, rn, rm, t, t_wrong, idx]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: constrained
-    idx: constrained
-    t: fourh_eighth_twos_fours
-    t_wrong: neon_t_not_equal_t
+    t: 2s|4s|2d
+    t_wrong: other_arrangement
   relation:
-    op: holds
-    expr: encode_neon_elem(mismatched_ops, 0, 8).is_err()
+    op: throws
+    expr: encode_neon_float_elem([Vd.t, Vn.t_wrong, Vm.Ts[idx]], 0, 0b1001)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
+  t_wrong: { gen: string }
 expected_error: String
-evidence: README.md:12 ARM matching T llvm-mc encoder/mod.rs:307-310
+evidence: README.md:12 llvm-mc invalid operand for mismatched T
 ```
 
-## encode_neon_elem_neg_h_rm_hi
-- Tier: 3
-- Rationale: Negative/error vs ARM/llvm-mc. size=01 (H) restricts Rm to v0-v15; llvm-mc rejects v16.h[idx]. The SUT mask `rm & 0xF` is the producing statement, not an API exclusion of v16-v31.
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:424 H-lane Rm v16-v31
-- Formal: ∀ rd,rn ∈ {0..31}, rm ∈ {16..31}, idx ∈ {0..7}, T ∈ {4h,8h}. llvm-mc rejects mul Vd.T, Vn.T, Vm.h[idx] ⇒ encode_neon_elem(...) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_neg_gpr_bare_nonv
+- Tier: 4e
+- Rationale: gas/llvm-mc require Vd.T / Vn.T arranged NEON registers and a lane third operand. GPR dest (x/w), SP, bare V without arrangement, x-prefixed arrangement, scalar s/d dest, and a non-lane third operand must Err.
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:410 encode_neon_elem_neg_gpr_bare_nonv
+- Formal: ∀ kind ∈ {x-dest, w-dest, sp-dest, bare-V, x-prefix-arr, s-dest}. llvm-mc(asm(kind)) is Err ∧ encode_neon_float_elem(ops(kind), 0, 0b1001) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_elem([v0.4h, v0.4h, v16.h[0]], u=0, opcode=0b1000) → Ok(Word) encoding v0.h[0]; llvm-mc rejects `mul v0.4h, v0.4h, v16.h[0]`
-- Bug report: bug_reports/encode_neon_elem_h_rm_hi.md
+- Counterexample: encode_neon_float_elem([RegArrangement(x0,4s), v0.4s, v0.s[0]], U=0, opc=0b1001) = Ok(Word) while llvm-mc rejects "fmul x0.4s, v0.4s, v0.s[0]"
+- Bug report: pbt-out/bug_reports/encode_neon_float_elem_x_prefix.md
 
 ```property
-function: encoder.encode_neon_elem
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, idx, t]
-  domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: 16_31
-    idx: 0_7
-    t: fourh_eighth
-  relation:
-    op: holds
-    expr: encode_neon_elem(h_rm_hi_ops, 0, 8).is_err()
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 16, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
-expected_error: String
-evidence: ARM size=01 Rm v0-v15 llvm-mc README.md:12
-```
-
-## encode_neon_elem_neg_gpr_bare_nonv
-- Tier: 3
-- Rationale: Negative/error vs llvm-mc/gas. GNU-style by-element requires arranged V registers and a lane third operand. get_neon_reg accepting Operand::Reg and parse_reg_num accepting x/w/s prefixes is not an API contract that GPR dest is valid.
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:448 GPR/bare/non-V
-- Formal: ∀ kind ∈ {x-dest, w-dest, sp-dest, bare-V, x-prefix arrangement, non-lane third, s-dest}. llvm-mc rejects ⇒ encode_neon_elem(ops, 0, 0b1000) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_elem([x0.4h, v0.4h, v0.h[0]], u=0, opcode=0b1000) → Ok(Word) as V0; llvm-mc rejects `mul x0.4h, v0.4h, v0.h[0]`
-- Bug report: bug_reports/encode_neon_elem_x_prefix.md
-
-```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rn, rm, idx, kind]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: 0_15
-    idx: 0_7
-    kind: 0_6
+    kind: 0..6
   relation:
-    op: holds
-    expr: encode_neon_elem(non_neon_ops(kind), 0, 8).is_err()
+    op: throws
+    expr: encode_neon_float_elem(ops_kind, 0, 0b1001)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 15, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
   kind: { gen: int, min: 0, max: 6, type: u8 }
 expected_error: String
-evidence: README.md:12 llvm-mc encoder/mod.rs:307-310
+evidence: README.md:12 llvm-mc invalid operand
 ```
 
-## encode_neon_elem_neg_index_oob
-- Tier: 3
-- Rationale: Sweep — ARM/llvm-mc reject lane index > 7 for .h and > 3 for .s. encode_neon_elem_long range-checks; encode_neon_elem does not. Documented bound from ARM vector-x-indexed-element (H:L:M / H:L) and llvm-mc error "vector lane must be an integer in range [0, 7]".
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:512 index-oob
-- Formal: ∀ T ∈ {4h,8h,2s,4s}, idx > imax(T). llvm-mc rejects mul Vd.T, Vn.T, Vm.Ts[idx] ⇒ encode_neon_elem(...) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_neg_index_oob
+- Tier: 4e
+- Rationale: llvm-mc rejects vector lane out of range: S lanes [0,3], D lanes [0,1]. ARM index field cannot represent those values without wrapping. Documented bound must be sampled at imax+1.
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs:494 encode_neon_elem_neg_index_oob
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, extra ∈ {1..8}. let idx = imax(T)+extra. llvm-mc("fmul Vd.T, Vn.T, Vm.Ts[idx]") is Err ∧ encode_neon_float_elem([Vd.T,Vn.T,Vm.Ts[idx]], 0, 0b1001) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_elem([v0.4h, v0.4h, v0.h[8]], u=0, opcode=0b1000) → Ok(Word) wrapping to index 0; llvm-mc rejects `mul v0.4h, v0.4h, v0.h[8]`
-- Bug report: bug_reports/encode_neon_elem_index_oob.md
+- Counterexample: encode_neon_float_elem([v0.2s, v0.2s, v0.s[4]], U=0, opc=0b1001) = Ok(Word) while llvm-mc rejects "fmul v0.2s, v0.2s, v0.s[4]" (lane range [0, 3])
+- Bug report: pbt-out/bug_reports/encode_neon_float_elem_index_oob.md
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, idx, t]
+  vars: [rd, rn, rm, t, extra]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: constrained
-    idx: imax_plus
-    t: fourh_eighth_twos_fours
+    extra: 1..8
   relation:
-    op: holds
-    expr: encode_neon_elem(index_oob_ops, 0, 8).is_err()
+    op: throws
+    expr: encode_neon_float_elem([Vd.t, Vn.t, Vm.Ts[imax_plus_extra]], 0, 0b1001)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: int, min: 1, max: 8, type: u32 }
 expected_error: String
-evidence: ARM index H:L:M 0..7 / H:L 0..3 llvm-mc README.md:12
+evidence: llvm-mc vector lane must be an integer in range
 ```
 
-## encode_neon_elem_neg_unsupported_t
-- Tier: 3
-- Rationale: Sweep — neon.rs:1603 declares size not in {01,10} invalid ("unsupported element size for by-element"). Dest T whose neon_arr_to_q_size size is 00 or 11 (8b/16b/2d/1d) or unknown (4b, empty) is out of domain; the property asserts the documented Err, not a mishandling of valid input.
-- Doc contract: neon.rs:1603 "unsupported element size for by-element" — domain-restriction fingerprint 630d7964
-- Seed: encode_neon_elem_long_pbt.rs:541 unsupported-src
-- Formal: ∀ T ∈ documented-invalid-size {8b,16b,2d,1d,4b,ε}. encode_neon_elem([Vd.T, Vn.T, Vm.h[idx]], 0, 0b1000) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_neg_unsupported_t
+- Tier: 4e
+- Rationale: neon.rs:1624 declares arrangements other than 2s/4s/2d unsupported. Sweep covers that documented error path (coverage_gaps had no Rust profraw).
+- Doc contract: neon.rs:1624 "float by-element: unsupported:" — domain-restriction fingerprint d3f34d13
+- Seed: encode_neon_elem_pbt.rs encode_neon_elem_neg_unsupported_t
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,1d,4b,ε}, idx ∈ {0..3}. encode_neon_float_elem([Vd.T, Vn.T, Vm.s[idx]], 0, 0b1001) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_elem
+function: encoder.encode_neon_float_elem
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rn, rm, idx, t]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: 0_15
-    idx: 0_3
-    t: unsupported_t
+    t: unsupported_arrangement
   relation:
-    op: holds
-    expr: encode_neon_elem(unsupported_ops, 0, 8).is_err()
+    op: throws
+    expr: encode_neon_float_elem([Vd.t, Vn.t, Vm.s[idx]], 0, 0b1001)
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 15, type: u32 }
-  idx: { gen: int, min: 0, max: 3, type: u32 }
+  t: { gen: string }
 expected_error: String
-evidence: neon.rs:1603
+evidence: neon.rs:1624
 ```
 
-## encode_neon_elem_neg_lane_elem_mismatch
-- Tier: 3
-- Rationale: Sweep — llvm-mc rejects Vm.b[idx] when T is .4h (lane elem must match arrangement). SUT discards elem_size (`RegLane { reg, index, .. }`). Not an API exclusion.
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:557 lane-elem-mismatch
-- Formal: ∀ T ∈ {4h,8h,2s,4s}, wrong ≠ Ts(T). llvm-mc rejects mul Vd.T, Vn.T, Vm.wrong[idx] ⇒ encode_neon_elem(...) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_elem([v0.4h, v0.4h, v0.b[0]], u=0, opcode=0b1000) → Ok(Word); llvm-mc rejects `mul v0.4h, v0.4h, v0.b[0]`
-- Bug report: bug_reports/encode_neon_elem_lane_elem_mismatch.md
-
-```property
-function: encoder.encode_neon_elem
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, idx, t, wrong]
-  domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: constrained
-    idx: constrained
-    t: fourh_eighth_twos_fours
-    wrong: b_h_s_d_not_elem
-  relation:
-    op: holds
-    expr: encode_neon_elem(lane_mismatch_ops, 0, 8).is_err()
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 3, type: u32 }
-expected_error: String
-evidence: README.md:12 llvm-mc lane elem must match T
-```
-
-## encode_neon_elem_diff_alt_spellings
-- Tier: 5
-- Rationale: Sweep — parse_reg_num lowercases V/X/W prefixes; llvm-mc accepts uppercase V. Differential agreement on uppercase V spellings of the valid domain.
-- Doc contract: neon.rs:1590 "MUL/MLA/MLS by element: 0 Q U 01111 size L M Rm opcode H 0 Rn Rd" — asserted fingerprint c300f7ba
-- Seed: encode_neon_elem_long_pbt.rs:587 alt-spellings
-- Formal: ∀ valid by-element with uppercase V prefix. encode_neon_elem([Vrd.T, Vrn.T, Vrm.Ts[idx]], U, opc) = llvm-mc(mnem Vrd.T, Vrn.T, Vrm.Ts[idx])
-- Test file: src/backend/arm/assembler/encoder/encode_neon_elem_pbt.rs
+## encode_neon_float_elem_meta_alt_spellings
+- Tier: 4c
+- Rationale: parse_reg_num lowercases names, so uppercase V must encode identically to lowercase v. Not vs llvm-mc (that is the already-filed size-bit bug).
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs encode_neon_elem_diff_alt_spellings
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, idx ∈ {0..imax(T)}, (U,opc) ARM table. encode(V-prefix) = encode(v-prefix)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_elem
-oracle: differential
+function: encoder.encode_neon_float_elem
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, idx, t, insn]
+  vars: [rd, rn, rm, t, idx, u, opcode]
   domain:
-    rd: v0_v31
-    rn: v0_v31
-    rm: constrained
-    idx: constrained
-    t: fourh_eighth_twos_fours
-    insn: ARM_ELEM_TABLE
+    rd: v0..v31
   relation:
     op: eq
-    lhs: encode_neon_elem(uppercase_ops, insn.u, insn.opcode)
-    rhs: llvm_mc(uppercase_asm)
+    lhs: encode_neon_float_elem(upper_V_ops, u, opcode)
+    rhs: encode_neon_float_elem(lower_v_ops, u, opcode)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  idx: { gen: int, min: 0, max: 7, type: u32 }
-evidence: README.md:12 parse_reg_num lowercases prefix
+evidence: parse_reg_num lowercases register names
+```
+
+## encode_neon_float_elem_neg_lane_elem_mismatch
+- Tier: 4e
+- Rationale: llvm-mc requires the lane element size to match T (s for 2s/4s, d for 2d). The SUT discards elem_size. Documented gas compatibility requires Err.
+- Doc contract: neon.rs:1615 "NEON float by-element requires 3 operands" — domain-restriction fingerprint 2f020693
+- Seed: encode_neon_elem_pbt.rs encode_neon_elem_neg_lane_elem_mismatch
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}, wrong ≠ Ts(T), idx ∈ {0..imax(T)}. llvm-mc("fmul Vd.T, Vn.T, Vm.wrong[idx]") is Err ∧ encode_neon_float_elem([Vd.T, Vn.T, Vm.wrong[idx]], 0, 0b1001) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_float_elem_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_float_elem([v0.2d, v0.2d, v0.b[0]], U=0, opc=0b1001) = Ok(Word) while llvm-mc rejects "fmul v0.2d, v0.2d, v0.b[0]"
+- Bug report: pbt-out/bug_reports/encode_neon_float_elem_lane_elem.md
+
+```property
+function: encoder.encode_neon_float_elem
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t, idx, wrong]
+  domain:
+    wrong: b|h|s|d minus matching elem
+  relation:
+    op: throws
+    expr: encode_neon_float_elem([Vd.t, Vn.t, Vm.wrong[idx]], 0, 0b1001)
+generators:
+  wrong: { gen: string }
+expected_error: String
+evidence: README.md:12 llvm-mc invalid operand for mismatched lane size
 ```

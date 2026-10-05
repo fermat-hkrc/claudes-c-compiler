@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_neon_float_elem)
+
+- Rd/Rn isolation in bits[4:0]/[9:5]; U isolation at bit 29 (1000 cases).
+- Arity 0–2 always Err (1000 cases).
+- Dest arrangements 8b/16b/4h/8h/1d/4b/empty always Err (1000 cases).
+- Uppercase V prefix encodes the same word as lowercase v (1000 cases).
+- llvm-mc mapping KAT: `fmul v0.2s, v1.2s, v2.s[0]` = 0x0f829020.
+- Valid-domain llvm-mc agreement currently fails: SUT size field is 00/01 instead of ARM 10/11 (see bugs).
+
+## Environment (encode_neon_float_elem)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Advanced SIMD vector x indexed element (FP): T in {2S,4S,2D}; size=10 (S) index H:L 0..3, M=Rm[4]; size=11 (D) index H 0..1, L=0, M=Rm[4]; Rm v0-v31. FMUL U=0 opcode=1001; FMLA U=0 opcode=0001; FMLS U=0 opcode=0101; FMULX U=1 opcode=1001.
+- Dispatch: encoder/mod.rs:456-459 fmul RegLane => encode_neon_float_elem(operands, 1, 0b1001) (dispatcher U=1 is FMULX's U; properties call the helper with ARM-correct U=0); encoder/mod.rs:534-545 fmla/fmls.
+- encode_neon_float_elem checks operands.len() < 3 only; source arrangement discarded; lane elem_size discarded; no index range check; sz shifted to bit 22 only; get_neon_reg accepts Operand::Reg and x/w prefixes on RegArrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep: unsupported-t/alt-spellings passing, lane-elem failing.
+- Six SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_float_elem_*.md.
+
+## Quirks (encode_neon_float_elem)
+
+- Size bit 23 is clear (see bugs).
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- X-prefixed RegArrangement dest encodes as V (see bugs).
+- Out-of-range index wraps via H:L bits (see bugs).
+- Lane elem_size is ignored (see bugs).
+- Bare Operand::Reg dest returns Err via empty arrangement.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus unsupported-t/alt-spellings/lane-elem.
+
 # Confirmed invariants (encode_neon_elem)
 
 - Valid MUL/MLA/MLS/SQDMULH/SQRDMULH Vd.T, Vn.T, Vm.Ts[idx] with T in {4h,8h,2s,4s}, ARM-correct (U, opcode) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
