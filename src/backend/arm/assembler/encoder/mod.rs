@@ -54,6 +54,8 @@ mod encode_neon_zip_uzp_pbt;
 mod encode_neon_eor3_pbt;
 #[cfg(test)]
 mod encode_neon_pmull_pbt;
+#[cfg(test)]
+mod encode_neon_add_sub_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

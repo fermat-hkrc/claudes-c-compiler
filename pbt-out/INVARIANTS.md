@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_neon_add_sub)
+
+- Valid ADD/SUB Vd.T, Vn.T, Vm.T with T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16]; add vs sub differs only in U bit 29 (1000 cases).
+- Success-path 32-bit word: bit31=0, Q at bit30, U at bit29, bits[28:24]=01110, size at [23:22], bit21=1, Rm at [20:16], bits[15:11]=10000, bit10=1, Rn at [9:5], Rd at [4:0]. Q/size from T: 8b=(0,00), 16b=(1,00), 4h=(0,01), 8h=(1,01), 2s=(0,10), 4s=(1,10), 2d=(1,11).
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase mnemonic/V prefix with lowercase T matches llvm-mc (1000 cases).
+- Imm/Mem/Label at any operand slot returns Err (1000 cases).
+- Known-answer: `add v0.8b, v1.8b, v2.8b` = 0x0e228420; `add v0.16b, v1.16b, v2.16b` = 0x4e228420; `add v0.2d, v1.2d, v2.2d` = 0x4ee28420; `sub v0.8b, v1.8b, v2.8b` = 0x2e228420; `add v31.8b, v31.8b, v31.8b` = 0x0e3f87ff; `add v0.8b, v0.8b, v0.8b` = 0x0e208400; `add v15.4s, v16.4s, v17.4s` = 0x4eb1860f.
+- Extra operand, mismatched/reserved T, and bare/GPR currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_add_sub)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same ADD/SUB: T in {8B,16B,4H,8H,2S,4S,2D}; size:Q=11:0 (1D) reserved; matching arrangements; U=0 ADD / U=1 SUB; opcode=10000.
+- Dispatch: encoder/mod.rs:259-266 `add`/`sub` => encode_add_sub (when not scalar D-reg); data_processing.rs:296-300 NEON vector form calls encode_neon_add_sub.
+- Sibling encode_neon_three_same / encode_neon_scalar_three_same are different jobs, not same-job differentials.
+- encode_neon_add_sub has no arity check; extra ignored; source arrangements discarded; neon_arr_to_q_size accepts 1d.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus uppercase V alt-spellings and non-register operands.
+- Three SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_add_sub_*.md.
+
 # Confirmed invariants (encode_neon_pmull)
 
 - Valid PMULL Vd.1q, Vn.1d, Vm.1d and PMULL2 Vd.1q, Vn.2d, Vm.2d with v0–v31 matches llvm-mc `-triple=aarch64 -mattr=+aes -show-encoding` (1000 cases).

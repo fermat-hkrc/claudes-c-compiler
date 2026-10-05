@@ -1,84 +1,57 @@
-# Properties: encode_neon_pmull
+# Properties: encode_neon_add_sub
 
-## encode_neon_pmull_diff_llvm_mc_1q
+## encode_neon_add_sub_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the documented 64-bit polynomial-multiply-long form. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree PMULL decoder). Sibling encode_neon_three_diff / encode_neon_pmul rejected (same-job gate: integer widening vs 8-bit three-same PMUL, different ARM opcodes).
-- Doc contract: neon.rs:1138 "PMULL  Vd.1q, Vn.1d, Vm.1d: 0 0 00 1110 11 1 Rm 11100 0 Rn Rd  (size=11)" — asserted fingerprint 14f676c6
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_diff_llvm_mc
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}. let Tb = 1d if ¬is_pmull2 else 2d. encode_neon_pmull([Vd.1q, Vn.Tb, Vm.Tb], is_pmull2) = llvm-mc(pmull{2} Vd.1q, Vn.Tb, Vm.Tb) under -triple=aarch64 -mattr=+aes -show-encoding
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: Strongest applicable oracle is Differential vs llvm-mc (independent GNU-style assembler of the same textual assembly the SUT claims to accept). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree vector ADD/SUB decoder). Sibling encode_neon_three_same rejected (same-job gate: generic CMEQ/UQSUB encoder; opcode=10000 would copy this formula). encode_neon_scalar_three_same rejected (scalar Dd,Dn,Dm).
+- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_diff_llvm_mc_1q
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. encode_neon_add_sub([Vd.T,Vn.T,Vm.T], is_sub) = llvm-mc("add|sub Vd.T, Vn.T, Vm.T")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_pmull2]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_pmull2: bool }
+  vars: [rd, rn, rm, t, is_sub]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: neon_t, is_sub: bool }
   relation:
     op: eq
-    lhs: encode_neon_pmull(ops_1q(rd, rn, rm, is_pmull2), is_pmull2)
-    rhs: llvm_mc(asm_1q(rd, rn, rm, is_pmull2))
+    lhs: encode_neon_add_sub([Vd.T, Vn.T, Vm.T], is_sub)
+    rhs: llvm_mc(add_or_sub Vd.T, Vn.T, Vm.T)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
-evidence: assembler/README.md:11 gas-compatible textual assembly; neon.rs:1138-1139 1q forms; encoder/mod.rs:779-780 pmull/pmull2 dispatch; ARM three-different PMULL size=11
+  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
+  is_sub: { gen: bool }
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
 ```
 
-## encode_neon_pmull_diff_llvm_mc_8h
-- Tier: 2
-- Rationale: ARM / gas / llvm-mc also accept the 8-bit polynomial-long form (Vd.8h, Vn.8b/16b, Vm.8b/16b). README.md:230 lists `pmull` under NEON widen/long without restricting Ta to 1Q. The function comment does not declare 8H invalid. Differential vs llvm-mc is the same independent assembler contract as the 1q property. Stronger oracles rejected as above.
-- Doc contract: neon.rs:1127 "Encode NEON PMULL/PMULL2 (polynomial multiply long)" — asserted fingerprint 3c262cb2
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_diff_llvm_mc
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}. let Tb = 8b if ¬is_pmull2 else 16b. encode_neon_pmull([Vd.8h, Vn.Tb, Vm.Tb], is_pmull2) = llvm-mc(pmull{2} Vd.8h, Vn.Tb, Vm.Tb) under -triple=aarch64 -mattr=+aes -show-encoding
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
-- Status: failing
-- Counterexample: encode_neon_pmull([v0.8h, v0.8b, v0.8b], false)
-- Bug report: bug_reports/encode_neon_pmull_8h_as_64bit.md
-
-```property
-function: encoder.encode_neon_pmull
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, is_pmull2]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_pmull2: bool }
-  relation:
-    op: eq
-    lhs: encode_neon_pmull(ops_8h(rd, rn, rm, is_pmull2), is_pmull2)
-    rhs: llvm_mc(asm_8h(rd, rn, rm, is_pmull2))
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
-evidence: assembler/README.md:11 gas-compatible; README.md:230 pmull listed under NEON widen/long; ARM three-different PMULL size=00 for Ta=8H
-```
-
-## encode_neon_pmull_metamorphic_rd_rn_rm_q
+## encode_neon_add_sub_metamorphic_rd_rn_rm_u
 - Tier: 3
-- Rationale: ARM three-different packing isolates Rd[4:0], Rn[9:5], Rm[20:16], Q[30]. Changing one field must not disturb the others. Weaker than differential but independent of llvm-mc availability for the field-isolation claim. Round-trip rejected (no decoder).
-- Doc contract: neon.rs:1138 "PMULL  Vd.1q, Vn.1d, Vm.1d: 0 0 00 1110 11 1 Rm 11100 0 Rn Rd  (size=11)" — asserted fingerprint 14f676c6
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_metamorphic_rd_rn_rm_rk
-- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}. let w(rd,rn,rm,q) = encode_neon_pmull([Vd.1q,Vn.1d,Vm.1d], q). (w(rd1,rn1,rm1,0) ⊕ w(rd2,rn1,rm1,0)) ∧ ¬0x1F = 0 ∧ w(rd2,…)[4:0]=rd2; (w(rd1,rn1,rm1,0) ⊕ w(rd1,rn2,rm1,0)) ∧ ¬(0x1F≪5) = 0; (w(rd1,rn1,rm1,0) ⊕ w(rd1,rn1,rm2,0)) ∧ ¬(0x1F≪16) = 0; (w(rd1,rn1,rm1,0) ⊕ w(rd1,rn1,rm1,1)) ∧ ¬(1≪30) = 0
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: ARM three-same layout isolates Rd[4:0], Rn[9:5], Rm[20:16], U[29]. Stronger differential is p1; this metamorphic check does not need llvm-mc and catches field-packing bugs.
+- Doc contract: neon.rs:1171 "ADD: 0 Q 0 01110 size 1 Rm 10000 1 Rn Rd" — asserted fingerprint ec6c59b1
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_metamorphic_rd_rn_rm_q
+- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}. changing only Rd (resp. Rn, Rm, is_sub) of encode_neon_add_sub on T=8b differs only in bits[4:0] (resp. [9:5], [20:16], bit 29)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [rd1, rd2, rn1, rn2, rm1, rm2]
   domain: { rd1: u32_0_31, rd2: u32_0_31, rn1: u32_0_31, rn2: u32_0_31, rm1: u32_0_31, rm2: u32_0_31 }
-  body: field isolation of Rd bits[4:0], Rn bits[9:5], Rm bits[20:16], Q bit30
+  relation:
+    op: holds
+    expr: ((w(rd1,rn1,rm1,false) ^ w(rd2,rn1,rm1,false)) & !0x1Fu32) == 0 && ((w(rd1,rn1,rm1,false) ^ w(rd1,rn2,rm1,false)) & !(0x1Fu32 << 5)) == 0 && ((w(rd1,rn1,rm1,false) ^ w(rd1,rn1,rm2,false)) & !(0x1Fu32 << 16)) == 0 && ((w(rd1,rn1,rm1,false) ^ w(rd1,rn1,rm1,true)) & !(1u32 << 29)) == 0
 generators:
   rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
@@ -86,220 +59,225 @@ generators:
   rn2: { gen: int, min: 0, max: 31, type: u32 }
   rm1: { gen: int, min: 0, max: 31, type: u32 }
   rm2: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM Advanced SIMD three-different PMULL; neon.rs:1138-1139 field layout
+evidence: neon.rs:1171
 ```
 
-## encode_neon_pmull_invariant_arm_64bit_fields
+## encode_neon_add_sub_invariant_arm_fields
 - Tier: 3
-- Rationale: ARM three-different PMULL 64-bit word layout is an exact structural predicate on every success-path encoding of the 1q form. Weaker than differential (does not check agreement with llvm-mc on the variable fields jointly) but pins fixed opcode bits independently.
-- Doc contract: neon.rs:1138 "PMULL  Vd.1q, Vn.1d, Vm.1d: 0 0 00 1110 11 1 Rm 11100 0 Rn Rd  (size=11)" — asserted fingerprint 14f676c6
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_invariant_arm_fields
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}. let w = encode_neon_pmull([Vd.1q,Vn.Tb,Vm.Tb], is_pmull2). bit31(w)=0 ∧ bit30(w)=is_pmull2 ∧ bits[29:24](w)=001110 ∧ bits[23:22](w)=11 ∧ bit21(w)=1 ∧ bits[20:16](w)=rm ∧ bits[15:11](w)=11100 ∧ bit10(w)=0 ∧ bits[9:5](w)=rn ∧ bits[4:0](w)=rd
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: Documented ARM layout on the success path. Weaker than differential; still pins Q/size/U/opcode independently of llvm-mc.
+- Doc contract: neon.rs:1171 "ADD: 0 Q 0 01110 size 1 Rm 10000 1 Rn Rd" — asserted fingerprint ec6c59b1; neon.rs:1172 "SUB: 0 Q 1 01110 size 1 Rm 10000 1 Rn Rd" — asserted fingerprint 8620efa7
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_invariant_arm_64bit_fields
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. let w = encode_neon_add_sub([Vd.T,Vn.T,Vm.T], is_sub). bit31(w)=0 ∧ Q(w)=q(T) ∧ U(w)=is_sub ∧ bits[28:24]=01110 ∧ size(w)=size(T) ∧ bit21=1 ∧ Rm=rm ∧ bits[15:11]=10000 ∧ bit10=1 ∧ Rn=rn ∧ Rd=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_pmull2]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_pmull2: bool }
-  body: ARM three-different PMULL size=11 field layout holds
+  vars: [rd, rn, rm, t, is_sub]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: neon_t, is_sub: bool }
+  relation:
+    op: holds
+    expr: arm_three_same_add_sub_layout(encode_neon_add_sub([Vd.T,Vn.T,Vm.T], is_sub))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
-evidence: ARM Advanced SIMD three-different PMULL U=0 opcode=1110 size=11; llvm-mc KAT pmull v0.1q,v1.1d,v2.1d = 0x0ee2e020
+  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
+  is_sub: { gen: bool }
+evidence: neon.rs:1171
 ```
 
-## encode_neon_pmull_neg_arity
+## encode_neon_add_sub_neg_arity
 - Tier: 4
-- Rationale: Documented arity "pmull requires 3 operands" (neon.rs:1130) plus llvm-mc/gas rejection of 0–2 operands. Negative/error contract is the evidenced failure mode. Stronger oracles do not apply to the invalid-arity domain.
-- Doc contract: neon.rs:1130 "pmull requires 3 operands" — domain-restriction fingerprint 77eabc5e
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_neg_arity
-- Formal: ∀ n ∈ {0,1,2}, rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}. encode_neon_pmull(ops[0..n], is_pmull2) is Err ∧ llvm-mc rejects the corresponding truncated assembly
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: gas/llvm-mc reject fewer than 3 operands. README.md:11 same textual assembly as gas. Negative-error: arity 0–2 must Err. The function has no explicit arity check; get_neon_reg on a missing slot is the documented failure path.
+- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_arity
+- Formal: ∀ n ∈ {0,1,2}, rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}. llvm-mc rejects arity-n ADD/SUB ⇒ encode_neon_add_sub(ops[:n], is_sub) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, rd, rn, rm, is_pmull2]
-  domain: { n: 0..2, rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_pmull2: bool }
+  vars: [n, rd, rn, rm, is_sub]
+  domain: { n: 0..2, rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool }
   relation:
     op: throws
-    expr: encode_neon_pmull(take(ops_1q(rd,rn,rm,is_pmull2), n), is_pmull2)
+    expr: encode_neon_add_sub(ops.take(n), is_sub)
 generators:
   n: { gen: int, min: 0, max: 2, type: usize }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
+  is_sub: { gen: bool }
 expected_error: String
-evidence: neon.rs:1130 pmull requires 3 operands; llvm-mc rejects arity 0-2
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
 ```
 
-## encode_neon_pmull_neg_extra_operand
+## encode_neon_add_sub_neg_extra_operand
 - Tier: 4
-- Rationale: llvm-mc/gas reject a fourth operand. README.md:11 gas-compatible contract. The comment "pmull requires 3 operands" names the arity; extra is not a documented valid input. Negative/error: SUT must Err.
-- Doc contract: neon.rs:1130 "pmull requires 3 operands" — domain-restriction fingerprint 77eabc5e
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_neg_extra_operand
-- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, is_pmull2 ∈ {false,true}. llvm-mc rejects pmull{2} Vd.1q, Vn.Tb, Vm.Tb, Vextra.Tb ⇒ encode_neon_pmull([Vd.1q,Vn.Tb,Vm.Tb,Vextra.Tb], is_pmull2) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: llvm-mc/gas reject a fourth operand. README.md:11. Function currently ignores extra operands (no len check).
+- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_extra_operand
+- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. llvm-mc rejects 4-operand ADD/SUB ⇒ encode_neon_add_sub([Vd.T,Vn.T,Vm.T,Vextra.T], is_sub) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_pmull([v0.1q, v0.1d, v0.1d, v0.1d], false)
-- Bug report: bug_reports/encode_neon_pmull_extra_operand.md
+- Counterexample: encode_neon_add_sub([v0.8b, v0.8b, v0.8b, v0.8b], is_sub=false)
+- Bug report: bug_reports/encode_neon_add_sub_extra_operand.md
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, extra, is_pmull2]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, extra: u32_0_31, is_pmull2: bool }
+  vars: [rd, rn, rm, extra, t, is_sub]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, extra: u32_0_31, t: neon_t, is_sub: bool }
   relation:
     op: throws
-    expr: encode_neon_pmull(ops_1q(rd,rn,rm,is_pmull2) ++ [Vextra.Tb], is_pmull2)
+    expr: encode_neon_add_sub([Vd.T,Vn.T,Vm.T,Vextra.T], is_sub)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
+  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
+  is_sub: { gen: bool }
 expected_error: String
-evidence: assembler/README.md:11 gas-compatible; llvm-mc rejects a fourth operand; neon.rs:1130 requires 3 operands
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
 ```
 
-## encode_neon_pmull_neg_invalid_t
+## encode_neon_add_sub_neg_invalid_t
 - Tier: 4
-- Rationale: ARM / llvm-mc reject arrangements outside the Ta/Tb pairs (8H←8B/16B, 1Q←1D/2D) and reject PMULL with PMULL2's Tb (and vice versa). Function discards arrangements so this is the documented-assembler error path. Negative/error contract.
-- Doc contract: neon.rs:1138 "PMULL  Vd.1q, Vn.1d, Vm.1d: 0 0 00 1110 11 1 Rm 11100 0 Rn Rd  (size=11)" — asserted fingerprint 14f676c6
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_neg_invalid_t
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}, (Td,Tn,Tm) not a valid PMULL{2} Ta/Tb triple. llvm-mc rejects the assembly ⇒ encode_neon_pmull([Vd.Td,Vn.Tn,Vm.Tm], is_pmull2) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: ARM integer ADD/SUB T is {8B,16B,4H,8H,2S,4S,2D}; 1D reserved; arrangements must match. llvm-mc rejects reserved/mismatched T. Function uses only dest arrangement and neon_arr_to_q_size accepts 1d.
+- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_invalid_t
+- Formal: ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}, is_sub ∈ {false,true}. ¬valid(Td,Tn,Tm) ∧ llvm-mc rejects ⇒ encode_neon_add_sub([Vd.Td,Vn.Tn,Vm.Tm], is_sub) = Err. valid iff Td=Tn=Tm ∈ {8b,16b,4h,8h,2s,4s,2d}
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_pmull([v0.8b, v0.8b, v0.8b], false)
-- Bug report: bug_reports/encode_neon_pmull_invalid_t.md
+- Counterexample: encode_neon_add_sub([v0.8b, v0.8b, v0.16b], is_sub=false)
+- Bug report: bug_reports/encode_neon_add_sub_invalid_t.md
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_pmull2, td, tn, tm]
-  domain: { rd: u32_0_31, invalid Ta/Tb triples (not the four ARM-legal pairs) }
+  vars: [rd, rn, rm, td, tn, tm, is_sub]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, td: any_t, tn: any_t, tm: any_t, is_sub: bool }
   relation:
     op: throws
-    expr: encode_neon_pmull([Vd.td, Vn.tn, Vm.tm], is_pmull2)
+    expr: encode_neon_add_sub([Vd.Td,Vn.Tn,Vm.Tm], is_sub)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
-  td: { gen: oneof, values: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
-  tn: { gen: oneof, values: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
-  tm: { gen: oneof, values: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
+  td: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
+  tn: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
+  tm: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
+  is_sub: { gen: bool }
 expected_error: String
-evidence: ARM PMULL Ta in {8H,1Q} with matching Tb; llvm-mc rejects other T; assembler/README.md:11
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
 ```
 
-## encode_neon_pmull_neg_gpr_or_bare
+## encode_neon_add_sub_neg_gpr_or_bare
 - Tier: 4
-- Rationale: llvm-mc/gas require V registers with arrangement specifiers. Operand::Reg (xN, vN without .T, dN, …) is not a valid PMULL operand. get_neon_reg accepts Operand::Reg, so this is the error-path the public assembler must still reject. Negative/error contract.
-- Doc contract: neon.rs:1138 "PMULL  Vd.1q, Vn.1d, Vm.1d: 0 0 00 1110 11 1 Rm 11100 0 Rn Rd  (size=11)" — asserted fingerprint 14f676c6
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_neg_gpr_or_bare
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}, dest ∈ {xN, wN, vN-bare, dN, sN, qN, sp}. llvm-mc rejects the assembly ⇒ encode_neon_pmull([dest, Vn.Tb, Vm.Tb], is_pmull2) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: gas/llvm-mc require Vd.T / Vn.T / Vm.T. GPR dest, bare V, and xN.T are rejected. parse_reg_num accepts x/w/d/s/q/v/h/b and maps them to 0–31.
+- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_gpr_or_bare
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, kind ∈ {gpr_dest, bare_vn, x_rm, bare_vd, x_vd_arr}. llvm-mc rejects the corresponding asm ⇒ encode_neon_add_sub(ops(kind), is_sub) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_pmull([Reg("x0"), v0.1d, v0.1d], false)
-- Bug report: bug_reports/encode_neon_pmull_gpr_dest.md
+- Counterexample: encode_neon_add_sub([v0.8b, Reg(v0), v0.8b], is_sub=false)
+- Bug report: bug_reports/encode_neon_add_sub_bare_src.md
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_pmull2, kind]
-  domain: { rd: u32_0_31, kind: gpr_or_bare }
+  vars: [rd, rn, rm, is_sub, kind]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool, kind: 0..4 }
   relation:
     op: throws
-    expr: encode_neon_pmull([non_v_arr_dest, Vn.Tb, Vm.Tb], is_pmull2)
+    expr: encode_neon_add_sub(ops(kind), is_sub)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
+  is_sub: { gen: bool }
   kind: { gen: int, min: 0, max: 4, type: u8 }
 expected_error: String
-evidence: assembler/README.md:11 gas-compatible; llvm-mc rejects GPR/bare-V dest; ARM requires Vd.<Ta>
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
 ```
 
-## encode_neon_pmull_diff_alt_spellings
+## encode_neon_add_sub_diff_alt_spellings
 - Tier: 2
-- Rationale: Sweep — parse_reg_num lowercases V/X prefixes and the assembler accepts the same textual assembly as gas, including uppercase mnemonic and V. Differential vs llvm-mc on the documented 1q domain with uppercase spellings.
-- Doc contract: neon.rs:1138 "PMULL  Vd.1q, Vn.1d, Vm.1d: 0 0 00 1110 11 1 Rm 11100 0 Rn Rd  (size=11)" — asserted fingerprint 14f676c6
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_diff_alt_spellings
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}. encode_neon_pmull([Vrd.1q, Vrn.Tb, Vrm.Tb], is_pmull2) = llvm-mc(PMULL{2} Vrd.1Q, Vrn.TbU, Vrm.TbU)
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: Differential vs llvm-mc on uppercase mnemonic/V prefix (parser lowercases). Strengthens p1 past the canonical lowercase spelling.
+- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_diff_alt_spellings
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, is_sub ∈ {false,true}. encode_neon_add_sub([V{rd}.T, V{rn}.T, V{rm}.T], is_sub) = llvm-mc("ADD|SUB Vd.T, Vn.T, Vm.T")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_pmull2]
-  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_pmull2: bool }
+  vars: [rd, rn, rm, t, is_sub]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: neon_t, is_sub: bool }
   relation:
     op: eq
-    lhs: encode_neon_pmull(ops_1q_upper_V(rd, rn, rm, is_pmull2), is_pmull2)
-    rhs: llvm_mc(asm_1q_upper(rd, rn, rm, is_pmull2))
+    lhs: encode_neon_add_sub([Vrd.T, Vrn.T, Vrm.T], is_sub)
+    rhs: llvm_mc(ADD_or_SUB Vd.T, Vn.T, Vm.T)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
-evidence: assembler/README.md:11 gas-compatible; parse_reg_num lowercases prefix (encoder/mod.rs:165)
+  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
+  is_sub: { gen: bool }
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
 ```
 
-## encode_neon_pmull_neg_nonreg
+## encode_neon_add_sub_neg_nonreg
 - Tier: 4
-- Rationale: Sweep — get_neon_reg returns Err for Imm/Mem/Label ("expected NEON register"). llvm-mc rejects those at the dest slot. Negative/error contract on a documented helper path the SUT always takes.
-- Doc contract: neon.rs:1130 "pmull requires 3 operands" — domain-restriction fingerprint 77eabc5e
-- Seed: encode_neon_eor3_pbt.rs:encode_neon_eor3_neg_nonreg
-- Formal: ∀ rd,rn,rm ∈ {0..31}, is_pmull2 ∈ {false,true}, slot ∈ {0,1,2}, kind ∈ {Imm,Mem,Label}. encode_neon_pmull(ops with slot replaced, is_pmull2) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_pmull_pbt.rs
+- Rationale: Sweep — Imm/Mem/Label at any operand slot must Err (get_neon_reg else-arm). llvm-mc rejects Imm/Mem/Label dest. Weaker than the GPR/bare property; covers the documented error path of non-register operands.
+- Doc contract: neon.rs:1163 "Encode NEON ADD/SUB (vector integer): ADD/SUB Vd.T, Vn.T, Vm.T" — asserted fingerprint 2c237b39
+- Seed: encode_neon_pmull_pbt.rs encode_neon_pmull_neg_nonreg
+- Formal: ∀ rd,rn,rm ∈ {0..31}, is_sub ∈ {false,true}, kind ∈ {Imm,Mem,Label}, slot ∈ {0,1,2}. encode_neon_add_sub(ops with slot replaced by kind, is_sub) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_add_sub_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_pmull
+function: encoder.encode_neon_add_sub
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, is_pmull2, kind, slot]
-  domain: { slot: 0..2, kind: Imm|Mem|Label }
+  vars: [rd, rn, rm, is_sub, kind, slot]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, is_sub: bool, kind: 0..2, slot: 0..2 }
   relation:
     op: throws
-    expr: encode_neon_pmull(ops_with_nonreg(slot, kind), is_pmull2)
+    expr: encode_neon_add_sub(ops_with_nonreg(kind, slot), is_sub)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_pmull2: { gen: bool }
+  is_sub: { gen: bool }
   kind: { gen: int, min: 0, max: 2, type: u8 }
   slot: { gen: int, min: 0, max: 2, type: usize }
 expected_error: String
-evidence: neon.rs:19 get_neon_reg Err for non-Reg; llvm-mc rejects Imm/Mem/Label dest
+evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint f00ab438
 ```
