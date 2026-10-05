@@ -86,6 +86,8 @@ mod encode_neon_three_diff_pbt;
 mod encode_neon_logical_pbt;
 #[cfg(test)]
 mod encode_neon_cmp_zero_pbt;
+#[cfg(test)]
+mod encode_neon_elem_long_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

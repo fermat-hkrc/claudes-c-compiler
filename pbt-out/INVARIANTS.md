@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_neon_elem_long)
+
+- Valid SMULL/UMULL/SMLAL/UMLAL/SMLSL/UMLSL/SQDMULL/SQDMLAL/SQDMLSL (+ `2`) Vd.{4s,2d}, Vn.{4h,8h,2s,4s}, Vm.{h,s}[idx] with ARM-correct (U, opcode, is_high) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: bit31=0, Q at 30 (is_high), U at 29, bits[28:24]=01111, size at [23:22] (01 for .h, 10 for .s), L at 21, M at 20, Rm[3:0] at [19:16], opcode at [15:12], H at 11, bit10=0, Rn at [9:5], Rd at [4:0] (1000 cases).
+- Rd/Rn isolation in bits[4:0]/[9:5]; U isolation at bit 29 (1000 cases).
+- Arity 0–2 always Err (1000 cases).
+- Index > 7 for .h and > 3 for .s always Err (1000 cases).
+- Source arrangements other than 4h/8h/2s/4s always Err (1000 cases).
+- Uppercase V prefix matches llvm-mc (1000 cases).
+- Known-answer: `smull v0.4s, v1.4h, v2.h[2]` = 0x0f62a020; `smull2 v0.4s, v1.8h, v2.h[7]` = 0x4f72a820; `smull v0.2d, v1.2s, v31.s[3]` = 0x0fbfa820.
+
+## Environment (encode_neon_elem_long)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD vector x indexed element (long): size=01 Rm v0-v15 index H:L:M 0..7; size=10 Rm v0-v31 (M=Rm[4]) index H:L 0..3; dest 4h/8h→4s, 2s/4s→2d.
+- Dispatch: encoder/mod.rs:318-329 smull/umull RegLane; encoder/mod.rs:749-775 sqdmlal/sqdmlsl/sqdmull (+2); encoder/mod.rs:837-890 umlal/smlal/umlsl/smlsl/umull2/smull2.
+- encode_neon_elem_long checks operands.len() < 3 only; dest `_arr_d` discarded; lane `elem_size` discarded; half-word Rm is `rm & 0xF`; get_neon_reg accepts Operand::Reg and x/w/s/sp prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep: index-oob/unsupported-src/alt-spellings passing, lane-elem-mismatch failing.
+- Five SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_elem_long_*.md.
+
+## Quirks (encode_neon_elem_long)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Destination arrangement is discarded (see bugs).
+- H-lane Rm v16-v31 is truncated to v0-v15 (see bugs).
+- Operand::Reg and x/w/s/sp prefixes encode as V registers (see bugs).
+- Lane elem_size is ignored (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus index-oob/unsupported-src/alt-spellings/lane-elem.
+
 # Confirmed invariants (encode_neon_logical)
 
 - Valid AND/ORR/EOR Vd.T, Vn.T, Vm.T with T in {8b,16b}, v0–v31, opc in {0b00,0b01,0b10} matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
