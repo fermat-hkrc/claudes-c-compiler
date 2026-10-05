@@ -1,104 +1,220 @@
-# PBT Campaign Report: encode_neon_ldnr
+# PBT Campaign Report: encode_neon_ld1r
 
 ## Summary
 
-**Date:** 2026-09-15
-**Repository:** claudes-c-compiler
-**Modules tested:** encode_neon_ldnr
-**Tests:** 15 properties + 1 KAT + 12 regression witnesses
-**Result:** 5 passing properties, 10 failing properties, 1 passing KAT, 12 failing regressions; 7 bugs
-**Effort tier:** standard (1 strengthening round; 1 contract-surface sweep; ≥1000 generator runs)
+**Verdict:** 1 high, 2 medium, 1 low: encode_neon_ld1r drops register post-index to a no-writeback load, ignores surplus operands, accepts W/XZR/FP bases, and encodes illegal post-index immediates as the legal form.
+**Date:** 2026-10-05
+**Repository:** /home/toan/github/claudes-c-compiler
+**Modules tested:** encode_neon_ld1r
+**Tests:** 13
+**Result:** 9 passing, 4 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter looking at unrelated binaries listed encode_neon_ld1r NOT LINKED). cargo test --lib encode_neon_ld1r executed the symbol (KAT + 13 properties). Sweep: manual arm audit of documented LD1R forms (register post-index, illegal #imm, alt spellings, invalid names, [Xn,#imm]).
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_ldnr | 15 properties (5 passing, 10 failing) + KAT + 12 regressions | 7 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_neon_ld1r | 13 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-1. **LD2R/LD4R S bit at bit 12 not bit 21**
-   - Law: AdvSIMD replicate encoding (gas/llvm-mc) places S at bit 21 (1 for LD2R/LD4R) with bit 12 clear.
-   - Shrunk: n=4, t="8b", rt=0, rn=0 — `ld4r {v0.8b, v1.8b, v2.8b, v3.8b}, [x0]` SUT 0x0d40f000 vs llvm-mc 0x0d60e000. Also KAT `ld2r {v0.8b, v1.8b}, [x1]` SUT 0x0d40d020 vs 0x0d60c020.
-   - Properties: encode_neon_ldnr_diff_no_offset_llvm_mc, encode_neon_ldnr_diff_post_imm_llvm_mc, encode_neon_ldnr_arm_fields, encode_neon_ldnr_diff_alt_spellings.
-   - Severity: high. `pbt-out/bug_reports/encode_neon_ldnr_s_bit.md`
+### B1: encode_neon_ld1r ignores a surplus operand
 
-2. **Surplus operand ignored**
-   - Law: llvm-mc/gas reject a surplus operand after a complete ldNr (README.md:12).
-   - Shrunk: n=2, t="8b", rt=0, rn=0, extra_kind=0 (Cond "eq") — encode returns Ok.
-   - Property: encode_neon_ldnr_neg_extra.
-   - Severity: medium. `pbt-out/bug_reports/encode_neon_ldnr_extra_operand.md`
+**Formal:** ∀ T ∈ {8b,16b,4h,8h,2s,4s,1d,2d}, rt ∈ 0..31, rn ∈ 0..30, extra ∈ {Cond, Shift, RegArrangement, Label}. encode_neon_ld1r([RegList, Mem, extra]) is Err.
+**Contract evidence:** inferred (README.md:12 gas-compatible assembler; llvm-mc rejects a surplus operand after ld1r)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ld1r([RegList({v0.8b}), Mem{x0, 0}, Cond("eq")])
+**Expected / Actual:** Err / Ok(Word(0x0d40c000))
+**Impact:** Trailing junk is dropped and a no-offset LD1R is emitted, so a mistyped extra operand assembles without a diagnostic.
+**Root cause:** neon.rs:834 checks `operands.len() < 2` only, so a third Cond/Shift/Label is ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:834`
+```rust
+    if operands.len() < 2 {
+        return Err("ld1r requires 2 operands".to_string());
+    }
+```
+**Suggested fix:** Reject a surplus operand that is not a register post-index Xm.
+```rust
+    if operands.len() > 2 && !matches!(operands.get(2), Some(Operand::Reg(_))) {
+        return Err("ld1r: unexpected extra operand".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_neon_ld1r_extra_operand.md
+**Repro seed:** t="8b", rt=0, rn=0, extra_kind=0
+**Raw output:**
+```text
+Test failed: ld1r extra operand must Err (llvm-mc/gas reject a surplus operand)
+minimal failing input: t = "8b", rt = 0, rn = 0, extra_kind = 0
+```
 
-3. **Invalid base (W / XZR / x31 / FP) accepted**
-   - Law: ARM/gas/llvm-mc require base Xn|SP.
-   - Shrunk: n=2, t="8b", rt=0, base="w0" — encode returns Ok. Same property domain also encodes xzr, x31, d0 (regressions).
-   - Property: encode_neon_ldnr_neg_invalid_base.
-   - Severity: medium. `pbt-out/bug_reports/encode_neon_ldnr_w_base.md` (also encode_neon_ldnr_xzr_base.md, encode_neon_ldnr_fp_base.md)
+### B2: encode_neon_ld1r accepts W, XZR, x31, and FP bases
 
-4. **Register post-index `[Xn], Xm` ignored**
-   - Law: README.md:235 post-index; llvm-mc `ld2r {v0.8b, v1.8b}, [x1], x2` = 0x0de2c020.
-   - Shrunk: n=2, t="8b", rt=0, rn=0, rm=0 — `ld2r {v0.8b, v1.8b}, [x0], x0` SUT 0x0d40d000 vs llvm-mc 0x0de0c000.
-   - Property: encode_neon_ldnr_diff_post_reg_llvm_mc.
-   - Severity: high. `pbt-out/bug_reports/encode_neon_ldnr_reg_post.md`
+**Formal:** ∀ T ∈ {8b,16b,4h,8h,2s,4s,1d,2d}, rt ∈ 0..31, base ∈ {w0,wzr,wsp,xzr,x31,d0,s0,v0,q0}. encode_neon_ld1r([RegList, Mem{base}]) is Err.
+**Contract evidence:** inferred (llvm-mc requires Xn|SP; README.md:12 gas-compatible)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_ld1r([RegList({v0.8b}), Mem{base:"w0", offset:0}])
+**Expected / Actual:** Err / Ok(Word(0x0d40c000))
+**Impact:** `[w0]` encodes as `[x0]`; `[xzr]`/`[x31]` encode as `[sp]`; `[d0]` encodes as `[x0]`. A mistyped base silently loads from the wrong register.
+**Root cause:** neon.rs:868 calls parse_reg_num on the base with no Xn|SP check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:868`
+```rust
+            let rn = parse_reg_num(base).ok_or("invalid base reg")?;
+```
+**Suggested fix:** Accept only `sp` or `x0`–`x30`.
+```rust
+            let rn = parse_ld1r_base(base)?;
+```
+**Bug report:** bug_reports/encode_neon_ld1r_invalid_base.md
+**Repro seed:** t="8b", rt=0, base="w0"
+**Raw output:**
+```text
+Test failed: ld1r base [w0] must Err (llvm-mc requires Xn|SP)
+minimal failing input: t = "8b", rt = 0, base = "w0"
+```
 
-5. **Illegal post-index immediate accepted**
-   - Law: post-index #imm must equal n*esize.
-   - Shrunk: n=2, t="8b", rt=0, rn=0, imm=-1 — encode returns Ok.
-   - Property: encode_neon_ldnr_neg_bad_post_imm.
-   - Severity: medium. `pbt-out/bug_reports/encode_neon_ldnr_bad_post_imm.md`
+### B3: encode_neon_ld1r encodes register post-index as no-offset
 
-6. **Non-consecutive register list accepted**
-   - Law: gas/llvm-mc require consecutive wrapping same-T lists.
-   - Shrunk: n=2, t="8b", rt=0, skip=1, rn=0 — `{v0.8b, v2.8b}` encodes.
-   - Property: encode_neon_ldnr_neg_nonconsecutive.
-   - Severity: medium. `pbt-out/bug_reports/encode_neon_ldnr_nonconsecutive.md`
+**Formal:** ∀ T ∈ {8b,16b,4h,8h,2s,4s,1d,2d}, rt ∈ 0..31, rn ∈ 0..30, rm ∈ 0..30. encode_neon_ld1r([RegList({Vt.T}), Mem{Xn}, Reg(Xm)]) = llvm-mc("ld1r {Vt.T}, [Xn], Xm").
+**Contract evidence:** documented README.md:235 "ld1r/ld2r/ld3r/ld4r (with post-index)"
+**Documentation conflict:** README.md:235 lists ld1r with post-index as supported; the function comment neon.rs:833 shows only `[Xn]`. The README is the assembler contract. The comment does not declare register post-index invalid.
+**Severity:** high
+**Counterexample:** encode_neon_ld1r([RegList({v0.8b}), Mem{x0, 0}, Reg("x0")]) then compared to llvm-mc `ld1r {v0.8b}, [x0], x0`
+**Expected / Actual:** 0x0dc0c000 / 0x0d40c000
+**Impact:** Valid register post-index is assembled as no-writeback LD1R, so the base is not updated.
+**Root cause:** neon.rs:866 matches only operands[1] as Mem/MemPostIndex and never reads a trailing GPR.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:866`
+```rust
+        Operand::Mem { base, offset: 0 } => {
+            let rn = parse_reg_num(base).ok_or("invalid base reg")?;
+            // LD1R: 0 Q 0 01101 0 1 0 00000 110 0 size Rn Rt (no post-index)
+            let word = (q << 30) | (0b001101 << 24) | (1 << 22) | (0b110 << 13)
+                | (size << 10) | (rn << 5) | rt;
+            Ok(EncodeResult::Word(word))
+        }
+```
+**Suggested fix:** If operands[2] is Xm, set L=1 and Rm=Xm.
+```rust
+            if let Some(Operand::Reg(rm_name)) = operands.get(2) {
+                let rm = parse_reg_num(rm_name).ok_or("invalid post-index reg")?;
+                let word = (q << 30) | (0b001101 << 24) | (1 << 23) | (1 << 22)
+                    | (rm << 16) | (0b110 << 13) | (size << 10) | (rn << 5) | rt;
+                return Ok(EncodeResult::Word(word));
+            }
+```
+**Bug report:** bug_reports/encode_neon_ld1r_reg_post.md
+**Repro seed:** t="8b", rt=0, rn=0, rm=0
+**Raw output:**
+```text
+Test failed: assertion failed: `(left == right)`
+  left: `222347264`,
+ right: `230735872`: mismatch for ld1r {v0.8b}, [x0], x0
+minimal failing input: t = "8b", rt = 0, rn = 0, rm = 0
+```
 
-7. **`[Xn, #imm]` accepted as no-offset**
-   - Law: only `[Xn]` or post-index is valid.
-   - Shrunk: n=2, t="8b", rt=0, rn=0, off=-1 — encode returns Ok.
-   - Property: encode_neon_ldnr_neg_mem_offset.
-   - Severity: medium. `pbt-out/bug_reports/encode_neon_ldnr_mem_offset.md`
+### B4: encode_neon_ld1r accepts illegal post-index immediates
 
-Serial reconfirmation: all failures reproduced with `cargo test --lib encode_neon_ldnr -- --test-threads=1`.
+**Formal:** ∀ T ∈ {8b,16b,4h,8h,2s,4s,1d,2d}, rt, rn, imm ∈ {-1,0,3,5,7,64,256} \ {esize(T)}. encode_neon_ld1r([RegList, MemPostIndex{imm}]) is Err.
+**Contract evidence:** documented limitation neon.rs:876 "offset must match element size, not encoded separately"
+**Documentation conflict:** neon.rs:876 states the offset must match element size, then discards it. That admits a gap on an input the API accepts (MemPostIndex with any i64), not an input-domain exclusion. Severity stepped down.
+**Severity:** low (documented by the author)
+**Counterexample:** encode_neon_ld1r([RegList({v0.8b}), MemPostIndex{x0, -1}])
+**Expected / Actual:** Err / Ok(Word(0x0ddfc000))
+**Impact:** Any illegal #imm encodes as the legal post-index-by-esize form, so the written immediate and the machine-code increment disagree.
+**Root cause:** neon.rs:876 `let _ = offset` always encodes Rm=11111.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:876`
+```rust
+            let _ = offset; // offset must match element size, not encoded separately
+```
+**Suggested fix:** Compare offset to esize(T) and reject a mismatch.
+```rust
+            let esize = match size { 0b00 => 1i64, 0b01 => 2, 0b10 => 4, _ => 8 };
+            if *offset != esize {
+                return Err(format!("ld1r: post-index #{} must be #{}", offset, esize));
+            }
+```
+**Bug report:** bug_reports/encode_neon_ld1r_bad_post_imm.md
+**Repro seed:** t="8b", rt=0, rn=0, imm=-1
+**Raw output:**
+```text
+Test failed: ld1r post-index #-1 (legal #1) must Err
+minimal failing input: t = "8b", rt = 0, rn = 0, imm = -1
+```
 
-## Design Caveats (if any)
+## Design Caveats
 
-- Empty `Operand::RegList(vec![])` panics at `regs[0]` (neon.rs:1532). Not a filed bug: `encode_neon_ldnr` is `pub(crate)`; the only in-tree caller is encoder dispatch, and the parser rejects empty lists. Doc evidence: parser.rs:2069-2071 `if regs.is_empty() { return Err("empty register list".to_string()); }`
-- Mixed arrangements (`{v0.8b, v1.16b}`) are the same list-validation gap as bug 6 (only `regs[0]` and `len` are read). Regression `test_encode_neon_ldnr_regression_mixed_arr` fails; not a separate shrunk property.
-- `num_structs` not in {1,2,3,4} returns Err (neon.rs:1554). Dispatch only passes 2/3/4.
+(none)
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/neon.rs (mod encode_neon_ldnr_pbt) | 15 properties + 1 KAT + 12 regressions |
+| src/backend/arm/assembler/encoder/encode_neon_ld1r_pbt.rs | 13 properties + 1 KAT + 6 regression witnesses |
+
+## Reproduction
+
+Whole suite:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_neon_ld1r -- --test-threads=1
+```
+
+B1 extra operand:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_ld1r_regression_extra_operand -- --test-threads=1
+```
+
+B2 invalid base:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_ld1r_regression_w_base -- --test-threads=1
+```
+
+B3 register post-index:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_ld1r_regression_reg_post -- --test-threads=1
+```
+
+B4 illegal post-index immediate:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_ld1r_regression_bad_post_imm -- --test-threads=1
+```
 
 ## Output Directories
 
 - pbt-out/PLAN.md
 - pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_neon_ldnr_s_bit.md
-- pbt-out/bug_reports/encode_neon_ldnr_extra_operand.md
-- pbt-out/bug_reports/encode_neon_ldnr_w_base.md
-- pbt-out/bug_reports/encode_neon_ldnr_xzr_base.md
-- pbt-out/bug_reports/encode_neon_ldnr_fp_base.md
-- pbt-out/bug_reports/encode_neon_ldnr_reg_post.md
-- pbt-out/bug_reports/encode_neon_ldnr_bad_post_imm.md
-- pbt-out/bug_reports/encode_neon_ldnr_nonconsecutive.md
-- pbt-out/bug_reports/encode_neon_ldnr_mem_offset.md
-
-Sweep: `coverage_gaps` had no LLVM profraw; manual arm audit added mixed-arrangement regression and LD3R-only differential (1000 llvm-mc cases). Closed: tier round spent.
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_neon_ld1r_extra_operand.md
+- pbt-out/bug_reports/encode_neon_ld1r_extra_operand.html
+- pbt-out/bug_reports/encode_neon_ld1r_invalid_base.md
+- pbt-out/bug_reports/encode_neon_ld1r_invalid_base.html
+- pbt-out/bug_reports/encode_neon_ld1r_reg_post.md
+- pbt-out/bug_reports/encode_neon_ld1r_reg_post.html
+- pbt-out/bug_reports/encode_neon_ld1r_bad_post_imm.md
+- pbt-out/bug_reports/encode_neon_ld1r_bad_post_imm.html
+- pbt-out/run/encode_neon_ld1r_round1.log
+- pbt-out/run/encode_neon_ld1r_round2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-09-15 00:33 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 102/289 total | PBT candidates: 102 | Tested: 102 (100%) | 0 pass, 102 fail
+> Last updated: 2026-10-05 08:09 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 103/289 total | PBT candidates: 103 | Tested: 103 (100%) | 0 pass, 103 fail
 
 ## Summary
 
@@ -107,10 +223,10 @@ Sweep: `coverage_gaps` had no LLVM profraw; manual arm audit added mixed-arrange
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 102 |
-| **Tested (of PBT candidates)** | **102 / 102 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 102 / 0 |
-| **Overall (tested / all functions)** | **102 / 289 (35%)** |
+| PBT candidates (from FUNCTION_INDEX) | 103 |
+| **Tested (of PBT candidates)** | **103 / 103 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 103 / 0 |
+| **Overall (tested / all functions)** | **103 / 289 (36%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -118,13 +234,13 @@ Sweep: `coverage_gaps` had no LLVM profraw; manual arm audit added mixed-arrange
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 102 | 102 | 0 | 100% |
+|  | 103 | 103 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 102 | 102 | 0 | 100% |
+| unknown | 103 | 103 | 0 | 100% |
 
 ## File Coverage
 
@@ -137,7 +253,7 @@ Sweep: `coverage_gaps` had no LLVM profraw; manual arm audit added mixed-arrange
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 17 | 17 | 100% | covered |
+| neon.rs | 68 | 18 | 18 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -249,3 +365,4 @@ Sweep: `coverage_gaps` had no LLVM profraw; manual arm audit added mixed-arrange
 | encode_neon_dup | neon.rs |
 | encode_ldrs | load_store.rs |
 | encode_neon_ldnr | neon.rs |
+| encode_neon_ld1r | neon.rs |

@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_ld1r)
+
+- Valid LD1R (T in {8b,16b,4h,8h,2s,4s,1d,2d}, v0–v31, Xn|SP base, no-offset and immediate post-index #esize) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path LD1R word is ARM AdvSIMD replicate: 0 Q 001101 L R=1 S=0 Rm opcode=110 size Rn Rt with bit12=0, bit21=0. No-offset L=0 Rm=0; imm post-index L=1 Rm=11111.
+- Metamorphic: Rt+1 increments bits[4:0] only; Rn+1 increments bits[9:5] only; 8b vs 16b (4h vs 8h, 2s vs 4s, 1d vs 2d) flips only Q bit 30 (1000 cases).
+- Fewer than 2 operands, non-RegList dest, non-Mem second operand, list length != 1, unsupported T, invalid names (foo/x32/v32/r0/empty), and [Xn, #imm] always Err (1000 cases).
+- Uppercase V/X spellings match llvm-mc (1000 cases).
+- Known-answer: llvm-mc `ld1r {v0.8b}, [x1]` = 0x0d40c020; `ld1r {v0.16b}, [x1]` = 0x4d40c020; `ld1r {v0.4h}, [x1]` = 0x0d40c420; `ld1r {v0.2d}, [x1]` = 0x4d40cc20; `ld1r {v0.8b}, [x1], #1` = 0x0ddfc020; `ld1r {v0.8b}, [sp]` = 0x0d40c3e0; `ld1r {v31.2d}, [x30]` = 0x4d40cfdf; `ld1r {v0.8b}, [x1], x2` = 0x0dc2c020.
+- Extra operand, W/XZR/x31/FP base, register post-index, and illegal post-index #imm currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_ld1r)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM AdvSIMD load/store single structure (replicate): 0 Q 001101 L R=1 S=0 Rm opcode=110 size Rn Rt; no-offset Rm=00000 L=0; imm post-index Rm=11111 L=1; register post-index Rm=Xm L=1.
+- Dispatch: encoder/mod.rs:732 `"ld1r" => encode_neon_ld1r(operands)`.
+- Callers: encoder dispatch only.
+- Sibling encode_neon_ldnr is LD2R/LD3R/LD4R (different mnemonic). Sibling encode_neon_ld_st_single / encode_neon_ld_st_multi are different ARM classes.
+- encode_neon_ld1r checks only operands.len() < 2 (extra ignored); Mem { offset: 0 } only; MemPostIndex always Rm=11111 ignoring offset; parse_reg_num accepts w/d/s/q/v/h/b and maps xzr/x31/sp to 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (register post-index / illegal #imm / alt spellings / invalid names / Mem offset).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_ld1r_*.md.
+
 # Confirmed invariants (encode_neon_ldnr)
 
 - Valid LD3R (T in {8b,16b,4h,8h,2s,4s,1d,2d}, consecutive wrapping v0–v31, Xn|SP base, no-offset and immediate post-index #3*esize) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.
