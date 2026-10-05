@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_neon_tbx)
+
+- Valid vector TBX with Ta in {8b,16b}, Vd/Vm in v0–v31, 1–4 consecutive wrapping table registers all .16B matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Ta=8b XOR Ta=16b at equal Rd/Rn/Rm/len = 1<<30 (1000 cases).
+- Changing only nregs in {1,2,3,4} differs only in len bits [14:13]; len = nregs-1 (1000 cases).
+- Success-path word: bit 31=0, Q at 30, bits [29:24]=001110, bits [23:21]=000, Rm at [20:16], bit 15=0, len at [14:13], op=1 at 12, bits [11:10]=00, Rn at [9:5], Rd at [4:0].
+- Uppercase V/T spellings match llvm-mc (1000 cases).
+- Known-answer: `tbx v0.8b, {v1.16b}, v2.8b` encodes as 0x0e021020; `tbx v0.16b, {v1.16b}, v2.16b` as 0x4e021020; 2-reg 0x0e033020; 3-reg 0x4e045020; 4-reg 0x0e057020; wrap `{v31.16b, v0.16b}` as 0x0e0233e0.
+
+## Environment (encode_neon_tbx)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD table lookup TBX: `0 Q 00 1110 00 0 Rm 0 len op 00 Rn Rd` with op=1. Ta in {8B,16B}. Table is 1–4 consecutive .16B registers wrapping at 31. Vm.Ta matches Vd.Ta. Q=1 iff Ta=16B.
+- Dispatch: encoder/mod.rs:736 `"tbx" => encode_neon_tbx`. Sibling encode_neon_tbl is TBL (op=0), different job.
+- Callers: assembler README NEON permute table lists tbl/tbx.
+- Parser `parser.rs:2030-2072` builds Operand::RegList; rejects empty lists; range syntax expands wrapping consecutives. Encoder still panics if given an empty list directly.
+- encode_neon_tbx checks operands.len() < 3; extra ignored; Q=1 iff arr_d=="16b"; only regs[0] and len are encoded; (num_regs-1)&0x3 wraps n>4; get_neon_reg accepts Operand::Reg; Vm arrangement discarded.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (list/Vm kinds / alt-spellings).
+- Ten failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_tbx_*.md.
+
 # Confirmed invariants (encode_neon_ld_st_multi)
 
 - Valid LD/ST multiple-structure (n in {1,2,3,4}, T in {8b,16b,4h,8h,2s,4s,1d,2d} for n=1 and {8b,16b,4h,8h,2s,4s,2d} for n≥2, consecutive wrapping v0–v31, Xn|SP base, no-offset, legal immediate post-index #n_regs*(Q?16:8), and register post-index Xm) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.

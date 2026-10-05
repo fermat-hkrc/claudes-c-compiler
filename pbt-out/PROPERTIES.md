@@ -1,396 +1,447 @@
-# Properties: encode_neon_ld_st_multi
+# Properties: encode_neon_tbx
 
-## encode_neon_ld_st_multi_diff_no_offset_llvm_mc
-- Tier: 3
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (README.md:12 gas-compatible assembler; README.md:235 lists ld1-4/st1-4). State machine rejected (pure function). Round-trip rejected (no in-tree multiple-structures decoder). Sibling encode_neon_ld_st_single rejected (same-job gate: single-element encoding).
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:280
-- Formal: ∀ n∈{1,2,3,4}, T∈valid(n), rt,rn∈0..31, load∈𝔹. encode_neon_ld_st_multi(RegList({v_rt.T .. consecutive wrap n_regs}), Mem[Xn|SP], load, n) = llvm-mc(`ldn/stn {v_rt.T..}, [Xn|SP]`) where n_regs=n for n≥2 else n_regs∈{1,2,3,4}; valid(1)={8b,16b,4h,8h,2s,4s,1d,2d}, valid(n≥2)={8b,16b,4h,8h,2s,4s,2d}
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
+## encode_neon_tbx_diff_llvm_mc
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc, which the assembler README claims gas-compatible encodings. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree TBX decoder). Sibling encode_neon_tbl rejected by same-job gate (TBL op=0 vs TBX op=1).
+- Doc contract: neon.rs:802 "Encode NEON TBX: table vector lookup with insert (preserves out-of-range lanes)" — asserted fingerprint e8e04215
+- Seed: neon.rs:6847 encode_neon_tbl_diff_llvm_mc
+- Formal: ∀ rd,rn,rm ∈ {0..31}, ta ∈ {8b,16b}, n ∈ {1,2,3,4}. encode_neon_tbx([Vd.ta, {Vn.16b..Vn+n-1.16b wrap}, Vm.ta]) = llvm-mc("tbx Vd.ta, {Vn.16b, ...}, Vm.ta")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ld_st_multi
+function: encoder.encode_neon_tbx
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [n, n_regs, t, rt, rn, load]
-  domain: { n: structs_1_4, t: valid_arr(n), rt: v0_31, rn: x0_sp, load: bool }
-  body: sut_word([reg_list(rt,n_regs,t), mem0(rn)], load, n) == llvm_mc(asm_no_offset)
+  vars: [rd, rn, rm, ta, n]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, ta: {8b,16b}, n: 1_4 }
+  relation:
+    op: eq
+    lhs: encode_neon_tbx(valid_ops(rd, ta, rn, n, rm))
+    rhs: llvm_mc_word(tbx_asm(rd, ta, rn, n, rm))
 generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  load: { gen: bool }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, items: ["8b", "16b"] }
+  n: { gen: int, min: 1, max: 4, type: u32 }
 evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_ld_st_multi_diff_post_imm_llvm_mc
-- Tier: 3
-- Rationale: Same differential vs llvm-mc for the documented post-index form (README.md:235 "with post-index"). Immediate must equal n_regs*(Q?16:8).
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:302
-- Formal: ∀ n,T,rt,rn,load in the valid domain. encode_neon_ld_st_multi(RegList, MemPostIndex(Xn|SP, #n_regs*(Q?16:8)), load, n) = llvm-mc(`ldn/stn {..}, [Xn|SP], #imm`)
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_neon_ld_st_multi
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [n, n_regs, t, rt, rn, load]
-  domain: { n: structs_1_4, t: valid_arr(n), rt: v0_31, rn: x0_sp, load: bool }
-  body: sut_word([reg_list(rt,n_regs,t), mem_post(rn, legal_imm)], load, n) == llvm_mc(asm_post_imm)
-generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  load: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:235
-```
-
-## encode_neon_ld_st_multi_arm_fields
+## encode_neon_tbx_metamorphic_q
 - Tier: 4
-- Rationale: Algebraic invariant from ARM AdvSIMD load/store multiple structures layout cited in neon.rs:1075-1089 and encoder/mod.rs:1-7. Stronger differential already used above; this pins field placement independently of llvm-mc.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:326
-- Formal: ∀ valid no-offset or legal-imm-post inputs. word bit31=0, bit30=Q(T), bits[29:24]=001100, bit23=post, bit22=L, bit21=0, Rm=0 or 31, opcode per neon.rs:1061-1065, size=size(T), Rn, Rt
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
+- Rationale: ARM Q bit is 1 iff Ta=16B; 8B vs 16B at equal Rd/Rn/Rm/len must XOR only bit 30.
+- Doc contract: neon.rs:824 "TBX: 0 Q 00 1110 000 Rm 0 len 1 00 Rn Rd (op=1 for TBX vs op=0 for TBL)" — asserted fingerprint 9de9df1f
+- Seed: neon.rs:6864 encode_neon_tbl_metamorphic_q
+- Formal: ∀ rd,rn,rm ∈ {0..31}, n ∈ {1,2,3,4}. encode_neon_tbx(8b) XOR encode_neon_tbx(16b) = 1<<30
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ld_st_multi
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [n, n_regs, t, rt, rn, load, post]
-  domain: { n: structs_1_4, t: valid_arr(n), rt: v0_31, rn: x0_sp, load: bool, post: bool }
-  body: fields(encode_neon_ld_st_multi(...)) match ARM AdvSIMD multiple-structures layout
-generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  load: { gen: bool }
-  post: { gen: bool }
-evidence: src/backend/arm/assembler/encoder/neon.rs:1061
-```
-
-## encode_neon_ld_st_multi_metamorphic_rt_rn_l
-- Tier: 4
-- Rationale: Metamorphic: incrementing Rt/Rn or flipping load/store must change only the corresponding field (ARM layout). Required STANDARD metamorphic/differential (differential already present; this strengthens).
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:360
-- Formal: ∀ T∈valid(1), rt,rn∈0..30. encode(rt+1,rn,load) differs only in bits[4:0]; encode(rt,rn+1,load) differs only in bits[9:5]; encode(rt,rn,!load) XOR encode(rt,rn,load) = 1<<22
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_neon_ld_st_multi
+function: encoder.encode_neon_tbx
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [t, rt, rn]
-  domain: { t: valid_arr(1), rt: 0..30, rn: 0..30 }
-  body: (w_rt xor w) masked to bits[4:0] AND (w_rn xor w) masked to bits[9:5] AND (w_st xor w) == 1<<22
+  vars: [rd, rn, rm, n]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, n: 1_4 }
+  relation:
+    op: eq
+    lhs: encode_neon_tbx(valid_ops(rd, "8b", rn, n, rm)) XOR encode_neon_tbx(valid_ops(rd, "16b", rn, n, rm))
+    rhs: 1u32 << 30
 generators:
-  rt: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-evidence: src/backend/arm/assembler/encoder/neon.rs:1088
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  n: { gen: int, min: 1, max: 4, type: u32 }
+evidence: neon.rs:824
 ```
 
-## encode_neon_ld_st_multi_neg_arity_kinds
+## encode_neon_tbx_invariant_arm_fields
 - Tier: 4
-- Rationale: Negative/error contract: llvm-mc/gas reject fewer than 2 operands and non (RegList, Mem) kinds. SUT returns Err for operands.len()<2, non-RegList dest, non-Mem second operand (neon.rs:1009-1057).
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:384
-- Formal: ∀ n∈{1,2,3,4}, load∈𝔹. operands empty | dest-only | Reg dest | RegArrangement dest | swapped | Imm second ⇒ encode_neon_ld_st_multi = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
+- Rationale: ARM Advanced SIMD table lookup TBX field layout; pins op=1 (TBX vs TBL).
+- Doc contract: neon.rs:824 "TBX: 0 Q 00 1110 000 Rm 0 len 1 00 Rn Rd (op=1 for TBX vs op=0 for TBL)" — asserted fingerprint 9de9df1f
+- Seed: neon.rs:6880 encode_neon_tbl_invariant_arm_fields
+- Formal: ∀ rd,rn,rm ∈ {0..31}, ta ∈ {8b,16b}, n ∈ {1,2,3,4}. let w = encode_neon_tbx(...). w[31]=0 ∧ w[30]=Q(ta) ∧ w[29:24]=001110 ∧ w[23:21]=000 ∧ w[20:16]=rm ∧ w[15]=0 ∧ w[14:13]=n-1 ∧ w[12]=1 ∧ w[11:10]=00 ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ld_st_multi
-oracle: negative_error
+function: encoder.encode_neon_tbx
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [kind, n, load]
-  domain: { kind: 0..5, n: structs_1_4, load: bool }
-  body: encode_neon_ld_st_multi(bad_ops(kind), load, n).is_err()
+  vars: [rd, rn, rm, ta, n]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, ta: {8b,16b}, n: 1_4 }
+  body: bit31(w)=0 AND Q(w)=Q(ta) AND bits[29:24]=0b001110 AND bits[23:21]=0 AND Rm=rm AND bit15=0 AND len=n-1 AND op=1 AND bits[11:10]=0 AND Rn=rn AND Rd=rd
 generators:
-  kind: { gen: int, min: 0, max: 5, type: u32 }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, items: ["8b", "16b"] }
   n: { gen: int, min: 1, max: 4, type: u32 }
-  load: { gen: bool }
-expected_error: String
-evidence: src/backend/arm/assembler/encoder/neon.rs:1009
+evidence: neon.rs:824
 ```
 
-## encode_neon_ld_st_multi_neg_count_arr_names
+## encode_neon_tbx_metamorphic_len
 - Tier: 4
-- Rationale: llvm-mc rejects unsupported arrangement, invalid register names, LD1 with 0 or 5 regs, and LD2/3/4 with list length ≠ n. SUT documents opcode only for those counts (neon.rs:1061-1065). Wrong list length is in the documented assembler domain.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:408
-- Formal: ∀ n∈{1,2,3,4}. unsupported T | invalid name ∈{foo,v32,x32,r0,ε} | LD1 n_regs∉{1,2,3,4} | LD2/3/4 n_regs≠n ⇒ encode_neon_ld_st_multi = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
-- Status: failing
-- Counterexample: n=2, wrong_len=1, t_idx=0, name_idx=0, rn=0 (ld2 {v0.16b}, [x0] encodes)
-- Bug report: pbt-out/bug_reports/encode_neon_ld_st_multi_wrong_reg_count.md
+- Rationale: Changing only table length must differ only in len bits [14:13]; len = nregs-1 for n in {1,2,3,4}.
+- Doc contract: neon.rs:824 "TBX: 0 Q 00 1110 000 Rm 0 len 1 00 Rn Rd (op=1 for TBX vs op=0 for TBL)" — asserted fingerprint 9de9df1f
+- Seed: neon.rs:6904 encode_neon_tbl_metamorphic_len
+- Formal: ∀ rd,rn,rm ∈ {0..31}, ta ∈ {8b,16b}, n1,n2 ∈ {1,2,3,4}. (w(n1) XOR w(n2)) & ~(0b11<<13) = 0 ∧ w(n).len = n-1
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ld_st_multi
-oracle: negative_error
+function: encoder.encode_neon_tbx
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, wrong_len, t_idx, name_idx, rn]
-  domain: { n: structs_1_4, wrong_len: 1..5, t_idx: 0..4, name_idx: 0..4, rn: 0..30 }
-  body: encode_neon_ld_st_multi(bad_count_or_arr_or_name, true, n).is_err()
+  vars: [rd, rn, rm, ta, n1, n2]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, ta: {8b,16b}, n1: 1_4, n2: 1_4 }
+  body: ((encode_neon_tbx(n1) ^ encode_neon_tbx(n2)) & !(0b11u32 << 13)) == 0 && ((encode_neon_tbx(n1) >> 13) & 0b11) == n1 - 1
 generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  wrong_len: { gen: int, min: 1, max: 5, type: u32 }
-  t_idx: { gen: int, min: 0, max: 4, type: u32 }
-  name_idx: { gen: int, min: 0, max: 4, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/encoder/neon.rs:1061
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, items: ["8b", "16b"] }
+  n1: { gen: int, min: 1, max: 4, type: u32 }
+  n2: { gen: int, min: 1, max: 4, type: u32 }
+evidence: neon.rs:824
 ```
 
-## encode_neon_ld_st_multi_neg_extra
-- Tier: 4
-- Rationale: llvm-mc/gas reject a surplus non-post-index operand (README.md:12). SUT only inspects operands[2] when it is Imm or Reg (neon.rs:1078-1086) and otherwise falls through. Extra Cond/Shift/Label/RegArrangement is in the documented assembler domain and must Err.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:461
-- Formal: ∀ valid no-offset ops, extra∈{Cond,Shift,RegArrangement,Label}. encode_neon_ld_st_multi(ops++[extra], load, n) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
-- Status: failing
-- Counterexample: n=1, n_regs=1, t=8b, rt=0, rn=0, load=false, extra_kind=0 (st1 {v0.8b}, [x0], eq encodes)
-- Bug report: pbt-out/bug_reports/encode_neon_ld_st_multi_extra_operand.md
-
-```property
-function: encoder.encode_neon_ld_st_multi
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, n_regs, t, rt, rn, load, extra_kind]
-  domain: { n: structs_1_4, extra_kind: 0..3 }
-  body: encode_neon_ld_st_multi(ops ++ [extra], load, n).is_err()
-generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  load: { gen: bool }
-  extra_kind: { gen: int, min: 0, max: 3, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_ld_st_multi_neg_invalid_base
-- Tier: 4
-- Rationale: llvm-mc rejects W/XZR/x31/FP bases for AdvSIMD multiple-structure addressing (base is Xn|SP only). parse_reg_num maps those names to a number; the function's own comment does not declare them invalid, so they stay in domain.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:487
-- Formal: ∀ n,T,rt,load, base∈{w0,w31,wsp,xzr,x31,s0,d0,v0,q0}. encode_neon_ld_st_multi(list, Mem{base}, load, n) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
-- Status: failing
-- Counterexample: n=1, n_regs=1, t=8b, rt=0, load=false, base=w0 (st1 {v0.8b}, [w0] encodes as [x0])
-- Bug report: pbt-out/bug_reports/encode_neon_ld_st_multi_invalid_base.md
-
-```property
-function: encoder.encode_neon_ld_st_multi
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, n_regs, t, rt, load, base]
-  domain: { n: structs_1_4, base: {w0,w31,wsp,xzr,x31,s0,d0,v0,q0} }
-  body: encode_neon_ld_st_multi(list, Mem{base}, load, n).is_err()
-generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  load: { gen: bool }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_ld_st_multi_diff_reg_post_llvm_mc
+## encode_neon_tbx_neg_extra_operand
 - Tier: 3
-- Rationale: Sweep: register post-index `[Xn], Xm` is a documented ARM addressing mode (README.md:235 post-index; neon.rs:1078-1086). Differential vs llvm-mc.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:605
-- Formal: ∀ valid inputs, rm∈0..30. encode_neon_ld_st_multi([RegList, Mem0, Reg(Xm)], load, n) = llvm-mc(`ldn/stn {..}, [Xn|SP], Xm`)
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
+- Rationale: llvm-mc rejects a fourth operand; README claims gas-compatible assembly so the encoder must Err.
+- Doc contract: neon.rs:804 "tbx requires 3 operands" — asserted fingerprint c183c7b5
+- Seed: neon.rs:6926 encode_neon_tbl_neg_extra_operand
+- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, ta ∈ {8b,16b}, n ∈ {1,2,3,4}. llvm-mc rejects 4-operand tbx ⇒ encode_neon_tbx(ops++[Vextra.ta]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_tbx([v0.8b, {v0.16b}, v0.8b, v0.8b]) = Ok(Word(0x0e001000))
+- Bug report: bug_reports/encode_neon_tbx_extra_operand.md
+
+```property
+function: encoder.encode_neon_tbx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, extra, ta, n]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, extra: v0_31, ta: {8b,16b}, n: 1_4 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx(valid_ops(rd, ta, rn, n, rm) ++ [Vextra.ta])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, items: ["8b", "16b"] }
+  n: { gen: int, min: 1, max: 4, type: u32 }
+expected_error: String
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_tbx_neg_invalid_ta
+- Tier: 3
+- Rationale: ARM TBX Ta is only 8B/16B; llvm-mc rejects 4h/8h/2s/4s/2d/1d.
+- Doc contract: neon.rs:802 "Encode NEON TBX: table vector lookup with insert (preserves out-of-range lanes)" — asserted fingerprint e8e04215
+- Seed: neon.rs:6950 encode_neon_tbl_neg_invalid_ta
+- Formal: ∀ rd,rn,rm ∈ {0..31}, ta ∈ {4h,8h,2s,4s,2d,1d}, n ∈ {1,2,3,4}. llvm-mc rejects tbx Vd.ta ⇒ encode_neon_tbx is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_tbx([v0.4h, {v0.16b}, v0.4h]) = Ok(Word(0x0e001000))
+- Bug report: bug_reports/encode_neon_tbx_invalid_ta.md
+
+```property
+function: encoder.encode_neon_tbx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, ta, n]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, ta: {4h,8h,2s,4s,2d,1d}, n: 1_4 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx(valid_ops(rd, ta, rn, n, rm))
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  ta: { gen: oneof, items: ["4h", "8h", "2s", "4s", "2d", "1d"] }
+  n: { gen: int, min: 1, max: 4, type: u32 }
+expected_error: String
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_tbx_neg_table_contract
+- Tier: 3
+- Rationale: ARM table is 1-4 consecutive wrapping .16B registers. Empty list, n>4, non-sequential names, and table arrangement other than .16B are rejected by llvm-mc / ARM.
+- Doc contract: neon.rs:802 "Encode NEON TBX: table vector lookup with insert (preserves out-of-range lanes)" — asserted fingerprint e8e04215
+- Seed: neon.rs:6973 encode_neon_tbl_neg_table_contract
+- Formal: ∀ invalid table (empty | n∈{5..8} | non-sequential pair | arrangement ∉ {16b}). encode_neon_tbx is Err (not panic, not Ok)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_tbx([v0.8b, RegList([]), v0.8b]) panics at neon.rs:812 regs[0]
+- Bug report: bug_reports/encode_neon_tbx_empty_list_panic.md
+
+```property
+function: encoder.encode_neon_tbx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, n_hi, gap, bad_arr, kind]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, n_hi: 5_8, gap: 2_16, bad_arr: {8b,4h,8h,2s,4s,2d}, kind: 0_3 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx(invalid_table(kind))
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  n_hi: { gen: int, min: 5, max: 8, type: u32 }
+  gap: { gen: int, min: 2, max: 16, type: u32 }
+  bad_arr: { gen: oneof, items: ["8b", "4h", "8h", "2s", "4s", "2d"] }
+  kind: { gen: int, min: 0, max: 3, type: u8 }
+expected_error: String
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_tbx_neg_arity_kinds
+- Tier: 3
+- Rationale: Fewer than 3 operands must Err. GPR/FP dest, invalid names, missing RegList, and mismatched Vd.Ta vs Vm.Ta are rejected by llvm-mc.
+- Doc contract: neon.rs:804 "tbx requires 3 operands" — asserted fingerprint c183c7b5
+- Seed: neon.rs:7032 encode_neon_tbl_neg_arity_kinds
+- Formal: ∀ n∈{0,1,2}. encode_neon_tbx(ops[..n]) is Err. ∀ dest prefix in {x,w,d,s,q,h,b}. encode_neon_tbx([Reg(dest), list, Vm.8b]) is Err. ∀ bad name. encode_neon_tbx is Err. Missing RegList is Err. Vd.8b vs Vm.16b is Err.
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_tbx([Reg("x0"), {v0.16b}, v0.8b]) = Ok(Word(0x0e001000))
+- Bug report: bug_reports/encode_neon_tbx_gpr_dest.md
+
+```property
+function: encoder.encode_neon_tbx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, rd, rn, rm, prefix, dest_n, bad, ta]
+  domain: { n: 0_2, rd: v0_31, rn: v0_31, rm: v0_31, prefix: {x,w,d,s,q,h,b}, dest_n: v0_31, bad: {v32,v99,foo,empty,v,v-1}, ta: {8b,16b} }
+  relation:
+    op: throws
+    expr: encode_neon_tbx(bad_arity_or_kind)
+generators:
+  n: { gen: int, min: 0, max: 2, type: usize }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  prefix: { gen: oneof, items: ["x", "w", "d", "s", "q", "h", "b"] }
+  dest_n: { gen: int, min: 0, max: 31, type: u32 }
+  bad: { gen: oneof, items: ["v32", "v99", "foo", "", "v", "v-1"] }
+  ta: { gen: oneof, items: ["8b", "16b"] }
+expected_error: String
+evidence: neon.rs:804
+```
+
+## encode_neon_tbx_neg_list_and_vm_kinds
+- Tier: 3
+- Rationale: Coverage sweep of documented list/Vm contracts. list[0] must be Vn.16B; Vm must be Vm.Ta. llvm-mc rejects bare Reg / Imm / GPR / bad names.
+- Doc contract: neon.rs:815 "tbx: expected register in list" — asserted fingerprint (none — inline error string)
+- Seed: neon.rs:7119 encode_neon_tbl_neg_list_and_vm_kinds
+- Formal: ∀ kind∈{bare list Reg, list Imm, bad list name, bare Vm Reg, bad Vm name}. encode_neon_tbx is Err (not panic, not Ok)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_tbx([v0.8b, {v0.16b}, Reg("x0")]) = Ok(Word(0x0e001000))
+- Bug report: bug_reports/encode_neon_tbx_bare_vm.md
+
+```property
+function: encoder.encode_neon_tbx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, prefix, n, bad, kind]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, prefix: {x,w,d,s,q,h,b,v}, n: v0_31, bad: {v32,foo,empty,v}, kind: 0_4 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx(list_or_vm_kind)
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  prefix: { gen: oneof, items: ["x", "w", "d", "s", "q", "h", "b", "v"] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  bad: { gen: oneof, items: ["v32", "foo", "", "v"] }
+  kind: { gen: int, min: 0, max: 4, type: u8 }
+expected_error: String
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_tbx_diff_alt_spellings
+- Tier: 5
+- Rationale: Coverage sweep: llvm-mc accepts uppercase V/T spellings; README claims gas-compatible assembly so the lowercase SUT encoding must match.
+- Doc contract: src/backend/arm/assembler/README.md:12 "accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint 950aac70
+- Seed: encode_neon_ld_st_multi_diff_alt_spellings
+- Formal: ∀ rd,rn,rm ∈ {0..31}, n ∈ {1,2,3,4}. encode_neon_tbx(lowercase ops) = llvm-mc("tbx Vd.8B, {Vn.16B, ...}, Vm.8B")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ld_st_multi
+function: encoder.encode_neon_tbx
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [n, n_regs, t, rt, rn, rm, load]
-  domain: { n: structs_1_4, t: valid_arr(n), rm: 0..30 }
-  body: sut_word([list, mem0(rn), Reg(Xm)], load, n) == llvm_mc(asm_reg_post)
+  vars: [rd, rn, rm, n]
+  domain: { rd: v0_31, rn: v0_31, rm: v0_31, n: 1_4 }
+  relation:
+    op: eq
+    lhs: encode_neon_tbx(valid_ops(rd, "8b", rn, n, rm))
+    rhs: llvm_mc_word(uppercase_tbx_asm(rd, rn, n, rm))
 generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
   n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  load: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:235
+evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_ld_st_multi_diff_alt_spellings
+## encode_neon_tbx_neg_five_regs
 - Tier: 3
-- Rationale: Sweep: gas/llvm-mc accept uppercase V/X and arrangement (README.md:12). parse_reg_num lowercases names; neon_arr_to_q_size does not.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:510
-- Formal: ∀ valid inputs. encode_neon_ld_st_multi(RegList({Vrt.T_upper..}), Mem[XN], load, n) = llvm-mc(uppercase spelling)
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
+- Rationale: ARM TBX allows 1-4 table registers; llvm-mc rejects more. Split from table_contract kind=1 after empty-list shrink.
+- Doc contract: neon.rs:802 "Encode NEON TBX: table vector lookup with insert (preserves out-of-range lanes)" — asserted fingerprint e8e04215
+- Seed: neon.rs:7246 test_encode_neon_tbl_regression_five_regs
+- Formal: ∀ n∈{5..8}. encode_neon_tbx with n table registers is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
 - Status: failing
-- Counterexample: ld3 {V2.2S, V3.2S, V4.2S}, [X10] — SUT Err "unsupported NEON arrangement: 2S"
-- Bug report: pbt-out/bug_reports/encode_neon_ld_st_multi_uppercase_arrangement.md
+- Counterexample: encode_neon_tbx([v0.8b, {v0.16b..v4.16b}, v0.8b])
+- Bug report: bug_reports/encode_neon_tbx_five_regs.md
 
 ```property
-function: encoder.encode_neon_ld_st_multi
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [n, n_regs, t, rt, rn, load]
-  domain: { n: structs_1_4, t: valid_arr(n), rt: 0..30, rn: 0..30 }
-  body: sut_word(uppercase_ops, load, n) == llvm_mc(uppercase_asm)
-generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  load: { gen: bool }
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_ld_st_multi_neg_nonconsecutive
-- Tier: 4
-- Rationale: Sweep: llvm-mc reports "registers must be sequential"; ARM ISA requires consecutive wrapping lists. SUT uses only regs[0].
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:578
-- Formal: ∀ n∈{2,3,4}, T∈valid(n), rt∈0..28, rn∈0..30, load∈𝔹. list with regs[1] skipped ⇒ encode_neon_ld_st_multi = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
-- Status: failing
-- Counterexample: n=2, t=8b, rt=0, rn=0, load=false (st2 {v0.8b, v2.8b}, [x0] encodes as {v0.8b, v1.8b})
-- Bug report: pbt-out/bug_reports/encode_neon_ld_st_multi_nonconsecutive.md
-
-```property
-function: encoder.encode_neon_ld_st_multi
+function: encoder.encode_neon_tbx
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, t, rt, rn, load]
-  domain: { n: {2,3,4}, t: valid_arr(n), rt: 0..28, rn: 0..30 }
-  body: encode_neon_ld_st_multi(nonconsecutive_list, load, n).is_err()
+  vars: [n]
+  domain: { n: 5_8 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx(valid_ops(0, "8b", 0, n, 0))
 generators:
-  n: { gen: int, min: 2, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 28, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  load: { gen: bool }
+  n: { gen: int, min: 5, max: 8, type: u32 }
 expected_error: String
 evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_ld_st_multi_neg_bad_post_imm
-- Tier: 4
-- Rationale: Sweep: ARM immediate post-index amount is implicit (n_regs*(Q?16:8)); llvm-mc rejects any other #imm. SUT binds `_imm` and always uses Rm=11111.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:643
-- Formal: ∀ valid inputs, bad≠legal_imm. encode_neon_ld_st_multi(RegList, MemPostIndex(Xn, #bad), load, n) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
+## encode_neon_tbx_neg_nonsequential
+- Tier: 3
+- Rationale: ARM TBX table registers must be consecutive. Split from table_contract kind=2.
+- Doc contract: neon.rs:802 "Encode NEON TBX: table vector lookup with insert (preserves out-of-range lanes)" — asserted fingerprint e8e04215
+- Seed: neon.rs:7258 test_encode_neon_tbl_regression_nonsequential
+- Formal: encode_neon_tbx({v0.16b, v2.16b}) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
 - Status: failing
-- Counterexample: n=1, n_regs=1, t=8b, rt=0, rn=0, load=false, bad=0 (st1 {v0.8b}, [x0], #0 encodes as #8)
-- Bug report: pbt-out/bug_reports/encode_neon_ld_st_multi_bad_post_imm.md
+- Counterexample: encode_neon_tbx([v0.8b, {v0.16b, v2.16b}, v0.8b])
+- Bug report: bug_reports/encode_neon_tbx_nonsequential.md
 
 ```property
-function: encoder.encode_neon_ld_st_multi
+function: encoder.encode_neon_tbx
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, n_regs, t, rt, rn, load, bad]
-  domain: { n: structs_1_4, bad: illegal_post_imm }
-  body: encode_neon_ld_st_multi(list, mem_post(rn, bad), load, n).is_err()
+  vars: [dummy]
+  domain: { dummy: 0 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx([v0.8b, {v0.16b, v2.16b}, v0.8b])
 generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  load: { gen: bool }
+  dummy: { gen: int, min: 0, max: 0, type: u32 }
 expected_error: String
-evidence: src/backend/arm/assembler/README.md:235
+evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_ld_st_multi_neg_mem_offset
-- Tier: 4
-- Rationale: Sweep: `[Xn, #imm]` is not a valid multiple-structure addressing mode (llvm-mc rejects). SUT matches only Mem { offset: 0 }.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: encode_neon_ld_st_single_pbt.rs:664
-- Formal: ∀ valid inputs, off∈{1,4,8,-4,16}. encode_neon_ld_st_multi(RegList, Mem{Xn, off}, load, n) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_neon_tbx_neg_table_not_16b
+- Tier: 3
+- Rationale: ARM TBX table is .16B. Split from table_contract kind=3.
+- Doc contract: neon.rs:802 "Encode NEON TBX: table vector lookup with insert (preserves out-of-range lanes)" — asserted fingerprint e8e04215
+- Seed: neon.rs:7272 test_encode_neon_tbl_regression_table_not_16b
+- Formal: encode_neon_tbx with table arrangement 8b is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_tbx([v0.8b, {v0.8b}, v0.8b])
+- Bug report: bug_reports/encode_neon_tbx_table_not_16b.md
 
 ```property
-function: encoder.encode_neon_ld_st_multi
+function: encoder.encode_neon_tbx
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, n_regs, t, rt, rn, load, off]
-  domain: { n: structs_1_4, off: {1,4,8,-4,16} }
-  body: encode_neon_ld_st_multi(list, Mem{rn, off}, load, n).is_err()
+  vars: [dummy]
+  domain: { dummy: 0 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx([v0.8b, {v0.8b}, v0.8b])
 generators:
-  n: { gen: int, min: 1, max: 4, type: u32 }
-  n_regs: { gen: int, min: 1, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  load: { gen: bool }
+  dummy: { gen: int, min: 0, max: 0, type: u32 }
 expected_error: String
-evidence: src/backend/arm/assembler/encoder/neon.rs:1031
+evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_ld_st_multi_neg_1d_ldn
-- Tier: 4
-- Rationale: Sweep: llvm-mc rejects .1d for LD2/ST2/LD3/ST3/LD4/ST4 (only LD1/ST1 allow .1d). neon_arr_to_q_size accepts 1d for all n.
-- Doc contract: neon.rs:1007 "Common encoder for LD1/ST1 (multiple structures)" — asserted fingerprint 1717cd25
-- Seed: (none) — llvm-mc rejection of ld2 {v0.1d, v1.1d}, [x0]
-- Formal: ∀ n∈{2,3,4}, rt,rn,load. encode_neon_ld_st_multi(RegList({v.1d}×n), Mem[Xn], load, n) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ld_st_multi_pbt.rs
+## encode_neon_tbx_neg_mismatched_t
+- Tier: 3
+- Rationale: ARM TBX requires Vm.Ta = Vd.Ta. Split from arity_kinds mismatched-T arm.
+- Doc contract: neon.rs:802 "Encode NEON TBX: table vector lookup with insert (preserves out-of-range lanes)" — asserted fingerprint e8e04215
+- Seed: neon.rs:7317 test_encode_neon_tbl_regression_mismatched_t
+- Formal: encode_neon_tbx(Vd.8b, Vm.16b) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
 - Status: failing
-- Counterexample: n=2, rt=0, rn=0, load=false (st2 {v0.1d, v1.1d}, [x0] encodes)
-- Bug report: pbt-out/bug_reports/encode_neon_ld_st_multi_1d_ldn.md
+- Counterexample: encode_neon_tbx([v0.8b, {v0.16b}, v0.16b])
+- Bug report: bug_reports/encode_neon_tbx_mismatched_t.md
 
 ```property
-function: encoder.encode_neon_ld_st_multi
+function: encoder.encode_neon_tbx
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n, rt, rn, load]
-  domain: { n: {2,3,4}, rt: v0_31, rn: 0..30 }
-  body: encode_neon_ld_st_multi(reg_list(rt, n, "1d"), mem0(rn), load, n).is_err()
+  vars: [dummy]
+  domain: { dummy: 0 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx([v0.8b, {v0.16b}, v0.16b])
 generators:
-  n: { gen: int, min: 2, max: 4, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  load: { gen: bool }
+  dummy: { gen: int, min: 0, max: 0, type: u32 }
+expected_error: String
+evidence: src/backend/arm/assembler/README.md:12
+```
+
+## encode_neon_tbx_neg_bare_list_reg
+- Tier: 3
+- Rationale: Table members must be Vn.16B. Split from list_and_vm_kinds kind=0.
+- Doc contract: neon.rs:815 "tbx: expected register in list" — asserted fingerprint (none — inline error string)
+- Seed: neon.rs:7286 test_encode_neon_tbl_regression_bare_list_reg
+- Formal: encode_neon_tbx with bare Reg in the table list is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_tbx_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_tbx([v0.8b, RegList([Reg("v0")]), v0.8b])
+- Bug report: bug_reports/encode_neon_tbx_bare_list_reg.md
+
+```property
+function: encoder.encode_neon_tbx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [dummy]
+  domain: { dummy: 0 }
+  relation:
+    op: throws
+    expr: encode_neon_tbx([v0.8b, RegList([Reg("v0")]), v0.8b])
+generators:
+  dummy: { gen: int, min: 0, max: 0, type: u32 }
 expected_error: String
 evidence: src/backend/arm/assembler/README.md:12
 ```
