@@ -32,6 +32,8 @@ mod encode_neon_ins_pbt;
 mod encode_neon_umov_pbt;
 #[cfg(test)]
 mod encode_neon_ext_pbt;
+#[cfg(test)]
+mod encode_neon_movi_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

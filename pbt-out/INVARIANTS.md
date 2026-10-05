@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_neon_movi)
+
+- Valid MOVI Vd.T, #imm with T in {8b,16b,4h,8h} (no shift), T in {2s,4s} with LSL {0,8,16,24}, and T=2d with each byte 0x00 or 0xFF, v0–v31, imm8 0–255 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.
+- Changing only Rd differs only in bits[4:0] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff T in {16b,8h,4s,2d}, op at 29 = 1 iff T=2d, bits[28:24]=01111, bit23=0, bits[22:19]=0, abc at [18:16], cmode at [15:12], o2=0 at 11, bit10=1, defgh at [9:5], Rd at [4:0].
+- Arity 0–1 returns Err (1000 cases).
+- Illegal T, 2s/4s LSL amount not in {0,8,16,24}, and 2d bytes other than 0x00/0xFF return Err (1000 cases).
+- Known-answer: `movi v0.16b, #0` = 0x4f00e400; `movi v0.8b, #0` = 0x0f00e400; `movi v0.16b, #255` = 0x4f07e7e0; `movi v31.16b, #0xaa` = 0x4f05e55f; `movi v0.4s, #0` = 0x4f000400; `movi v0.4s, #1, lsl #8` = 0x4f002420; `movi v0.4s, #1, lsl #16` = 0x4f004420; `movi v0.4s, #1, lsl #24` = 0x4f006420; `movi v0.2s, #1` = 0x0f000420; `movi v0.8h, #1` = 0x4f008420; `movi v0.4h, #1` = 0x0f008420; `movi v0.2d, #0` = 0x6f00e400; `movi v0.2d, #-1` = 0x6f07e7e0; `movi v0.2d, #0xff00000000000000` = 0x6f04e400.
+- 4h/8h LSL #8, 2s/4s MSL, extra operands, and 8-bit imm outside [0,255] currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_movi)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. Range/error contract: aarch64-linux-gnu-as (README claims gas).
+- ARM ARM Advanced SIMD modified immediate (MOVI): 0 Q op 01111 00000 abc cmode o2 1 defgh Rd. T in {8B,16B,4H,8H,2S,4S,2D}. Q=1 iff T in {16B,8H,4S,2D}. op=1 iff T=2D. cmode 1110 (8B/16B/2D), 10x0 (H, x=shift/8), 0xx0 (S LSL, xx=shift/8), 110x (S MSL, x=(amount==16)).
+- Dispatch: encoder/mod.rs:687 `"movi" => encode_neon_movi`.
+- Sibling encode_neon_mvni is inverted immediate (op=1 on 2S/4S/4H/8H), not a same-job differential. It does implement MSL.
+- encode_neon_movi checks operands.len() < 2; extra ignored except 2s/4s LSL peek; imm8 via `imm as u32 & 0xFF`; 4h/8h hard-codes cmode=1000; non-lsl Shift on 2s/4s encodes as no-shift.
+- Parser lowercases arrangement; Shift tokens are lsl/lsr/asr/ror only (parser.rs:1885) — MSL is not produced by the parser.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. Co-generate (T, shift, imm) — 2d imm is expanded from 8 bits to 0x00/0xFF bytes.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (invalid T / illegal LSL amount / bad 2d byte).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_movi_*.md.
+
 # Confirmed invariants (encode_neon_ext)
 
 - Valid EXT Vd.T, Vn.T, Vm.T, #i with T in {8b,16b}, matching arrangements, i in [0, imax(T)], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.

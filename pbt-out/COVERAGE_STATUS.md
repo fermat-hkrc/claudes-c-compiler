@@ -1,7 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 10:23 (campaign: encode_neon_ext)
-> Files: 10/10 scanned (100%) | Functions: 109/289 total | PBT candidates: 109 | Tested: 109 (100%) | 1 pass, 108 fail
+> Last updated: 2026-10-05 (campaign: encode_neon_movi)
+> Files: 10/10 scanned (100%) | Functions: 110/289 total | PBT candidates: 110 | Tested: 110 (100%) | 1 pass, 109 fail
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED).
 
 ## Summary
 
@@ -10,10 +11,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 109 |
-| **Tested (of PBT candidates)** | **109 / 109 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 108 / 0 |
-| **Overall (tested / all functions)** | **109 / 289 (38%)** |
+| PBT candidates (from FUNCTION_INDEX) | 110 |
+| **Tested (of PBT candidates)** | **110 / 110 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 109 / 0 |
+| **Overall (tested / all functions)** | **110 / 289 (38%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,7 +22,7 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 109 | 109 | 0 | 100% |
+|  | 110 | 110 | 0 | 100% |
 
 ## Oracle Type Distribution
 
@@ -40,7 +41,7 @@
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 24 | 24 | 100% | covered |
+| neon.rs | 68 | 25 | 25 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -158,3 +159,5 @@
 | encode_neon_tbx | neon.rs |
 | encode_neon_ins | neon.rs |
 | encode_neon_umov | neon.rs |
+| encode_neon_ext | neon.rs |
+| encode_neon_movi | neon.rs |
