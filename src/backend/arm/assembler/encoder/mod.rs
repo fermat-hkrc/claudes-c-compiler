@@ -98,6 +98,8 @@ mod encode_neon_fcvtl_pbt;
 mod encode_neon_fcvtn_pbt;
 #[cfg(test)]
 mod encode_neon_bitwise_insert_pbt;
+#[cfg(test)]
+mod encode_neon_faddp_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

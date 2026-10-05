@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_neon_faddp)
+
+- Valid vector FADDP Vd.T, Vn.T, Vm.T with T in {2s,4s,2d}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Valid scalar FADDP Sd, Vn.2S and FADDP Dd, Vn.2D matches llvm-mc (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; only Rm in bits[20:16] (1000 cases).
+- Success-path vector word: bit31=0, Q/sz from dest T (2s=0/0, 4s=1/0, 2d=1/1), U=1, bits[28:24]=01110, bit21=1, Rm at [20:16], bits[15:10]=110101, Rn at [9:5], Rd at [4:0].
+- Success-path scalar word: bits[31:24]=01111110, sz at bit22, bits[21:17]=11000, bits[16:12]=01101, bits[11:10]=10, Rn at [9:5], Rd at [4:0].
+- Invalid T (8b/16b/4h/8h/1d/…) returns Err (1000 cases).
+- Arity 0–1 returns Err (1000 cases).
+- Uppercase V prefix with lowercase T matches llvm-mc (1000 cases).
+- Known-answer: `faddp v0.2s, v1.2s, v2.2s` = 0x2e22d420; `faddp v0.4s, v1.4s, v2.4s` = 0x6e22d420; `faddp v0.2d, v1.2d, v2.2d` = 0x6e62d420; `faddp s0, v1.2s` = 0x7e30d820; `faddp d0, v1.2d` = 0x7e70d820; `faddp v31.2s, v31.2s, v31.2s` = 0x2e3fd7ff.
+- Extra operand, mismatched T, and scalar dest-size mismatch currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_faddp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD three-same FADDP: 0 Q 1 01110 0 sz 1 Rm 110101 Rn Rd. T in {2S,4S,2D}. Q/sz = 0/0 2S, 1/0 4S, 1/1 2D.
+- ARM SISD FADDP: 01 1 11110 0 sz 11000 01101 10 Rn Rd. Sd+Vn.2S (sz=0) or Dd+Vn.2D (sz=1).
+- Dispatch: encoder/mod.rs:758 `"faddp" => encode_neon_faddp(operands)`.
+- Sibling encode_neon_float_three_same / encode_neon_scalar_addp are different opcodes, not same-job differentials.
+- encode_neon_faddp uses operands.len() >= 3 for vector (no max); source arrangements discarded; scalar dest is any Operand::Reg accepted by parse_reg_num.
+- get_neon_reg accepts Operand::Reg; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (uppercase V alt-spellings).
+- Three failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_faddp_*.md.
+
 # Confirmed invariants (encode_neon_bitwise_insert)
 
 - Valid BIT/BIF Vd.T, Vn.T, Vm.T with T in {8b,16b}, size in {0b10,0b11}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

@@ -1,286 +1,275 @@
-# Properties: encode_neon_bitwise_insert
+# Properties: encode_neon_faddp
 
-## encode_neon_bitwise_insert_diff_llvm_mc
-- Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree BIT/BIF decoder). Sibling encode_neon_bsl / encode_neon_bic rejected (same-job gate: different three-same opcodes). README.md:12 claims gas-compatible textual assembly; encoder/mod.rs:3 claims 32-bit AArch64 words. llvm-mc is the independent reference for that contract.
-- Doc contract: neon.rs:1664 "Encodes BIT (size=10) and BIF (size=11) instructions." — asserted fingerprint 2d3adf7e
+## encode_neon_faddp_diff_llvm_mc_vector
+- Tier: 2
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the documented vector domain FADDP Vd.T, Vn.T, Vm.T with T in {2s,4s,2d}. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree FADDP decoder). Sibling encode_neon_float_three_same rejected (same-job gate: FADD vs pairwise FADDP, different opcode). Doc evidence: README.md:12 gas-compatible assembly; README.md:226 lists faddp; neon.rs:1682 vector form.
+- Doc contract: neon.rs:1682 "Vector form: FADDP Vd.T, Vn.T, Vm.T" — asserted fingerprint 69be30d9
 - Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_diff_llvm_mc
-- Formal: ∀ rd,rn,rm ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}. encode_neon_bitwise_insert([Vd.t, Vn.t, Vm.t], size) = llvm-mc(mnem(size) " Vd.t, Vn.t, Vm.t") where mnem(0b10)=bit and mnem(0b11)=bif
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}. encode_neon_faddp([Vd.T, Vn.T, Vm.T]) = Word(w) ∧ w = llvm-mc("faddp Vd.T, Vn.T, Vm.T")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_bitwise_insert
+function: encoder.encode_neon_faddp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, size]
-  domain: { rd: v0..v31, rn: v0..v31, rm: v0..v31, t: {8b,16b}, size: {0b10,0b11} }
+  vars: [rd, rn, rm, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: {2s,4s,2d} }
   relation:
     op: eq
-    lhs: encode_neon_bitwise_insert([arr(rd,t), arr(rn,t), arr(rm,t)], size)
-    rhs: llvm_mc(mnem(size) + " v" + rd + "." + t + ", v" + rn + "." + t + ", v" + rm + "." + t)
+    lhs: encode_neon_faddp([arr(rd,t), arr(rn,t), arr(rm,t)])
+    rhs: llvm_mc("faddp v{rd}.{t}, v{rn}.{t}, v{rm}.{t}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
+  t: { gen: element, of: ["2s", "4s", "2d"] }
 evidence: src/backend/arm/assembler/README.md:12
 ```
 
-## encode_neon_bitwise_insert_meta_rd_rn_rm_size
-- Tier: 4
-- Rationale: Metamorphic isolation of Rd/Rn/Rm/size. Stronger differential is the primary property; this checks field packing independently of llvm-mc. Changing only Rd (resp. Rn, Rm, size) must XOR only bits[4:0] (resp. bits[9:5], bits[20:16], bits[23:22]).
-- Doc contract: neon.rs:1666 "Format: 0 Q 1 01110 ss 1 Rm 000111 Rn Rd" — asserted fingerprint ee9c3e91
-- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_meta_rd_rn_rm
-- Formal: ∀ rd,rd2,rn,rn2,rm,rm2 ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size,size2 ∈ {0b10,0b11}. let w = encode_neon_bitwise_insert([Vd.t,Vn.t,Vm.t], size). (w ⊕ encode([Vd2.t,Vn.t,Vm.t], size)) & ~0x1F = 0 ∧ (w ⊕ encode([Vd.t,Vn2.t,Vm.t], size)) & ~(0x1F<<5) = 0 ∧ (w ⊕ encode([Vd.t,Vn.t,Vm2.t], size)) & ~(0x1F<<16) = 0 ∧ (w ⊕ encode([Vd.t,Vn.t,Vm.t], size2)) & ~(0b11<<22) = 0
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
+## encode_neon_faddp_diff_llvm_mc_scalar
+- Tier: 2
+- Rationale: Documented scalar form FADDP Sd, Vn.2S / FADDP Dd, Vn.2D must agree with llvm-mc. Same stronger-oracle rejection chain as the vector differential. Doc evidence: neon.rs:1684.
+- Doc contract: neon.rs:1684 "Scalar form: FADDP Sd, Vn.2S  or FADDP Dd, Vn.2D" — asserted fingerprint edfd218d
+- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_diff_llvm_mc
+- Formal: ∀ rd,rn ∈ {0..31}, (dest,T) ∈ {(s,2s),(d,2d)}. encode_neon_faddp([Reg(dest rd), Vn.T]) = Word(w) ∧ w = llvm-mc("faddp {dest}rd, Vn.T")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_bitwise_insert
+function: encoder.encode_neon_faddp
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rn, dest, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, (dest,t): {(s,2s),(d,2d)} }
+  relation:
+    op: eq
+    lhs: encode_neon_faddp([Reg(dest rd), arr(rn,t)])
+    rhs: llvm_mc("faddp {dest}{rd}, v{rn}.{t}")
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  dest: { gen: element, of: ["s", "d"] }
+evidence: src/backend/arm/assembler/encoder/neon.rs:1684
+```
+
+## encode_neon_faddp_meta_rd_rn_rm
+- Tier: 3
+- Rationale: ARM three-same layout isolates Rd[4:0], Rn[9:5], Rm[20:16]. Changing one register must differ only in that field. Weaker than differential (already used for value agreement) but independently checks field placement. Doc evidence: neon.rs:1683.
+- Doc contract: neon.rs:1683 "Format: 0 Q 1 01110 0 sz 1 Rm 110101 Rn Rd" — asserted fingerprint 9590c88c
+- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_meta_rd_rn_rm
+- Formal: ∀ rd1,rd2,rn1,rn2,rm1,rm2 ∈ {0..31}, T ∈ {2s,4s,2d}. let w(rd,rn,rm)=encode_neon_faddp([Vd.T,Vn.T,Vm.T]). (w(rd1,rn1,rm1) ⊕ w(rd2,rn1,rm1)) ∧ ¬0x1F = 0 ∧ w&0x1F=rd; (w(rd1,rn1,rm1) ⊕ w(rd1,rn2,rm1)) ∧ ¬(0x1F<<5) = 0; (w(rd1,rn1,rm1) ⊕ w(rd1,rn1,rm2)) ∧ ¬(0x1F<<16) = 0
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_neon_faddp
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rd2, rn, rn2, rm, rm2, t, size, size2]
-  domain: { rd,rd2,rn,rn2,rm,rm2: v0..v31, t: {8b,16b}, size,size2: {0b10,0b11} }
+  vars: [rd1, rd2, rn1, rn2, rm1, rm2, t]
+  domain: { rd1: u32_0_31, rd2: u32_0_31, rn1: u32_0_31, rn2: u32_0_31, rm1: u32_0_31, rm2: u32_0_31, t: {2s,4s,2d} }
   relation:
     op: holds
-    expr: "((sut_word(ops3(rd,rn,rm,t), size) ^ sut_word(ops3(rd2,rn,rm,t), size)) & !0x1F) == 0"
+    expr: "((sut_word(&[arr(rd1,t),arr(rn1,t),arr(rm1,t)])? ^ sut_word(&[arr(rd2,t),arr(rn1,t),arr(rm1,t)])?) & !0x1Fu32) == 0"
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rn1: { gen: int, min: 0, max: 31, type: u32 }
   rn2: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
+  rm1: { gen: int, min: 0, max: 31, type: u32 }
   rm2: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
-  size2: { gen: int, min: 2, max: 3, type: u32 }
-evidence: neon.rs:1666
+  t: { gen: element, of: ["2s", "4s", "2d"] }
+evidence: src/backend/arm/assembler/encoder/neon.rs:1683
 ```
 
-## encode_neon_bitwise_insert_inv_arm_layout
-- Tier: 4
-- Rationale: ARM Advanced SIMD three-same layout invariant. BIT/BIF share BSL's format with size=10/11 instead of 01. Weaker than differential; pins bit fields even if llvm-mc is unavailable. Format cited at neon.rs:1666.
-- Doc contract: neon.rs:1666 "Format: 0 Q 1 01110 ss 1 Rm 000111 Rn Rd" — asserted fingerprint ee9c3e91
+## encode_neon_faddp_inv_layout
+- Tier: 3
+- Rationale: Documented ARM bit layout for vector (0 Q 1 01110 0 sz 1 Rm 110101 Rn Rd) and scalar (01 1 11110 0 sz 11000 01101 10 Rn Rd) must hold exactly, including Q/sz for each T. Doc evidence: neon.rs:1683 and neon.rs:1685.
+- Doc contract: neon.rs:1683 "Format: 0 Q 1 01110 0 sz 1 Rm 110101 Rn Rd" — asserted fingerprint 9590c88c
 - Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_inv_layout
-- Formal: ∀ rd,rn,rm ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}. let w = encode_neon_bitwise_insert(...). bit31(w)=0 ∧ Q(w)=(t==16b) ∧ U(w)=1 ∧ bits[28:24]=01110 ∧ size(w)=size ∧ bit21=1 ∧ Rm=rm ∧ bits[15:10]=000111 ∧ Rn=rn ∧ Rd=rd ∧ (w8 ⊕ w16) = 1<<30
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}. encode_neon_faddp([Vd.T,Vn.T,Vm.T]) = Word(ARM_FADDP_VEC(rd,rn,rm,T)). ∀ rd,rn ∈ {0..31}, (sz,T) ∈ {(0,2s),(1,2d)}. encode_neon_faddp([Reg(s|d rd), Vn.T]) = Word(ARM_FADDP_SISD(rd,rn,sz))
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_bitwise_insert
+function: encoder.encode_neon_faddp
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, size]
-  domain: { rd,rn,rm: v0..v31, t: {8b,16b}, size: {0b10,0b11} }
+  vars: [rd, rn, rm, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: {2s,4s,2d} }
   relation:
     op: eq
-    lhs: encode_neon_bitwise_insert([arr(rd,t), arr(rn,t), arr(rm,t)], size)
-    rhs: arm_bit_bif_word(rd, rn, rm, t, size)
+    lhs: encode_neon_faddp([arr(rd,t), arr(rn,t), arr(rm,t)])
+    rhs: arm_faddp_vec(rd, rn, rm, t)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
-evidence: neon.rs:1666
+  t: { gen: element, of: ["2s", "4s", "2d"] }
+evidence: src/backend/arm/assembler/encoder/neon.rs:1683
 ```
 
-## encode_neon_bitwise_insert_neg_arity
+## encode_neon_faddp_neg_extra
 - Tier: 3
-- Rationale: Documented arity floor. neon.rs:1669 returns Err when operands.len() < 3. llvm-mc also rejects fewer than 3 operands. Negative/error contract; stronger oracles do not apply on the invalid-arity domain.
-- Doc contract: neon.rs:1669 "bit/bif requires 3 operands" — domain-restriction fingerprint 1f2376df
-- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_neg_arity
-- Formal: ∀ n ∈ {0,1,2}, ∀ rd ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}. encode_neon_bitwise_insert(ops[0..n], size) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_neon_bitwise_insert
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, rd, t, size]
-  domain: { n: 0..2, rd: v0..v31, t: {8b,16b}, size: {0b10,0b11} }
-  relation:
-    op: holds
-    expr: "encode_neon_bitwise_insert(ops_prefix(n, rd, t), size).is_err()"
-generators:
-  n: { gen: int, min: 0, max: 2, type: usize }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
-expected_error: String
-evidence: neon.rs:1669
-```
-
-## encode_neon_bitwise_insert_neg_extra
-- Tier: 3
-- Rationale: llvm-mc/gas reject a fourth operand for BIT/BIF. README.md:12 gas-compatible assembler. The SUT only checks len < 3 (no maximum). Negative/error vs llvm-mc rejection.
-- Doc contract: neon.rs:1664 "Encodes BIT (size=10) and BIF (size=11) instructions." — asserted fingerprint 2d3adf7e
+- Rationale: Documented arity is 2 or 3 operands (neon.rs:1718 "faddp requires 2 or 3 operands"; vector form is three operands; llvm-mc rejects a fourth). The SUT uses `operands.len() >= 3` with no maximum, so this is the documented error contract. Doc evidence: neon.rs:1718; README.md:12 gas compatibility (gas/llvm-mc reject extra).
+- Doc contract: neon.rs:1718 "faddp requires 2 or 3 operands" — domain-restriction fingerprint 9f4f4026
 - Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_neg_extra
-- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}. llvm-mc(mnem size four-ops) is Err ⇒ encode_neon_bitwise_insert([Vd.t,Vn.t,Vm.t,Vextra.t], size) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
+- Formal: ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ {2s,4s,2d}. llvm-mc rejects "faddp Vd.T, Vn.T, Vm.T, Vextra.T" ⇒ encode_neon_faddp([Vd.T,Vn.T,Vm.T,Vextra.T]) is Err. Also ∀ n ∈ {0,1}. encode_neon_faddp(ops with n operands) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, extra=0, t="8b", size=0b10 — encode_neon_bitwise_insert([v0.8b,v0.8b,v0.8b,v0.8b], 0b10) = Ok(Word(0x2ea01c00))
-- Bug report: pbt-out/bug_reports/encode_neon_bitwise_insert_extra_operand.md
+- Counterexample: encode_neon_faddp([v0.2s, v0.2s, v0.2s, v0.2s])
+- Bug report: bug_reports/encode_neon_faddp_extra_operand.md
 
 ```property
-function: encoder.encode_neon_bitwise_insert
+function: encoder.encode_neon_faddp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, extra, t, size]
-  domain: { rd,rn,rm,extra: v0..v31, t: {8b,16b}, size: {0b10,0b11} }
+  vars: [rd, rn, rm, extra, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, extra: u32_0_31, t: {2s,4s,2d} }
   relation:
-    op: holds
-    expr: "encode_neon_bitwise_insert([arr(rd,t), arr(rn,t), arr(rm,t), arr(extra,t)], size).is_err()"
+    op: throws
+    expr: encode_neon_faddp(&[arr(rd,t), arr(rn,t), arr(rm,t), arr(extra,t)])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
+  t: { gen: element, of: ["2s", "4s", "2d"] }
 expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
+evidence: src/backend/arm/assembler/encoder/neon.rs:1718
 ```
 
-## encode_neon_bitwise_insert_neg_invalid_t
+## encode_neon_faddp_neg_invalid_t
 - Tier: 3
-- Rationale: ARM Advanced SIMD three-same BIT/BIF only allow T in {8B,16B}. llvm-mc rejects 4h/8h/2s/4s/2d/1d. README.md:12 gas-compatible. Negative/error vs llvm-mc.
-- Doc contract: neon.rs:1664 "Encodes BIT (size=10) and BIF (size=11) instructions." — asserted fingerprint 2d3adf7e
+- Rationale: ARM/docs restrict vector T to {2S,4S,2D}; llvm-mc rejects 8b/16b/4h/8h/1d/etc (4h/8h need fullfp16, not claimed). Doc evidence: neon.rs:1682 vector form; README.md:12.
+- Doc contract: neon.rs:1682 "Vector form: FADDP Vd.T, Vn.T, Vm.T" — asserted fingerprint 69be30d9
 - Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_neg_invalid_t
-- Formal: ∀ rd,rn,rm ∈ {0..31}, ∀ t ∈ {4h,8h,2s,4s,2d,1d,4b,8d,2h,1s}, ∀ size ∈ {0b10,0b11}. llvm-mc rejects mnem Vd.t,Vn.t,Vm.t ⇒ encode_neon_bitwise_insert([Vd.t,Vn.t,Vm.t], size) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, t="4h", size=0b10 — encode_neon_bitwise_insert([v0.4h,v0.4h,v0.4h], 0b10) = Ok(Word) (Q=0 as if 8b)
-- Bug report: pbt-out/bug_reports/encode_neon_bitwise_insert_invalid_t.md
-
-```property
-function: encoder.encode_neon_bitwise_insert
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, t, size]
-  domain: { rd,rn,rm: v0..v31, t: invalid ARM T, size: {0b10,0b11} }
-  relation:
-    op: holds
-    expr: "encode_neon_bitwise_insert([arr(rd,t), arr(rn,t), arr(rm,t)], size).is_err()"
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:224
-```
-
-## encode_neon_bitwise_insert_neg_mismatch_t
-- Tier: 3
-- Rationale: llvm-mc/gas require matching T on Vd, Vn, Vm. README.md:12 gas-compatible. Negative/error vs llvm-mc.
-- Doc contract: neon.rs:1664 "Encodes BIT (size=10) and BIF (size=11) instructions." — asserted fingerprint 2d3adf7e
-- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_neg_mismatch_t
-- Formal: ∀ rd,rn,rm ∈ {0..31}, ∀ td,tn,tm ∈ {8b,16b} not all equal, ∀ size ∈ {0b10,0b11}. llvm-mc rejects mismatched T ⇒ encode_neon_bitwise_insert([Vd.td,Vn.tn,Vm.tm], size) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, td="16b", tn="8b", tm="8b", size=0b10 — encode_neon_bitwise_insert([v0.16b,v0.8b,v0.8b], 0b10) = Ok(Word) (Q from dest only)
-- Bug report: pbt-out/bug_reports/encode_neon_bitwise_insert_mismatch_t.md
-
-```property
-function: encoder.encode_neon_bitwise_insert
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, td, tn, tm, size]
-  domain: { rd,rn,rm: v0..v31, td,tn,tm: {8b,16b}, size: {0b10,0b11} }
-  relation:
-    op: holds
-    expr: "encode_neon_bitwise_insert([arr(rd,td), arr(rn,tn), arr(rm,tm)], size).is_err()"
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  td: { gen: string }
-  tn: { gen: string }
-  tm: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_bitwise_insert_neg_gpr_bare_sp
-- Tier: 3
-- Rationale: llvm-mc/gas require arranged NEON Vd.T / Vn.T / Vm.T. GPR, SP, bare V, scalar FP (d/s/q) are rejected. README.md:12 gas-compatible. Negative/error vs llvm-mc.
-- Doc contract: neon.rs:1664 "Encodes BIT (size=10) and BIF (size=11) instructions." — asserted fingerprint 2d3adf7e
-- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_neg_gpr_bare_sp
-- Formal: ∀ rd,rn,rm ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}, ∀ kind ∈ {x-gpr, w-dest, sp, bare-v, d-scalar, s-dest, q-dest}. llvm-mc rejects that form ⇒ encode_neon_bitwise_insert(ops(kind), size) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
-- Status: failing
-- Counterexample: rd=0, rn=0, rm=0, t="8b", size=0b10, kind=0 — encode_neon_bitwise_insert([x0,x0,x0], 0b10) = Ok(Word)
-- Bug report: pbt-out/bug_reports/encode_neon_bitwise_insert_gpr_bare_sp.md
-
-```property
-function: encoder.encode_neon_bitwise_insert
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, t, size, kind]
-  domain: { rd,rn,rm: v0..v31, t: {8b,16b}, size: {0b10,0b11}, kind: gpr/sp/bare/fp }
-  relation:
-    op: holds
-    expr: "encode_neon_bitwise_insert(ops_kind(kind, rd, rn, rm, t), size).is_err()"
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
-  kind: { gen: int, min: 0, max: 6, type: u8 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_neon_bitwise_insert_diff_alt_spellings
-- Tier: 5
-- Rationale: Sweep — GNU as / llvm-mc accept uppercase V register names. parse_reg_num lowercases. Differential vs llvm-mc on uppercase Vd.T. Documented gas-compatible assembly (README.md:12).
-- Doc contract: neon.rs:1664 "Encodes BIT (size=10) and BIF (size=11) instructions." — asserted fingerprint 2d3adf7e
-- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_diff_alt_spellings
-- Formal: ∀ rd,rn,rm ∈ {0..31}, ∀ t ∈ {8b,16b}, ∀ size ∈ {0b10,0b11}. encode_neon_bitwise_insert([V{rd}.t, V{rn}.t, V{rm}.t], size) = llvm-mc(mnem(size) " Vd.t, Vn.t, Vm.t")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_bitwise_insert_pbt.rs
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∉ {2s,4s,2d} ∧ T ∈ NEON_ARR. llvm-mc rejects "faddp Vd.T, Vn.T, Vm.T" ⇒ encode_neon_faddp([Vd.T,Vn.T,Vm.T]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_bitwise_insert
-oracle: differential
+function: encoder.encode_neon_faddp
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, t, size]
-  domain: { rd: v0..v31, rn: v0..v31, rm: v0..v31, t: {8b,16b}, size: {0b10,0b11} }
+  vars: [rd, rn, rm, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: invalid_t }
   relation:
-    op: eq
-    lhs: encode_neon_bitwise_insert([arr_upper(rd,t), arr_upper(rn,t), arr_upper(rm,t)], size)
-    rhs: llvm_mc(mnem(size) + " V" + rd + "." + t + ", V" + rn + "." + t + ", V" + rm + "." + t)
+    op: throws
+    expr: encode_neon_faddp(&[arr(rd,t), arr(rn,t), arr(rm,t)])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: string }
-  size: { gen: int, min: 2, max: 3, type: u32 }
+  t: { gen: element, of: ["8b", "16b", "4h", "8h", "1d", "1s", "4d", "2h", "1q"] }
+expected_error: String
+evidence: src/backend/arm/assembler/encoder/neon.rs:1682
+```
+
+## encode_neon_faddp_neg_mismatch_t
+- Tier: 3
+- Rationale: Documented vector form uses one T for Vd, Vn, Vm; llvm-mc/gas reject mismatched arrangements. Doc evidence: neon.rs:1682 "FADDP Vd.T, Vn.T, Vm.T"; README.md:12.
+- Doc contract: neon.rs:1682 "Vector form: FADDP Vd.T, Vn.T, Vm.T" — asserted fingerprint 69be30d9
+- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_neg_mismatch_t
+- Formal: ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ {2s,4s,2d}. ¬(Td=Tn=Tm) ∧ llvm-mc rejects "faddp Vd.Td, Vn.Tn, Vm.Tm" ⇒ encode_neon_faddp([Vd.Td,Vn.Tn,Vm.Tm]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_faddp([v0.2d, v0.2s, v0.2s])
+- Bug report: bug_reports/encode_neon_faddp_mismatch_t.md
+
+```property
+function: encoder.encode_neon_faddp
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, td, tn, tm]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, td: {2s,4s,2d}, tn: {2s,4s,2d}, tm: {2s,4s,2d}, not_all_equal: true }
+  relation:
+    op: throws
+    expr: encode_neon_faddp(&[arr(rd,td), arr(rn,tn), arr(rm,tm)])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  td: { gen: element, of: ["2s", "4s", "2d"] }
+  tn: { gen: element, of: ["2s", "4s", "2d"] }
+  tm: { gen: element, of: ["2s", "4s", "2d"] }
+expected_error: String
+evidence: src/backend/arm/assembler/encoder/neon.rs:1682
+```
+
+## encode_neon_faddp_neg_gpr_bare_scalar_dest
+- Tier: 3
+- Rationale: Vector FADDP requires arranged V registers; scalar FADDP requires Sd+Vn.2S or Dd+Vn.2D (neon.rs:1684). GPR, SP, bare V, and dest/source size mismatches are rejected by llvm-mc/gas. Doc evidence: neon.rs:1682, neon.rs:1684, README.md:12.
+- Doc contract: neon.rs:1684 "Scalar form: FADDP Sd, Vn.2S  or FADDP Dd, Vn.2D" — asserted fingerprint edfd218d
+- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_neg_gpr_bare_sp
+- Formal: ∀ inputs in {GPR triple, W dest + vector, SP dest, bare V triple, D dest + Vn.2S, S dest + Vn.2D, X dest + Vn.2S, S dest + Vn.4S}. llvm-mc rejects asm ⇒ encode_neon_faddp(ops) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
+- Status: failing
+- Counterexample: encode_neon_faddp([Reg("d0"), v0.2s])
+- Bug report: bug_reports/encode_neon_faddp_scalar_dest_size.md
+
+```property
+function: encoder.encode_neon_faddp
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, kind]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, kind: 0..7 }
+  relation:
+    op: throws
+    expr: encode_neon_faddp(&ops_for(kind, rd, rn, rm))
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  kind: { gen: int, min: 0, max: 7, type: u8 }
+expected_error: String
+evidence: src/backend/arm/assembler/encoder/neon.rs:1684
+```
+
+## encode_neon_faddp_diff_alt_spellings
+- Tier: 2
+- Rationale: Sweep property: GNU-style assembly is case-insensitive on V-register prefixes (README.md:12). Uppercase Vd.T must agree with llvm-mc. Same differential oracle as the vector property.
+- Doc contract: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint f00ab438
+- Seed: encode_neon_bsl_pbt.rs:encode_neon_bsl_diff_alt_spellings
+- Formal: ∀ rd,rn,rm ∈ {0..31}, T ∈ {2s,4s,2d}. encode_neon_faddp([V{rd}.T, V{rn}.T, V{rm}.T]) = Word(w) ∧ w = llvm-mc("faddp Vrd.T, Vrn.T, Vrm.T")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_faddp_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_neon_faddp
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, t]
+  domain: { rd: u32_0_31, rn: u32_0_31, rm: u32_0_31, t: {2s,4s,2d} }
+  relation:
+    op: eq
+    lhs: encode_neon_faddp([arr_upper(rd,t), arr_upper(rn,t), arr_upper(rm,t)])
+    rhs: llvm_mc("faddp V{rd}.{t}, V{rn}.{t}, V{rm}.{t}")
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  t: { gen: element, of: ["2s", "4s", "2d"] }
 evidence: src/backend/arm/assembler/README.md:12
 ```
