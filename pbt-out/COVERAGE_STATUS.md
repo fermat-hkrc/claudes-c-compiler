@@ -1,8 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_mls, English)
-> Files: 10/10 scanned (100%) | Functions: 132/289 total | PBT candidates: 132 | Tested: 132 (100%) | 0 pass, 132 fail
-> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw; C++ reporter claimed encode_neon_mls NOT LINKED. Cargo test --lib encode_neon_mls executed the real symbol.
+> Last updated: 2026-10-05 (campaign: encode_neon_three_same, English)
+> Files: 10/10 scanned (100%) | Functions: 133/289 total | PBT candidates: 133 | Tested: 133 | encode_neon_three_same: 5 pass / 5 fail properties, 5 bugs
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw; C++ reporter claimed NOT LINKED. Manual arm audit: arity / get_neon_reg / neon_arr_to_q_size / Ok Word driven.
 
 ## Summary
 
@@ -28,7 +28,7 @@
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 131 | 131 | 0 | 100% |
+| unknown | 132 | 132 | 0 | 100% |
 
 ## File Coverage
 
@@ -41,7 +41,7 @@
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 46 | 46 | 100% | covered |
+| neon.rs | 68 | 47 | 47 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -182,3 +182,4 @@
 | encode_neon_mul | neon.rs |
 | encode_neon_pmul | neon.rs |
 | encode_neon_mla | neon.rs |
+| encode_neon_mls | neon.rs |

@@ -1,143 +1,168 @@
-# PBT Campaign Report: encode_neon_mls
+# PBT Campaign Report: encode_neon_three_same
 
 ## Summary
 
-**Verdict:** 4 medium: encode_neon_mls silently encodes extra operands, mismatched T, reserved .1d/.2d, and bare/GPR registers that llvm-mc/gas reject, so invalid GNU-style MLS assembles instead of failing.
+**Verdict:** 5 medium: encode_neon_three_same silently encodes invalid GNU three-same assembly — extra operands, mismatched T, reserved `.1d`, bare Vn, and GPR dest `x0.8b` — so the assembler emits a word llvm-mc rejects.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_mls
-**Tests:** 10 properties (plus 1 KAT + 6 regression witnesses)
-**Result:** 6 passing, 4 failing (4 bugs)
-**Change surface:** 1 changed function (encode_neon_mls), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_neon_mls NOT LINKED). The cargo test --lib encode_neon_mls run executed the real symbol; sweep was a manual arm audit plus reserved-T and nonreg properties.
+**Modules tested:** encode_neon_three_same
+**Tests:** 10 properties + 1 KAT + 5 regression witnesses
+**Result:** 5 passing, 5 failing properties, 5 bugs
+**Change surface:** 1 changed function (encode_neon_three_same), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of encode_neon_three_same: arity < 3, get_neon_reg dest/src, neon_arr_to_q_size, Ok Word all driven. Recorded as file-level because native line coverage was absent.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_mls | 10 properties (6 pass / 4 fail) + 1 KAT + 6 regressions | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_three_same | 10 properties (5 pass / 5 fail) + 1 KAT + 5 regressions | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_mls ignores a fourth operand
+### B1: encode_neon_three_same ignores a fourth operand
 
-**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, t ∈ {8b,16b,4h,8h,2s,4s}. llvm-mc rejects 4-operand mls ⇒ encode_neon_mls([Vd.t,Vn.t,Vm.t,Vextra.t]) is Err
-**Contract evidence:** documented neon.rs:361 "Encode NEON MLS Vd.T, Vn.T, Vm.T (multiply-subtract)" — three operands; assembler README.md:12 gas-compatible
+**Formal:** ∀ rd,rn,rm,extra ∈ {0..31}, T ∈ three_same_t, insn ∈ InsnTable. llvm-mc(mnemonic Vd.T,Vn.T,Vm.T,Vextra.T) = Err ⇒ encode_neon_three_same([Vd.T,Vn.T,Vm.T,Vextra.T], U, opcode) = Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembler; llvm-mc rejects a fourth operand; documented layout is three registers)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_mls([v0.8b, v0.8b, v0.8b, v0.8b])
-**Expected / Actual:** Err / Ok(Word(0x2e209400))
-**Impact:** Invalid assembly `mls Vd.T, Vn.T, Vm.T, Vextra.T` is assembled as if the extra register were absent
-**Root cause:** neon.rs:369 returns Ok without checking operands.len(); get_neon_reg only reads indices 0..2
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:369`
+**Counterexample:** encode_neon_three_same([v0.8b, v0.8b, v0.8b, v0.8b], u=1, opcode=0b10001) then `cmeq v0.8b, v0.8b, v0.8b, v0.8b`
+**Expected / Actual:** Err / Ok(Word) for the first three operands
+**Impact:** Invalid assembly is assembled; extra operands are dropped.
+**Root cause:** neon.rs:66 checks only `operands.len() < 3`, so slots beyond index 2 are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:66`
 ```rust
-    Ok(EncodeResult::Word(word))
+    if operands.len() < 3 {
+        return Err("NEON three-same requires 3 operands".to_string());
+    }
 ```
-**Suggested fix:** Reject any operand count other than 3
+**Suggested fix:** Reject `operands.len() != 3`.
 ```rust
-if operands.len() != 3 {
-    return Err("mls requires 3 operands".to_string());
-}
+    if operands.len() != 3 {
+        return Err("NEON three-same requires 3 operands".to_string());
+    }
 ```
-**Bug report:** bug_reports/encode_neon_mls_extra_operand.md
-**Repro seed:** rd=0, rn=0, rm=0, extra=0, t=8b
+**Bug report:** bug_reports/encode_neon_three_same_extra_operand.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:303:1:
-Test failed: 4 operands must Err (llvm-mc rejects mls v0.8b, v0.8b, v0.8b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:322.
-minimal failing input: rd = 0, rn = 0, rm = 0, extra = 0, t = "8b"
+thread '...test_encode_neon_three_same_regression_extra_operand' panicked at encode_neon_three_same_pbt.rs:489:5:
+cmeq v0.8b, v0.8b, v0.8b, v0.8b must Err (gas/llvm-mc reject a fourth operand)
 ```
 
-### B2: encode_neon_mls ignores source arrangement mismatch
+### B2: encode_neon_three_same ignores source arrangements
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, td,tn,tm ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}. ¬(valid_mls(td) ∧ td=tn=tm) ∧ llvm-mc rejects ⇒ encode_neon_mls([Vd.td,Vn.tn,Vm.tm]) is Err
-**Contract evidence:** documented neon.rs:361 "Encode NEON MLS Vd.T, Vn.T, Vm.T (multiply-subtract)" — same T on all three
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, Td,Tn,Tm ∈ Arr ∪ {1d,1q}, insn ∈ InsnTable. ¬(valid_T(Td) ∧ Td=Tn=Tm) ⇒ encode_neon_three_same([Vd.Td,Vn.Tn,Vm.Tm], U, opcode) = Err
+**Contract evidence:** inferred (ARM three-same matching T; README.md:12; llvm-mc rejects `cmeq v0.8b, v0.16b, v0.8b`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_mls([v0.8b, v0.16b, v0.8b])
-**Expected / Actual:** Err / Ok(Word(0x2e209400))
-**Impact:** A width typo such as `mls v0.8b, v0.16b, v0.8b` assembles as dest-only 8B MLS instead of failing
-**Root cause:** neon.rs:363 discards Vn arrangement (`_`); only dest arr_d is passed to neon_arr_to_q_size
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:363`
+**Counterexample:** encode_neon_three_same([v0.8b, v0.16b, v0.8b], u=1, opcode=0b10001)
+**Expected / Actual:** Err / Ok(Word) using dest T only
+**Impact:** Mismatched T encodes as if all three matched Vd.T.
+**Root cause:** neon.rs:70-71 bind `_arr_n` / `_arr_m` and never compare them to `arr_d`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:70`
 ```rust
-    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rn, _arr_n) = get_neon_reg(operands, 1)?;
+    let (rm, _arr_m) = get_neon_reg(operands, 2)?;
 ```
-**Suggested fix:** Require all three arrangements to be equal and in the MLS T set
+**Suggested fix:** Require `arr_n == arr_d && arr_m == arr_d`.
 ```rust
     let (rn, arr_n) = get_neon_reg(operands, 1)?;
     let (rm, arr_m) = get_neon_reg(operands, 2)?;
-    if arr_d != arr_n || arr_n != arr_m {
-        return Err(format!("mls requires matching T, got {arr_d}/{arr_n}/{arr_m}"));
+    if arr_n != arr_d || arr_m != arr_d {
+        return Err(format!("NEON three-same arrangement mismatch: dest {arr_d}, src {arr_n}/{arr_m}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_mls_mismatched_t.md
-**Repro seed:** rd=0, rn=0, rm=0, td=8b, tn=16b, tm=8b
+**Bug report:** bug_reports/encode_neon_three_same_mismatched_t.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_invalid_t' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:330:1:
-Test failed: invalid/mismatched/reserved T must Err (ARM MLS T in {8B,16B,4H,8H,2S,4S} matching; llvm-mc rejects mls v0.8b, v0.16b, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:350.
-minimal failing input: rd = 0, rn = 0, rm = 0, td = "8b", tn = "16b", tm = "8b"
+thread '...test_encode_neon_three_same_regression_mismatched_t' panicked at encode_neon_three_same_pbt.rs:499:5:
+cmeq v0.8b, v0.16b, v0.8b must Err (ARM/gas/llvm-mc require matching T)
 ```
 
-### B3: encode_neon_mls encodes reserved .1d/.2d MLS
+### B3: encode_neon_three_same encodes reserved .1d
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, t ∈ {1d,2d}. llvm-mc rejects mls Vd.t,Vn.t,Vm.t ⇒ encode_neon_mls is Err
-**Contract evidence:** inferred (ARM Advanced SIMD three-same MLS T in {8B,16B,4H,8H,2S,4S}; size:Q=11:x reserved; llvm-mc rejects)
-**Documentation conflict:** (none) — neon.rs:365 documents the encoding layout but does not declare 1d/2d invalid
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, insn ∈ InsnTable. encode_neon_three_same([Vd.1d,Vn.1d,Vm.1d], U, opcode) = Err
+**Contract evidence:** inferred (ARM ARM Advanced SIMD three-same size:Q=11:0 Reserved; llvm-mc rejects `.1d`; function doc lists CMEQ/UQSUB/SQSUB/CMHI which do not support 1D)
+**Documentation conflict:** (none) — neon_arr_to_q_size lists `"1d"` as a general NEON arrangement, not a three-same domain restriction
 **Severity:** medium
-**Counterexample:** encode_neon_mls([v0.1d, v0.1d, v0.1d])
-**Expected / Actual:** Err / Ok(Word(0x2ee09400)) for .1d; Ok(Word(0x6ee09400)) for .2d
-**Impact:** `mls v0.1d` / `mls v0.2d` assemble to unallocated encodings; executing them is UNDEFINED
-**Root cause:** neon.rs:365 calls neon_arr_to_q_size, which maps 1d/2d to size=11, with no MLS-specific rejection
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:365`
+**Counterexample:** encode_neon_three_same([v0.1d, v0.1d, v0.1d], u=1, opcode=0b10001)
+**Expected / Actual:** Err / Ok(Word) with Q=0 size=11
+**Impact:** Reserved encodings are emitted for integer three-same mnemonics.
+**Root cause:** neon.rs:73 uses neon_arr_to_q_size, which accepts `"1d"` with no Reserved check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:73`
 ```rust
     let (q, size) = neon_arr_to_q_size(&arr_d)?;
 ```
-**Suggested fix:** Reject size=11 (1d/2d) for vector MLS
+**Suggested fix:** Reject Q=0 && size=11.
 ```rust
     let (q, size) = neon_arr_to_q_size(&arr_d)?;
-    if size == 0b11 {
-        return Err(format!("MLS does not support arrangement {arr_d}"));
+    if q == 0 && size == 0b11 {
+        return Err(format!("NEON three-same reserved arrangement: {arr_d}"));
     }
 ```
-**Bug report:** bug_reports/encode_neon_mls_reserved_t.md
-**Repro seed:** rd=0, rn=0, rm=0, t=1d
+**Bug report:** bug_reports/encode_neon_three_same_reserved_1d.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_reserved_t' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:428:1:
-Test failed: reserved MLS T=1d (ARM size:Q=11:x) must Err (llvm-mc rejects mls v0.1d, v0.1d, v0.1d) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:513.
-minimal failing input: rd = 0, rn = 0, rm = 0, t = "1d"
+thread '...test_encode_neon_three_same_regression_reserved_1d' panicked at encode_neon_three_same_pbt.rs:509:5:
+cmeq v0.1d, v0.1d, v0.1d must Err (ARM size:Q=11:0 reserved; llvm-mc rejects)
 ```
 
-### B4: encode_neon_mls accepts bare V / GPR as NEON MLS operands
+### B4: encode_neon_three_same accepts a bare Vn without arrangement
 
-**Formal:** ∀ rd,rn,rm ∈ {0..31}, kind ∈ {0..4}. llvm-mc rejects the corresponding non-arrangement form ⇒ encode_neon_mls(ops_kind) is Err
-**Contract evidence:** documented neon.rs:361 "Encode NEON MLS Vd.T, Vn.T, Vm.T (multiply-subtract)" — arrangement operands
+**Formal:** ∀ rd,rn,rm ∈ {0..31}, kind ∈ {gpr_dest, bare_vn, bare_vm, fp_dest}. llvm-mc rejects ⇒ encode_neon_three_same(ops, U, opcode) = Err
+**Contract evidence:** inferred (GNU/llvm-mc require Vn.T; parser.rs documents RegArrangement as v0.8b)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_mls([v0.8b, Operand::Reg("v0"), v0.8b])
-**Expected / Actual:** Err / Ok(Word(0x2e209400))
-**Impact:** `mls v0.8b, v0, v0.8b` and `mls x0.8b, v0.8b, v0.8b` assemble as vector MLS instead of failing
-**Root cause:** neon.rs:363 calls get_neon_reg, which accepts Operand::Reg (empty arrangement) and parse_reg_num maps x/w prefixes to the same 0..31 index
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:363`
+**Counterexample:** encode_neon_three_same([v0.8b, Reg("v0"), v0.8b], u=1, opcode=0b10001)
+**Expected / Actual:** Err / Ok(Word)
+**Impact:** Bare `v0` is treated as a numbered NEON register with dest T.
+**Root cause:** neon.rs:70-71 call get_neon_reg (accepts Operand::Reg) then discard the empty arrangement.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:70`
 ```rust
-    let (rn, _) = get_neon_reg(operands, 1)?;
+    let (rn, _arr_n) = get_neon_reg(operands, 1)?;
+    let (rm, _arr_m) = get_neon_reg(operands, 2)?;
 ```
-**Suggested fix:** Require RegArrangement with a V-prefixed register on every operand
+**Suggested fix:** Reject an empty source arrangement.
 ```rust
-    match operands.get(idx) {
-        Some(Operand::RegArrangement { reg, arrangement }) if reg.to_lowercase().starts_with('v') => { /* parse */ }
-        other => return Err(format!("expected NEON Vn.T at operand {idx}, got {:?}", other)),
+    if arr_n.is_empty() || arr_m.is_empty() {
+        return Err("NEON three-same requires Vn.T and Vm.T".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_mls_gpr_or_bare.md
-**Repro seed:** rd=0, rn=0, rm=0, kind=1, fp_prefix=x
+**Bug report:** bug_reports/encode_neon_three_same_bare_src.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_neon_mls_pbt::encode_neon_mls_neg_gpr_or_bare' panicked at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:358:1:
-Test failed: GPR/bare/non-arrangement kind=1 must Err (llvm-mc rejects mls v0.8b, v0, v0.8b) at src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs:419.
-minimal failing input: rd = 0, rn = 0, rm = 0, kind = 1, fp_prefix = "x"
+thread '...test_encode_neon_three_same_regression_bare_src' panicked at encode_neon_three_same_pbt.rs:519:5:
+cmeq v0.8b, v0, v0.8b must Err (gas/llvm-mc require Vn.T)
+```
+
+### B5: encode_neon_three_same encodes a GPR name as Vd
+
+**Formal:** ∀ rd ∈ {0..31}. encode_neon_three_same([RegArrangement{x{rd}, 8b}, v0.8b, v0.8b], U, opcode) = Err
+**Contract evidence:** inferred (three-same Vd is a NEON V register; llvm-mc rejects `cmeq x0.8b, …`; parse_reg_num accepts `x`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_three_same([RegArrangement{reg:"x0", arrangement:"8b"}, v0.8b, v0.8b], u=1, opcode=0b10001)
+**Expected / Actual:** Err / Ok(Word) identical to `cmeq v0.8b, v0.8b, v0.8b`
+**Impact:** GPR names encode as V registers with the same number.
+**Root cause:** neon.rs:69 uses get_neon_reg → parse_reg_num, which accepts prefix `x`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:69`
+```rust
+    let (rd, arr_d) = get_neon_reg(operands, 0)?;
+```
+**Suggested fix:** Require a `v` prefix on three-same register names.
+```rust
+    // get_neon_reg / parse_reg_num must require a 'v' prefix for three-same Vd/Vn/Vm
+```
+**Bug report:** bug_reports/encode_neon_three_same_gpr_dest.md
+**Repro seed:** (deterministic regression)
+**Raw output:**
+```text
+thread '...test_encode_neon_three_same_regression_gpr_dest' panicked at encode_neon_three_same_pbt.rs:536:5:
+cmeq x0.8b, v0.8b, v0.8b must Err (gas/llvm-mc require Vd.T)
 ```
 
 ## Design Caveats
@@ -148,69 +173,74 @@ minimal failing input: rd = 0, rn = 0, rm = 0, kind = 1, fp_prefix = "x"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_mls_pbt.rs | 10 properties + 1 KAT + 6 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_mls_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_neon_three_same_pbt.rs | 10 properties + 1 KAT + 5 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_mls -- --test-threads=1
+cargo test --lib encode_neon_three_same -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mls_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_neon_three_same_regression_extra_operand -- --test-threads=1
 ```
 
 B2 mismatched T:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mls_regression_mismatched_t -- --test-threads=1
+cargo test --lib test_encode_neon_three_same_regression_mismatched_t -- --test-threads=1
 ```
 
-B3 reserved T:
+B3 reserved 1d:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mls_regression_reserved_1d -- --test-threads=1
+cargo test --lib test_encode_neon_three_same_regression_reserved_1d -- --test-threads=1
 ```
 
 B4 bare src:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_mls_regression_bare_src -- --test-threads=1
+cargo test --lib test_encode_neon_three_same_regression_bare_src -- --test-threads=1
+```
+
+B5 GPR dest:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_three_same_regression_gpr_dest -- --test-threads=1
 ```
 
 ## Output Directories
 
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_neon_mls_extra_operand.md
-- pbt-out/bug_reports/encode_neon_mls_extra_operand.html
-- pbt-out/bug_reports/encode_neon_mls_mismatched_t.md
-- pbt-out/bug_reports/encode_neon_mls_mismatched_t.html
-- pbt-out/bug_reports/encode_neon_mls_reserved_t.md
-- pbt-out/bug_reports/encode_neon_mls_reserved_t.html
-- pbt-out/bug_reports/encode_neon_mls_gpr_or_bare.md
-- pbt-out/bug_reports/encode_neon_mls_gpr_or_bare.html
-- pbt-out/run/encode_neon_mls_round1.log
-- pbt-out/run/encode_neon_mls_round2.log
+- pbt-out/bug_reports/encode_neon_three_same_extra_operand.md
+- pbt-out/bug_reports/encode_neon_three_same_extra_operand.html
+- pbt-out/bug_reports/encode_neon_three_same_mismatched_t.md
+- pbt-out/bug_reports/encode_neon_three_same_mismatched_t.html
+- pbt-out/bug_reports/encode_neon_three_same_reserved_1d.md
+- pbt-out/bug_reports/encode_neon_three_same_reserved_1d.html
+- pbt-out/bug_reports/encode_neon_three_same_bare_src.md
+- pbt-out/bug_reports/encode_neon_three_same_bare_src.html
+- pbt-out/bug_reports/encode_neon_three_same_gpr_dest.md
+- pbt-out/bug_reports/encode_neon_three_same_gpr_dest.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 17:54 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 132/289 total | PBT candidates: 132 | Tested: 132 (100%) | 0 pass, 132 fail
+> Last updated: 2026-10-05 18:12 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 133/289 total | PBT candidates: 133 | Tested: 133 (100%) | 0 pass, 133 fail
 
 ## Summary
 
@@ -219,10 +249,10 @@ cargo test --lib test_encode_neon_mls_regression_bare_src -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 132 |
-| **Tested (of PBT candidates)** | **132 / 132 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 132 / 0 |
-| **Overall (tested / all functions)** | **132 / 289 (46%)** |
+| PBT candidates (from FUNCTION_INDEX) | 133 |
+| **Tested (of PBT candidates)** | **133 / 133 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 133 / 0 |
+| **Overall (tested / all functions)** | **133 / 289 (46%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -230,13 +260,13 @@ cargo test --lib test_encode_neon_mls_regression_bare_src -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 132 | 132 | 0 | 100% |
+|  | 133 | 133 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 132 | 132 | 0 | 100% |
+| unknown | 133 | 133 | 0 | 100% |
 
 ## File Coverage
 
@@ -249,7 +279,7 @@ cargo test --lib test_encode_neon_mls_regression_bare_src -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 47 | 47 | 100% | covered |
+| neon.rs | 68 | 48 | 48 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -391,3 +421,4 @@ cargo test --lib test_encode_neon_mls_regression_bare_src -- --test-threads=1
 | encode_neon_pmul | neon.rs |
 | encode_neon_mla | neon.rs |
 | encode_neon_mls | neon.rs |
+| encode_neon_three_same | neon.rs |

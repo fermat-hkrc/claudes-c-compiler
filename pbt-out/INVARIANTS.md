@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_neon_three_same)
+
+- Valid integer three-same (cmeq/cmhi/cmhs/cmge/cmgt/cmtst/sqadd/uqadd/sqsub/uqsub/sshl/ushl/sqshl/uqshl/srshl/urshl/sqrshl/uqrshl/addp) with matching T in {8b,16b,4h,8h,2s,4s,2d}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Success-path word: bit31=0, Q at 30, U at 29, bits[28:24]=01110, size at [23:22], bit21=1, Rm at [20:16], opcode at [15:11], bit10=1, Rn at [9:5], Rd at [4:0] (1000 cases).
+- encode(..., u=0) XOR encode(..., u=1) = 1<<29; opcode isolation in bits[15:11]; 8b vs 16b XOR = 1<<30 (1000 cases).
+- Arity 0–2 always Err (1000 cases).
+- Invalid NEON names (v32, foo, empty) and non-register kinds (Imm/Mem/Symbol) always Err (1000 cases).
+- Known-answer: `cmeq v0.8b, v1.8b, v2.8b` = 0x2e228c20; `cmeq v0.16b` = 0x6e228c20; `cmeq v0.2d` = 0x6ee28c20; `cmhi v0.8b` = 0x2e223420; `cmgt v0.4s` = 0x4ea23420; `uqsub v31.8h, v30.8h, v29.8h` = 0x6e7d2fdf; `sqadd v0.2d` = 0x4ee20c20; `sshl v15.4h, v16.4h, v17.4h` = 0x0e71460f.
+
+## Environment
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding
+- ARM ARM Advanced SIMD three-same: T in {8B,16B,4H,8H,2S,4S,2D}; size:Q=11:0 reserved.
+- Dispatch: encoder/mod.rs:567-638 cmeq/cmhi/…/addp; encoder/mod.rs:302 mul vector.
+
+## Quirks
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangements are discarded; Q/size come only from dest (see bugs).
+- neon_arr_to_q_size accepts 1d (reserved for three-same) (see bugs).
+- get_neon_reg accepts Operand::Reg, so bare Vn encodes (see bugs).
+- parse_reg_num accepts x/w/d/s/q/h/b prefixes, so GPR dest encodes as Vd (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / get_neon_reg / neon_arr_to_q_size / Ok Word).
+
+---
+
 # Confirmed invariants (encode_neon_mls)
 
 - Valid MLS Vd.T, Vn.T, Vm.T with T in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

@@ -1,4 +1,4 @@
-> Total files: 10 | Total functions: 289 | PBT candidates: 132 | Excluded: 157
+> Total files: 10 | Total functions: 289 | PBT candidates: 133 | Excluded: 156
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -101,7 +101,7 @@
 | get_neon_reg | neon.rs | 7 | function | no | helper; campaign is single-symbol |
 | encode_cnt | neon.rs | 23 | function | yes | - |
 | neon_arr_to_q_size | neon.rs | 44 | function | no | helper; campaign is single-symbol |
-| encode_neon_three_same | neon.rs | 65 | function | no | out of campaign scope |
+| encode_neon_three_same | neon.rs | 65 | function | yes | - |
 | encode_neon_three_diff | neon.rs | 89 | function | no | out of campaign scope |
 | encode_neon_sqshrun | neon.rs | 119 | function | yes | - |
 | encode_neon_xtl | neon.rs | 163 | function | yes | - |
