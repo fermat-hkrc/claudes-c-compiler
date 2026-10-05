@@ -1,3 +1,36 @@
+# Confirmed invariants (encode_neon_xtl)
+
+- Valid UXTL/SXTL/UXTL2/SXTL2 Vd.Ta, Vn.Tb with mandated (Ta,Tb,Q) pairs, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; U in bit 29; is_high with matching Tb differs only in Q bit 30 (1000 cases).
+- Success-path 32-bit word: bit31=0, Q at bit30, U at bit29, bits[28:23]=011110, immh at [22:19] from source esize (8b|16b→0001, 4h|8h→0010, 2s|4s→0100), immb=000 at [18:16], bits[15:10]=101001, Rn at [9:5], Rd at [4:0].
+- Arity 0–1 returns Err (1000 cases).
+- Uppercase mnemonic/V prefix with lowercase T matches llvm-mc (1000 cases).
+- Imm/Mem/Label at dest or src returns Err (1000 cases).
+- Known-answer: `uxtl v0.8h, v1.8b` = 0x2f08a420; `sxtl v0.8h, v1.8b` = 0x0f08a420; `uxtl2 v0.8h, v1.16b` = 0x6f08a420; `sxtl2 v0.4s, v1.8h` = 0x4f10a420; `uxtl v0.2d, v1.2s` = 0x2f20a420; `uxtl v0.4s, v1.4h` = 0x2f10a420; `uxtl2 v0.2d, v1.4s` = 0x6f20a420; `sxtl v31.8h, v31.8b` = 0x0f08a7ff; `uxtl v0.8h, v0.8b` = 0x2f08a400; `sxtl v15.4s, v16.4h` = 0x0f10a60f.
+- Extra operand, mismatched Ta/Tb, and GPR/bare dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_xtl)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD shift-by-immediate UXTL/SXTL (USHLL/SSHLL #0): Ta in {8H,4S,2D}; Tb 8B/4H/2S (Q=0) or 16B/8H/4S (Q=1); U=1 unsigned / U=0 signed; immh from source esize; immb=000; bits[15:10]=101001.
+- Dispatch: encoder/mod.rs:895-898 uxtl/uxtl2/sxtl/sxtl2 => encode_neon_xtl.
+- encode_neon_xtl checks operands.len() < 2; extra ignored; dest arrangement discarded; Q from is_high only.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / get_neon_reg other / alt spellings).
+
+## Quirks (encode_neon_xtl)
+
+- Extra operands beyond index 1 are ignored (see bugs).
+- Destination arrangement is discarded (see bugs).
+- Operand::Reg dest and x/w prefixes encode as V registers (see bugs).
+- Bare source (empty arrangement) hits unsupported-source Err.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
+---
+
 # Confirmed invariants (encode_neon_two_misc)
 
 - Valid matching-T ABS/NEG/CLS/CLZ/REV16/REV32/SQABS/SQNEG Vd.T, Vn.T with opcode-legal T, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
