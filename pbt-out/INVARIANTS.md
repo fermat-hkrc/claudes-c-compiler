@@ -1,3 +1,37 @@
+# Confirmed invariants (encode_neon_sri)
+
+- Valid SRI Vd.T, Vn.T, #shift with T in {8b,16b,4h,8h,2s,4s,2d}, shift in [1, esize(T)], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; 8b vs 16b at the same shift differs only in Q bit 30 (1000 cases).
+- Success-path 32-bit word: bit31=0, Q at bit30, U=1 at bit29, bits[28:23]=011110, immh:immb at [22:16] = 2*esize-shift, bits[15:10]=010001, Rn at [9:5], Rd at [4:0]. Q from T: 8b=0, 16b=1, 4h=0, 8h=1, 2s=0, 4s=1, 2d=1. esize: 8b/16b=8, 4h/8h=16, 2s/4s=32, 2d=64.
+- Arity 0–2 returns Err (1000 cases).
+- Uppercase mnemonic/V prefix with lowercase T matches llvm-mc (1000 cases).
+- Imm/Mem/Label at dest/src slots returns Err (1000 cases).
+- Known-answer: `sri v0.8b, v1.8b, #1` = 0x2f0f4420; `sri v0.16b, v1.16b, #8` = 0x6f084420; `sri v0.4h, v1.4h, #1` = 0x2f1f4420; `sri v0.8h, v1.8h, #16` = 0x6f104420; `sri v0.2s, v1.2s, #1` = 0x2f3f4420; `sri v0.4s, v1.4s, #32` = 0x6f204420; `sri v0.2d, v1.2d, #1` = 0x6f7f4420; `sri v0.2d, v1.2d, #64` = 0x6f404420; `sri v31.8b, v31.8b, #8` = 0x2f0847ff; `sri v0.8b, v0.8b, #1` = 0x2f0f4400; `sri v15.4s, v16.4s, #17` = 0x6f2f460f; `sri v0.8b, v1.8b, #8` = 0x2f084420.
+- Extra operand, mismatched T, bare source / GPR dest, and shift 0 currently disagree with llvm-mc/gas (see bugs). Debug overflow panic at neon.rs:1297 for 8-bit T when `16 - shift` underflows (shift as u32 from i64 -1).
+
+## Environment (encode_neon_sri)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding.
+- ARM ARM Advanced SIMD shift-by-immediate SRI: T in {8B,16B,4H,8H,2S,4S,2D}; shift in [1, esize]; matching arrangements; U=1; opcode=010001; immh != 0000; immh:immb = 2*esize - shift.
+- Dispatch: encoder/mod.rs:706 `"sri" => encode_neon_sri(operands)`.
+- Sibling encode_neon_sli is SLI / left-insert / opcode 010101 (same-job gate fails). encode_neon_ushr is USHR / opcode 000001. encode_neon_sshr is SSHR / U=0. encode_neon_shift_right is a generic right-shift helper (independence gate).
+- encode_neon_sri checks operands.len() < 3; extra ignored; source arrangement discarded; shift masked per T with no range check.
+- get_neon_reg accepts Operand::Reg and RegArrangement; parse_reg_num accepts x/w/d/s/q/v/h/b and maps sp/wsp/xzr/wzr to 31.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit (arity / get_neon_reg other / alt spellings).
+
+## Quirks (encode_neon_sri)
+
+- Extra operands beyond index 2 are ignored (see bugs).
+- Source arrangement is discarded (see bugs).
+- Shift is `get_imm as u32` with no range check; #0 encodes reserved immh=0000; negatives overflow in debug (see bugs).
+- Operand::Reg dest/src and x/w prefixes encode as V registers (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit.
+
+---
+
 # Confirmed invariants (encode_neon_shl)
 
 - Valid SHL Vd.T, Vn.T, #shift with T in {8b,16b,4h,8h,2s,4s,2d}, shift in [0, esize(T)-1], v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).

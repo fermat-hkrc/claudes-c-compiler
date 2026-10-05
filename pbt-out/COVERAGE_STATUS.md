@@ -1,23 +1,26 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_shl)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw
-> Files: neon.rs in scope | Function under test: encode_neon_shl | Properties: 10 (6 passing, 4 failing)
+> Last updated: 2026-10-05 (campaign: encode_neon_sri)
+> Files: 10/10 scanned (100%) | Functions: 125/289 PBT candidates | Tested this campaign: encode_neon_sri
+> Coverage evidence: file-level (symbol presence) — no .gcda/.profraw from cargo test
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Target function | encode_neon_shl |
-| Source | neon.rs:1231 |
-| Properties | 10 |
-| Passing | 6 |
-| Failing (bugs) | 4 |
-| Sweep round | 1/1 spent (alt-spellings + nonreg, both passing) |
+| Total source files | 10 |
+| Files scanned | 10 / 10 (100%) |
+| Total functions (all files) | 289 |
+| PBT candidates (from FUNCTION_INDEX) | 125 |
+| **Tested this campaign** | encode_neon_sri (10 properties) |
 | Coverage evidence | file-level (symbol presence) |
 
-## File Coverage
+## This campaign
 
-| Source File | Funcs | Candidates | Tested this campaign | Status |
-|-------------|-------|------------|----------------------|--------|
-| neon.rs | 68 | encode_neon_shl | encode_neon_shl | covered |
+| Function | Source | Tested | Result |
+|----------|--------|--------|--------|
+| encode_neon_sri | neon.rs:1285 | yes | 6 passing / 4 failing |
+
+## Sweep
+
+coverage_gaps: no LLVM profraw (C++ reporter listed unrelated binaries, claimed NOT LINKED). Manual arm audit of encode_neon_sri: arity Err, get_neon_reg, get_imm, neon_arr_to_q_size, match T, Ok Word all driven. Added alt-spellings differential and non-register negative-error (both passing). Closed: standard tier 1/1 round spent.
