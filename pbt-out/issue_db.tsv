@@ -1,3 +1,10 @@
+518	open	Bug: __builtin_bswap32 constant folding stores sign-extended I32 instead of zero-extended U32
+517	open	Bug: f128_bytes_to_f64 truncates instead of round-to-nearest — long-double constants up to 1 ulp low on ARM64/RISC-V
+516	open	Bug: f64_to_x87_bytes_simple mis-encodes subnormal doubles — 5e-324 decodes back as +0.0
+515	open	Bug: encode_neon_ld1r accepts illegal post-index immediates
+514	open	Bug: encode_neon_ld1r accepts W, XZR, x31, and FP bases
+513	open	Bug: encode_neon_ld1r ignores a surplus operand
+512	open	Bug: encode_neon_ld1r encodes register post-index as no-offset
 511	closed	Bug: ccc-i686 -static emits entry = main with no C runtime — every static i686 binary crashes
 510	open	Bug: invalid float↔pointer casts silently accepted; float→pointer compiled as raw bit reinterpretation
 509	open	Bug: ccc-i686 -static emits entry = main with no C runtime — every static i686 binary crashes
@@ -509,6 +516,3 @@
 3	open	Bug: float-to-unsigned casts store U8/U16 as signed I8/I16, so to_i64() sign-extends
 2	open	Bug: cast_float_to_target panics on f64 subnormals when targeting F128
 1	closed	Double-check found bugs
-518	open	Bug: __builtin_bswap32 constant folding stores sign-extended I32 instead of zero-extended U32
-517	open	Bug: f128_bytes_to_f64 truncates instead of round-to-nearest — long-double constants up to 1 ulp low on ARM64/RISC-V
-516	open	Bug: f64_to_x87_bytes_simple mis-encodes subnormal doubles — 5e-324 decodes back as +0.0
