@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_neon_mvni)
+
+- Valid MVNI Vd.T, #imm with T in {4h,8h} (no shift) and T in {2s,4s} with LSL {0,8,16,24}, v0–v31, imm8 0–255 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Valid MVNI Vd.{2s,4s}, #imm8, msl #{8,16} matches llvm-mc (1000 cases).
+- Changing only Rd differs only in bits[4:0] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff T in {8h,4s}, op at 29 = 1, bits[28:24]=01111, bit23=0, bits[22:19]=0, abc at [18:16], cmode at [15:12], o2=0 at 11, bit10=1, defgh at [9:5], Rd at [4:0].
+- Arity 0–1 returns Err (1000 cases).
+- Illegal T (including 8b/16b/2d), 2s/4s LSL amount not in {0,8,16,24}, and 2s/4s MSL amount not in {8,16} return Err (1000 cases).
+- Known-answer: `mvni v0.4s, #0` = 0x6f000400; `mvni v0.2s, #0` = 0x2f000400; `mvni v0.4s, #255` = 0x6f0707e0; `mvni v31.4s, #0xaa` = 0x6f05055f; `mvni v0.4s, #1, lsl #8` = 0x6f002420; `mvni v0.4s, #1, lsl #16` = 0x6f004420; `mvni v0.4s, #1, lsl #24` = 0x6f006420; `mvni v0.2s, #1` = 0x2f000420; `mvni v0.8h, #1` = 0x6f008420; `mvni v0.4h, #1` = 0x2f008420; `mvni v0.2s, #0, msl #8` = 0x2f00c400; `mvni v0.4s, #1, msl #16` = 0x6f00d420.
+- 4h/8h LSL #8, extra operands, out-of-range imm, illegal H LSL amount, and LSR currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_mvni)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. Range/error contract: aarch64-linux-gnu-as (README claims gas).
+- ARM ARM Advanced SIMD modified immediate (MVNI): 0 Q 1 01111 00000 abc cmode o2 1 defgh Rd. T in {4H,8H,2S,4S} only. Q=1 iff T in {8H,4S}. op=1 always. cmode 10x0 (H, x=shift/8), 0xx0 (S LSL, xx=shift/8), 110x (S MSL, x=(amount==16)).
+- Dispatch: encoder/mod.rs:961 `"mvni" => encode_neon_mvni`.
+- Sibling encode_neon_movi is inverted immediate (op=0, extra 8B/16B/2D), not a same-job differential.
+- encode_neon_mvni checks operands.len() < 2; extra ignored; imm8 via `imm as u32 & 0xFF`; 4h/8h hard-codes cmode=1000; non-lsl/non-msl Shift on 2s/4s encodes as no-shift.
+- Parser lowercases arrangement; Shift tokens are lsl/lsr/asr/ror only (parser.rs) — MSL is not produced by the parser but the encoder implements it and llvm-mc accepts it.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. Co-generate (T, shift, imm).
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (invalid T / illegal 2s/4s LSL / illegal MSL).
+- Five failing property/regression groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_mvni_*.md.
+
 # Confirmed invariants (encode_neon_movi)
 
 - Valid MOVI Vd.T, #imm with T in {8b,16b,4h,8h} (no shift), T in {2s,4s} with LSL {0,8,16,24}, and T=2d with each byte 0x00 or 0xFF, v0–v31, imm8 0–255 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). gas aarch64-linux-gnu-as agrees on KAT vectors.

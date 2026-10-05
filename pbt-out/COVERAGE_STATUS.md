@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_movi)
-> Files: 10/10 scanned (100%) | Functions: 110/289 total | PBT candidates: 110 | Tested: 110 (100%) | 1 pass, 109 fail
+> Last updated: 2026-10-05 (campaign: encode_neon_mvni)
+> Files: 10/10 scanned (100%) | Functions: 111/289 total | PBT candidates: 111 | Tested: 111 (100%) | 1 pass, 110 fail
 > Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED).
 
 ## Summary
@@ -11,10 +11,10 @@
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 110 |
-| **Tested (of PBT candidates)** | **110 / 110 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 109 / 0 |
-| **Overall (tested / all functions)** | **110 / 289 (38%)** |
+| PBT candidates (from FUNCTION_INDEX) | 111 |
+| **Tested (of PBT candidates)** | **111 / 111 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 110 / 0 |
+| **Overall (tested / all functions)** | **111 / 289 (38%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -22,7 +22,7 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 110 | 110 | 0 | 100% |
+|  | 111 | 111 | 0 | 100% |
 
 ## Oracle Type Distribution
 

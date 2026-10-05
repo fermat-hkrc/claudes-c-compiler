@@ -1,161 +1,192 @@
-# PBT Campaign Report: encode_neon_movi
+# PBT Campaign Report: encode_neon_mvni
 
 ## Summary
 
-**Verdict:** 2 high, 2 medium: encode_neon_movi drops LSL #8 on .4h/.8h (encodes unshifted), truncates `#256` to `#0`, ignores extra operands, and encodes MSL as LSL #0 — any of those silently emit the wrong 32-bit word.
+**Verdict:** 2 high, 3 medium: encode_neon_mvni drops LSL #8 on .4h/.8h (silent wrong cmode), truncates immediates outside [0,255] to 8 bits, and accepts extra operands / illegal H shifts / LSR that llvm-mc and gas reject.
 **Date:** 2026-10-05
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_neon_movi
-**Tests:** 9 properties (plus 1 KAT + 4 failing regression witnesses)
-**Result:** 5 passing, 4 bugs
-**Change surface:** 1 changed function (encode_neon_movi), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit added documented-error isolation (invalid T / illegal LSL amount / bad 2d byte), all passing.
+**Modules tested:** encode_neon_mvni
+**Tests:** 11 properties (plus 1 KAT + 5 regression witnesses)
+**Result:** 6 passing, 5 failing properties (5 bugs)
+**Change surface:** 1 changed function (encode_neon_mvni), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no LLVM profraw; C++ reporter listed unrelated binaries and claimed encode_neon_mvni NOT LINKED. Sweep was a manual arm audit of documented error paths.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_neon_movi | 9 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_neon_mvni | 11 properties (6 pass, 5 fail) + 1 KAT + 5 regressions | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_neon_movi ignores LSL #8 on .4h/.8h
+### B1: encode_neon_mvni ignores LSL #8 on .4h/.8h
 
-**Formal:** ∀ rd ∈ [0,31], T ∈ {4h,8h}, imm8 ∈ [0,255]. encode_neon_movi([Vd.T, #imm8, lsl #8]) = llvm-mc("movi Vd.T, #imm8, lsl #8")
-**Contract evidence:** inferred (ARM AdvSIMD modified immediate cmode=1010; llvm-mc/gas accept `movi v0.4h, #0, lsl #8`; parser.rs:1887 emits Operand::Shift { kind: "lsl" })
-**Documentation conflict:** neon.rs:708 "cmode=1000 for .4h/.8h with no shift" describes the no-shift encoding; it does not declare LSL #8 invalid.
+**Formal:** ∀ rd ∈ [0,31], T ∈ {4h,8h}, imm8 ∈ [0,255]. encode_neon_mvni([Vd.T, #imm8, lsl #8]) = llvm-mc("mvni Vd.T, #imm8, lsl #8")
+**Contract evidence:** documented README.md:12 "It accepts the same textual assembly that GCC's gas would consume"; ARM AdvSIMD MVNI cmode=1010 for H LSL #8. neon.rs:1374 describes the no-shift encoding and does not declare LSL #8 invalid.
+**Documentation conflict:** neon.rs:1374 "MVNI 16-bit: cmode=1000, op=1" — other (describes the no-shift encoding; does not declare LSL #8 invalid). (not independently verified) against ARM/llvm-mc, which accept LSL #8.
 **Severity:** high
-**Counterexample:** encode_neon_movi([v0.4h, #0, lsl #8])
-**Expected / Actual:** llvm-mc 0x0f00a400 / SUT 0x0f008400
-**Impact:** 16-bit MOVI with LSL #8 silently produces the unshifted immediate, so each halfword is imm8 instead of imm8<<8.
-**Root cause:** neon.rs:701-710 the .4h/.8h arm hard-codes cmode=1000 and never inspects a third Shift operand.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:701`
+**Counterexample:** encode_neon_mvni([v0.4h, #0, lsl #8])
+**Expected / Actual:** 0x2f00a400 / 0x2f008400
+**Impact:** `mvni v0.4h, #0, lsl #8` is assembled as no-shift `mvni v0.4h, #0`, so the 8-bit immediate is placed in the wrong byte of each 16-bit lane.
+**Root cause:** neon.rs:1378-1380 hard-codes cmode=1000 and never reads operands[2] on the 4h/8h path.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1377`
 ```rust
-        "4h" | "8h" => {
-            // MOVI Vd.4h/8h, #imm8
-            let q: u32 = if arr_d == "8h" { 1 } else { 0 };
+            // MVNI 16-bit: cmode=1000, op=1
+            let word = (q << 30) | (1 << 29) | (0b0111100 << 22)
+                | (abc << 16) | (0b1000 << 12) | (0b01 << 10) | (defgh << 5) | rd;
+            Ok(EncodeResult::Word(word))
 ```
-**Suggested fix:** Peek at a third LSL operand; LSL #0 → cmode=1000, LSL #8 → cmode=1010, other amounts Err.
+**Suggested fix:** Decode optional LSL on 4h/8h: amount 0 → cmode=1000, amount 8 → cmode=1010, else Err.
 ```rust
             let cmode = if let Some(Operand::Shift { kind, amount }) = operands.get(2) {
-                if kind == "lsl" {
+                if kind.to_lowercase() == "lsl" {
                     match *amount {
                         0 => 0b1000u32,
                         8 => 0b1010,
-                        _ => return Err(format!("movi: unsupported shift amount: {}", amount)),
+                        _ => return Err(format!("mvni: unsupported shift amount: {}", amount)),
                     }
                 } else {
-                    return Err(format!("movi: unsupported shift kind: {}", kind));
+                    return Err(format!("mvni: unsupported shift kind: {}", kind));
                 }
             } else {
                 0b1000
             };
 ```
-**Bug report:** bug_reports/encode_neon_movi_h_lsl8.md
-**Repro seed:** rd = 0, t = "4h", imm8 = 0
+**Bug report:** bug_reports/encode_neon_mvni_h_lsl8.md
+**Repro seed:** cc 288b06d450d1dba90931f99133eea772a9dbe8baafbb610dc2a9d7456255f703
 **Raw output:**
 ```text
-assertion `left == right` failed: movi v0.4h, #0, lsl #8 must match llvm-mc (cmode=1010, 0x0f00a400)
-  left: 251692032
- right: 251700224
+Test failed: assertion failed: `(left == right)`
+  left: `788562944`,
+ right: `788571136`: mismatch for mvni v0.4h, #0, lsl #8
+minimal failing input: rd = 0, t = "4h", imm8 = 0
 ```
 
-### B2: encode_neon_movi encodes MSL as unshifted LSL #0
+### B2: encode_neon_mvni ignores extra operands
 
-**Formal:** ∀ rd ∈ [0,31], T ∈ {2s,4s}, imm8 ∈ [0,255], n ∈ {8,16}. encode_neon_movi([Vd.T, #imm8, msl #n]) = llvm-mc("movi Vd.T, #imm8, msl #n")
-**Contract evidence:** inferred (ARM cmode=110x; llvm-mc/gas accept MSL; sibling encode_neon_mvni implements MSL)
-**Documentation conflict:** neon.rs:675 "Check for optional LSL shift operand" asserts LSL handling; it does not declare MSL invalid.
-**Severity:** medium
-**Counterexample:** encode_neon_movi([v0.2s, #0, msl #8])
-**Expected / Actual:** llvm-mc 0x0f00c400 / SUT 0x0f000400
-**Impact:** MSL #8 (ones shifted in from the right) encodes as unshifted #0. Parser does not currently tokenize `msl`, so the public assembler also cannot accept the form; the encoder still produces a silently wrong word for Operand::Shift { kind: "msl" }.
-**Root cause:** neon.rs:678-687 only special-cases kind == "lsl"; any other Shift kind falls through to cmode=0000.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:678`
-```rust
-                    if kind == "lsl" {
-                        match amount {
-                            0 => (0b0000u32, 0),
-```
-**Suggested fix:** Handle MSL #8/#16 as cmode 1100/1101 (as encode_neon_mvni does) and reject unknown shift kinds.
-```rust
-                    } else if kind == "msl" {
-                        match amount {
-                            8 => (0b1100u32, 8),
-                            16 => (0b1101, 16),
-                            _ => return Err(format!("movi: unsupported MSL shift: {}", amount)),
-                        }
-                    } else {
-                        return Err(format!("movi: unsupported shift kind: {}", kind));
-                    }
-```
-**Bug report:** bug_reports/encode_neon_movi_s_msl.md
-**Repro seed:** rd = 0, t = "2s", imm8 = 0, n = 8
-**Raw output:**
-```text
-assertion `left == right` failed: movi v0.2s, #0, msl #8 must match llvm-mc (cmode=1100, 0x0f00c400)
-  left: 251659264
- right: 251708416
-```
-
-### B3: encode_neon_movi ignores surplus operands
-
-**Formal:** ∀ valid 2-operand movi plus (extra RegArrangement OR illegal shift for T). llvm-mc rejects the asm ∧ encode_neon_movi(ops) = Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembler; llvm-mc/gas reject a third non-shift operand)
+**Formal:** ∀ rd ∈ [0,31], T ∈ {4h,8h,2s,4s}, extra-or-illegal-shift operand. llvm-mc rejects asm ⇒ encode_neon_mvni(ops) is Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembler; llvm-mc rejects a third non-shift operand). neon.rs:1335 documents a minimum of 2 operands, not a maximum.
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_neon_movi([v0.8b, #0, v0.8b])
-**Expected / Actual:** Err / Ok encoded as `movi v0.8b, #0`
-**Impact:** A typo or extra token silently produces a valid instruction instead of an assembler error.
-**Root cause:** neon.rs:625 `if operands.len() < 2` only rejects too few operands; extras are never rejected.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:625`
+**Counterexample:** encode_neon_mvni([v0.4h, #0, v0.4h])
+**Expected / Actual:** Err / Ok(Word) encoding mvni v0.4h, #0
+**Impact:** Typos such as a leftover register after the immediate assemble silently as two-operand MVNI.
+**Root cause:** neon.rs:1334 only rejects operands.len() < 2.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1334`
 ```rust
     if operands.len() < 2 {
-        return Err("movi requires 2 operands".to_string());
+        return Err("mvni requires 2 operands".to_string());
     }
 ```
-**Suggested fix:** Require exactly 2 operands, or 3 when the third is a legal Shift for that arrangement.
+**Suggested fix:** Reject len > 3, and require operand 2 (when present) to be a legal Shift.
 ```rust
-    if operands.len() != 2 && !(operands.len() == 3 && matches!(operands.get(2), Some(Operand::Shift { .. }))) {
-        return Err("movi requires 2 operands (optional shift)".to_string());
+    if operands.len() > 3 {
+        return Err("mvni: extra operand".to_string());
+    }
+    if operands.len() == 3 && !matches!(operands.get(2), Some(Operand::Shift { .. })) {
+        return Err("mvni: expected optional shift".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_neon_movi_extra_operand.md
-**Repro seed:** rd = 0, extra = 0, t = "8b", imm8 = 0, kind = 0
+**Bug report:** bug_reports/encode_neon_mvni_extra_operand.md
+**Repro seed:** cc 11b31a873604ce4cacbed0ab9218617b4cfac0f58137f7af23c045d6ccdd90cb
 **Raw output:**
 ```text
-movi v0.8b, #0, v0.8b must Err (gas/llvm-mc reject a third non-shift operand)
+Test failed: extra/illegal shift must Err (llvm-mc rejects mvni v0.4h, #0, v0.4h)
+minimal failing input: rd = 0, extra = 0, t = "4h", imm8 = 0, kind = 0
 ```
 
-### B4: encode_neon_movi truncates out-of-range 8-bit immediates
+### B3: encode_neon_mvni truncates out-of-range immediates
 
-**Formal:** ∀ rd ∈ [0,31], T ∈ {8b,16b,4h,8h,2s,4s}, imm ∉ [0,255]. llvm-mc rejects ∧ encode_neon_movi([Vd.T, #imm]) = Err
-**Contract evidence:** inferred (llvm-mc: immediate must be an integer in range [0, 255]; gas: out of range -128 to 255)
+**Formal:** ∀ rd ∈ [0,31]. (imm ∉ [0,255] on a valid T, or T ∉ {4h,8h,2s,4s}). llvm-mc rejects asm ⇒ encode_neon_mvni(ops) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc: "immediate must be an integer in range [0, 255]")
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_neon_movi([v0.8b, #256])
-**Expected / Actual:** Err / Ok(Word(0x0f00e400)) same as `#0`
-**Impact:** A mistyped immediate silently wraps (`imm as u32 & 0xFF`), so the object file contains a different constant than the source.
-**Root cause:** neon.rs:637 (and the 2s/4s and 4h/8h copies) mask with `imm as u32 & 0xFF` instead of requiring 0..=255.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:637`
+**Counterexample:** encode_neon_mvni([v0.4h, #256])
+**Expected / Actual:** Err / Ok(Word) encoding #0 (256 as u32 & 0xFF)
+**Impact:** `#256` becomes `#0` and `#-1` becomes `#255`; the assembler emits the wrong immediate with no error.
+**Root cause:** neon.rs:1338 masks with `imm as u32 & 0xFF` instead of range-checking.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1338`
 ```rust
-            let imm8 = imm as u32 & 0xFF;
+    let imm8 = imm as u32 & 0xFF;
 ```
-**Suggested fix:** Reject immediates outside 0..=255 for 8-bit MOVI forms.
+**Suggested fix:** Reject values outside [0, 255] before encoding.
 ```rust
-            if !(0..=255).contains(&imm) {
-                return Err(format!("movi: immediate {} out of range [0, 255]", imm));
-            }
-            let imm8 = imm as u32;
+    if imm < 0 || imm > 255 {
+        return Err(format!("mvni: immediate {} out of range [0, 255]", imm));
+    }
+    let imm8 = imm as u32;
 ```
-**Bug report:** bug_reports/encode_neon_movi_imm_oor.md
-**Repro seed:** rd = 0, kind = 0, t_ok = "8b", over = 1
+**Bug report:** bug_reports/encode_neon_mvni_imm_oor.md
+**Repro seed:** (deterministic; first example kind=0, over=1)
 **Raw output:**
 ```text
-movi v0.8b, #256 must Err (llvm-mc: immediate must be in range [0, 255])
+Test failed: OOR imm / invalid T must Err (llvm-mc rejects mvni v0.4h, #256)
+minimal failing input: rd = 0, kind = 0, t_ok = "4h", t_bad = "8b", over = 1, neg = 1
 ```
 
-## Design Caveats (if any)
+### B4: encode_neon_mvni accepts illegal LSL amounts on .4h/.8h
+
+**Formal:** ∀ rd ∈ [0,31], T ∈ {4h,8h,2s,4s}, extra-or-illegal-shift operand. llvm-mc rejects asm ⇒ encode_neon_mvni(ops) is Err
+**Contract evidence:** inferred (README.md:12; llvm-mc rejects `mvni v0.4h, #0, lsl #32`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_mvni([v0.4h, #0, lsl #32])
+**Expected / Actual:** Err / Ok(Word) encoding no-shift MVNI
+**Impact:** Illegal H shift amounts assemble as LSL #0 instead of failing.
+**Root cause:** neon.rs:1378-1380 never inspects the optional shift on the 4h/8h path.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1377`
+```rust
+            // MVNI 16-bit: cmode=1000, op=1
+            let word = (q << 30) | (1 << 29) | (0b0111100 << 22)
+                | (abc << 16) | (0b1000 << 12) | (0b01 << 10) | (defgh << 5) | rd;
+            Ok(EncodeResult::Word(word))
+```
+**Suggested fix:** Parse optional LSL on 4h/8h and reject amounts other than 0 and 8.
+```rust
+                    match *amount {
+                        0 => 0b1000u32,
+                        8 => 0b1010,
+                        _ => return Err(format!("mvni: unsupported shift amount: {}", amount)),
+                    }
+```
+**Bug report:** bug_reports/encode_neon_mvni_illegal_h_shift.md
+**Repro seed:** (deterministic regression)
+**Raw output:**
+```text
+mvni v0.4h, #0, lsl #32 must Err (llvm-mc rejects illegal H LSL amount)
+```
+
+### B5: encode_neon_mvni treats LSR as no-shift
+
+**Formal:** ∀ rd ∈ [0,31], T ∈ {4h,8h,2s,4s}, extra-or-illegal-shift operand. llvm-mc rejects asm ⇒ encode_neon_mvni(ops) is Err
+**Contract evidence:** inferred (README.md:12; llvm-mc rejects `mvni v0.4s, #0, lsr #8`; ARM MVNI shift kinds are LSL and MSL only)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_neon_mvni([v0.4s, #0, lsr #8])
+**Expected / Actual:** Err / Ok(Word) encoding no-shift MVNI (cmode=0000)
+**Impact:** `lsr` (and other non-lsl/non-msl kinds) assemble as no-shift instead of an error.
+**Root cause:** neon.rs:1364-1366 maps any non-lsl/non-msl shift kind to cmode=0000.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/neon.rs:1364`
+```rust
+                } else {
+                    0b0000
+                }
+```
+**Suggested fix:** Reject unknown shift kinds.
+```rust
+                } else {
+                    return Err(format!("mvni: unsupported shift kind: {}", kind));
+                }
+```
+**Bug report:** bug_reports/encode_neon_mvni_lsr.md
+**Repro seed:** (deterministic regression)
+**Raw output:**
+```text
+mvni v0.4s, #0, lsr #8 must Err (llvm-mc rejects LSR on MVNI)
+```
+
+## Design Caveats
 
 (none)
 
@@ -163,60 +194,78 @@ movi v0.8b, #256 must Err (llvm-mc: immediate must be in range [0, 255])
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_neon_movi_pbt.rs | 9 properties + 1 KAT + 4 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one additive `#[cfg(test)] mod encode_neon_movi_pbt;` |
+| src/backend/arm/assembler/encoder/encode_neon_mvni_pbt.rs | 11 properties + 1 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_neon_mvni_pbt` registration |
 
 ## Reproduction
 
-Whole suite (serial, as run):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_neon_movi -- --test-threads=1
+cargo test --lib encode_neon_mvni -- --test-threads=1
 ```
 
-B1:
+B1 (h_lsl8):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_movi_regression_h_lsl8 -- --test-threads=1
+cargo test --lib encode_neon_mvni_diff_h_lsl8 -- --test-threads=1
 ```
 
-B2:
+B2 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_movi_regression_s_msl -- --test-threads=1
+cargo test --lib encode_neon_mvni_neg_extra_and_illegal_shift -- --test-threads=1
 ```
 
-B3:
+B3 (imm OOR):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_movi_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_neon_mvni_neg_imm_oor_invalid_t -- --test-threads=1
 ```
 
-B4:
+B4 (illegal H shift):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_neon_movi_regression_imm_oor -- --test-threads=1
+cargo test --lib test_encode_neon_mvni_regression_illegal_h_shift -- --test-threads=1
+```
+
+B5 (LSR):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_neon_mvni_regression_lsr -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md, pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md, pbt-out/PLAN.md
-- pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json, pbt-out/INVARIANTS.md, pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_neon_movi_h_lsl8.md (+ .html)
-- pbt-out/bug_reports/encode_neon_movi_s_msl.md (+ .html)
-- pbt-out/bug_reports/encode_neon_movi_extra_operand.md (+ .html)
-- pbt-out/bug_reports/encode_neon_movi_imm_oor.md (+ .html)
-- pbt-out/run/kat.log, movi.log, regression.log, sweep.log
-- proptest-regressions/backend/arm/assembler/encoder/encode_neon_movi_pbt.txt (proptest shrinking corpus, sibling convention)
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/report.json
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/run/encode_neon_mvni.log
+- pbt-out/run/encode_neon_mvni_sweep.log
+- pbt-out/bug_reports/encode_neon_mvni_h_lsl8.md
+- pbt-out/bug_reports/encode_neon_mvni_h_lsl8.html
+- pbt-out/bug_reports/encode_neon_mvni_extra_operand.md
+- pbt-out/bug_reports/encode_neon_mvni_extra_operand.html
+- pbt-out/bug_reports/encode_neon_mvni_imm_oor.md
+- pbt-out/bug_reports/encode_neon_mvni_imm_oor.html
+- pbt-out/bug_reports/encode_neon_mvni_illegal_h_shift.md
+- pbt-out/bug_reports/encode_neon_mvni_illegal_h_shift.html
+- pbt-out/bug_reports/encode_neon_mvni_lsr.md
+- pbt-out/bug_reports/encode_neon_mvni_lsr.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 10:53 (campaign: coverage)
-> Files: 10/10 scanned (100%) | Functions: 110/289 total | PBT candidates: 110 | Tested: 110 (100%) | 0 pass, 110 fail
+> Last updated: 2026-10-05 11:14 (campaign: coverage)
+> Files: 10/10 scanned (100%) | Functions: 111/289 total | PBT candidates: 111 | Tested: 111 (100%) | 0 pass, 111 fail
 
 ## Summary
 
@@ -225,10 +274,10 @@ cargo test --lib test_encode_neon_movi_regression_imm_oor -- --test-threads=1
 | Total source files | 10 |
 | Files scanned | 10 / 10 (100%) |
 | Total functions (all files) | 289 |
-| PBT candidates (from FUNCTION_INDEX) | 110 |
-| **Tested (of PBT candidates)** | **110 / 110 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 110 / 0 |
-| **Overall (tested / all functions)** | **110 / 289 (38%)** |
+| PBT candidates (from FUNCTION_INDEX) | 111 |
+| **Tested (of PBT candidates)** | **111 / 111 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 111 / 0 |
+| **Overall (tested / all functions)** | **111 / 289 (38%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -236,13 +285,13 @@ cargo test --lib test_encode_neon_movi_regression_imm_oor -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 110 | 110 | 0 | 100% |
+|  | 111 | 111 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 110 | 110 | 0 | 100% |
+| unknown | 111 | 111 | 0 | 100% |
 
 ## File Coverage
 
@@ -255,7 +304,7 @@ cargo test --lib test_encode_neon_movi_regression_imm_oor -- --test-threads=1
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
-| neon.rs | 68 | 25 | 25 | 100% | covered |
+| neon.rs | 68 | 26 | 26 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
 ## Recommended Focus
@@ -375,3 +424,4 @@ cargo test --lib test_encode_neon_movi_regression_imm_oor -- --test-threads=1
 | encode_neon_umov | neon.rs |
 | encode_neon_ext | neon.rs |
 | encode_neon_movi | neon.rs |
+| encode_neon_mvni | neon.rs |
