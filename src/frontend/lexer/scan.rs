@@ -1186,3 +1186,783 @@ fn hex_digit_val(c: u8) -> u8 {
         _ => 0,
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PBT properties (round 02) — see pbt-out/rounds/02_lexer/PROPERTIES.md
+// ─────────────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::Lexer;
+    use crate::frontend::lexer::token::TokenKind;
+    use proptest::prelude::*;
+
+    fn kinds_of(input: &str) -> Vec<TokenKind> {
+        Lexer::new(input, 0).tokenize().into_iter().map(|t| t.kind).collect()
+    }
+
+    fn first_tok(input: &str) -> TokenKind {
+        let ks = kinds_of(input);
+        assert!(!ks.is_empty(), "no tokens for {input:?}");
+        ks[0].clone()
+    }
+
+    fn int_payload(k: &TokenKind) -> u64 {
+        match k {
+            TokenKind::IntLiteral(v)
+            | TokenKind::LongLiteral(v)
+            | TokenKind::LongLongLiteral(v) => *v as u64,
+            TokenKind::UIntLiteral(v)
+            | TokenKind::ULongLiteral(v)
+            | TokenKind::ULongLongLiteral(v) => *v,
+            other => panic!("not an int token: {other:?}"),
+        }
+    }
+
+    fn float_payload(k: &TokenKind) -> f64 {
+        match k {
+            TokenKind::FloatLiteral(v)
+            | TokenKind::FloatLiteralF32(v)
+            | TokenKind::FloatLiteralLongDouble(v, _) => *v,
+            other => panic!("not a float token: {other:?}"),
+        }
+    }
+
+    /// Reference C11 §6.4.4.1 promotion under LP64, written from README:218-226
+    /// (int=32, long=64, long long=64; hex/octal/bin try unsigned intermediates).
+    fn expect_int_kind(v: u64, suffix: &str, base: &str) -> TokenKind {
+        let hexish = matches!(base, "hex" | "oct" | "bin");
+        match (suffix, hexish) {
+            ("ull", _) => TokenKind::ULongLongLiteral(v),
+            ("ul", _) => TokenKind::ULongLiteral(v),
+            ("u", _) => {
+                if v <= u32::MAX as u64 {
+                    TokenKind::UIntLiteral(v)
+                } else {
+                    TokenKind::ULongLiteral(v)
+                }
+            }
+            ("ll", true) => {
+                if v > i64::MAX as u64 {
+                    TokenKind::ULongLongLiteral(v)
+                } else {
+                    TokenKind::LongLongLiteral(v as i64)
+                }
+            }
+            ("ll", false) => TokenKind::LongLongLiteral(v as i64),
+            ("l", true) => {
+                if v > i64::MAX as u64 {
+                    TokenKind::ULongLiteral(v)
+                } else {
+                    TokenKind::LongLiteral(v as i64)
+                }
+            }
+            ("l", false) => TokenKind::LongLiteral(v as i64),
+            (_, true) => {
+                if v <= i32::MAX as u64 {
+                    TokenKind::IntLiteral(v as i64)
+                } else if v <= u32::MAX as u64 {
+                    TokenKind::UIntLiteral(v)
+                } else if v <= i64::MAX as u64 {
+                    TokenKind::LongLiteral(v as i64)
+                } else {
+                    TokenKind::ULongLiteral(v)
+                }
+            }
+            (_, false) => {
+                if v > i64::MAX as u64 {
+                    TokenKind::ULongLiteral(v)
+                } else if v <= i32::MAX as u64 {
+                    TokenKind::IntLiteral(v as i64)
+                } else {
+                    TokenKind::LongLiteral(v as i64)
+                }
+            }
+        }
+    }
+
+    fn render_int(v: u64, suffix: &str, base: &str) -> String {
+        match base {
+            "hex" => format!("0x{:x}{}", v, suffix),
+            "oct" => format!("0{:o}{}", v, suffix),
+            "bin" => format!("0b{:b}{}", v, suffix),
+            _ => format!("{}{}", v, suffix),
+        }
+    }
+
+    // P1 ─ identifier round-trip ────────────────────────────────────────────
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p1_identifier_round_trip(
+            first in 0usize..54,
+            rest in prop::collection::vec(0usize..64, 0..15),
+        ) {
+            const HEAD: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$";
+            const TAIL: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$0123456789";
+            let mut s = String::new();
+            s.push(HEAD[first % HEAD.len()] as char);
+            for &i in &rest {
+                s.push(TAIL[i % TAIL.len()] as char);
+            }
+            prop_assume!(TokenKind::from_keyword(&s, true).is_none());
+            prop_assume!(TokenKind::from_keyword(&s, false).is_none());
+            prop_assume!(!s.starts_with("__ccc_pack_") && !s.starts_with("__ccc_visibility_"));
+            let toks = Lexer::new(&s, 7).tokenize();
+            prop_assert_eq!(toks.len(), 2);
+            prop_assert_eq!(&toks[0].kind, &TokenKind::Identifier(s.clone()));
+            prop_assert_eq!(toks[0].span.start, 0);
+            prop_assert_eq!(toks[0].span.end as usize, s.len());
+            prop_assert_eq!(toks[0].span.file_id, 7);
+            prop_assert!(toks[1].is_eof());
+            prop_assert_eq!(toks[1].span.start as usize, s.len());
+            prop_assert_eq!(toks[1].span.end as usize, s.len());
+        }
+    }
+
+    // P2 ─ keyword table vs C11 §6.4.1 + documented gnu_extensions contract ──
+    #[test]
+    fn p2_keyword_table_reference() {
+        // (canonical spelling, expected kind, accepted in strict mode)
+        let table: &[(&str, TokenKind, bool)] = &[
+            ("auto", TokenKind::Auto, true), ("break", TokenKind::Break, true),
+            ("case", TokenKind::Case, true), ("char", TokenKind::Char, true),
+            ("const", TokenKind::Const, true), ("continue", TokenKind::Continue, true),
+            ("default", TokenKind::Default, true), ("do", TokenKind::Do, true),
+            ("double", TokenKind::Double, true), ("else", TokenKind::Else, true),
+            ("enum", TokenKind::Enum, true), ("extern", TokenKind::Extern, true),
+            ("float", TokenKind::Float, true), ("for", TokenKind::For, true),
+            ("goto", TokenKind::Goto, true), ("if", TokenKind::If, true),
+            ("inline", TokenKind::Inline, true), ("int", TokenKind::Int, true),
+            ("long", TokenKind::Long, true), ("register", TokenKind::Register, true),
+            ("restrict", TokenKind::Restrict, true), ("return", TokenKind::Return, true),
+            ("short", TokenKind::Short, true), ("signed", TokenKind::Signed, true),
+            ("sizeof", TokenKind::Sizeof, true), ("static", TokenKind::Static, true),
+            ("struct", TokenKind::Struct, true), ("switch", TokenKind::Switch, true),
+            ("typedef", TokenKind::Typedef, true), ("union", TokenKind::Union, true),
+            ("unsigned", TokenKind::Unsigned, true), ("void", TokenKind::Void, true),
+            ("volatile", TokenKind::Volatile, true), ("while", TokenKind::While, true),
+            ("_Alignas", TokenKind::Alignas, true), ("_Alignof", TokenKind::Alignof, true),
+            ("_Atomic", TokenKind::Atomic, true), ("_Bool", TokenKind::Bool, true),
+            ("_Complex", TokenKind::Complex, true), ("_Generic", TokenKind::Generic, true),
+            ("_Imaginary", TokenKind::Imaginary, true), ("_Noreturn", TokenKind::Noreturn, true),
+            ("_Static_assert", TokenKind::StaticAssert, true),
+            ("_Thread_local", TokenKind::ThreadLocal, true),
+            // GCC canonical spellings (bare GNU words NOT keywords in strict mode)
+            ("typeof", TokenKind::Typeof, false), ("asm", TokenKind::Asm, false),
+            ("__attribute__", TokenKind::Attribute, true),
+            ("__extension__", TokenKind::Extension, true),
+            ("__builtin_va_list", TokenKind::Builtin, true),
+            ("__builtin_va_arg", TokenKind::BuiltinVaArg, true),
+            ("__builtin_types_compatible_p", TokenKind::BuiltinTypesCompatibleP, true),
+            ("__int128", TokenKind::Int128, true), ("__uint128_t", TokenKind::UInt128, true),
+            ("__real__", TokenKind::RealPart, true), ("__imag__", TokenKind::ImagPart, true),
+            ("__auto_type", TokenKind::AutoType, true),
+            ("__alignof__", TokenKind::GnuAlignof, true),
+            ("__label__", TokenKind::GnuLabel, true),
+            ("__seg_gs", TokenKind::SegGs, true), ("__seg_fs", TokenKind::SegFs, true),
+            // double-underscore forms are always keywords (token.rs:367 doc)
+            ("__typeof__", TokenKind::Typeof, true), ("__asm__", TokenKind::Asm, true),
+            ("__volatile__", TokenKind::Volatile, true), ("__const__", TokenKind::Const, true),
+            ("__inline__", TokenKind::Inline, true), ("__restrict__", TokenKind::Restrict, true),
+            ("__signed__", TokenKind::Signed, true), ("__complex__", TokenKind::Complex, true),
+            ("__noreturn__", TokenKind::Noreturn, true), ("__thread", TokenKind::ThreadLocal, true),
+        ];
+        for (spelling, kind, strict_ok) in table {
+            assert_eq!(TokenKind::from_keyword(spelling, true), Some(kind.clone()),
+                "gnu-mode keyword mismatch for {spelling:?}");
+            assert_eq!(first_tok(spelling), kind.clone(), "tokenize mismatch for {spelling:?}");
+            // Display shows the CANONICAL keyword text (token.rs:200-203 doc);
+            // double-underscore alias spellings display as their bare form.
+            const ALIASES: &[&str] = &[
+                "__typeof__", "__asm__", "__volatile__", "__const__", "__inline__",
+                "__restrict__", "__signed__", "__complex__", "__noreturn__", "__thread",
+            ];
+            if !ALIASES.contains(spelling) {
+                assert_eq!(format!("{kind}"), format!("'{spelling}'"),
+                    "Display mismatch for {spelling:?}");
+            }
+            let strict = TokenKind::from_keyword(spelling, false);
+            if *strict_ok {
+                assert_eq!(strict, Some(kind.clone()), "strict-mode should keep {spelling:?}");
+            } else {
+                assert_eq!(strict, None, "strict-mode must not keep bare GNU word {spelling:?}");
+                let mut lx = Lexer::new(spelling, 0);
+                lx.set_gnu_extensions(false);
+                let ks = lx.tokenize();
+                assert_eq!(ks[0].kind, TokenKind::Identifier(spelling.to_string()),
+                    "strict-mode tokenize for {spelling:?}");
+            }
+        }
+    }
+
+    // P3 ─ integer literal round-trip with documented promotion (LP64) ──────
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p3_int_round_trip(v in any::<u64>(), suffix in 0usize..6, base in 0usize..4) {
+            const SUFS: [&str; 6] = ["", "u", "l", "ll", "ul", "ull"];
+            const BASES: [&str; 4] = ["dec", "hex", "oct", "bin"];
+            let suffix = SUFS[suffix];
+            let base = BASES[base];
+            // signed renders must keep v within the documented domain (v <= i64::MAX)
+            let v = if matches!(suffix, "l" | "ll") && base == "dec" { v % (1u64 << 63) } else { v };
+            let text = render_int(v, suffix, base);
+            let toks = Lexer::new(&text, 0).tokenize();
+            prop_assert_eq!(toks.len(), 2, "text={:?}", text);
+            prop_assert_eq!(&toks[0].kind, &expect_int_kind(v, suffix, base), "text={:?}", text);
+            prop_assert_eq!(toks[0].span.end as usize, text.len());
+            prop_assert!(toks[1].is_eof());
+        }
+    }
+
+    // P4 ─ documented promotion boundaries, sampled exactly (exhaustive) ────
+    #[test]
+    fn p4_promotion_boundaries_exact() {
+        let bounds: [u64; 7] = [
+            i32::MAX as u64,
+            i32::MAX as u64 + 1,
+            u32::MAX as u64,
+            u32::MAX as u64 + 1,
+            i64::MAX as u64,
+            i64::MAX as u64 + 1,
+            u64::MAX,
+        ];
+        for &v in &bounds {
+            for suffix in ["", "u", "l", "ll", "ul", "ull"] {
+                for base in ["dec", "hex", "oct", "bin"] {
+                    if matches!(suffix, "l" | "ll") && base == "dec" && v > i64::MAX as u64 {
+                        continue; // outside documented decimal-L domain (README silent)
+                    }
+                    let text = render_int(v, suffix, base);
+                    assert_eq!(first_tok(&text), expect_int_kind(v, suffix, base),
+                        "boundary v={v} suffix={suffix:?} base={base} text={text:?}");
+                }
+            }
+        }
+    }
+
+    // P5 ─ hex float exact value (reference: README:181 formula, exact domain)─
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p5_hex_float_exact(
+            int_digits in prop::collection::vec(0usize..16, 1..8),
+            frac_digits in prop::collection::vec(0usize..16, 0..4),
+            exp in -60i32..=60,
+        ) {
+            const HEX: &[u8] = b"0123456789abcdefABCDEF";
+            let int_s: String = int_digits.iter().map(|&i| HEX[i % HEX.len()] as char).collect();
+            let frac_s: String = frac_digits.iter().map(|&i| HEX[i % HEX.len()] as char).collect();
+            let lit = if frac_s.is_empty() {
+                format!("0x{int_s}p{exp}")
+            } else {
+                format!("0x{int_s}.{frac_s}p{exp}")
+            };
+            let mant = u64::from_str_radix(&format!("{int_s}{frac_s}"), 16).unwrap();
+            let expected = (mant as f64) * 2f64.powi(exp - 4 * frac_s.len() as i32);
+            let k = first_tok(&lit);
+            let got = float_payload(&k);
+            prop_assert_eq!(got.to_bits(), expected.to_bits(), "lit={:?}", lit);
+        }
+    }
+
+    // P6 ─ hex float must not collapse to 0 / wrong value on wide inputs ────
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p6_hex_float_no_collapse(
+            int_digits in prop::collection::vec(0usize..16, 1..20),
+            exp in -1000i32..=1000,
+        ) {
+            const HEX: &[u8] = b"0123456789abcdefABCDEF";
+            let int_s: String = int_digits.iter().map(|&i| HEX[i % HEX.len()] as char).collect();
+            prop_assume!(int_s.chars().any(|c| c != '0'));
+            let lit = format!("0x{int_s}p{exp}");
+            let got = float_payload(&first_tok(&lit));
+            prop_assert!(!got.is_nan(), "lit={:?}", lit);
+            prop_assert_ne!(got, 0.0, "nonzero literal collapsed to 0.0: lit={:?}", lit);
+        }
+    }
+
+    #[test]
+    fn p6b_hex_float_huge_exponent() {
+        // Positive huge exponents: true value overflows double -> must be infinite (or at least huge), never 1.0
+        for e in ["4294967296", "2147483648", "18446744073709551616", "99999999999999999999"] {
+            let lit = format!("0x1p{e}");
+            let v = float_payload(&first_tok(&lit));
+            assert!(v.is_infinite() || v >= 1e300, "lit={lit:?} gave {v}");
+        }
+        // Negative huge exponents: true value underflows to exactly 0.0, never 1.0
+        for e in ["-4294967296", "-2147483648", "-18446744073709551616", "-99999999999999999999"] {
+            let lit = format!("0x1p{e}");
+            let v = float_payload(&first_tok(&lit));
+            assert_eq!(v, 0.0, "lit={lit:?} gave {v}");
+        }
+    }
+
+    // P7 ─ integer literal overflow: payload ≡ digits (mod 2^64) ────────────
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p7_int_overflow_wraparound(
+            digits in prop::collection::vec(0usize..16, 1..20),
+            base in 0usize..3,
+        ) {
+            const HEX: &[u8] = b"0123456789abcdefABCDEF";
+            const OCT: &[u8] = b"01234567";
+            const BIN: &[u8] = b"01";
+            let (prefix, radix): (&str, u32) = match base {
+                0 => ("0x", 16),
+                1 => ("0", 8),
+                _ => ("0b", 2),
+            };
+            let digits_s: String = digits
+                .iter()
+                .map(|&i| {
+                    let alpha = match radix { 16 => HEX, 8 => OCT, _ => BIN };
+                    alpha[i % alpha.len()] as char
+                })
+                .collect();
+            let text = format!("{prefix}{digits_s}");
+            let expected = u128::from_str_radix(&digits_s, radix).unwrap() as u64;
+            let got = int_payload(&first_tok(&text));
+            prop_assert_eq!(got, expected, "text={:?}", text);
+        }
+    }
+
+    #[test]
+    fn p7b_decimal_exact_up_to_u64() {
+        for d in ["0", "9", "2147483647", "2147483648", "4294967296",
+                  "9223372036854775807", "18446744073709551615"] {
+            let got = int_payload(&first_tok(d));
+            assert_eq!(got, d.parse::<u64>().unwrap(), "decimal {d:?}");
+        }
+    }
+
+    // P8 ─ escape sequences vs documented table (README:275-283, C11 6.4.4.4)
+    #[test]
+    fn p8a_simple_escapes_table() {
+        let table: &[(&str, char)] = &[
+            ("n", '\n'), ("t", '\t'), ("r", '\r'), ("\\", '\\'),
+            ("'", '\''), ("\"", '"'), ("a", '\x07'), ("b", '\x08'),
+            ("e", '\x1b'), ("E", '\x1b'), ("f", '\x0c'), ("v", '\x0b'),
+        ];
+        for (esc, want) in table {
+            let lit = format!("'\\{esc}'");
+            assert_eq!(first_tok(&lit), TokenKind::CharLiteral(*want), "esc=\\{esc}");
+            let slit = format!("\"\\{esc}\"");
+            assert_eq!(first_tok(&slit), TokenKind::StringLiteral(want.to_string()));
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p8b_octal_hex_escapes(d in 0u32..512) {
+            // octal escape: 1-3 digits, value truncated to byte (README:278)
+            let oct = format!("{:o}", d);
+            let lit = format!("'\\{oct}'");
+            match first_tok(&lit) {
+                TokenKind::CharLiteral(c) => {
+                    prop_assert_eq!(c as u32, d & 0xFF, "octal lit={:?}", lit);
+                }
+                other => panic!("octal escape {lit:?} not a CharLiteral: {other:?}"),
+            }
+            // hex escape: consumes all digits, truncated to byte (README:279)
+            let hex = format!("{:x}", d);
+            let hlit = format!("'\\x{hex}'");
+            match first_tok(&hlit) {
+                TokenKind::CharLiteral(c) => {
+                    prop_assert_eq!(c as u32, d & 0xFF, "hex lit={:?}", hlit);
+                }
+                other => panic!("hex escape {hlit:?} not a CharLiteral: {other:?}"),
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p8c_unicode_escapes(cp_raw in 0u32..=0x10FFFF) {
+            let Some(cp) = char::from_u32(cp_raw) else {
+                return Ok(()); // surrogates have no char; U+FFFD path tested in T-series
+            };
+            let escs = if (cp as u32) <= 0xFFFF {
+                vec![format!("\\u{:04X}", cp as u32), format!("\\U{:08X}", cp as u32)]
+            } else {
+                vec![format!("\\U{:08X}", cp as u32)]
+            };
+            // wide char literal: code point directly (README:266)
+            for esc in &escs {
+                let lit = format!("L'{esc}'");
+                prop_assert_eq!(first_tok(&lit), TokenKind::IntLiteral(cp as i64), "wide lit={:?}", lit);
+            }
+            // narrow char literal: <=0xFF single char; >0xFF UTF-8-packed int (README:258)
+            let lit = format!("'{}'", escs[0]);
+            let k = first_tok(&lit);
+            if (cp as u32) <= 0xFF {
+                prop_assert_eq!(k, TokenKind::CharLiteral(cp), "narrow lit={:?}", lit);
+            } else {
+                let mut packed: i32 = 0;
+                let mut buf = [0u8; 4];
+                let utf8 = cp.encode_utf8(&mut buf);
+                for b in utf8.bytes() {
+                    packed = (packed << 8) | b as i32;
+                }
+                // multichar constants have type int (C11 6.4.4.4p10); value is the
+                // 32-bit packed pattern, sign-extended when widened to i64
+                prop_assert_eq!(k, TokenKind::IntLiteral(packed as i64), "narrow packed lit={:?}", lit);
+            }
+            // narrow string literal: UTF-8 encoded byte-by-byte (README:248)
+            let slit = format!("\"{}\"", escs[escs.len() - 1]);
+            let mut want = String::new();
+            let mut buf = [0u8; 4];
+            let utf8 = cp.encode_utf8(&mut buf);
+            for b in utf8.bytes() {
+                want.push(b as char);
+            }
+            prop_assert_eq!(first_tok(&slit), TokenKind::StringLiteral(want), "string lit={:?}", slit);
+        }
+    }
+
+    #[test]
+    fn p8d_multichar_packing() {
+        assert_eq!(first_tok("'AB'"), TokenKind::IntLiteral(0x4142));
+        assert_eq!(first_tok("'abcd'"), TokenKind::IntLiteral(0x61626364));
+        assert_eq!(first_tok("L'x'"), TokenKind::IntLiteral('x' as i64));
+    }
+
+    // P9 ─ whitespace/comment insertion is token-stream invariant ───────────
+    const SEPS: &[&str] = &[" ", "\t", "\n", "  \t ", "\n\n", "/*xy*/", "//c\n", " /*a*/\n"];
+
+    fn safe_token_strategy() -> BoxedStrategy<(String, TokenKind)> {
+        prop_oneof![
+            Just(("x".into(), TokenKind::Identifier("x".into()))),
+            Just(("foo42".into(), TokenKind::Identifier("foo42".into()))),
+            (0i64..i32::MAX as i64)
+                .prop_map(|v| (v.to_string(), TokenKind::IntLiteral(v))),
+            Just(("+".into(), TokenKind::Plus)),
+            Just(("-".into(), TokenKind::Minus)),
+            Just(("*".into(), TokenKind::Star)),
+            Just(("(".into(), TokenKind::LParen)),
+            Just((")".into(), TokenKind::RParen)),
+            Just((";".into(), TokenKind::Semicolon)),
+            Just((",".into(), TokenKind::Comma)),
+            Just((".".into(), TokenKind::Dot)),
+            Just(("<".into(), TokenKind::Less)),
+            Just((">".into(), TokenKind::Greater)),
+            Just(("==".into(), TokenKind::EqualEqual)),
+            (any::<char>().prop_map(|c| (format!("'{}'", c), TokenKind::CharLiteral(c))))
+                .prop_filter("alnum only", |(_, k)| matches!(k, TokenKind::CharLiteral(c) if c.is_ascii_alphanumeric())),
+            (prop::collection::vec(any::<char>(), 1..8)).prop_map(|cs| {
+                let body: String = cs.iter().filter(|c| c.is_ascii_alphabetic()).collect();
+                let b = if body.is_empty() { "a".to_string() } else { body };
+                (format!("\"{b}\""), TokenKind::StringLiteral(b))
+            }),
+        ]
+            .boxed()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p9_whitespace_invariance(
+            toks in prop::collection::vec(safe_token_strategy(), 1..8),
+            seeds in prop::collection::vec(any::<u64>(), 1..16),
+        ) {
+            let render = |seed_shift: u64| -> String {
+                let mut out = String::new();
+                for (i, (text, _)) in toks.iter().enumerate() {
+                    if i > 0 {
+                        let idx = (seeds[i % seeds.len()].wrapping_add(seed_shift)) as usize % SEPS.len();
+                        out.push_str(SEPS[idx]);
+                    }
+                    out.push_str(text);
+                }
+                out
+            };
+            let a = kinds_of(&render(0));
+            let b = kinds_of(&render(7));
+            let mut expected: Vec<TokenKind> = toks.iter().map(|(_, k)| k.clone()).collect();
+            expected.push(TokenKind::Eof);
+            prop_assert_eq!(a, expected.clone(), "render A: {:?}", render(0));
+            prop_assert_eq!(b, expected, "render B: {:?}", render(7));
+        }
+    }
+
+    // P10 ─ arbitrary input: terminate, end with Eof, spans sane ────────────
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p10_fuzz_spans_and_termination(s in prop::collection::vec(any::<char>(), 0..64)) {
+            let input: String = s.into_iter().collect();
+            let toks = Lexer::new(&input, 0).tokenize();
+            let last = toks.last().expect("tokenize must emit at least Eof");
+            prop_assert!(last.is_eof());
+            prop_assert_eq!(last.span.start as usize, input.len());
+            prop_assert_eq!(last.span.end as usize, input.len());
+            for w in toks.windows(2) {
+                prop_assert!(w[1].span.start >= w[0].span.end,
+                    "span regression at {}..{} -> {}..{} in {input:?}",
+                    w[0].span.start, w[0].span.end, w[1].span.start, w[1].span.end);
+            }
+            for t in &toks {
+                prop_assert!(t.span.start <= t.span.end);
+                prop_assert!(t.span.end as usize <= input.len());
+            }
+        }
+    }
+
+    // KAT gate for reference oracles (P2/P4/P5/P8) — must pass before PBT ran
+    #[test]
+    fn kat_reference_gate() {
+        assert_eq!(float_payload(&first_tok("0x1.8p1")), 3.0);
+        assert_eq!(float_payload(&first_tok("0x10p2")), 64.0);
+        assert_eq!(float_payload(&first_tok("0x1p-2")), 0.25);
+        assert_eq!(int_payload(&first_tok("0xff")), 255);
+        assert_eq!(first_tok("int"), TokenKind::Int);
+        assert_eq!(first_tok("'A'"), TokenKind::CharLiteral('A'));
+    }
+
+    // P11 (sweep round) ─ documented integer/float suffix grammar incl.
+    // imaginary i/I/j/J combinations (README:213-217, 245-251)
+    #[test]
+    fn p11_imaginary_suffix_combinations() {
+        // integer imaginary: 5i / 5I / 5j / 5J / 5ui / 5li / 5lli / 5ulli / 5ULi
+        for (lit, want) in [
+            ("5i", TokenKind::ImaginaryLiteral(5.0)),
+            ("5I", TokenKind::ImaginaryLiteral(5.0)),
+            ("5j", TokenKind::ImaginaryLiteral(5.0)),
+            ("5J", TokenKind::ImaginaryLiteral(5.0)),
+            ("5ui", TokenKind::ImaginaryLiteral(5.0)),
+            ("5li", TokenKind::ImaginaryLiteral(5.0)),
+            ("5lli", TokenKind::ImaginaryLiteral(5.0)),
+            ("5ulli", TokenKind::ImaginaryLiteral(5.0)),
+            ("0x10i", TokenKind::ImaginaryLiteral(16.0)),
+        ] {
+            assert_eq!(first_tok(lit), want, "int imaginary suffix {lit:?}");
+        }
+        // float imaginary: kind 0=double, 1=float, 2=long double (README:245-251);
+        // i/I may appear before or after the type suffix; j/J after or standalone
+        for (lit, want_kind, want_val) in [
+            ("1.5i", 0u8, 1.5f64),
+            ("1.5j", 0, 1.5),
+            ("1.5J", 0, 1.5),
+            ("1.5fi", 1, 1.5),
+            ("1.5if", 1, 1.5),
+            ("1.5fj", 1, 1.5),
+            ("1.5Fi", 1, 1.5),
+            ("2.5Li", 2, 2.5),
+            ("2.5iL", 2, 2.5),
+            ("2.5Lj", 2, 2.5),
+        ] {
+            match first_tok(lit) {
+                TokenKind::ImaginaryLiteral(v) => {
+                    assert_eq!(want_kind, 0, "wrong kind for {lit:?}");
+                    assert_eq!(v, want_val, "{lit:?}");
+                }
+                TokenKind::ImaginaryLiteralF32(v) => {
+                    assert_eq!(want_kind, 1, "wrong kind for {lit:?}");
+                    assert_eq!(v, want_val, "{lit:?}");
+                }
+                TokenKind::ImaginaryLiteralLongDouble(v, _) => {
+                    assert_eq!(want_kind, 2, "wrong kind for {lit:?}");
+                    assert_eq!(v, want_val, "{lit:?}");
+                }
+                k => panic!("{lit:?} -> {k:?}"),
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p11b_random_int_suffix_round_trip(
+            v in 0u64..0xFFFF,
+            us in 0usize..3, ls in 0usize..4, tail in 0usize..2,
+        ) {
+            // README:213: suffix order is flexible; u/U and l/L repeatable (GCC warns
+            // for >2 but still lexes); trailing i/j (if next char is not ident-continuation).
+            let mut suf = String::new();
+            for _ in 0..us { suf.push('u'); }
+            for _ in 0..ls { suf.push('l'); }
+            if tail == 1 { suf.push('j'); }
+            let lit = format!("{v}{suf}");
+            let k = first_tok(&lit);
+            if tail == 1 {
+                prop_assert!(matches!(k, TokenKind::ImaginaryLiteral(_)), "lit={:?} -> {:?}", lit, k);
+            } else {
+                let unsigned = us > 0;
+                let long_long = ls >= 2;
+                let long_only = ls == 1;
+                let expected = match (unsigned, long_long, long_only) {
+                    (true, true, _) => TokenKind::ULongLongLiteral(v),
+                    (true, false, true) => TokenKind::ULongLiteral(v),
+                    (true, false, false) => {
+                        if v <= u32::MAX as u64 { TokenKind::UIntLiteral(v) } else { TokenKind::ULongLiteral(v) }
+                    }
+                    (false, true, _) => TokenKind::LongLongLiteral(v as i64),
+                    (false, false, true) => TokenKind::LongLiteral(v as i64),
+                    (false, false, false) => TokenKind::IntLiteral(v as i64),
+                };
+                prop_assert_eq!(k, expected, "lit={:?}", lit);
+            }
+        }
+    }
+
+    // P12 (sweep round) ─ surrogate U+FFFD fallback (README:283) + wide/u8
+    // string code-point storage (README:248-254)
+    #[test]
+    fn p12_surrogate_fallback_and_string_families() {
+        // Surrogate code points have no char: documented fallback U+FFFD
+        assert_eq!(first_tok("'\\ud800'"), TokenKind::IntLiteral(0xEFBFBD),
+            "narrow surrogate: U+FFFD UTF-8-packed");
+        assert_eq!(first_tok("L'\\ud800'"), TokenKind::IntLiteral(0xFFFD),
+            "wide surrogate: code point U+FFFD directly");
+        // max code point packs to F4 8F BF BF; multichar constants have type int
+        // (C11 6.4.4.4p10) so the high bit makes the value negative
+        assert_eq!(first_tok("'\\U0010FFFF'"),
+            TokenKind::IntLiteral(0xF48FBFBFu32 as i32 as i64), "narrow max code point packed");
+        // Wide strings store code points directly (not UTF-8 bytes)
+        assert_eq!(first_tok("L\"\\u00e9\""), TokenKind::WideStringLiteral("\u{00e9}".into()));
+        // u8"..." is lexed identically to a narrow string (README:250)
+        assert_eq!(first_tok("u8\"\\u00e9\""), first_tok("\"\\u00e9\""));
+        // u"..." is Char16StringLiteral
+        assert_eq!(first_tok("u\"ab\""), TokenKind::Char16StringLiteral("ab".into()));
+        // u'x' uses the wide-char path (code point as IntLiteral)
+        assert_eq!(first_tok("u'x'"), TokenKind::IntLiteral('x' as i64));
+        assert_eq!(first_tok("u8'x'"), TokenKind::IntLiteral('x' as i64));
+    }
+}
+
+#[cfg(test)]
+mod pbt_regression {
+    use super::Lexer;
+    use crate::frontend::lexer::token::TokenKind;
+
+    fn kinds(input: &str) -> Vec<TokenKind> {
+        Lexer::new(input, 0).tokenize().into_iter().map(|t| t.kind).collect()
+    }
+
+    // T1: documented line-marker handling (README:162)
+    #[test]
+    fn t1_line_markers() {
+        assert_eq!(
+            kinds("# 42 \"f.c\"\nint x;"),
+            vec![TokenKind::Int, TokenKind::Identifier("x".into()), TokenKind::Semicolon, TokenKind::Eof]
+        );
+        // '#' not at start of line stays a Hash token
+        assert_eq!(
+            kinds("x # 3"),
+            vec![TokenKind::Identifier("x".into()), TokenKind::Hash, TokenKind::IntLiteral(3), TokenKind::Eof]
+        );
+        // '#if' is not a line marker (no digit)
+        assert_eq!(
+            kinds("#if 0"),
+            vec![TokenKind::Hash, TokenKind::If, TokenKind::IntLiteral(0), TokenKind::Eof]
+        );
+    }
+
+    // T2: unterminated comment — BUG WITNESS (B5): the last byte of an
+    // unterminated block comment leaks out as a token (scan.rs block-comment
+    // loop stops at pos+1 < len, leaving the final byte unconsumed).
+    #[test]
+    fn t2_unterminated_comment() {
+        assert_eq!(kinds("/*"), vec![TokenKind::Eof]);
+        assert_eq!(
+            kinds("int /* gone"),
+            vec![TokenKind::Int, TokenKind::Eof]
+        );
+    }
+
+    // B4 probe: runs of unknown non-ASCII chars must terminate. lex_punctuation
+    // recurses per character (unknown-char branch), so this stays below the
+    // observed stack-overflow threshold (~2000-4000 chars on a 2 MiB thread stack).
+    #[test]
+    fn probe_unknown_char_stack_depth_safe() {
+        for n in [1usize, 10, 100, 500, 1000, 2000] {
+            let s: String = "\u{00ff}".repeat(n);
+            let toks = Lexer::new(&s, 0).tokenize();
+            assert!(toks.last().unwrap().is_eof(), "n={n}");
+        }
+    }
+
+    // B4 witness: at ~4000+ unknown chars the recursive unknown-char path
+    // overflows the stack and ABORTS the process. Run in isolation:
+    //   cargo test --lib frontend::lexer::scan::pbt_regression::probe_unknown_char_stack_crash -- --ignored --exact
+    #[test]
+    #[ignore = "B4 witness: aborts the test process (stack overflow, SIGABRT)"]
+    fn probe_unknown_char_stack_crash() {
+        let s: String = "\u{00ff}".repeat(200_000);
+        let toks = Lexer::new(&s, 0).tokenize();
+        assert!(toks.last().unwrap().is_eof());
+    }
+
+    // ── deterministic regression tests (shrunk witnesses; FAIL until fixed) ──
+
+    fn tok0(input: &str) -> TokenKind {
+        Lexer::new(input, 0).tokenize().remove(0).kind
+    }
+
+    // B1: 0x10000000000000000p0 == 2^64 — exactly representable f64, valid C99
+    // hex float; GCC accepts it without complaint. ccc evaluates it to 0.0.
+    #[test]
+    fn test_lex_hex_float_regression_wide_mantissa_zero() {
+        assert_eq!(tok0("0x10000000000000000p0"), TokenKind::FloatLiteral(18446744073709551616.0));
+    }
+
+    // B2: exponent 2^32 truncates to i32 0 -> 1.0 instead of inf; -2^32 -> 1.0 instead of 0.0.
+    #[test]
+    fn test_lex_hex_float_regression_exponent_truncation() {
+        match tok0("0x1p4294967296") {
+            TokenKind::FloatLiteral(v) => assert!(v.is_infinite(), "got {v}"),
+            k => panic!("not a float: {k:?}"),
+        }
+        match tok0("0x1p-4294967296") {
+            TokenKind::FloatLiteral(v) => assert_eq!(v, 0.0),
+            k => panic!("not a float: {k:?}"),
+        }
+    }
+
+    // B3: 17-hex-digit integer: true value 2^64+1, mod 2^64 = 1 (GCC: warns, value 1);
+    // ccc silently yields 0.
+    #[test]
+    fn test_lex_int_regression_u64_overflow_zero() {
+        assert_eq!(tok0("0x10000000000000001"), TokenKind::IntLiteral(1));
+    }
+
+    // B5: unterminated block comment leaks its LAST byte as a token.
+    #[test]
+    fn test_lex_comment_regression_unterminated_leaks_last_byte() {
+        assert_eq!(
+            Lexer::new("int /* gone", 0).tokenize().into_iter().map(|t| t.kind).collect::<Vec<_>>(),
+            vec![TokenKind::Int, TokenKind::Eof]
+        );
+    }
+
+    // T3: synthetic pragma tokens (documented formats)
+    #[test]
+    fn t3_pragma_synthetic_tokens() {
+        assert_eq!(kinds("__ccc_pack_set_16")[0], TokenKind::PragmaPackSet(16));
+        assert_eq!(kinds("__ccc_pack_pop")[0], TokenKind::PragmaPackPop);
+        assert_eq!(kinds("__ccc_visibility_push_hidden")[0],
+            TokenKind::PragmaVisibilityPush("hidden".into()));
+    }
+
+    // T4: octal + ellipsis special case (README:205)
+    #[test]
+    fn t4_octal_ellipsis() {
+        assert_eq!(
+            kinds("case 0 ... 5 :"),
+            vec![TokenKind::Case, TokenKind::IntLiteral(0), TokenKind::Ellipsis,
+                  TokenKind::IntLiteral(5), TokenKind::Colon, TokenKind::Eof]
+        );
+        assert_eq!(
+            kinds("07..."),
+            vec![TokenKind::IntLiteral(7), TokenKind::Ellipsis, TokenKind::Eof]
+        );
+    }
+
+    // B1/B2/B3 witnesses — filled during Review from shrunk counterexamples.
+}
+

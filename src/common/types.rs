@@ -1888,3 +1888,33 @@ impl IrType {
         }
     }
 }
+
+// ============================================================================
+// Property-based tests (pi-pbt campaign, round 01_common)
+// ============================================================================
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// P13: align_up produces a multiple of align that is >= offset,
+        /// advances by < align, and is idempotent.
+        #[test]
+        fn pbt_p13_align_up_laws(
+            offset in any::<u32>(),
+            shift in 0u8..64,
+        ) {
+            let offset = offset as usize;
+            let align = 1usize << shift; // power of two, no overflow possible below
+            let r = align_up(offset, align);
+            prop_assert!(r % align == 0, "r={} not multiple of align={}", r, align);
+            prop_assert!(r >= offset);
+            prop_assert!(r - offset < align, "r={} overshoots offset={} by {}", r, offset, r - offset);
+            prop_assert_eq!(align_up(r, align), r);
+        }
+    }
+}

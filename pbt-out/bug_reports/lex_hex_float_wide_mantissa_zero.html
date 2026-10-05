@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: Hex float literals wider than 64 bits silently evaluate to 0.0</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: Hex float literals wider than 64 bits silently evaluate to 0.0</h1>
+<p><span class="badge">high</span> <code>b1</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>Hex float literals wider than 64 bits silently evaluate to 0.0</p>
+<table><tr><th>Expected behavior</th><td>FloatLiteral(18446744073709551616.0)</td></tr><tr><th>Observed behavior</th><td>FloatLiteral(0.0)</td></tr><tr><th>Impact assessment</th><td>Programs using large hex-float constants (e.g. exact 2^64) silently compile with 0.0 — silent wrong-code.</td></tr><tr><th>Minimal counterexample</th><td><code>lex 0x10000000000000000p0 → FloatLiteral(0.0), expected FloatLiteral(18446744073709551616.0)</code></td></tr></table>
+<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>README:181 &quot;Hex floats follow the C99 format 0x&lt;int&gt;.&lt;frac&gt;p&lt;exp&gt; and are converted via: value = (int_part + frac_part) * 2^exp&quot;</code></p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>hex_float_no_value_collapse (<code>p6a</code>)</td></tr><tr><th>Formal property</th><td>∀ lit = 0x&lt;hex 1..20 digits, ≥1 nonzero&gt;p&lt;−1000..1000&gt;: value(lit) ≠ 0.0 ∧ ¬NaN</td></tr><tr><th>Oracle</th><td>reference</td></tr><tr><th>System under test</th><td>Lexer::lex_hex_float</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/lexer/scan.rs:204</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/lexer/scan.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::lexer</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/02_lexer/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/02_lexer/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::lexer
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::lexer::scan::pbt_regression::test_lex_hex_float_regression_wide_mantissa_zero</code></pre>
+<p class="muted">No random seed is required for this deterministic reproduction.</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Parse hex digits into u128 (or accumulate into f64 with running scale, or reuse parse_long_double_to_f128_bytes) instead of u64::from_str_radix(...).unwrap_or(0) in lex_hex_float (scan.rs:242,244).</p>
+</section>
+</body>
+</html>

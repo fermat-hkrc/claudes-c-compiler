@@ -1,0 +1,67 @@
+{
+  "platform": "linux",
+  "hostArch": "x64",
+  "target": {
+    "openHarmony": false
+  },
+  "packageManagers": [
+    "dpkg"
+  ],
+  "findings": [],
+  "unresolved": [
+    "rapidcheck",
+    "googletest"
+  ],
+  "recommendations": [
+    {
+      "dependency": "rapidcheck",
+      "priority": 1,
+      "source": "project",
+      "message": "Use the repository's existing rapidcheck source or declared build dependency first.",
+      "command": null,
+      "requiresNetwork": false
+    },
+    {
+      "dependency": "rapidcheck",
+      "priority": 2,
+      "source": "system-repository",
+      "message": "If the project has no usable copy, install rapidcheck from the already configured package repositories (including enterprise/internal mirrors). Run it directly when already root or the manager is user-owned (Homebrew, pip --user, npm), and prefix `sudo -n` only when elevation is actually required and available — never an interactive sudo, which hangs a headless campaign, and a root container often has no sudo at all. Move to the next rung the moment it is refused. When multiple package databases exist, confirm the OS native package manager before choosing a command. pi-pbt does not run this itself — the campaign does.",
+      "command": "apt-get install librapidcheck-dev",
+      "requiresNetwork": true
+    },
+    {
+      "dependency": "rapidcheck",
+      "priority": 3,
+      "source": "public-network",
+      "message": "Vendor rapidcheck into the harness (`git clone --depth 1` plus the build system's subproject include). This needs no root, so it is often what works on a locked-down box. If the network is unreachable too, stop acquiring and continue the campaign under the PBT-FALLBACK protocol rather than ending it.",
+      "command": null,
+      "requiresNetwork": true
+    },
+    {
+      "dependency": "googletest",
+      "priority": 1,
+      "source": "project",
+      "message": "Use the repository's existing googletest source or declared build dependency first.",
+      "command": null,
+      "requiresNetwork": false
+    },
+    {
+      "dependency": "googletest",
+      "priority": 2,
+      "source": "system-repository",
+      "message": "If the project has no usable copy, install googletest from the already configured package repositories (including enterprise/internal mirrors). Run it directly when already root or the manager is user-owned (Homebrew, pip --user, npm), and prefix `sudo -n` only when elevation is actually required and available — never an interactive sudo, which hangs a headless campaign, and a root container often has no sudo at all. Move to the next rung the moment it is refused. When multiple package databases exist, confirm the OS native package manager before choosing a command. pi-pbt does not run this itself — the campaign does.",
+      "command": "apt-get install libgtest-dev",
+      "requiresNetwork": true
+    },
+    {
+      "dependency": "googletest",
+      "priority": 3,
+      "source": "public-network",
+      "message": "Vendor googletest into the harness (`git clone --depth 1` plus the build system's subproject include). This needs no root, so it is often what works on a locked-down box. If the network is unreachable too, stop acquiring and continue the campaign under the PBT-FALLBACK protocol rather than ending it.",
+      "command": null,
+      "requiresNetwork": true
+    }
+  ],
+  "diagnostics": [],
+  "commandsRun": 3
+}

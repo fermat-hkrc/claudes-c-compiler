@@ -600,3 +600,152 @@ pub fn truncate_and_extend_bits(bits: u64, target_width: usize, target_signed: b
 
     (result, target_signed)
 }
+
+// ============================================================================
+// Property-based tests (pi-pbt campaign, round 01_common)
+// ============================================================================
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::frontend::parser::ast::BinOp;
+    use crate::ir::reexports::IrConst;
+    use proptest::prelude::*;
+
+    fn ev(op: &BinOp, l: i64, r: i64, is_32bit: bool, is_unsigned: bool) -> Option<i64> {
+        eval_const_binop(
+            op,
+            &IrConst::I64(l),
+            &IrConst::I64(r),
+            is_32bit,
+            is_unsigned,
+            is_unsigned,
+            is_unsigned,
+        )
+        .and_then(|c| c.to_i64())
+    }
+
+    /// (a, b, is_32bit, is_unsigned) with values in range of the chosen C type,
+    /// b != 0. Mirrors the caller contract documented on eval_const_binop_int.
+    fn nonzero_case() -> impl proptest::strategy::Strategy<Value = (i64, i64, bool, bool)> {
+        prop_oneof![
+            1 => (any::<u32>(), any::<u32>()).prop_map(|(a, b)| (a as i64, b as i64, true, true)),
+            1 => (any::<i32>(), any::<i32>()).prop_map(|(a, b)| (a as i64, b as i64, true, false)),
+            1 => (any::<u64>(), any::<u64>()).prop_map(|(a, b)| (a as i64, b as i64, false, true)),
+            1 => (any::<i64>(), any::<i64>()).prop_map(|(a, b)| (a, b, false, false)),
+        ]
+        .prop_filter("b != 0", |(_, b, _, _)| *b != 0)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// P2: truncate_and_extend_bits == reference mask/sign-extension, and is idempotent.
+        #[test]
+        fn pbt_p2_truncate_extend(bits in any::<u64>(), w in 1usize..=64, signed in any::<bool>()) {
+            let mask = if w == 64 { u64::MAX } else { (1u64 << w) - 1 };
+            let (got, _) = truncate_and_extend_bits(bits, w, signed);
+            let expected = if signed {
+                let trunc = bits & mask;
+                if w < 64 && trunc & (1u64 << (w - 1)) != 0 { trunc | !mask } else { trunc }
+            } else {
+                bits & mask
+            };
+            prop_assert_eq!(got, expected);
+            let (again, _) = truncate_and_extend_bits(got, w, signed);
+            prop_assert_eq!(again, got);
+        }
+
+        /// P3: C99 6.5.5p6 — (a/b)*b + a%b == a (mod 2^width) for every width/signedness.
+        #[test]
+        fn pbt_p3_div_rem_identity((a, b, w32, uns) in nonzero_case()) {
+            let d = ev(&BinOp::Div, a, b, w32, uns).unwrap();
+            let m = ev(&BinOp::Mod, a, b, w32, uns).unwrap();
+            let prod = ev(&BinOp::Mul, d, b, w32, uns).unwrap();
+            let sum = ev(&BinOp::Add, prod, m, w32, uns).unwrap();
+            let width_mask = if w32 { 0xFFFF_FFFFu64 } else { u64::MAX };
+            prop_assert_eq!((sum.wrapping_sub(a) as u64) & width_mask, 0,
+                "a={} b={} w32={} uns={} d={} m={}", a, b, w32, uns, d, m);
+        }
+
+        /// P4: division / modulo by zero returns None (no panic, no value).
+        #[test]
+        fn pbt_p4_div_by_zero_none(a in any::<i64>(), w32 in any::<bool>(), uns in any::<bool>()) {
+            prop_assert!(ev(&BinOp::Div, a, 0, w32, uns).is_none());
+            prop_assert!(ev(&BinOp::Mod, a, 0, w32, uns).is_none());
+        }
+
+        /// P5: comparisons form a total order for each width/signedness.
+        #[test]
+        fn pbt_p5_cmp_totality((a, b, w32, uns) in nonzero_case()) {
+            let lt = ev(&BinOp::Lt, a, b, w32, uns).unwrap();
+            let eq = ev(&BinOp::Eq, a, b, w32, uns).unwrap();
+            let gt = ev(&BinOp::Gt, a, b, w32, uns).unwrap();
+            let le = ev(&BinOp::Le, a, b, w32, uns).unwrap();
+            let ge = ev(&BinOp::Ge, a, b, w32, uns).unwrap();
+            let ne = ev(&BinOp::Ne, a, b, w32, uns).unwrap();
+            let gt_rev = ev(&BinOp::Gt, b, a, w32, uns).unwrap();
+            prop_assert_eq!(lt + eq + gt, 1, "a={} b={} w32={} uns={}", a, b, w32, uns);
+            prop_assert_eq!(le, lt | eq);
+            prop_assert_eq!(ge, gt | eq);
+            prop_assert_eq!(ne, 1 - eq);
+            prop_assert_eq!(lt, gt_rev);
+        }
+
+        /// P6: F64 constant arithmetic is bitwise-identical to native IEEE-754 f64 ops
+        /// (finite operands; 0/0 excluded because its NaN payload is unspecified).
+        #[test]
+        fn pbt_p6_f64_differential(abits in finite_bits(), bbits in finite_bits(), which in any::<u8>()) {
+            let a = f64::from_bits(abits);
+            let b = f64::from_bits(bbits);
+            let op = match which % 4 {
+                0 => BinOp::Add,
+                1 => BinOp::Sub,
+                2 => BinOp::Mul,
+                _ => BinOp::Div,
+            };
+            if matches!(op, BinOp::Div) {
+                prop_assume!(a != 0.0 || b != 0.0);
+            }
+            let native = match op {
+                BinOp::Add => a + b,
+                BinOp::Sub => a - b,
+                BinOp::Mul => a * b,
+                _ => a / b,
+            };
+            let got = eval_const_binop(&op, &IrConst::F64(a), &IrConst::F64(b), false, false, false, false).unwrap();
+            match got {
+                IrConst::F64(v) => prop_assert_eq!(v.to_bits(), native.to_bits(),
+                    "a={:?} b={:?}", a, b),
+                other => panic!("expected F64 result, got {:?}", other),
+            }
+        }
+
+        /// P14: negation and bitwise NOT are value-wise involutions.
+        #[test]
+        fn pbt_p14_negate_bitnot_involution(
+            v64 in any::<i64>(), v32 in any::<i32>(), v8 in any::<i8>(), v128 in any::<i128>(), v16 in any::<i16>(),
+        ) {
+            let nn = negate_const(negate_const(IrConst::I64(v64)).unwrap()).unwrap();
+            prop_assert_eq!(nn.to_i64(), Some(v64));
+            let nn = negate_const(negate_const(IrConst::I32(v32)).unwrap()).unwrap();
+            prop_assert_eq!(nn.to_i64(), Some(v32 as i64));
+            let nn = negate_const(negate_const(IrConst::I8(v8)).unwrap()).unwrap();
+            prop_assert_eq!(nn.to_i64(), Some(v8 as i32 as i64));
+            let nn = negate_const(negate_const(IrConst::I16(v16)).unwrap()).unwrap();
+            prop_assert_eq!(nn.to_i64(), Some(v16 as i32 as i64));
+            let nn = negate_const(negate_const(IrConst::I128(v128)).unwrap()).unwrap();
+            prop_assert!(matches!(nn, IrConst::I128(x) if x == v128));
+
+            prop_assert!(matches!(bitnot_const(bitnot_const(IrConst::I64(v64)).unwrap()).unwrap(), IrConst::I64(x) if x == v64));
+            prop_assert!(matches!(bitnot_const(bitnot_const(IrConst::I32(v32)).unwrap()).unwrap(), IrConst::I32(x) if x == v32));
+            prop_assert!(matches!(bitnot_const(bitnot_const(IrConst::I8(v8)).unwrap()).unwrap(), IrConst::I32(x) if x == v8 as i32));
+            prop_assert!(matches!(bitnot_const(bitnot_const(IrConst::I128(v128)).unwrap()).unwrap(), IrConst::I128(x) if x == v128));
+        }
+    }
+
+    /// Random finite f64 bit patterns (exponent != 0x7FF so no NaN/Inf).
+    fn finite_bits() -> impl proptest::strategy::Strategy<Value = u64> {
+        any::<u64>().prop_map(|bits| bits & !(0x7FFu64 << 52))
+    }
+}

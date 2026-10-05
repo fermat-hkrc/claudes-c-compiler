@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: Integer literals larger than u64::MAX silently evaluate to 0 (all bases)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: Integer literals larger than u64::MAX silently evaluate to 0 (all bases)</h1>
+<p><span class="badge">medium</span> <code>b3</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>Integer literals larger than u64::MAX silently evaluate to 0 (all bases)</p>
+<table><tr><th>Expected behavior</th><td>IntLiteral(1)</td></tr><tr><th>Observed behavior</th><td>IntLiteral(0)</td></tr><tr><th>Impact assessment</th><td>Oversized constants (hash/mask tables) silently become 0 — GCC keeps the wrapped value with a diagnostic.</td></tr><tr><th>Minimal counterexample</th><td><code>lex 0x10000000000000001 → IntLiteral(0), expected IntLiteral(1)</code></td></tr></table>
+
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>integer_overflow_wraparound (<code>p7</code>)</td></tr><tr><th>Formal property</th><td>∀ base ∈ {hex,bin,oct}, digits 1..20: u64_payload(tokenize(render(digits,base))) = u128(digits) mod 2^64; decimal ≤ u64::MAX exact</td></tr><tr><th>Oracle</th><td>reference</td></tr><tr><th>System under test</th><td>Lexer::lex_hex_number</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/lexer/scan.rs:173</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/frontend/lexer/scan.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib frontend::lexer</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/02_lexer/run</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/02_lexer/run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::lexer
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib frontend::lexer::scan::pbt_regression::test_lex_int_regression_u64_overflow_zero</code></pre>
+<p class="muted">No random seed is required for this deterministic reproduction.</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Parse digit strings into u128 and truncate to u64 (modular accumulation) and emit a diagnostic when the value exceeds ULLONG_MAX (scan.rs:199,286,314,371).</p>
+</section>
+</body>
+</html>

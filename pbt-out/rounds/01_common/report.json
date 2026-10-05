@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 3,
+  "generator": { "tool": "pi-pbt", "version": "1.0" },
+  "run": {
+    "date": "2026-02-27",
+    "revision": "6f1b99acb2f4ec2414592136c2009fe7713deec3",
+    "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+    "target": "src/common",
+    "tier": "standard"
+  },
+  "build": {
+    "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo check --lib",
+    "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+    "result": "success"
+  },
+  "properties": [
+    { "id": "p1", "name": "pua_roundtrip", "formal": "forall v in (ASCII + lone continuation bytes)*. walk_decode(bytes_to_string(v)) = v", "oracle": "algebraic.round_trip", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/encoding.rs", "sourceLine": 24, "functionName": "bytes_to_string", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/encoding.rs", "testTarget": "cargo test --lib common::encoding", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p2", "name": "truncate_extend_reference", "formal": "forall x:u64, w in 1..=64, s:bool. truncate_and_extend_bits(x,w,s).0 = (mask/sign-extend reference) and is idempotent", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "sourceLine": 265, "functionName": "truncate_and_extend_bits", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "testTarget": "cargo test --lib common::const_arith", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p3", "name": "div_rem_c99_identity", "formal": "forall a,b (b!=0), width, signedness. (a/b)*b + a%b = a (mod 2^w) via eval_const_binop", "oracle": "algebraic", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "sourceLine": 50, "functionName": "eval_const_binop_int", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "testTarget": "cargo test --lib common::const_arith", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p4", "name": "div_by_zero_none", "formal": "forall a, width, signedness. eval(Div,a,0)=None and eval(Mod,a,0)=None", "oracle": "negative_error", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "sourceLine": 50, "functionName": "eval_const_binop_int", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "testTarget": "cargo test --lib common::const_arith", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p5", "name": "cmp_totality", "formal": "forall a,b,width,signedness. lt+eq+gt=1, le=lt|eq, ge=gt|eq, ne=!eq, lt(a,b)=gt(b,a)", "oracle": "algebraic.invariant", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "sourceLine": 50, "functionName": "eval_const_binop_int", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "testTarget": "cargo test --lib common::const_arith", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p6", "name": "f64_native_differential", "formal": "forall finite a,b, op in {+,-,*,/} (0/0 excluded). to_f64(eval(op,F64(a),F64(b))) = a op b bitwise", "oracle": "differential", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "sourceLine": 107, "functionName": "eval_const_binop_float", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "testTarget": "cargo test --lib common::const_arith", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p7", "name": "f128_lossless_roundtrip", "formal": "forall finite x:f64. f128_bytes_to_f64(f64_to_f128_bytes_lossless(x)).to_bits() = x.to_bits()", "oracle": "algebraic.round_trip", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "sourceLine": 1028, "functionName": "f64_to_f128_bytes_lossless", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "testTarget": "cargo test --lib common::long_double", "status": "failing", "counterexample": "x = 0.5 (biased_exp = 1022 < 1023): 'd.biased_exp as u128 - 1023' underflows -> panic 'attempt to subtract with overflow' in debug, garbage exponent in release. Also x = f64::from_bits(1) (subnormal, biased_exp = 0).", "bugId": "b1" },
+    { "id": "p8", "name": "i64_f128_roundtrip", "formal": "forall v:i64. f128_bytes_to_i64(i64_to_f128_bytes(v)) = Some(v)", "oracle": "algebraic.round_trip", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "sourceLine": 943, "functionName": "i64_to_f128_bytes", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "testTarget": "cargo test --lib common::long_double", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p9", "name": "f128_single_rounding", "formal": "forall finite normal a,b, op in {+,-,*,/}. f128_bytes_to_f64(f128_op(enc(a),enc(b))).to_bits() = (a op b).to_bits() (f128 arithmetic on f64-exact operands is exact, so one correctly-rounded narrowing equals native f64)", "oracle": "metamorphic", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "sourceLine": 1028, "functionName": "f64_to_f128_bytes_lossless", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "testTarget": "cargo test --lib common::long_double", "status": "failing", "counterexample": "any operand pair with |a| < 1.0 or |b| < 1.0 (e.g. a = 0.5): panics inside f64_to_f128_bytes_lossless (same root cause as b1); once that is fixed this property also isolates the f128_bytes_to_f64 truncation (b3)", "bugId": "b5" },
+    { "id": "p10", "name": "x87_f128_bridge_differential", "formal": "forall normal x87 bytes b. f128_bytes_to_f64(x87_bytes_to_f128_bytes(b)).to_bits() = x87_bytes_to_f64(b).to_bits()", "oracle": "differential", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "sourceLine": 906, "functionName": "f128_bytes_to_f64", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "testTarget": "cargo test --lib common::long_double", "status": "failing", "counterexample": "x87 2^0 x 1.111...1 (all-ones 64-bit mantissa, bytes[..8]=u64::MAX.to_le_bytes(), exp=0x3FFF): direct (round-to-nearest) = 2.0, via exact f128 bridge (truncating) = 1.9999999999999998", "bugId": "b3" },
+    { "id": "p11", "name": "x87_f64_roundtrip", "formal": "forall finite x:f64. x87_bytes_to_f64(f64_to_x87_bytes_simple(x)).to_bits() = x.to_bits()", "oracle": "algebraic.round_trip", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "sourceLine": 1143, "functionName": "f64_to_x87_bytes_simple", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs", "testTarget": "cargo test --lib common::long_double", "status": "failing", "counterexample": "x = f64::from_bits(1) = 5e-324 (smallest positive subnormal): encoded as ~2.22e-308 (implicit-leading-1 assumption on a subnormal mantissa), decodes to +0.0 (bits 0x0 vs expected 0x1)", "bugId": "b2" },
+    { "id": "p12", "name": "builtin_bitops_differential", "formal": "forall v:i64 (clz/ctz of 0 excluded as GCC-undefined). builtin(v) = rust_native(v) for clz/ctz/clzll/ctzll/popcount(ll)/parity(ll)/ffs, and ffs(0)=0", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_eval.rs", "sourceLine": 55, "functionName": "eval_builtin_call", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_eval.rs", "testTarget": "cargo test --lib common::const_eval", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p12b", "name": "bswap_semantics", "formal": "forall v:i64. bswapN(v) = (v as uN).swap_bytes() zero-extended for the result width, and bswap32(bswap32(v)) = (v as u32)", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_eval.rs", "sourceLine": 95, "functionName": "eval_builtin_call", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_eval.rs", "testTarget": "cargo test --lib common::const_eval", "status": "failing", "counterexample": "__builtin_bswap32 with v = -5495501120125551105 (low u32 after bswap = 0xFFBBD010 >= 2^31): folded constant reads back -4380928 (signed I32) instead of 4290586368 (zero-extended unsigned int)", "bugId": "b4" },
+    { "id": "p13", "name": "align_up_laws", "formal": "forall o:usize, a power-of-two >= 1 without overflow. align_up(o,a)%a=0 and align_up(o,a)>=o and align_up(o,a)-o<a and align_up(align_up(o,a),a)=align_up(o,a)", "oracle": "algebraic.invariant", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/types.rs", "sourceLine": 1177, "functionName": "align_up", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/types.rs", "testTarget": "cargo test --lib common::types", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p14", "name": "negate_bitnot_involution", "formal": "forall v. negate_const(negate_const(v)) = v value-wise; bitnot_const(bitnot_const(v)) = v for I8/I16/I32/I64/I128", "oracle": "algebraic.involution", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "sourceLine": 243, "functionName": "negate_const", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/const_arith.rs", "testTarget": "cargo test --lib common::const_arith", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p15", "name": "fxhash_write_consistency", "formal": "forall v. write_uN(v).finish() = write(&v.to_ne_bytes()).finish() (N=8,16,32,64) and forall 8-aligned s1, any s2. write(s1);write(s2) = write(s1||s2)", "oracle": "algebraic.invariant", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/fx_hash.rs", "sourceLine": 41, "functionName": "write", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/fx_hash.rs", "testTarget": "cargo test --lib common::fx_hash", "status": "passing", "counterexample": null, "bugId": null },
+    { "id": "p16", "name": "symbol_table_scope_shadowing", "formal": "automaton(scope stack; ops push_scope/declare/lookup/pop_scope; invariant: lookup returns innermost binding; popping a scope removes its bindings and restores outer visibility; the global scope survives)", "oracle": "state_machine", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/symbol_table.rs", "sourceLine": 33, "functionName": "SymbolTable::lookup", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/symbol_table.rs", "testTarget": "cargo test --lib common::symbol_table", "status": "passing", "counterexample": null, "bugId": null }
+  ],
+  "bugs": [
+    {
+      "id": "b1",
+      "propertyId": "p7",
+      "summary": "f64_to_f128_bytes_lossless corrupts every |x| < 1.0 (u128 underflow: panic in debug, garbage exponent in release)",
+      "severity": "critical",
+      "impact": "Every double/long double constant with magnitude < 1.0 on ARM64/RISC-V: compiler panic (debug) or silently wrong constant emitted (release).",
+      "expected": "lossless bitwise round-trip for every finite f64",
+      "actual": "panic 'attempt to subtract with overflow' at long_double.rs:1040 in debug; wrapped garbage exponent in release",
+      "counterexample": "x = 0.5 (biased_exp = 1022 < 1023): 'd.biased_exp as u128 - 1023' underflows -> panic 'attempt to subtract with overflow' in debug, garbage exponent in release. Also x = f64::from_bits(1) (subnormal, biased_exp = 0).",
+      "fix": "Compute the exponent without an unsigned intermediate underflow, e.g. (d.biased_exp as u128 + 16383 - 1023) or via i32; add a subnormal branch that normalizes the mantissa.",
+      "reportPath": "rounds/01_common/bug_reports/f64_to_f128_bytes_lossless_lt1_underflow.md",
+      "contractBasis": "inferred",
+      "documentedBehavior": null,
+      "reproduction": {
+        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib -- --test-threads=1 --ignored common::long_double::pbt_regression::test_f64_to_f128_bytes_lossless_regression_lt1_underflow",
+        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+        "seed": null,
+        "path": null
+      }
+    },
+    {
+      "id": "b5",
+      "propertyId": "p9",
+      "summary": "f128 single-rounding law broken (same root cause as b1: any |operand| < 1.0 panics inside f64_to_f128_bytes_lossless before f128 arithmetic is reached)",
+      "severity": "critical",
+      "impact": "Compile-time long double arithmetic on ARM64/RISC-V cannot fold any expression with an operand below 1.0; after fixing b1 this property additionally pins the f128_bytes_to_f64 truncation (b3).",
+      "expected": "f128_bytes_to_f64(f128_op(enc(a), enc(b))) bitwise-equal to native f64 a op b for f64-exact operands",
+      "actual": "panic 'attempt to subtract with overflow' at long_double.rs:1040 inside the operand conversion",
+      "counterexample": "any operand pair with |a| < 1.0 or |b| < 1.0 (e.g. a = 0.5): panics inside f64_to_f128_bytes_lossless (same root cause as b1); once that is fixed this property also isolates the f128_bytes_to_f64 truncation (b3)",
+      "fix": "Same fix as b1; then re-run this property to confirm agreement with native f64 (which will additionally exercise the b3 rounding fix).",
+      "reportPath": "rounds/01_common/bug_reports/f64_to_f128_bytes_lossless_lt1_underflow.md",
+      "contractBasis": "inferred",
+      "documentedBehavior": null,
+      "reproduction": {
+        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib -- --test-threads=1 pbt_p9_f128_single_rounding",
+        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+        "seed": null,
+        "path": null
+      }
+    },
+    {
+      "id": "b2",
+      "propertyId": "p11",
+      "summary": "f64_to_x87_bytes_simple mis-encodes subnormal f64 values (assumes implicit leading 1)",
+      "severity": "high",
+      "impact": "Subnormal double constants through the x86/i686 path become ~2^752 times larger — silent wrong constant.",
+      "expected": "decode-back to the original subnormal value (widening is exact per its own doc)",
+      "actual": "5e-324 encodes as ~2.22e-308 and decodes to +0.0",
+      "counterexample": "x = f64::from_bits(1) = 5e-324 (smallest positive subnormal): encoded as ~2.22e-308 (implicit-leading-1 assumption on a subnormal mantissa), decodes to +0.0 (bits 0x0 vs expected 0x1)",
+      "fix": "Add a subnormal branch: normalize the mantissa to explicit-integer-bit form with a correspondingly smaller exponent.",
+      "reportPath": "rounds/01_common/bug_reports/f64_to_x87_bytes_simple_subnormal.md",
+      "contractBasis": "documented-and-violated",
+      "documentedBehavior": "src/common/long_double.rs:1141 \"This is a widening conversion that zero-fills the extra mantissa bits.\"",
+      "reproduction": {
+        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib -- --test-threads=1 --ignored common::long_double::pbt_regression::test_f64_to_x87_bytes_simple_regression_subnormal",
+        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+        "seed": null,
+        "path": null
+      }
+    },
+    {
+      "id": "b3",
+      "propertyId": "p10",
+      "summary": "f128_bytes_to_f64 truncates instead of rounding to nearest — disagrees with same-job sibling x87_to_f64 called by the same caller (eval_const_binop_float) into the same IrConst slot",
+      "severity": "medium",
+      "impact": "Every folded long double Add/Sub/Mul/Div/Mod constant on ARM64/RISC-V (const_arith.rs:174-190) stores an approx 1 ulp away from the correctly-rounded value; by the single-rounding law it differs bitwise from native f64 arithmetic on f64-exact operands.",
+      "expected": "round-to-nearest-even narrowing, bitwise-equal to the sibling converter for the same value (2.0 for the witness)",
+      "actual": "truncated mantissa: 1.9999999999999998 for the witness",
+      "counterexample": "x87 2^0 x 1.111...1 (all-ones 64-bit mantissa, bytes[..8]=u64::MAX.to_le_bytes(), exp=0x3FFF): direct (round-to-nearest) = 2.0, via exact f128 bridge (truncating) = 1.9999999999999998",
+      "fix": "Mirror x87_bytes_to_f64's rounding (round bit = stored bit 59, sticky = bits 58..0, tie-to-even, mantissa-overflow carry into the exponent).",
+      "reportPath": "rounds/01_common/bug_reports/f128_bytes_to_f64_truncates.md",
+      "contractBasis": "documented-and-violated",
+      "documentedBehavior": "src/common/long_double.rs:655 \"Round to nearest: check bit 10 (the first dropped bit)\" (same-job sibling x87_bytes_to_f64; the same caller const_arith.rs:239 uses it for the identical IrConst approx slot)",
+      "reproduction": {
+        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib -- --test-threads=1 --ignored common::long_double::pbt_regression::test_f128_bytes_to_f64_regression_truncation",
+        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+        "seed": null,
+        "path": null
+      }
+    },
+    {
+      "id": "b4",
+      "propertyId": "p12b",
+      "summary": "__builtin_bswap32 folds unsigned results >= 2^31 into signed I32, violating the module's own zero-extension rule",
+      "severity": "medium",
+      "impact": "(__int128)__builtin_bswap32(x)-style widening via eval_const_binop_i128 sign-extends the wrong representation; any consumer reading to_i64() gets a negative value for an unsigned-int constant.",
+      "expected": "folded constant zero-extended: 4290586368 for the witness",
+      "actual": "folded constant -4380928 (I32 sign-extended)",
+      "counterexample": "__builtin_bswap32 with v = -5495501120125551105 (low u32 after bswap = 0xFFBBD010 >= 2^31): folded constant reads back -4380928 (signed I32) instead of 4290586368 (zero-extended unsigned int)",
+      "fix": "Store the result zero-extended like the arithmetic path does: Some(IrConst::I64(v.swap_bytes() as u64 as i64)).",
+      "reportPath": "rounds/01_common/bug_reports/bswap32_signed_representation.md",
+      "contractBasis": "documented-and-violated",
+      "documentedBehavior": "src/common/const_arith.rs:88-96 \"For unsigned 32-bit results, we must use I64 with zero-extension because IrConst::I32 is signed and cannot correctly represent unsigned values >= 2^31. ... Using I64(4294967295) preserves the correct unsigned value.\"",
+      "reproduction": {
+        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib -- --test-threads=1 --ignored common::const_eval::pbt_regression::test_eval_builtin_bswap32_regression_unsigned_repr",
+        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+        "seed": null,
+        "path": null
+      }
+    }
+  ],
+  "totals": { "properties": 17, "passing": 12, "failing": 5, "bugs": 5 }
+}

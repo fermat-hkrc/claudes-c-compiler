@@ -183,3 +183,40 @@ mod tests {
         }
     }
 }
+
+// ============================================================================
+// Property-based tests (pi-pbt campaign, round 01_common)
+// ============================================================================
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Walk the whole encoded string through the lexer-side decoder.
+    fn walk_decode(s: &str) -> Vec<u8> {
+        let input: Vec<u8> = s.bytes().collect();
+        let mut out = Vec::new();
+        let mut pos = 0usize;
+        while pos < input.len() {
+            let (b, n) = decode_pua_byte(&input, pos);
+            out.push(b);
+            pos += n;
+        }
+        out
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// P1: bytes from ASCII + lone continuation bytes (never valid UTF-8
+        /// multi-byte sequences) round-trip through the PUA encoding.
+        #[test]
+        fn pbt_p1_pua_roundtrip(bytes in prop::collection::vec(
+            (any::<u16>()).prop_map(|v| (v % 192) as u8), 0..64
+        )) {
+            let encoded = bytes_to_string(bytes.clone());
+            prop_assert_eq!(walk_decode(&encoded), bytes);
+        }
+    }
+}

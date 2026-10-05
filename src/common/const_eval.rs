@@ -344,3 +344,105 @@ pub fn eval_binop_with_types(
     const_arith::eval_const_binop(op, lhs, rhs, is_32bit, is_unsigned, lhs_unsigned, rhs_unsigned)
 }
 
+
+// ============================================================================
+// Property-based tests (pi-pbt campaign, round 01_common)
+// ============================================================================
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::source::Span;
+    use crate::frontend::parser::ast::Expr;
+    use proptest::prelude::*;
+
+    fn builtin64(name: &str, v: i64) -> Option<i64> {
+        let arg = if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
+            Expr::IntLiteral(v, Span::dummy())
+        } else {
+            Expr::LongLongLiteral(v, Span::dummy())
+        };
+        eval_builtin_call(name, &[arg], &|e| eval_literal(e)).and_then(|c| c.to_i64())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// P12: __builtin bit operations agree with GCC semantics
+        /// (== Rust native leading_zeros/trailing_zeros/count_ones/swap_bytes).
+        #[test]
+        fn pbt_p12_builtin_bitops(v in any::<i64>()) {
+            // clz/ctz on `unsigned int` — 0 is undefined in GCC, excluded from domain.
+            prop_assume!((v as u32) != 0 || (v as u64) != 0);
+            if (v as u32) != 0 {
+                prop_assert_eq!(builtin64("__builtin_clz", v), Some((v as u32).leading_zeros() as i64), "clz v={}", v);
+                prop_assert_eq!(builtin64("__builtin_ctz", v), Some((v as u32).trailing_zeros() as i64), "ctz v={}", v);
+                prop_assert_eq!(builtin64("__builtin_ffs", v), Some((v as u32).trailing_zeros() as i64 + 1), "ffs v={}", v);
+            }
+            prop_assert_eq!(builtin64("__builtin_clzll", v), Some((v as u64).leading_zeros() as i64), "clzll v={}", v);
+            if (v as u64) != 0 {
+                prop_assert_eq!(builtin64("__builtin_ctzll", v), Some((v as u64).trailing_zeros() as i64), "ctzll v={}", v);
+            }
+            prop_assert_eq!(builtin64("__builtin_popcountll", v), Some((v as u64).count_ones() as i64), "popcountll v={}", v);
+            prop_assert_eq!(builtin64("__builtin_popcount", v), Some((v as u32).count_ones() as i64), "popcount v={}", v);
+            prop_assert_eq!(builtin64("__builtin_parity", v), Some(((v as u32).count_ones() % 2) as i64), "parity v={}", v);
+            prop_assert_eq!(builtin64("__builtin_parityll", v), Some(((v as u64).count_ones() % 2) as i64), "parityll v={}", v);
+
+            // bswap: reference semantics + involution.
+            prop_assert_eq!(builtin64("__builtin_bswap16", v), Some((v as u16).swap_bytes() as i32 as i64), "bswap16 v={}", v);
+            prop_assert_eq!(builtin64("__builtin_bswap32", v), Some((v as u32).swap_bytes() as i32 as i64), "bswap32 v={}", v);
+            prop_assert_eq!(builtin64("__builtin_bswap64", v), Some((v as u64).swap_bytes() as i64), "bswap64 v={}", v);
+            let b16 = builtin64("__builtin_bswap16", builtin64("__builtin_bswap16", v).unwrap()).unwrap();
+            prop_assert_eq!(b16, (v as u16) as i64);
+            let b64 = builtin64("__builtin_bswap64", builtin64("__builtin_bswap64", v).unwrap()).unwrap();
+            prop_assert_eq!(b64, v);
+        }
+
+        /// P12b: __builtin_bswap* match Rust swap_bytes (GCC semantics) and are
+        /// involutions. Unsigned 32-bit results must be zero-extended per the
+        /// module's own constant-representation rule (const_arith.rs:88-96).
+        #[test]
+        fn pbt_p12b_bswap_semantics(v in any::<i64>()) {
+            prop_assert_eq!(builtin64("__builtin_bswap16", v), Some((v as u16).swap_bytes() as i64), "bswap16 v={}", v);
+            prop_assert_eq!(builtin64("__builtin_bswap32", v), Some((v as u32).swap_bytes() as u64 as i64), "bswap32 v={}", v);
+            prop_assert_eq!(builtin64("__builtin_bswap64", v), Some((v as u64).swap_bytes() as i64), "bswap64 v={}", v);
+            let b32 = builtin64("__builtin_bswap32", builtin64("__builtin_bswap32", v).unwrap()).unwrap();
+            prop_assert_eq!(b32, (v as u32) as i64, "bswap32 involution v={}", v);
+        }
+    }
+
+    /// P12b: __builtin_ffs(0) == 0 (GCC-documented).
+    #[test]
+    fn pbt_p12_ffs_zero() {
+        assert_eq!(builtin64("__builtin_ffs", 0), Some(0));
+    }
+}
+
+#[cfg(test)]
+mod pbt_regression {
+    use super::*;
+    use crate::common::source::Span;
+    use crate::frontend::parser::ast::Expr;
+
+    fn builtin64(name: &str, v: i64) -> Option<i64> {
+        let arg = if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
+            Expr::IntLiteral(v, Span::dummy())
+        } else {
+            Expr::LongLongLiteral(v, Span::dummy())
+        };
+        eval_builtin_call(name, &[arg], &|e| eval_literal(e)).and_then(|c| c.to_i64())
+    }
+
+    /// B4: __builtin_bswap32 returns unsigned int; its folded constant must be
+    /// zero-extended (per the module's own rule in const_arith.rs:88-96), but it
+    /// is stored as signed I32 and reads back negative.
+    #[test]
+    #[ignore = "SUT bug B4: __builtin_bswap32 fold uses signed I32 for unsigned >= 2^31"]
+    fn test_eval_builtin_bswap32_regression_unsigned_repr() {
+        let v: i64 = -5495501120125551105; // low 32 bits >= 2^31 after bswap
+        assert_eq!(
+            builtin64("__builtin_bswap32", v),
+            Some((v as u32).swap_bytes() as u64 as i64)
+        );
+    }
+}

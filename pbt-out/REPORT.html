@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PBT Report Overview: src/frontend/lexer</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body>
+<h1>PBT Report Overview: src/frontend/lexer</h1>
+<p class="muted">Test date: 2026-10-05; Tested revision: <code>6f1b99acb2f4ec2414592136c2009fe7713deec3</code>; Campaign tier: standard</p>
+<h2>Test Results</h2>
+<table><tr><th>Properties</th><th>Passing</th><th>Failing</th><th>Confirmed Defects</th></tr><tr><td>15</td><td>10</td><td>5</td><td>5</td></tr></table>
+<h2>Defect List</h2>
+<table><tr><th>ID</th><th>Summary</th><th>Severity</th><th>Details</th></tr><tr><td><code>b1</code></td><td>Hex float literals wider than 64 bits silently evaluate to 0.0</td><td>high</td><td><a href="bug_reports/lex_hex_float_wide_mantissa_zero.html">View defect details</a></td></tr>
+<tr><td><code>b2</code></td><td>Hex float exponent truncated to i32 / parse-overflow aliases to exponent 0</td><td>medium</td><td><a href="bug_reports/lex_hex_float_exponent_truncation.html">View defect details</a></td></tr>
+<tr><td><code>b3</code></td><td>Integer literals larger than u64::MAX silently evaluate to 0 (all bases)</td><td>medium</td><td><a href="bug_reports/lex_int_u64_overflow_zero.html">View defect details</a></td></tr>
+<tr><td><code>b4</code></td><td>Stack overflow (process abort) on a run of unknown non-ASCII characters</td><td>medium</td><td><a href="bug_reports/lex_punctuation_stack_overflow.html">View defect details</a></td></tr>
+<tr><td><code>b5</code></td><td>Unterminated block comment leaks its last byte as a token</td><td>medium</td><td><a href="bug_reports/lex_comment_unterminated_leaks_last_byte.html">View defect details</a></td></tr></table>
+<p class="muted">For technical details, see REPORT.md and report.json in this directory.</p>
+</body>
+</html>

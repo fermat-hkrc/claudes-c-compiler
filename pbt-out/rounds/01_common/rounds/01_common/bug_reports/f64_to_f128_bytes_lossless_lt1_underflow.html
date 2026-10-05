@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: f128 single-rounding law broken (same root cause as b1: any |operand| &lt; 1.0 panics inside f64_to_f128_bytes_lossless before f128 arithmetic is reached)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: f128 single-rounding law broken (same root cause as b1: any |operand| &lt; 1.0 panics inside f64_to_f128_bytes_lossless before f128 arithmetic is reached)</h1>
+<p><span class="badge">critical</span> <code>b5</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>f128 single-rounding law broken (same root cause as b1: any |operand| &lt; 1.0 panics inside f64_to_f128_bytes_lossless before f128 arithmetic is reached)</p>
+<table><tr><th>Expected behavior</th><td>f128_bytes_to_f64(f128_op(enc(a), enc(b))) bitwise-equal to native f64 a op b for f64-exact operands</td></tr><tr><th>Observed behavior</th><td>panic &#39;attempt to subtract with overflow&#39; at long_double.rs:1040 inside the operand conversion</td></tr><tr><th>Impact assessment</th><td>Compile-time long double arithmetic on ARM64/RISC-V cannot fold any expression with an operand below 1.0; after fixing b1 this property additionally pins the f128_bytes_to_f64 truncation (b3).</td></tr><tr><th>Minimal counterexample</th><td><code>any operand pair with |a| &lt; 1.0 or |b| &lt; 1.0 (e.g. a = 0.5): panics inside f64_to_f128_bytes_lossless (same root cause as b1); once that is fixed this property also isolates the f128_bytes_to_f64 truncation (b3)</code></td></tr></table>
+
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>f128_single_rounding (<code>p9</code>)</td></tr><tr><th>Formal property</th><td>forall finite normal a,b, op in {+,-,*,/}. f128_bytes_to_f64(f128_op(enc(a),enc(b))).to_bits() = (a op b).to_bits() (f128 arithmetic on f64-exact operands is exact, so one correctly-rounded narrowing equals native f64)</td></tr><tr><th>Oracle</th><td>metamorphic</td></tr><tr><th>System under test</th><td>f64_to_f128_bytes_lossless</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs:1028</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib common::long_double</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib --no-run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib -- --test-threads=1 pbt_p9_f128_single_rounding</code></pre>
+<p class="muted">No random seed is required for this deterministic reproduction.</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Same fix as b1; then re-run this property to confirm agreement with native f64 (which will additionally exercise the b3 rounding fix).</p>
+</section>
+</body>
+</html>

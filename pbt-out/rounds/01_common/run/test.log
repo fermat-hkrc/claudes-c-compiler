@@ -1,0 +1,1301 @@
+warning: unused variable: `reg`
+    --> src/backend/i686/codegen/peephole.rs:1607:33
+     |
+1607 |                 LineKind::Pop { reg } if depth > 0 => { depth -= 1; }
+     |                                 ^^^ help: try ignoring the field: `reg: _`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `ccc` (lib test) generated 1 warning (run `cargo fix --lib -p ccc --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (/home/shuhao/fermat-users/leo/github/claudes-c-compiler/target/debug/deps/ccc-405c0348f94fe50d)
+
+running 522 tests
+test backend::arm::codegen::peephole::tests::test_adjacent_store_load_diff_reg ... ok
+test backend::arm::codegen::peephole::tests::test_adjacent_store_load_same_reg ... ok
+test backend::arm::codegen::peephole::tests::test_branch_over_branch_fusion ... ok
+test backend::arm::codegen::peephole::tests::test_classify_branch ... ok
+test backend::arm::codegen::peephole::tests::test_classify_cond_branch ... ok
+test backend::arm::codegen::peephole::tests::test_classify_label ... ok
+test backend::arm::codegen::peephole::tests::test_classify_load ... ok
+test backend::arm::codegen::peephole::tests::test_classify_loadsw ... ok
+test backend::arm::codegen::peephole::tests::test_classify_move ... ok
+test backend::arm::codegen::peephole::tests::test_classify_move_imm ... ok
+test backend::arm::codegen::peephole::tests::test_classify_ret ... ok
+test backend::arm::codegen::peephole::tests::test_classify_store ... ok
+test backend::arm::codegen::peephole::tests::test_classify_sxtw ... ok
+test backend::arm::codegen::peephole::tests::test_copy_prop_no_false_match ... ok
+test backend::arm::codegen::peephole::tests::test_copy_prop_word_boundary ... ok
+test backend::arm::codegen::peephole::tests::test_dse_with_address_taken ... ok
+test backend::arm::codegen::peephole::tests::test_gsf_different_reg_forwarding ... ignored
+test backend::arm::codegen::peephole::tests::test_gsf_invalidation_at_jump_target ... ok
+test backend::arm::codegen::peephole::tests::test_gsf_invalidation_on_reg_overwrite ... ok
+test backend::arm::codegen::peephole::tests::test_gsf_ldrsw_forwarding ... ignored
+test backend::arm::codegen::peephole::tests::test_gsf_same_reg_elimination ... ignored
+test backend::arm::codegen::peephole::tests::test_gsf_word_forwarding ... ignored
+test backend::arm::codegen::peephole::tests::test_move_chain ... ok
+test backend::arm::codegen::peephole::tests::test_move_imm_chain ... ok
+test backend::arm::codegen::peephole::tests::test_redundant_branch ... ok
+test backend::arm::codegen::peephole::tests::test_self_move ... ok
+test backend::arm::codegen::peephole::tests::test_store_loadsw_fusion ... ok
+test backend::asm_expr::tests::test_arithmetic ... ok
+test backend::asm_expr::tests::test_bitwise ... ok
+test backend::asm_expr::tests::test_character_literals ... ok
+test backend::asm_expr::tests::test_complex ... ok
+test backend::asm_expr::tests::test_logical_not ... ok
+test backend::asm_expr::tests::test_operator_precedence ... ok
+test backend::asm_expr::tests::test_simple_integers ... ok
+test backend::asm_preprocess::tests::test_eval_if_condition ... ok
+test backend::asm_preprocess::tests::test_eval_if_condition_with_x86_registers ... ok
+test backend::asm_preprocess::tests::test_find_symbol_diff_minus ... ok
+test backend::asm_preprocess::tests::test_is_numeric_label_ref ... ok
+test backend::asm_preprocess::tests::test_parse_macro_params_empty ... ok
+test backend::asm_preprocess::tests::test_parse_macro_params_mixed ... ok
+test backend::asm_preprocess::tests::test_parse_macro_params_simple ... ok
+test backend::asm_preprocess::tests::test_parse_macro_params_space_separated ... ok
+test backend::asm_preprocess::tests::test_parse_macro_params_with_defaults ... ok
+test backend::asm_preprocess::tests::test_purgem_prevents_further_expansion ... ok
+test backend::asm_preprocess::tests::test_purgem_removes_macro ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_adjacent_digit ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_basic ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_before_delimiter ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_boundary_rejection ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_end_of_string ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_followed_by_operator ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_multiple ... ok
+test backend::asm_preprocess::tests::test_replace_macro_param_no_match ... ok
+test backend::asm_preprocess::tests::test_resolve_x86_registers ... ok
+test backend::asm_preprocess::tests::test_split_macro_args ... ok
+test backend::asm_preprocess::tests::test_split_on_semicolons ... ok
+test backend::asm_preprocess::tests::test_strip_c_comments ... ok
+test backend::asm_preprocess::tests::test_strip_c_comments_preserves_strings ... ok
+test backend::asm_preprocess::tests::test_strip_comment_hash ... ok
+test backend::asm_preprocess::tests::test_strip_comment_slash_slash_and_at ... ok
+test backend::i686::codegen::peephole::tests::test_addl_1_not_incl_before_adcl ... ok
+test backend::i686::codegen::peephole::tests::test_addl_1_to_incl ... ok
+test backend::i686::codegen::peephole::tests::test_addl_neg1_to_decl ... ok
+test backend::i686::codegen::peephole::tests::test_branch_inversion ... ok
+test backend::i686::codegen::peephole::tests::test_compare_branch_fusion ... ok
+test backend::i686::codegen::peephole::tests::test_compare_branch_fusion_inverted ... ok
+test backend::i686::codegen::peephole::tests::test_compare_branch_fusion_unmatched_store_bails ... ok
+test backend::i686::codegen::peephole::tests::test_compare_branch_fusion_with_store_load ... ok
+test backend::i686::codegen::peephole::tests::test_dead_store ... ok
+test backend::i686::codegen::peephole::tests::test_memory_fold ... ok
+test backend::i686::codegen::peephole::tests::test_movl_0_to_xorl ... ok
+test backend::i686::codegen::peephole::tests::test_redundant_jump ... ok
+test backend::i686::codegen::peephole::tests::test_redundant_movsbl ... ok
+test backend::i686::codegen::peephole::tests::test_redundant_store_load ... ok
+test backend::i686::codegen::peephole::tests::test_reverse_move_elimination ... ok
+test backend::i686::codegen::peephole::tests::test_self_move ... ok
+test backend::i686::codegen::peephole::tests::test_store_load_different_reg ... ok
+test backend::i686::codegen::peephole::tests::test_subl_1_not_decl_before_sbbl ... ok
+test backend::i686::codegen::peephole::tests::test_subl_1_to_decl ... ok
+test backend::i686::codegen::peephole::tests::test_subl_neg1_to_incl ... ok
+test backend::liveness::tests::test_empty_inline_asm_barrier_not_call_point ... ok
+test backend::liveness::tests::test_inline_asm_with_operands_is_call_point ... ok
+test backend::riscv::assembler::compress::tests::test_compress_addi_s0_sp_48 ... ok
+test backend::riscv::assembler::compress::tests::test_compress_addi_sp ... ok
+test backend::riscv::assembler::compress::tests::test_compress_addi_sp_48 ... ok
+test backend::riscv::assembler::compress::tests::test_compress_ebreak ... ok
+test backend::riscv::assembler::compress::tests::test_compress_ld_ra_sp ... ok
+test backend::riscv::assembler::compress::tests::test_compress_ld_s0_sp ... ok
+test backend::riscv::assembler::compress::tests::test_compress_li ... ok
+test backend::riscv::assembler::compress::tests::test_compress_mv_t1_t0 ... ok
+test backend::riscv::assembler::compress::tests::test_compress_nop ... ok
+test backend::riscv::assembler::compress::tests::test_compress_ret ... ok
+test backend::riscv::assembler::compress::tests::test_compress_sd_ra_sp ... ok
+test backend::riscv::assembler::compress::tests::test_compress_sd_s0_sp ... ok
+test backend::riscv::assembler::compress::tests::test_compress_slli ... ok
+test backend::riscv::assembler::compress::tests::test_no_compress_with_reloc ... ok
+test backend::riscv::codegen::peephole::tests::test_adjacent_store_load_elimination ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_alu ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_branch ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_jump ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_label ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_li ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_load ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_move ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_ret ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_sext_w ... ok
+test backend::riscv::codegen::peephole::tests::test_classify_store ... ok
+test backend::riscv::codegen::peephole::tests::test_copy_prop_basic ... ok
+test backend::riscv::codegen::peephole::tests::test_copy_prop_no_false_match ... ok
+test backend::riscv::codegen::peephole::tests::test_copy_prop_no_symbol_corruption ... ok
+test backend::riscv::codegen::peephole::tests::test_copy_prop_word_boundary ... ok
+test backend::riscv::codegen::peephole::tests::test_dead_reg_move ... ok
+test backend::riscv::codegen::peephole::tests::test_full_bb_copy_prop ... ok
+test backend::riscv::codegen::peephole::tests::test_global_dse ... ok
+test backend::riscv::codegen::peephole::tests::test_global_dse_with_addr_taken ... ok
+test backend::riscv::codegen::peephole::tests::test_gsf_different_reg_forwarding ... ok
+test backend::riscv::codegen::peephole::tests::test_gsf_invalidation_at_label ... ok
+test backend::riscv::codegen::peephole::tests::test_gsf_invalidation_on_reg_overwrite ... ok
+test backend::riscv::codegen::peephole::tests::test_gsf_same_reg_elimination ... ok
+test backend::riscv::codegen::peephole::tests::test_li_mv_chain ... ok
+test backend::riscv::codegen::peephole::tests::test_lla_not_corrupted_by_copy_prop ... ok
+test backend::riscv::codegen::peephole::tests::test_redundant_jump_elimination ... ok
+test backend::riscv::codegen::peephole::tests::test_self_move_elimination ... ok
+test backend::x86::assembler::parser::tests::test_parse_integer ... ok
+test backend::x86::assembler::parser::tests::test_parse_memory_operand ... ok
+test backend::x86::assembler::parser::tests::test_parse_rip_relative ... ok
+test backend::x86::assembler::parser::tests::test_parse_simple ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_dead_store_not_eliminated_when_cmp_reads_slot ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_frame_compact_dead_store_noped ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_frame_compact_overlapping_store_read ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_frame_compact_struct_suboffset_read ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_store_forward_param_ref_gep ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_when_extra_call ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_when_rax_used ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_with_dyn_alloca ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_with_lea_local ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_tail_call_direct ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_tail_call_indirect ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_tail_call_plt ... ok
+test backend::x86::codegen::peephole::passes::tests::test_back_to_back_cltq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_classify_line ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_blocked_by_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_blocked_by_rax_write ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_over_non_rax_write ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_with_store_rbp ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_je ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_no_fuse_cross_block_store ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_short ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_with_matched_store_load ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condbranch_inversion_fallthrough ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condbranch_inversion_je_to_jne ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condbranch_no_inversion_when_not_fallthrough ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condition_codes ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cpuid_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_dead_store_elimination ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_across_cond_branch ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_across_fallthrough_label ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_blocked_at_jump_target ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_callee_saved_across_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_invalidated_by_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_invalidated_by_unrecognized_rbp_write ... ok
+test backend::x86::codegen::peephole::passes::tests::test_inline_asm_rdmsr_invalidates_store_forwarding ... ok
+test backend::x86::codegen::peephole::passes::tests::test_jmp_star_reg_classified_as_indirect ... ok
+test backend::x86::codegen::peephole::passes::tests::test_jmpq_star_reg_classified_as_indirect ... ok
+test backend::x86::codegen::peephole::passes::tests::test_loop_trampoline_simple_coalesce ... ignored
+test backend::x86::codegen::peephole::passes::tests::test_loop_trampoline_two_copies ... ignored
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_addq_rcx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_andq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_cmpq_rcx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_load_rax_into_add_with_reg_dest ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_no_fold_for_callee_saved ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_no_fold_when_dest_is_loaded_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_orq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_subl_ecx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_testq_rcx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_with_empty_line_between ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_xorq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_non_adjacent_store_load_diff_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_non_adjacent_store_load_reg_modified ... ok
+test backend::x86::codegen::peephole::passes::tests::test_non_adjacent_store_load_same_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_parse_load_from_rbp ... ok
+test backend::x86::codegen::peephole::passes::tests::test_parse_rbp_offset ... ok
+test backend::x86::codegen::peephole::passes::tests::test_parse_store_to_rbp ... ok
+test backend::x86::codegen::peephole::passes::tests::test_push_pop_elimination ... ok
+test backend::x86::codegen::peephole::passes::tests::test_rdmsr_standalone_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_cltq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_jump ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_store_load ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_xorl_after_zero_store ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_xorl_chain_of_four ... ok
+test backend::x86::codegen::peephole::passes::tests::test_self_move ... ok
+test backend::x86::codegen::peephole::passes::tests::test_semicolon_multi_instruction_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_setcc_al_still_invalidates_rax ... ok
+test backend::x86::codegen::peephole::passes::tests::test_setcc_non_al_invalidates_store_forwarding ... ok
+test backend::x86::codegen::peephole::passes::tests::test_store_load_different_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_syscall_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_xorl_not_eliminated_after_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_xorl_not_eliminated_after_label ... ok
+test backend::x86::codegen::peephole::passes::tests::test_xorl_not_eliminated_after_rax_write ... ok
+test common::const_arith::pbt_tests::pbt_p14_negate_bitnot_involution ... ok
+test common::const_arith::pbt_tests::pbt_p2_truncate_extend ... ok
+test common::const_arith::pbt_tests::pbt_p3_div_rem_identity ... ok
+test common::const_arith::pbt_tests::pbt_p4_div_by_zero_none ... ok
+test common::const_arith::pbt_tests::pbt_p5_cmp_totality ... ok
+test common::const_arith::pbt_tests::pbt_p6_f64_differential ... ok
+test common::const_eval::pbt_regression::test_eval_builtin_bswap32_regression_unsigned_repr ... ignored, SUT bug B4: __builtin_bswap32 fold uses signed I32 for unsigned >= 2^31
+test common::const_eval::pbt_tests::pbt_p12_builtin_bitops ... ok
+test common::const_eval::pbt_tests::pbt_p12_ffs_zero ... ok
+test common::const_eval::pbt_tests::pbt_p12b_bswap_semantics ... FAILED
+test common::encoding::pbt_tests::pbt_p1_pua_roundtrip ... ok
+test common::encoding::tests::test_ascii_passthrough ... ok
+test common::encoding::tests::test_bom_stripping ... ok
+test common::encoding::tests::test_mixed_ascii_and_non_utf8 ... ok
+test common::encoding::tests::test_non_utf8_encoding ... ok
+test common::encoding::tests::test_roundtrip_all_bytes ... ok
+test common::encoding::tests::test_valid_utf8_passthrough ... ok
+test common::fx_hash::pbt_tests::pbt_p15_fxhash_write_consistency ... ok
+test common::long_double::f128_tests::test_f128_parse_integer ... ok
+test common::long_double::f128_tests::test_f128_parse_one ... ok
+test common::long_double::f128_tests::test_f128_parse_pi ... ok
+test common::long_double::f128_tests::test_f128_roundtrip_x87 ... ok
+test common::long_double::known_value_tests::test_add_carry_1_plus_1 ... ok
+test common::long_double::known_value_tests::test_add_commutativity ... ok
+test common::long_double::known_value_tests::test_add_denormals ... ok
+test common::long_double::known_value_tests::test_add_known_exact ... ok
+test common::long_double::known_value_tests::test_add_large_exp_diff ... ok
+test common::long_double::known_value_tests::test_add_max_overflow ... ok
+test common::long_double::known_value_tests::test_add_neg_is_sub ... ok
+test common::long_double::known_value_tests::test_add_zero_identity ... ok
+test common::long_double::known_value_tests::test_add_zero_signs ... ok
+test common::long_double::known_value_tests::test_addsub_inf_nan ... ok
+test common::long_double::known_value_tests::test_cmp_antisymmetry ... ok
+test common::long_double::known_value_tests::test_cmp_denormals ... ok
+test common::long_double::known_value_tests::test_cmp_inf ... ok
+test common::long_double::known_value_tests::test_cmp_nan ... ok
+test common::long_double::known_value_tests::test_cmp_ordering ... ok
+test common::long_double::known_value_tests::test_cmp_zero_equality ... ok
+test common::long_double::known_value_tests::test_div_by_one ... ok
+test common::long_double::known_value_tests::test_div_known_exact ... ok
+test common::long_double::known_value_tests::test_div_powers_of_two ... ok
+test common::long_double::known_value_tests::test_div_rounding_1_3 ... ok
+test common::long_double::known_value_tests::test_div_self_is_one ... ok
+test common::long_double::known_value_tests::test_div_zero_inf_nan ... ok
+test common::long_double::known_value_tests::test_ldbl_min_parse ... ok
+test common::long_double::known_value_tests::test_mul_commutativity ... ok
+test common::long_double::known_value_tests::test_mul_denormal_identity ... ok
+test common::long_double::known_value_tests::test_mul_identity ... ok
+test common::long_double::known_value_tests::test_mul_inf_cases ... ok
+test common::long_double::known_value_tests::test_mul_known_exact ... ok
+test common::long_double::known_value_tests::test_mul_nan_propagation ... ok
+test common::long_double::known_value_tests::test_mul_overflow_to_inf ... ok
+test common::long_double::known_value_tests::test_mul_powers_of_two ... ok
+test common::long_double::known_value_tests::test_mul_underflow_to_denormal ... ok
+test common::long_double::known_value_tests::test_mul_unnormal_is_nan ... ok
+test common::long_double::known_value_tests::test_mul_zero_sign ... ok
+test common::long_double::known_value_tests::test_rem_consistency ... ok
+test common::long_double::known_value_tests::test_rem_known_exact ... ok
+test common::long_double::known_value_tests::test_rem_large_quotient ... ok
+test common::long_double::known_value_tests::test_rem_less_than_divisor ... ok
+test common::long_double::known_value_tests::test_rem_sign_is_dividend ... ok
+test common::long_double::known_value_tests::test_sub_known_exact ... ok
+test common::long_double::known_value_tests::test_sub_self_is_zero ... ok
+test common::long_double::pbt_regression::test_f128_bytes_to_f64_regression_truncation ... ignored, SUT bug B3: f128_bytes_to_f64 truncates instead of round-to-nearest
+test common::long_double::pbt_regression::test_f64_to_f128_bytes_lossless_regression_lt1_underflow ... ignored, SUT bug B1: f64_to_f128_bytes_lossless corrupts |x| < 1.0
+test common::long_double::pbt_regression::test_f64_to_x87_bytes_simple_regression_subnormal ... ignored, SUT bug B2: f64_to_x87_bytes_simple mis-encodes subnormal f64
+test common::long_double::pbt_tests::pbt_p10_x87_f128_bridge ... FAILED
+test common::long_double::pbt_tests::pbt_p11_x87_f64_roundtrip ... FAILED
+test common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip ... FAILED
+test common::long_double::pbt_tests::pbt_p7_p11_boundary_constants ... FAILED
+test common::long_double::pbt_tests::pbt_p8_i64_f128_roundtrip ... ok
+test common::long_double::pbt_tests::pbt_p9_f128_single_rounding ... FAILED
+test common::long_double::soft_addsub_tests::test_soft_add_basic ... ok
+test common::long_double::soft_addsub_tests::test_soft_addsub_inf ... ok
+test common::long_double::soft_addsub_tests::test_soft_addsub_various ... ok
+test common::long_double::soft_addsub_tests::test_soft_addsub_zero ... ok
+test common::long_double::soft_addsub_tests::test_soft_sub_basic ... ok
+test common::long_double::soft_cmp_tests::test_soft_cmp_basic ... ok
+test common::long_double::soft_cmp_tests::test_soft_cmp_special ... ok
+test common::long_double::soft_cmp_tests::test_soft_cmp_various ... ok
+test common::long_double::soft_div_tests::test_soft_div_basic ... ok
+test common::long_double::soft_div_tests::test_soft_div_special ... ok
+test common::long_double::soft_div_tests::test_soft_div_various ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_basic ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_exact_halfway_denormal ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_inf_times_zero ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_infinity ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_max_normal ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_min_normal ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_nan ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_near_overflow ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_near_underflow ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_negative_combos ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_powers_of_two ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_pseudo_denormal ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_pseudo_inf_and_nan ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_rounding_carry ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_signaling_nan ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_unnormal ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_various_values ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_x87_denormals ... ok
+test common::long_double::soft_mul_tests::test_soft_mul_zero ... ok
+test common::long_double::soft_rem_tests::test_soft_rem_basic ... ok
+test common::long_double::soft_rem_tests::test_soft_rem_special ... ok
+test common::long_double::soft_rem_tests::test_soft_rem_various ... ok
+test common::long_double::tests::test_f64_to_x87_simple ... ok
+test common::long_double::tests::test_x87_to_f128 ... ok
+test common::symbol_table::pbt_tests::pbt_p16_scope_shadowing ... ok
+test common::types::pbt_tests::pbt_p13_align_up_laws ... ok
+test ir::mem2reg::phi_eliminate::tests::test_chain_pattern_conservative ... ok
+test ir::mem2reg::phi_eliminate::tests::test_constant_source_not_conflicting ... ok
+test ir::mem2reg::phi_eliminate::tests::test_mixed_conflicting_and_non_conflicting ... ok
+test ir::mem2reg::phi_eliminate::tests::test_no_conflicts_independent_phis ... ok
+test ir::mem2reg::phi_eliminate::tests::test_self_copy_not_conflicting ... ok
+test ir::mem2reg::phi_eliminate::tests::test_swap_pattern ... ok
+test ir::mem2reg::phi_eliminate::tests::test_three_way_cycle ... ok
+test ir::mem2reg::promote::tests::test_diamond_phi_insertion ... ok
+test ir::mem2reg::promote::tests::test_dominance_frontier ... ok
+test ir::mem2reg::promote::tests::test_dominator_computation ... ok
+test ir::mem2reg::promote::tests::test_inline_asm_memory_constraint_not_promoted ... ok
+test ir::mem2reg::promote::tests::test_inline_asm_memory_output_only_not_promoted ... ok
+test ir::mem2reg::promote::tests::test_inline_asm_output_promotion ... ok
+test ir::mem2reg::promote::tests::test_loop_phi ... ok
+test ir::mem2reg::promote::tests::test_non_promotable_address_taken ... ok
+test ir::mem2reg::promote::tests::test_simple_promotion ... ok
+test ir::mem2reg::promote::tests::test_volatile_alloca_not_promoted ... ok
+test passes::cfg_simplify::tests::test_combined_simplifications ... ok
+test passes::cfg_simplify::tests::test_cond_branch_threading ... ok
+test passes::cfg_simplify::tests::test_dead_block_elimination ... ok
+test passes::cfg_simplify::tests::test_fold_constant_switch ... ok
+test passes::cfg_simplify::tests::test_fold_constant_switch_matching_case ... ok
+test passes::cfg_simplify::tests::test_fold_constant_switch_phi_cleanup ... ok
+test passes::cfg_simplify::tests::test_jump_chain_threading ... ok
+test passes::cfg_simplify::tests::test_no_thread_through_block_with_instructions ... ok
+test passes::cfg_simplify::tests::test_no_thread_when_phi_conflict ... ok
+test passes::cfg_simplify::tests::test_phi_update_on_thread ... ok
+test passes::cfg_simplify::tests::test_redundant_cond_branch ... ok
+test passes::cfg_simplify::tests::test_trivial_phi_simplification ... ok
+test passes::constant_fold::tests::test_fold_binop_add ... ok
+test passes::constant_fold::tests::test_fold_binop_bitwise ... ok
+test passes::constant_fold::tests::test_fold_binop_div ... ok
+test passes::constant_fold::tests::test_fold_binop_div_by_zero ... ok
+test passes::constant_fold::tests::test_fold_binop_mul ... ok
+test passes::constant_fold::tests::test_fold_binop_shift ... ok
+test passes::constant_fold::tests::test_fold_binop_sub ... ok
+test passes::constant_fold::tests::test_fold_binop_udiv_32bit ... ok
+test passes::constant_fold::tests::test_fold_cast ... ok
+test passes::constant_fold::tests::test_fold_cast_unsigned_source ... ok
+test passes::constant_fold::tests::test_fold_cast_unsigned_target ... ok
+test passes::constant_fold::tests::test_fold_cast_unsigned_to_unsigned ... ok
+test passes::constant_fold::tests::test_fold_cmp ... ok
+test passes::constant_fold::tests::test_fold_float_binop_instruction ... ok
+test passes::constant_fold::tests::test_fold_float_cast_float_to_int ... ok
+test passes::constant_fold::tests::test_fold_float_cast_inf_to_int_no_fold ... ok
+test passes::constant_fold::tests::test_fold_float_cast_int_to_float ... ok
+test passes::constant_fold::tests::test_fold_float_cast_nan_to_int_no_fold ... ok
+test passes::constant_fold::tests::test_fold_float_cast_overflow_to_int_no_fold ... ok
+test passes::constant_fold::tests::test_fold_float_cmp_nan_ne ... ok
+test passes::constant_fold::tests::test_fold_float_cmp_neg_zero_eq ... ok
+test passes::constant_fold::tests::test_fold_float_div_by_zero ... ok
+test passes::constant_fold::tests::test_fold_float_nan_mul_zero ... ok
+test passes::constant_fold::tests::test_fold_float_neg_div_zero ... ok
+test passes::constant_fold::tests::test_fold_float_neg_mul_zero ... ok
+test passes::constant_fold::tests::test_fold_float_neg_zero_add ... ok
+test passes::constant_fold::tests::test_fold_float_neg_zero_add_self ... ok
+test passes::constant_fold::tests::test_fold_float_unary_neg ... ok
+test passes::constant_fold::tests::test_fold_unaryop ... ok
+test passes::constant_fold::tests::test_no_fold_with_value_operand ... ok
+test passes::constant_fold::tests::test_try_fold_binop ... ok
+test passes::copy_prop::tests::test_chain_copy_propagation ... ok
+test passes::copy_prop::tests::test_const_copy_propagation ... ok
+test passes::copy_prop::tests::test_no_propagation_when_no_copies ... ok
+test passes::copy_prop::tests::test_simple_copy_propagation ... ok
+test passes::copy_prop::tests::test_terminator_propagation ... ok
+test passes::dce::tests::test_eliminate_dead_binop ... ok
+test passes::dce::tests::test_self_referencing_phi_removed ... ok
+test passes::dce::tests::test_side_effects_preserved ... ok
+test passes::dce::tests::test_transitive_dead_chain ... ok
+test passes::div_by_const::tests::test_negative_divisor_sdiv ... ok
+test passes::div_by_const::tests::test_negative_divisor_sdiv64 ... ok
+test passes::div_by_const::tests::test_negative_divisor_srem ... ok
+test passes::div_by_const::tests::test_signed_magic_10 ... ok
+test passes::div_by_const::tests::test_signed_magic_64_div10 ... ok
+test passes::div_by_const::tests::test_signed_magic_64_exhaustive_small_divisors ... ok
+test passes::div_by_const::tests::test_signed_magic_64_large_divisors ... ok
+test passes::div_by_const::tests::test_signed_magic_7 ... ok
+test passes::div_by_const::tests::test_signed_magic_exhaustive_small ... ok
+test passes::div_by_const::tests::test_unsigned_magic_10 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_3 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_64_div10 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_64_exhaustive_small_divisors ... ok
+test passes::div_by_const::tests::test_unsigned_magic_64_large_divisors ... ok
+test passes::div_by_const::tests::test_unsigned_magic_7 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_exhaustive_small ... ok
+test passes::gvn::tests::test_cast_cse ... ok
+test passes::gvn::tests::test_commutative_cse ... ok
+test passes::gvn::tests::test_constant_cse ... ok
+test passes::gvn::tests::test_cross_block_cse ... ok
+test passes::gvn::tests::test_diamond_no_cse_between_branches ... ok
+test passes::gvn::tests::test_gep_cse ... ok
+test passes::gvn::tests::test_is_commutative ... ok
+test passes::gvn::tests::test_load_cse_across_dominating_block ... ok
+test passes::gvn::tests::test_load_cse_invalidated_at_merge_point ... ok
+test passes::gvn::tests::test_load_cse_invalidated_by_call ... ok
+test passes::gvn::tests::test_load_cse_invalidated_by_store ... ok
+test passes::gvn::tests::test_load_cse_same_block ... ok
+test passes::gvn::tests::test_non_commutative_not_cse ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_different_store_invalidates ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_invalidated_by_call ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_same_block ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_same_ptr_overwrite ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_value ... ok
+test passes::if_convert::tests::test_diamond_with_arm_instructions ... ok
+test passes::if_convert::tests::test_no_conversion_with_side_effects ... ok
+test passes::if_convert::tests::test_simple_diamond_conversion ... ok
+test passes::iv_strength_reduce::tests::test_find_basic_iv ... ok
+test passes::iv_strength_reduce::tests::test_ivsr_sum_array ... ok
+test passes::licm::tests::test_find_natural_loops ... ok
+test passes::licm::tests::test_licm_does_not_hoist_load_from_inline_asm_output_alloca ... ok
+test passes::licm::tests::test_licm_does_not_hoist_load_from_modified_alloca ... ok
+test passes::licm::tests::test_licm_hoists_invariant ... ok
+test passes::licm::tests::test_licm_hoists_load_from_unmodified_alloca ... ok
+test passes::licm::tests::test_promoted_asm_output_not_hoisted ... ok
+test passes::licm::tests::test_topological_sort ... ok
+test passes::narrow::tests::test_narrow_add_i32 ... ok
+test passes::narrow::tests::test_narrow_ashr_signed ... ok
+test passes::narrow::tests::test_narrow_cmp_sge ... ok
+test passes::narrow::tests::test_narrow_lshr_unsigned ... ok
+test passes::narrow::tests::test_no_narrow_and_all_ones_mask ... ok
+test passes::narrow::tests::test_no_narrow_ashr_unsigned_target ... ok
+test passes::narrow::tests::test_no_narrow_lshr_signed_target ... ok
+test passes::narrow::tests::test_no_narrow_when_multiple_uses ... ok
+test passes::simplify::tests::test_add_zero ... ok
+test passes::simplify::tests::test_and_all_ones_i32 ... ok
+test passes::simplify::tests::test_and_all_ones_i64 ... ok
+test passes::simplify::tests::test_and_self ... ok
+test passes::simplify::tests::test_binop_canonicalize_commutative_add ... ok
+test passes::simplify::tests::test_binop_canonicalize_commutative_and ... ok
+test passes::simplify::tests::test_binop_no_canonicalize_already_canonical ... ok
+test passes::simplify::tests::test_binop_no_canonicalize_non_commutative ... ok
+test passes::simplify::tests::test_cast_chain_widen_narrow ... ok
+test passes::simplify::tests::test_cast_const_fold ... ok
+test passes::simplify::tests::test_cast_different_type_no_change ... ok
+test passes::simplify::tests::test_cast_same_type ... ok
+test passes::simplify::tests::test_cmp_canonicalize_const_lhs_eq ... ok
+test passes::simplify::tests::test_cmp_canonicalize_const_lhs_slt ... ok
+test passes::simplify::tests::test_cmp_eq_cmp_result_one ... ok
+test passes::simplify::tests::test_cmp_eq_cmp_result_zero ... ok
+test passes::simplify::tests::test_cmp_ne_boolean_and_zero ... ok
+test passes::simplify::tests::test_cmp_ne_cmp_result_one ... ok
+test passes::simplify::tests::test_cmp_ne_cmp_result_zero ... ok
+test passes::simplify::tests::test_cmp_no_canonicalize_already_canonical ... ok
+test passes::simplify::tests::test_cmp_no_simplify_non_boolean ... ok
+test passes::simplify::tests::test_cmp_self_eq ... ok
+test passes::simplify::tests::test_cmp_self_ne ... ok
+test passes::simplify::tests::test_cmp_self_sle ... ok
+test passes::simplify::tests::test_cmp_self_slt ... ok
+test passes::simplify::tests::test_cmp_uge_zero_always_true ... ok
+test passes::simplify::tests::test_cmp_ugt_zero ... ok
+test passes::simplify::tests::test_cmp_ule_zero ... ok
+test passes::simplify::tests::test_cmp_ult_zero_always_false ... ok
+test passes::simplify::tests::test_fabs_to_intrinsic ... ok
+test passes::simplify::tests::test_fabsf_to_intrinsic ... ok
+test passes::simplify::tests::test_float_add_zero_lhs_not_simplified ... ok
+test passes::simplify::tests::test_float_add_zero_not_simplified ... ok
+test passes::simplify::tests::test_float_div_one_not_simplified ... ok
+test passes::simplify::tests::test_float_div_self_not_simplified ... ok
+test passes::simplify::tests::test_float_mul_one_not_simplified ... ok
+test passes::simplify::tests::test_float_mul_zero_not_simplified ... ok
+test passes::simplify::tests::test_float_sub_negative_zero_not_simplified ... ok
+test passes::simplify::tests::test_float_sub_positive_zero_ok ... ok
+test passes::simplify::tests::test_float_sub_self_not_simplified ... ok
+test passes::simplify::tests::test_gep_chain_fold ... ok
+test passes::simplify::tests::test_gep_chain_fold_to_zero ... ok
+test passes::simplify::tests::test_gep_nonzero_no_change ... ok
+test passes::simplify::tests::test_gep_zero_offset ... ok
+test passes::simplify::tests::test_is_all_ones_i32 ... ok
+test passes::simplify::tests::test_is_all_ones_i8 ... ok
+test passes::simplify::tests::test_is_all_ones_not_float ... ok
+test passes::simplify::tests::test_math_call_wrong_arg_count ... ok
+test passes::simplify::tests::test_mul_float_no_strength_reduction ... ok
+test passes::simplify::tests::test_mul_neg_one_float_not_simplified ... ok
+test passes::simplify::tests::test_mul_neg_one_lhs ... ok
+test passes::simplify::tests::test_mul_neg_one_rhs ... ok
+test passes::simplify::tests::test_mul_non_power_of_two_no_change ... ok
+test passes::simplify::tests::test_mul_one ... ok
+test passes::simplify::tests::test_mul_power_of_two_i32 ... ok
+test passes::simplify::tests::test_mul_power_of_two_to_shift ... ok
+test passes::simplify::tests::test_mul_two_to_add ... ok
+test passes::simplify::tests::test_mul_zero ... ok
+test passes::simplify::tests::test_no_simplify ... ok
+test passes::simplify::tests::test_or_all_ones_i32 ... ok
+test passes::simplify::tests::test_or_all_ones_i64 ... ok
+test passes::simplify::tests::test_pow_non_special_exponent ... ok
+test passes::simplify::tests::test_pow_variable_exponent_no_simplify ... ok
+test passes::simplify::tests::test_pow_x_half ... ok
+test passes::simplify::tests::test_pow_x_neg_one ... ok
+test passes::simplify::tests::test_pow_x_one ... ok
+test passes::simplify::tests::test_pow_x_two ... ok
+test passes::simplify::tests::test_pow_x_zero ... ok
+test passes::simplify::tests::test_powf_x_two_f32 ... ok
+test passes::simplify::tests::test_reassociate_add ... ok
+test passes::simplify::tests::test_reassociate_add_cancels ... ok
+test passes::simplify::tests::test_reassociate_and ... ok
+test passes::simplify::tests::test_reassociate_mul ... ok
+test passes::simplify::tests::test_reassociate_mul_commuted ... ok
+test passes::simplify::tests::test_reassociate_mul_to_zero ... ok
+test passes::simplify::tests::test_reassociate_shift ... ok
+test passes::simplify::tests::test_reassociate_shift_overflow_to_zero ... ok
+test passes::simplify::tests::test_reassociate_sub ... ok
+test passes::simplify::tests::test_reassociate_xor_cancels ... ok
+test passes::simplify::tests::test_select_const_false ... ok
+test passes::simplify::tests::test_select_const_nonzero ... ok
+test passes::simplify::tests::test_select_const_true ... ok
+test passes::simplify::tests::test_sqrt_to_intrinsic ... ok
+test passes::simplify::tests::test_sqrtf_to_intrinsic ... ok
+test passes::simplify::tests::test_sub_neg_float_not_simplified ... ok
+test passes::simplify::tests::test_sub_neg_to_add ... ok
+test passes::simplify::tests::test_sub_self ... ok
+test passes::simplify::tests::test_udiv_power_of_two ... ok
+test passes::simplify::tests::test_unknown_func_no_simplify ... ok
+test passes::simplify::tests::test_urem_power_of_two ... ok
+test passes::simplify::tests::test_xor_self ... ok
+
+failures:
+
+---- common::const_eval::pbt_tests::pbt_p12b_bswap_semantics stdout ----
+
+thread 'common::const_eval::pbt_tests::pbt_p12b_bswap_semantics' (2551705) panicked at src/common/const_eval.rs:368:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `Some(-4380928)`, 
+ right: `Some(4290586368)`: bswap32 v=-5495501120125551105 at src/common/const_eval.rs:407.
+minimal failing input: v = -5495501120125551105
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- common::long_double::pbt_tests::pbt_p10_x87_f128_bridge stdout ----
+
+thread 'common::long_double::pbt_tests::pbt_p10_x87_f128_bridge' (2551779) panicked at src/common/long_double.rs:3416:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `2355634373914480375`, 
+ right: `2355634373914480376`: direct=3.2257192316651656e-151 via_f128=3.225719231665165e-151 at src/common/long_double.rs:3465.
+minimal failing input: b = [
+    0,
+    188,
+    119,
+    250,
+    238,
+    219,
+    39,
+    135,
+    11,
+    62,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+]
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+
+---- common::long_double::pbt_tests::pbt_p11_x87_f64_roundtrip stdout ----
+
+thread 'common::long_double::pbt_tests::pbt_p11_x87_f64_roundtrip' (2551781) panicked at src/common/long_double.rs:3416:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `0`, 
+ right: `1`: x=5e-324 bits=0x1 at src/common/long_double.rs:3474.
+minimal failing input: bits = 1
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+
+---- common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip stdout ----
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip' (2551782) panicked at src/common/long_double.rs:3416:5:
+Test failed: attempt to subtract with overflow.
+minimal failing input: bits = 1
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+
+---- common::long_double::pbt_tests::pbt_p7_p11_boundary_constants stdout ----
+
+thread 'common::long_double::pbt_tests::pbt_p7_p11_boundary_constants' (2551783) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+---- common::long_double::pbt_tests::pbt_p9_f128_single_rounding stdout ----
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:1040:18:
+attempt to subtract with overflow
+
+thread 'common::long_double::pbt_tests::pbt_p9_f128_single_rounding' (2551785) panicked at src/common/long_double.rs:3416:5:
+Test failed: attempt to subtract with overflow.
+minimal failing input: abits = 2355382605114769408, bbits = 2355382605114769408, which = 130
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+
+
+failures:
+    common::const_eval::pbt_tests::pbt_p12b_bswap_semantics
+    common::long_double::pbt_tests::pbt_p10_x87_f128_bridge
+    common::long_double::pbt_tests::pbt_p11_x87_f64_roundtrip
+    common::long_double::pbt_tests::pbt_p7_f128_lossless_roundtrip
+    common::long_double::pbt_tests::pbt_p7_p11_boundary_constants
+    common::long_double::pbt_tests::pbt_p9_f128_single_rounding
+
+test result: FAILED. 506 passed; 6 failed; 10 ignored; 0 measured; 0 filtered out; finished in 0.94s
+
+error: test failed, to rerun pass `--lib`

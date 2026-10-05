@@ -3367,3 +3367,183 @@ mod known_value_tests {
         assert_eq!(biased_exp2, 0, "truncated LDBL_MIN string is subnormal in f128 (expected)");
     }
 }
+
+// ============================================================================
+// Property-based tests (pi-pbt campaign, round 01_common)
+// ============================================================================
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Random finite f64 bit patterns: exponent 0 (subnormal, kept in domain
+    /// deliberately — valid input) or 1..=2046 (normal); never 0x7FF (NaN/Inf).
+    fn finite_bits() -> impl proptest::strategy::Strategy<Value = u64> {
+        prop_oneof![
+            3 => (any::<u16>(), any::<u64>()).prop_map(|(e, bits)| {
+                let e = 1 + (e as u32 % 2046); // 1..=2046
+                (bits & !(0x7FFu64 << 52)) | ((e as u64) << 52)
+            }),
+            1 => (any::<u64>()).prop_map(|bits| bits & !(0x7FFu64 << 52)), // subnormals/zeros
+        ]
+    }
+
+    /// Random *normal* f64 with moderate exponent (unbiased in [-500, 500])
+    /// so all of +,-,*,/ on two such values stay finite and normal.
+    fn moderate_normal_bits() -> impl proptest::strategy::Strategy<Value = u64> {
+        (any::<bool>(), any::<u16>(), any::<u64>()).prop_map(|(sign, e, mant)| {
+            let exp_biased: u32 = (1023i32 + ((e as i32 % 1000) - 500)) as u32; // in [523, 1523]
+            ((sign as u64) << 63) | ((exp_biased as u64) << 52) | (mant & 0x000F_FFFF_FFFF_FFFF)
+        })
+    }
+
+    /// Raw x87 80-bit bytes for a normal value: sign, biased exp in [16383-500, 16383+500],
+    /// mantissa with the explicit integer bit set.
+    fn x87_normal_bytes() -> impl proptest::strategy::Strategy<Value = [u8; 16]> {
+        (any::<bool>(), any::<u16>(), any::<u64>()).prop_map(|(sign, e, mant)| {
+            let mut b = [0u8; 16];
+            let mant = mant | (1u64 << 63);
+            b[..8].copy_from_slice(&mant.to_le_bytes());
+            let biased: u16 = (16383i32 + (e as i32 % 1000 - 500)) as u16;
+            let es = biased | if sign { 0x8000 } else { 0 };
+            b[8] = (es & 0xFF) as u8;
+            b[9] = (es >> 8) as u8;
+            b
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// P7: f64 → f128 → f64 is lossless (bitwise, incl. -0.0 and subnormals).
+        #[test]
+        fn pbt_p7_f128_lossless_roundtrip(bits in finite_bits()) {
+            let x = f64::from_bits(bits);
+            let back = f128_bytes_to_f64(&f64_to_f128_bytes_lossless(x));
+            prop_assert_eq!(back.to_bits(), x.to_bits(), "x={:e} bits={:#x}", x, bits);
+        }
+
+        /// P8: every i64 is exactly representable in f128 (112-bit mantissa).
+        #[test]
+        fn pbt_p8_i64_f128_roundtrip(v in any::<i64>()) {
+            let bytes = i64_to_f128_bytes(v);
+            prop_assert_eq!(f128_bytes_to_i64(&bytes), Some(v), "v={}", v);
+        }
+
+        /// P9 (metamorphic/differential): f128 arithmetic on f64-exact operands is
+        /// exact (≤106 significant bits < 113), so a single correctly-rounded
+        /// narrowing must be bitwise-equal to native f64 arithmetic.
+        #[test]
+        fn pbt_p9_f128_single_rounding(
+            abits in moderate_normal_bits(),
+            bbits in moderate_normal_bits(),
+            which in any::<u8>(),
+        ) {
+            let a = f64::from_bits(abits);
+            let b = f64::from_bits(bbits);
+            let (op, native, f128op) = match which % 4 {
+                0 => (BinOpLabel::Add, a + b, f128_add as fn(&[u8;16], &[u8;16]) -> [u8;16]),
+                1 => (BinOpLabel::Sub, a - b, f128_sub as fn(&[u8;16], &[u8;16]) -> [u8;16]),
+                2 => (BinOpLabel::Mul, a * b, f128_mul as fn(&[u8;16], &[u8;16]) -> [u8;16]),
+                _ => (BinOpLabel::Div, a / b, f128_div as fn(&[u8;16], &[u8;16]) -> [u8;16]),
+            };
+            prop_assume!(native.is_finite() && native.is_normal());
+            let la = f64_to_f128_bytes_lossless(a);
+            let rb = f64_to_f128_bytes_lossless(b);
+            let got = f128_bytes_to_f64(&f128op(&la, &rb));
+            prop_assert_eq!(got.to_bits(), native.to_bits(),
+                "{:?}: a={:e} b={:e} native={:e} got={:e}", op, a, b, native, got);
+        }
+
+        /// P10: x87→f128 is exact, so the direct x87→f64 converter (documented
+        /// round-to-nearest) and the f128-bridge converter must agree bitwise.
+        #[test]
+        fn pbt_p10_x87_f128_bridge(b in x87_normal_bytes()) {
+            let direct = x87_bytes_to_f64(&b);
+            let via_f128 = f128_bytes_to_f64(&x87_bytes_to_f128_bytes(&b));
+            prop_assert_eq!(via_f128.to_bits(), direct.to_bits(),
+                "direct={:e} via_f128={:e}", direct, via_f128);
+        }
+
+        /// P11: f64 → x87 (widening, zero-fill) → f64 is lossless (bitwise).
+        #[test]
+        fn pbt_p11_x87_f64_roundtrip(bits in finite_bits()) {
+            let x = f64::from_bits(bits);
+            let back = x87_bytes_to_f64(&f64_to_x87_bytes_simple(x));
+            prop_assert_eq!(back.to_bits(), x.to_bits(), "x={:e} bits={:#x}", x, bits);
+        }
+    }
+
+    /// P7/P11 boundary constants (explicit, always run):
+    /// zeros, subnormals, extremes, infinities.
+    #[test]
+    fn pbt_p7_p11_boundary_constants() {
+        let vals = [0.0, -0.0, 1.0, -1.0, f64::MIN_POSITIVE, -f64::MIN_POSITIVE,
+                    f64::from_bits(1), f64::from_bits(0x8000_0000_0000_0001),
+                    f64::MAX, f64::MIN, f64::INFINITY, f64::NEG_INFINITY];
+        for &x in &vals {
+            assert_eq!(f128_bytes_to_f64(&f64_to_f128_bytes_lossless(x)).to_bits(), x.to_bits(),
+                "f128 lossless failed for {:e}", x);
+            assert_eq!(x87_bytes_to_f64(&f64_to_x87_bytes_simple(x)).to_bits(), x.to_bits(),
+                "x87 lossless failed for {:e}", x);
+        }
+    }
+
+    #[derive(Debug)]
+    enum BinOpLabel { Add, Sub, Mul, Div }
+}
+
+// Deterministic regression witnesses for SUT bugs found by the PBT campaign
+// (pbt-out/rounds/01_common/REPORT.md). #[ignore] so the suite stays green;
+// run with: cargo test --lib -- --ignored common::long_double
+#[cfg(test)]
+mod pbt_regression {
+    use super::*;
+
+    /// B1: f64_to_f128_bytes_lossless underflows on every |x| < 1.0
+    /// (biased_exp < 1023): u128 arithmetic `biased_exp - 1023` underflows.
+    /// Panics in debug, wraps to a garbage exponent in release.
+    #[test]
+    #[ignore = "SUT bug B1: f64_to_f128_bytes_lossless corrupts |x| < 1.0"]
+    fn test_f64_to_f128_bytes_lossless_regression_lt1_underflow() {
+        for &x in &[0.5f64, 0.1, 5e-324, f64::MIN_POSITIVE, 0.9999999999999999] {
+            assert_eq!(
+                f128_bytes_to_f64(&f64_to_f128_bytes_lossless(x)).to_bits(),
+                x.to_bits(),
+                "lossless round-trip failed for {:e}",
+                x
+            );
+        }
+    }
+
+    /// B2: f64_to_x87_bytes_simple mis-encodes subnormal f64 values
+    /// (treats the subnormal's raw mantissa as if it had an implicit leading 1).
+    #[test]
+    #[ignore = "SUT bug B2: f64_to_x87_bytes_simple mis-encodes subnormal f64"]
+    fn test_f64_to_x87_bytes_simple_regression_subnormal() {
+        let x = f64::from_bits(1); // 5e-324, smallest positive subnormal
+        assert_eq!(
+            x87_bytes_to_f64(&f64_to_x87_bytes_simple(x)).to_bits(),
+            x.to_bits()
+        );
+    }
+
+    /// B3: f128_bytes_to_f64 truncates the mantissa instead of rounding to
+    /// nearest (sibling x87_bytes_to_f64 implements round-to-nearest and the
+    /// two same-job converters disagree by 1 ulp).
+    #[test]
+    #[ignore = "SUT bug B3: f128_bytes_to_f64 truncates instead of round-to-nearest"]
+    fn test_f128_bytes_to_f64_regression_truncation() {
+        // x87 2^0 * 1.111...1 (all 64 mantissa bits set): correct f64 rounding
+        // carries into the exponent (-> 2.0); truncation gives the f64 below 2.0.
+        let mut b = [0u8; 16];
+        b[..8].copy_from_slice(&u64::MAX.to_le_bytes());
+        b[8] = 0xFF; // biased exp 16383
+        b[9] = 0x3F;
+        let direct = x87_bytes_to_f64(&b);
+        let via_f128 = f128_bytes_to_f64(&x87_bytes_to_f128_bytes(&b));
+        assert_eq!(direct, 2.0); // round-to-nearest carries
+        assert_eq!(via_f128.to_bits(), direct.to_bits()); // bridge must agree
+    }
+}

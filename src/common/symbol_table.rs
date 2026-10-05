@@ -64,3 +64,50 @@ impl Default for SymbolTable {
         Self::new()
     }
 }
+
+// ============================================================================
+// Property-based tests (pi-pbt campaign, round 01_common — sweep round)
+// ============================================================================
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::CType;
+    use proptest::prelude::*;
+
+    fn sym(name: &str) -> Symbol {
+        Symbol { name: name.to_string(), ty: CType::Int, explicit_alignment: None }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// P16: scoping state machine — innermost declaration wins, popping a
+        /// scope restores outer visibility, global scope always visible.
+        #[test]
+        fn pbt_p16_scope_shadowing(
+            depth in 1usize..8,
+            names in prop::collection::vec("[a-z]{1,4}", 0..8),
+        ) {
+            let mut st = SymbolTable::new();
+            st.declare(sym("g")); // global
+            prop_assert!(st.lookup("g").is_some());
+
+            for _ in 0..depth {
+                st.push_scope();
+                // Shadow every name seen so far with a redeclaration in the inner scope.
+                for n in &names {
+                    st.declare(sym(n));
+                    prop_assert!(st.lookup(n).is_some(), "innermost declare of {} must be visible", n);
+                }
+            }
+            // Pop all inner scopes: shadowed lookups fall back to global (or vanish).
+            for _ in 0..depth {
+                st.pop_scope();
+                prop_assert!(st.lookup("g").is_some(), "global must survive scope pops");
+            }
+            // The global scope itself was pushed by new() and remains.
+            prop_assert!(st.lookup("g").is_some());
+        }
+    }
+}

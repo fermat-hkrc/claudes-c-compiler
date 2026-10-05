@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: f64_to_x87_bytes_simple mis-encodes subnormal f64 values (assumes implicit leading 1)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: f64_to_x87_bytes_simple mis-encodes subnormal f64 values (assumes implicit leading 1)</h1>
+<p><span class="badge">high</span> <code>b2</code></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>f64_to_x87_bytes_simple mis-encodes subnormal f64 values (assumes implicit leading 1)</p>
+<table><tr><th>Expected behavior</th><td>decode-back to the original subnormal value (widening is exact per its own doc)</td></tr><tr><th>Observed behavior</th><td>5e-324 encodes as ~2.22e-308 and decodes to +0.0</td></tr><tr><th>Impact assessment</th><td>Subnormal double constants through the x86/i686 path become ~2^752 times larger — silent wrong constant.</td></tr><tr><th>Minimal counterexample</th><td><code>x = f64::from_bits(1) = 5e-324 (smallest positive subnormal): encoded as ~2.22e-308 (implicit-leading-1 assumption on a subnormal mantissa), decodes to +0.0 (bits 0x0 vs expected 0x1)</code></td></tr></table>
+<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>src/common/long_double.rs:1141 &quot;This is a widening conversion that zero-fills the extra mantissa bits.&quot;</code></p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>x87_f64_roundtrip (<code>p11</code>)</td></tr><tr><th>Formal property</th><td>forall finite x:f64. x87_bytes_to_f64(f64_to_x87_bytes_simple(x)).to_bits() = x.to_bits()</td></tr><tr><th>Oracle</th><td>algebraic.round_trip</td></tr><tr><th>System under test</th><td>f64_to_x87_bytes_simple</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs:1143</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/common/long_double.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib common::long_double</code></td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler</code>:</p>
+<pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib --no-run
+PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib -- --test-threads=1 --ignored common::long_double::pbt_regression::test_f64_to_x87_bytes_simple_regression_subnormal</code></pre>
+<p class="muted">No random seed is required for this deterministic reproduction.</p>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>Add a subnormal branch: normalize the mantissa to explicit-integer-bit form with a correspondingly smaller exponent.</p>
+</section>
+</body>
+</html>

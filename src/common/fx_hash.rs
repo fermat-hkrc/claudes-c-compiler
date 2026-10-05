@@ -79,3 +79,62 @@ impl Hasher for FxHasher {
         self.hash
     }
 }
+
+// ============================================================================
+// Property-based tests (pi-pbt campaign, round 01_common — sweep round)
+// ============================================================================
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+
+        /// P15: typed write_uN is equivalent to writing the value's native-endian
+        /// bytes, and 8-aligned splits of write() are transparent.
+        #[test]
+        fn pbt_p15_fxhash_write_consistency(
+            v64 in any::<u64>(),
+            v32 in any::<u32>(),
+            v16 in any::<u16>(),
+            v8 in any::<u8>(),
+            head in prop::collection::vec(any::<u8>(), 0..24).prop_filter("8-multiple len", |v| v.len() % 8 == 0),
+            tail in prop::collection::vec(any::<u8>(), 0..24),
+        ) {
+            let mut h1 = FxHasher::default();
+            h1.write_u64(v64);
+            let mut h2 = FxHasher::default();
+            h2.write(&v64.to_ne_bytes());
+            prop_assert_eq!(h1.finish(), h2.finish());
+
+            let mut h1 = FxHasher::default();
+            h1.write_u32(v32);
+            let mut h2 = FxHasher::default();
+            h2.write(&v32.to_ne_bytes());
+            prop_assert_eq!(h1.finish(), h2.finish());
+
+            let mut h1 = FxHasher::default();
+            h1.write_u16(v16);
+            let mut h2 = FxHasher::default();
+            h2.write(&v16.to_ne_bytes());
+            prop_assert_eq!(h1.finish(), h2.finish());
+
+            let mut h1 = FxHasher::default();
+            h1.write_u8(v8);
+            let mut h2 = FxHasher::default();
+            h2.write(&[v8]);
+            prop_assert_eq!(h1.finish(), h2.finish());
+
+            // Chunk-aligned split transparency.
+            let mut whole = FxHasher::default();
+            whole.write(&head);
+            whole.write(&tail);
+            let mut split = FxHasher::default();
+            let joined: Vec<u8> = head.iter().chain(tail.iter()).copied().collect();
+            split.write(&joined);
+            prop_assert_eq!(whole.finish(), split.finish());
+        }
+    }
+}

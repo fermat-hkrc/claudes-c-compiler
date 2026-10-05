@@ -1,0 +1,514 @@
+511	closed	Bug: ccc-i686 -static emits entry = main with no C runtime — every static i686 binary crashes
+510	open	Bug: invalid float↔pointer casts silently accepted; float→pointer compiled as raw bit reinterpretation
+509	open	Bug: ccc-i686 -static emits entry = main with no C runtime — every static i686 binary crashes
+508	open	Bug: PUA encoding silently corrupts source files containing literal U+E080..U+E0FF characters (3 bytes -> 1 byte)
+507	open	Bug: XZR and x31 are accepted as ldNr base (encoded as SP)
+506	open	Bug: W-register base is accepted for ld2r/ld3r/ld4r
+505	open	Bug: LD2R/LD4R S bit encoded at bit 12 instead of bit 21
+504	open	Bug: Register post-index `[Xn], Xm` is ignored
+503	open	Bug: Non-consecutive / mixed-arrangement register lists are accepted
+502	open	Bug: `[Xn, #imm]` (non-zero unsigned offset) is accepted as no-offset ldNr
+501	open	Bug: SIMD/FP register accepted as ldNr base
+500	open	Bug: Surplus operand on ld2r/ld3r/ld4r is ignored
+499	open	Bug: Illegal post-index immediate is accepted
+498	open	Bug: encode_ldrs accepts XZR as the memory base
+497	open	Bug: encode_ldrs encodes pre/post-index when Rt==Rn (Rn!=SP)
+496	open	Bug: encode_ldrs accepts a W index without uxtw/sxtw
+495	open	Bug: encode_ldrs accepts a W register as the memory base
+494	open	Bug: encode_ldrs accepts SP/WSP as the destination
+493	open	Bug: encode_ldrs truncates out-of-range offsets instead of rejecting them
+492	open	Bug: encode_ldrs accepts SIMD/FP destination registers
+491	open	Bug: encode_ldrs ignores operands beyond the second
+490	open	Bug: encode_ldrs accepts illegal register-offset shift/extend
+489	open	Bug: encode_neon_dup accepts wrong-width and non-GPR sources
+488	open	Bug: encode_neon_dup ignores dest arrangement vs element-size mismatch
+487	open	Bug: encode_neon_dup masks out-of-range lane indices
+486	open	Bug: encode_neon_dup ignores extra operands
+485	open	Bug: encode_fsqrt encodes mixed S/D (and GPR/SP/QVB) instead of rejecting
+484	open	Bug: encode_fsqrt encodes H registers as ftype=00 (single)
+483	open	Bug: encode_fsqrt ignores extra operands
+482	open	Bug: encode_fneg encodes mixed S/D (and GPR/SP/QVB) instead of rejecting
+481	open	Bug: encode_fneg encodes H registers as ftype=00 (single)
+480	open	Bug: encode_fneg ignores extra operands
+479	open	Bug: encode_fmadd_fmsub encodes mixed S/D (and GPR/SP/QVB) instead of rejecting
+478	open	Bug: encode_fmadd_fmsub encodes H registers as ftype=00 (single)
+477	open	Bug: encode_fmadd_fmsub ignores extra operands
+476	open	Bug: encode_fabs encodes mixed S/D (and GPR/SP/QVB) instead of rejecting
+475	open	Bug: encode_fabs encodes H registers as ftype=00 (single)
+474	open	Bug: encode_fabs ignores extra operands
+473	open	Bug: encode_neon_float_two_misc encodes SP/WSP/XZR/WZR/LR as a SIMD register
+472	open	Bug: encode_neon_float_two_misc accepts non-V register prefixes
+471	open	Bug: encode_neon_float_two_misc ignores extra operands
+470	open	Bug: encode_neon_float_two_misc accepts a bare source register
+469	open	Bug: encode_neon_float_two_misc ignores source arrangement
+468	open	Bug: encode_ubfx treats SP/WSP as ZR
+467	open	Bug: encode_ubfx accepts mixed W/X registers
+466	open	Bug: encode_ubfx panics or encodes out-of-range #lsb/#width
+465	open	Bug: encode_ubfx accepts FP/SIMD registers as GPR operands
+464	open	Bug: encode_ubfx ignores extra operands
+463	open	Bug: encode_ubfm accepts SP/WSP as Rd or Rn
+462	open	Bug: encode_ubfm accepts mixed W/X registers
+461	open	Bug: encode_ubfm accepts out-of-range immr/imms
+460	open	Bug: encode_ubfm accepts FP/SIMD registers as GPR operands
+459	open	Bug: encode_ubfm ignores extra operands
+458	open	Bug: encode_sbfx treats SP/WSP as ZR
+457	open	Bug: encode_sbfx accepts mixed W/X registers
+456	open	Bug: encode_sbfx panics or encodes out-of-range #lsb/#width
+455	open	Bug: encode_sbfx accepts FP/SIMD registers as GPR operands
+454	open	Bug: encode_sbfx ignores extra operands
+453	open	Bug: encode_sbfm treats SP/WSP as ZR
+452	open	Bug: encode_sbfm accepts mixed W/X registers
+451	open	Bug: encode_sbfm accepts out-of-range immr/imms
+450	open	Bug: encode_sbfm accepts FP/SIMD registers as GPR operands
+449	open	Bug: encode_sbfm ignores extra operands
+448	open	Bug: encode_bfm treats SP/WSP as ZR
+447	open	Bug: encode_bfm accepts mixed W/X registers
+446	open	Bug: encode_bfm accepts out-of-range immr/imms
+445	open	Bug: encode_bfm accepts FP/SIMD registers as GPR operands
+444	open	Bug: encode_bfm ignores extra operands
+443	open	Bug: encode_ubfiz accepts SP/WSP as register 31
+442	open	Bug: encode_ubfiz accepts mixed W/X register widths
+441	open	Bug: encode_ubfiz panics or encodes out-of-range #lsb/#width
+440	open	Bug: encode_ubfiz accepts FP/SIMD registers as GPR operands
+439	open	Bug: encode_ubfiz silently ignores a 5th operand
+438	open	Bug: encode_sbfiz accepts SP/WSP as register 31
+437	open	Bug: encode_sbfiz accepts mixed W/X register widths
+436	open	Bug: encode_sbfiz panics or encodes out-of-range #lsb/#width
+435	open	Bug: encode_sbfiz accepts FP/SIMD registers as GPR
+434	open	Bug: encode_sbfiz silently ignores a 5th operand
+433	open	Bug: encode_rev encodes SP/WSP as ZR
+432	open	Bug: encode_rev accepts mixed W/X register widths
+431	open	Bug: encode_rev accepts FP/SIMD register names as GPRs
+430	open	Bug: encode_rev silently ignores a third operand
+429	open	Bug: encode_rev32 accepts 32-bit W registers
+428	open	Bug: encode_rev32 accepts SP/WSP as register 31
+427	open	Bug: encode_rev32 NEON path accepts invalid arrangements 2s/4s/2d/1d
+426	open	Bug: encode_rev32 accepts mixed W/X register widths
+425	open	Bug: encode_rev32 accepts FP/SIMD registers as GPR operands
+424	open	Bug: encode_rev32 ignores extra operands
+423	open	Bug: encode_rev16 encodes SP/WSP as ZR
+422	open	Bug: encode_rev16 accepts mixed W/X register widths
+421	open	Bug: encode_rev16 accepts FP/SIMD register names as GPRs
+420	open	Bug: encode_rev16 silently ignores a third operand
+419	open	Bug: encode_rbit accepts SP/WSP as a GPR
+418	open	Bug: encode_rbit accepts mixed W/X register widths
+417	open	Bug: encode_rbit accepts FP/SIMD registers as scalar RBIT operands
+416	open	Bug: encode_rbit ignores extra operands
+415	open	Bug: encode_fp_arith encodes mixed S/D (and GPR/SP/QVB) instead of rejecting
+414	open	Bug: encode_fp_arith encodes H registers as ftype=00 (single)
+413	open	Bug: encode_fp_arith ignores extra operands
+412	open	Bug: encode_fmov encodes incompatible register classes instead of rejecting
+411	open	Bug: encode_fmov does not encode FMOV Xd, Vn.D[1] / FMOV Vd.D[1], Xn
+410	open	Bug: encode_fmov encodes SP/WSP as an FP or ZR register
+409	open	Bug: encode_fmov encodes H registers as ftype=00 (single)
+408	open	Bug: encode_fmov ignores extra operands
+407	open	Bug: encode_extr accepts SP/WSP as a GPR
+406	open	Bug: encode_extr accepts mixed W/X registers
+405	open	Bug: encode_extr panics or encodes out-of-range #lsb
+404	open	Bug: encode_extr accepts FP/SIMD registers as GPRs
+403	open	Bug: encode_extr ignores extra operands
+402	open	Bug: encode_clz accepts SP/WSP as a GPR
+401	open	Bug: encode_clz accepts mixed W/X register widths
+400	open	Bug: encode_clz accepts FP/SIMD registers as scalar CLZ operands
+399	open	Bug: encode_clz ignores extra operands
+398	open	Bug: encode_cls accepts SP/WSP as register 31
+397	open	Bug: encode_cls accepts mixed W/X register widths
+396	open	Bug: encode_cls accepts FP/SIMD registers as GPRs
+395	open	Bug: encode_cls ignores extra operands
+394	open	Bug: encode_cas accepts XZR/x31/WZR as the memory base
+393	open	Bug: encode_cas accepts a W register or WSP as the memory base
+392	open	Bug: encode_cas accepts SP/WSP as Rs or Rt
+391	open	Bug: encode_cas ignores a nonzero memory offset
+390	open	Bug: encode_cas accepts mixed W/X Rs and Rt
+389	open	Bug: encode_cas accepts FP/SIMD registers as Rs/Rt
+388	open	Bug: encode_cas ignores extra operands
+387	open	Bug: encode_cas accepts X registers for CASB/CASH
+386	open	Bug: encode_bfxil treats SP/WSP as ZR
+385	open	Bug: encode_bfxil accepts mixed W/X registers
+384	open	Bug: encode_bfxil panics or encodes out-of-range #lsb/#width
+383	open	Bug: encode_bfxil accepts FP/SIMD registers as GPR operands
+382	open	Bug: encode_bfxil ignores extra operands
+381	open	Bug: encode_bfi treats SP/WSP as ZR
+380	open	Bug: encode_bfi accepts mixed W/X registers
+379	open	Bug: encode_bfi panics or encodes out-of-range #lsb/#width
+378	open	Bug: encode_bfi accepts FP/SIMD registers as GPR operands
+377	open	Bug: encode_bfi ignores extra operands
+376	open	Bug: encode_neon_aes encodes SP as V31
+375	open	Bug: encode_neon_aes accepts non-V register prefixes
+374	open	Bug: encode_neon_aes ignores source arrangement
+373	open	Bug: encode_neon_aes ignores extra operands
+372	open	Bug: encode_neon_aes accepts a bare Vn without arrangement
+371	open	Bug: encode_neon_aes ignores arrangement (accepts T other than .16B)
+370	open	Bug: encode_fcvt_precision treats SP as an S register
+369	open	Bug: encode_fcvt_precision encodes same-precision FCVT (unallocated)
+368	open	Bug: encode_fcvt_precision ignores a third operand
+367	open	Bug: encode_fcmp accepts mixed S/D, GPR, Q/V/B, and SP
+366	open	Bug: encode_fcmp encodes H registers as ftype=00 (single)
+365	open	Bug: encode_fcmp ignores a third operand
+364	open	Bug: encode_fcmp treats a missing second operand as FCMP #0.0
+363	open	Bug: encode_int_to_float encodes GP dest / FP source as integer SCVTF
+362	open	Bug: encode_int_to_float encodes SP/WSP source as ZR
+361	open	Bug: encode_int_to_float encodes H dest as ftype=00 (single)
+360	open	Bug: encode_int_to_float ignores extra operands
+359	open	Bug: encode_fp_1src encodes mixed S/D (and GPR/SP/QVB) instead of rejecting
+358	open	Bug: encode_fp_1src encodes H registers as ftype=00 (single)
+357	open	Bug: encode_fp_1src ignores extra operands
+356	open	Bug: encode_fcvt_rounding encodes SP/WSP dest as ZR
+355	open	Bug: encode_fcvt_rounding encodes H source as ftype=00 (single)
+354	open	Bug: encode_fcvt_rounding encodes FP dest as integer W-form
+353	open	Bug: encode_fcvt_rounding ignores extra operands
+352	open	Bug: encode_smulh accepts WZR (32-bit form of XZR)
+351	open	Bug: encode_smulh accepts 32-bit W registers
+350	open	Bug: encode_smulh treats SP/WSP as XZR
+349	open	Bug: encode_smulh accepts FP/SIMD registers as GPRs
+348	open	Bug: encode_smulh ignores extra operands
+347	open	Bug: encode_prfm accepts XZR/x31 as the memory base
+346	open	Bug: encode_prfm accepts a W index without UXTW/SXTW
+345	open	Bug: encode_prfm accepts a W register as the memory base
+344	open	Bug: encode_prfm register-offset form uses the wrong opcode bits
+343	open	Bug: encode_prfm accepts an FP/SIMD register as the memory base
+342	open	Bug: encode_prfm ignores extra operands
+341	open	Bug: encode_prfm accepts illegal PRFM (register) shift amounts
+340	open	Bug: encode_ldtr_sized accepts XZR as the memory base
+339	open	Bug: encode_ldtr_sized accepts Xt/lr as dest
+338	open	Bug: encode_ldtr_sized accepts a W register as the memory base
+337	open	Bug: encode_ldtr_sized accepts SP/WSP as Rt
+336	open	Bug: encode_ldtr_sized silently wraps offsets outside signed 9-bit range
+335	open	Bug: encode_ldtr_sized accepts SIMD/FP registers as Rt
+334	open	Bug: encode_ldtr_sized ignores extra operands
+333	open	Bug: encode_ldrsw encodes XZR/X31 as the memory base SP
+332	open	Bug: encode_ldrsw encodes pre/post-index LDRSW when Rt equals Rn
+331	open	Bug: encode_ldrsw encodes a W index without UXTW/SXTW as LSL
+330	open	Bug: encode_ldrsw accepts a W register destination
+329	open	Bug: encode_ldrsw accepts a W register as the memory base
+328	open	Bug: encode_ldrsw encodes SP destination as XZR
+327	open	Bug: encode_ldrsw silently truncates out-of-range offsets
+326	open	Bug: encode_ldrsw rejects LDRSW (literal)
+325	open	Bug: encode_ldrsw accepts SIMD/FP destination registers
+324	open	Bug: encode_ldrsw ignores operands beyond the second
+323	open	Bug: encode_ldaxr_stlxr encodes XZR as SP in the exclusive base
+322	open	Bug: encode_ldaxr_stlxr accepts Xt on LDAXRB/LDAXRH
+321	open	Bug: encode_ldaxr_stlxr accepts an X register as STLXR status
+320	open	Bug: encode_ldaxr_stlxr encodes STLXR when Ws aliases a source
+319	open	Bug: encode_ldaxr_stlxr accepts a W register as exclusive base
+318	open	Bug: encode_ldaxr_stlxr encodes SP as ZR in Rt
+317	open	Bug: encode_ldaxr_stlxr ignores a nonzero exclusive offset
+316	open	Bug: encode_ldaxr_stlxr encodes SIMD/FP names as GPR Rt
+315	open	Bug: encode_ldaxr_stlxr ignores extra operands
+314	open	Bug: encode_uxtw accepts 32-bit dest (Wd)
+313	open	Bug: encode_uxtw encodes SP/WSP as XZR/WZR
+312	open	Bug: encode_uxtw emits MOV Wd,Wn (ORR) instead of UBFM Xd,Xn,#0,#31
+311	open	Bug: encode_uxtw accepts FP/SIMD register names as GPRs
+310	open	Bug: encode_uxtw ignores extra operands
+309	open	Bug: encode_umull accepts W dest and X sources
+308	open	Bug: encode_umull encodes SP/WSP as XZR/WZR
+307	open	Bug: encode_umull encodes FP/SIMD register names as GPRs
+306	open	Bug: encode_umull silently ignores a 4th operand
+305	open	Bug: encode_neon_rbit encodes SP as V31
+304	open	Bug: encode_neon_rbit encodes GPR/FP prefixes as V registers
+303	open	Bug: encode_neon_rbit ignores source arrangement
+302	open	Bug: encode_neon_rbit ignores extra operands
+301	open	Bug: encode_neon_rbit accepts a source without arrangement
+300	open	Bug: encode_umulh accepts 32-bit W registers
+299	open	Bug: encode_umulh encodes SP/WSP as XZR/WZR
+298	open	Bug: encode_umulh encodes FP/SIMD register names as GPRs
+297	open	Bug: encode_umulh ignores extra operands
+296	open	Bug: encode_umaddl accepts W dest, X sources, and W accumulator
+295	open	Bug: encode_umaddl encodes SP/WSP as XZR/WZR
+294	open	Bug: encode_umaddl encodes FP/SIMD register names as GPRs
+293	open	Bug: encode_umaddl silently ignores a 5th operand
+292	open	Bug: encode_neon_shift_left_imm accepts a source without arrangement
+291	open	Bug: encode_neon_shift_left_imm does not reject out-of-range shift
+290	open	Bug: encode_neon_shift_left_imm accepts non-V register prefixes
+289	open	Bug: encode_neon_shift_left_imm ignores extra operands
+288	open	Bug: encode_neon_shift_left_imm ignores source arrangement
+287	open	Bug: encode_sxtw accepts 32-bit dest (Wd)
+286	open	Bug: encode_sxtw encodes SP/WSP as XZR/WZR
+285	open	Bug: encode_sxtw accepts FP/SIMD register names as GPRs
+284	open	Bug: encode_sxtw ignores extra operands
+283	open	Bug: encode_sxth accepts W dest with X source
+282	open	Bug: encode_sxth encodes SP/WSP as ZR
+281	open	Bug: encode_sxth encodes FP/SIMD register names as GPRs
+280	open	Bug: encode_sxth ignores extra operands
+279	open	Bug: encode_smull accepts W dest and X sources
+278	open	Bug: encode_smull encodes SP/WSP as XZR/WZR
+277	open	Bug: encode_smull encodes FP/SIMD register names as GPRs
+276	open	Bug: encode_smull silently ignores a 4th operand
+275	open	Bug: SQSHRUN accepts shift amounts above dest element size
+274	open	Bug: SQSHRUN truncates i64 shift immediates with `as u32`
+273	open	Bug: SQSHRUN ignores destination arrangement Tb
+272	open	Bug: SQSHRUN encodes a GPR/scalar-FP dest as a NEON Rd
+271	open	Bug: SQSHRUN ignores operands beyond index 2
+270	open	Bug: encode_neon_shll does not require Tb to match the 2-suffix / Q
+269	open	Bug: encode_neon_shll accepts out-of-range shift (and panics on Imm(-1))
+268	open	Bug: encode_neon_shll ignores destination arrangement
+267	open	Bug: encode_neon_shll accepts a GPR/FP dest as if it were Vd.Ta
+266	open	Bug: encode_neon_shll ignores extra operands beyond index 2
+265	open	Bug: encode_shift truncates shift counts outside imm8
+264	open	Bug: encode_shift omits FS/GS segment override on memory operands
+263	open	Bug: encode_shift accepts size-mismatched and non-GP destinations
+262	open	Bug: encode_sbc encodes SP/WSP as XZR/WZR
+261	open	Bug: encode_sbc accepts mixed X/W register widths
+260	open	Bug: encode_sbc accepts FP/SIMD register names as GPRs
+259	open	Bug: encode_sbc silently ignores a trailing shift operand
+258	open	Bug: encode_ret accepts W-form Rn
+257	open	Bug: encode_ret encodes SP as XZR
+256	open	Bug: encode_ret accepts FP/SIMD register names as GPRs
+255	open	Bug: encode_ret ignores extra operands
+254	open	Bug: encode_orn treats unknown shift kinds as LSL
+253	open	Bug: encode_orn ignores a trailing operand after a valid shift
+252	open	Bug: encode_orn encodes SP/WSP as XZR/WZR
+251	open	Bug: encode_orn masks out-of-range shift amounts instead of rejecting them
+250	open	Bug: encode_orn ignores mismatched NEON arrangements and bare Reg sources
+249	open	Bug: encode_orn accepts mixed X/W register widths
+248	open	Bug: encode_orn accepts NEON ORN arrangements other than 8b/16b
+247	open	Bug: encode_orn rejects the GNU ORN-immediate alias
+246	open	Bug: encode_orn encodes FP/SIMD names as GPRs
+245	open	Bug: encode_orn ignores a trailing non-shift 4th operand
+244	open	Bug: encode_neon_tbl accepts a table arrangement other than .16B
+243	open	Bug: encode_neon_tbl ignores non-sequential table registers
+242	open	Bug: encode_neon_tbl ignores Vm arrangement mismatch with Vd.Ta
+241	open	Bug: encode_neon_tbl accepts Ta outside {8B,16B}
+240	open	Bug: encode_neon_tbl accepts a GPR/FP destination
+239	open	Bug: encode_neon_tbl wraps table length above 4 instead of rejecting
+238	open	Bug: encode_neon_tbl ignores extra operands
+237	open	Bug: encode_neon_tbl panics on an empty register list
+236	open	Bug: encode_neon_tbl accepts a bare GPR/FP/V as Vm
+235	open	Bug: encode_neon_tbl accepts a bare Reg as the table list member
+234	open	Bug: encode_neon_shift_imm panics or encodes out-of-range USHR shift
+233	open	Bug: encode_neon_shift_imm truncates i64 shift via `as u32`
+232	open	Bug: encode_neon_shift_imm accepts a bare GPR/FP/V register as Vn
+231	open	Bug: encode_neon_shift_imm discards source arrangement
+230	open	Bug: encode_neon_shift_imm ignores operands after index 2
+229	open	Bug: encode_negs encodes SP/WSP as XZR/WZR
+228	open	Bug: encode_negs accepts out-of-range shift amounts
+227	open	Bug: encode_negs accepts mixed X/W register widths
+226	open	Bug: encode_negs accepts FP/SIMD register names as GPRs
+225	open	Bug: encode_negs silently ignores extra non-shift operands
+224	open	Bug: encode_negs maps unknown and ROR shift kinds to LSL
+223	open	Bug: encode_neg silently ignores extra operands
+222	open	Bug: encode_neon_shift_right truncates i64 shift via `as u32`
+221	open	Bug: encode_neon_shift_right accepts a bare GPR/FP/V register as Vn
+220	open	Bug: encode_neon_shift_right discards source arrangement
+219	open	Bug: encode_neon_shift_right ignores operands after index 2
+218	open	Bug: encode_mvn encodes SP/WSP as XZR/WZR
+217	open	Bug: encode_mvn accepts out-of-range shift amounts
+216	open	Bug: encode_mvn accepts NEON arrangements other than 8b/16b
+215	open	Bug: encode_mvn ignores source NEON arrangement T
+214	open	Bug: encode_mvn NEON form silently ignores a third operand
+213	open	Bug: encode_mvn accepts mixed X/W register widths
+212	open	Bug: encode_mvn accepts FP/SIMD register names as GPRs
+211	open	Bug: encode_mvn silently ignores extra non-shift operands
+210	open	Bug: encode_mvn maps unknown shift kinds to LSL
+209	open	Bug: encode_mul encodes SP/WSP as XZR/WZR
+208	open	Bug: encode_mul ignores source NEON arrangements
+207	open	Bug: encode_mul accepts NEON MUL with 64-bit elements (size==11 UNDEFINED)
+206	open	Bug: encode_mul accepts mixed X/W register widths
+205	open	Bug: encode_mul treats FP/SIMD register names as GPRs
+204	open	Bug: encode_mul silently ignores a fourth operand
+203	open	Bug: encode_msub treats SP/WSP as XZR/WZR
+202	open	Bug: encode_msub accepts mixed X/W register widths
+201	open	Bug: encode_msub accepts FP/SIMD register names as GPRs
+200	open	Bug: encode_msub silently ignores a fifth operand
+199	open	Bug: encode_neon_qshrn accepts shift above destination element size
+198	open	Bug: encode_neon_qshrn truncates i64 shift via `as u32`
+197	open	Bug: encode_neon_qshrn ignores destination arrangement Tb
+196	open	Bug: encode_neon_qshrn accepts a GPR/FP dest as if it were Vd
+195	open	Bug: encode_neon_qshrn ignores extra operands beyond index 2
+194	open	Bug: encode_movz encodes SP/WSP as XZR/WZR
+193	open	Bug: encode_movz accepts non-lsl shifts and out-of-set lsl amounts
+192	open	Bug: encode_movz silently truncates immediates outside [0, 65535]
+191	open	Bug: encode_movz encodes FP/SIMD register names as GPRs
+190	open	Bug: encode_movz ignores extra operands after optional lsl
+189	open	Bug: encode_movn encodes SP/WSP as XZR/WZR
+188	open	Bug: encode_movn accepts non-lsl shifts and illegal shift amounts
+187	open	Bug: encode_movn silently truncates immediates outside [0, 65535]
+186	open	Bug: encode_movn encodes FP/SIMD register names as GPRs
+185	open	Bug: encode_movn ignores extra operands
+184	open	Bug: encode_movk encodes SP/WSP as XZR/WZR
+183	open	Bug: encode_movk accepts non-lsl shifts and illegal shift amounts
+182	open	Bug: encode_movk silently truncates immediates outside [0, 65535]
+181	open	Bug: encode_movk encodes FP/SIMD register names as GPRs
+180	open	Bug: encode_movk ignores extra operands
+179	open	Bug: encode_madd treats SP/WSP as XZR/WZR
+178	open	Bug: encode_madd accepts mixed X/W register widths
+177	open	Bug: encode_madd accepts FP/SIMD register names as GPRs
+176	open	Bug: encode_madd silently ignores a fifth operand
+175	open	Bug: encode_logical treats unknown shift kinds as LSL
+174	open	Bug: encode_logical accepts SP/WSP in shifted-register form
+173	open	Bug: encode_logical accepts out-of-range shift amounts
+172	open	Bug: encode_logical ignores mismatched NEON source arrangements
+171	open	Bug: encode_logical accepts NEON arrangements other than 8b/16b
+170	open	Bug: encode_logical accepts mixed X/W register widths
+169	open	Bug: encode_logical accepts FP/SIMD register names as GPRs
+168	open	Bug: encode_logical ignores a trailing extra GPR operand
+167	open	Bug: encode_logical encodes ANDS on NEON registers
+166	open	Bug: encode_ldxr_stxr encodes XZR as SP in the address base
+165	open	Bug: encode_ldxr_stxr accepts an X data register on byte/half exclusive
+164	open	Bug: encode_ldxr_stxr accepts an X register as STXR status
+163	open	Bug: encode_ldxr_stxr encodes STXR when Ws aliases a source
+162	open	Bug: encode_ldxr_stxr accepts a W register as the address base
+161	open	Bug: encode_ldxr_stxr encodes SP as ZR in Rt
+160	open	Bug: encode_ldxr_stxr ignores a nonzero exclusive offset
+159	open	Bug: encode_ldxr_stxr encodes SIMD/FP names as GPR Rt
+158	open	Bug: encode_ldxr_stxr ignores extra operands
+157	open	Bug: x86 encoder does not validate register size against mnemonic suffix (16-bit name silently encoded as its 64/32-bit twin)
+156	open	Bug: encode_neon_float_three_same accepts a source without arrangement T
+155	open	Bug: encode_neon_float_three_same encodes non-V register prefixes as V registers
+154	open	Bug: encode_neon_float_three_same ignores extra operands
+153	open	Bug: encode_neon_float_three_same ignores source arrangement and accepts T mismatch
+152	open	Bug: encode_ldxp_stxp encodes XZR/WZR as SP when used as the base
+151	open	Bug: encode_ldxp_stxp accepts an X register as STXP status
+150	open	Bug: encode_ldxp_stxp encodes STXP when Ws aliases a source
+149	open	Bug: encode_ldxp_stxp accepts a W register as the memory base
+148	open	Bug: encode_ldxp_stxp encodes SP/WSP as ZR in Rt/Rt2/Ws
+147	open	Bug: encode_ldxp_stxp ignores a nonzero exclusive-pair offset
+146	open	Bug: encode_ldxp_stxp accepts a mixed X/W exclusive pair
+145	open	Bug: encode_ldxp_stxp encodes SIMD/FP registers as GPRs
+144	open	Bug: encode_ldxp_stxp ignores extra operands
+143	open	Bug: encode_ldur_stur accepts a W register (or XZR/WZR/WSP) as the memory base
+142	open	Bug: encode_ldur_stur encodes a V-register Rt as a 64-bit SIMD (D) load/store
+141	open	Bug: encode_ldur_stur accepts SP/WSP as Rt
+140	open	Bug: encode_ldur_stur encodes SIMD Rt on LDTR/STTR
+139	open	Bug: encode_ldur_stur encodes LR as a 32-bit W30 load/store
+138	open	Bug: encode_ldur_stur silently wraps offsets outside signed 9-bit range
+137	open	Bug: encode_ldur_stur ignores extra operands
+136	open	Bug: encode_neon_sli does not reject out-of-range shift
+135	open	Bug: encode_neon_sli accepts non-V register prefixes as V registers
+134	open	Bug: encode_neon_sli ignores extra operands
+133	open	Bug: encode_neon_sli ignores source arrangement
+132	open	Bug: encode_neon_float_cmp_zero accepts non-V register prefixes
+131	open	Bug: encode_neon_float_cmp_zero ignores extra operands
+130	open	Bug: encode_neon_float_cmp_zero ignores source arrangement
+129	open	Bug: encode_neon_across_long encodes reserved SADDLV arrangements (2S/1D/2D)
+128	open	Bug: encode_neon_across_long ignores extra operands
+127	open	Bug: encode_neon_across_long ignores destination register type
+126	open	Bug: encode_ldar_stlr accepts a W register as the memory base
+125	open	Bug: encode_ldar_stlr accepts SP/WSP as Rt
+124	open	Bug: encode_ldar_stlr ignores extra operands
+123	open	Bug: encode_eon treats unknown shift kinds as LSL
+122	open	Bug: encode_eon encodes SP/WSP as XZR/WZR
+121	open	Bug: encode_eon masks out-of-range shift amounts instead of rejecting them
+120	open	Bug: encode_eon accepts mixed x/w register widths
+119	open	Bug: encode_eon rejects the GNU EON-immediate alias
+118	open	Bug: encode_eon accepts FP/SIMD register names as GPRs
+117	open	Bug: encode_eon ignores a trailing non-shift 4th operand
+116	open	Bug: encode_div accepts SP/WSP as a GPR operand
+115	open	Bug: encode_div accepts mixed x/w register widths
+114	open	Bug: encode_div accepts FP/SIMD register names as GPRs
+113	open	Bug: encode_div silently ignores a fourth operand
+112	open	Bug: encode_csneg encodes SP as XZR
+111	open	Bug: encode_csneg accepts mixed x/w register widths
+110	open	Bug: encode_csneg encodes FP/SIMD register names as GPRs
+109	open	Bug: encode_csneg ignores extra operands
+108	open	Bug: encode_csinv encodes SP as XZR
+107	open	Bug: encode_csinv accepts mixed x/w register widths
+106	open	Bug: encode_csinv accepts FP/SIMD register names as GPRs
+105	open	Bug: encode_csinv ignores extra operands
+104	open	Bug: encode_csinc encodes SP as XZR
+103	open	Bug: encode_csinc accepts mixed x/w register widths
+102	open	Bug: encode_csinc accepts FP/SIMD register names as GPRs
+101	open	Bug: encode_csinc ignores extra operands
+100	open	Bug: encode_csetm encodes SP as XZR
+99	open	Bug: encode_csetm accepts FP/SIMD register names as GPRs
+98	open	Bug: encode_csetm ignores extra operands
+97	open	Bug: encode_csetm accepts condition codes AL and NV
+96	open	Bug: encode_cset encodes SP as XZR
+95	open	Bug: encode_cset accepts FP/SIMD register names as GPRs
+94	open	Bug: encode_cset ignores extra operands
+93	open	Bug: encode_cset accepts condition codes AL and NV
+92	open	Bug: encode_csel encodes SP as XZR
+91	open	Bug: encode_csel accepts mixed x/w register widths
+90	open	Bug: encode_csel accepts FP/SIMD register names as GPRs
+89	open	Bug: encode_csel ignores extra operands
+88	open	Bug: encode_cneg encodes SP/WSP as XZR/WZR
+87	open	Bug: encode_cneg accepts mixed x/w register widths
+86	open	Bug: encode_cneg accepts FP/SIMD register names as GPRs
+85	open	Bug: encode_cneg ignores extra operands
+84	open	Bug: encode_cneg accepts condition codes AL and NV
+83	open	Bug: encode_cmp accepts XZR/WZR as immediate-form Rn
+82	open	Bug: encode_cmp accepts SP as Rm without an extend
+81	open	Bug: encode_cmp accepts mixed x/w without an extend
+80	open	Bug: encode_cmp panics on Imm(i64::MIN)
+79	open	Bug: encode_cmp accepts FP/SIMD register names as GPRs
+78	open	Bug: encode_cmp ignores extra operands
+77	open	Bug: encode_cmn accepts XZR/WZR as immediate-form Rn
+76	open	Bug: encode_cmn encodes SP as Rm as XZR
+75	open	Bug: encode_cmn accepts mixed x/w register widths
+74	open	Bug: encode_cmn panics on Imm(i64::MIN)
+73	open	Bug: encode_cmn accepts FP/SIMD register names as GPRs
+72	open	Bug: encode_cmn ignores extra operands
+71	open	Bug: encode_cinv encodes SP/WSP as XZR/WZR
+70	open	Bug: encode_cinv accepts mixed x/w register widths
+69	open	Bug: encode_cinv accepts FP/SIMD register names as GPRs
+68	open	Bug: encode_cinv ignores extra operands
+67	open	Bug: encode_cinv accepts condition codes AL and NV
+66	open	Bug: encode_cinc encodes SP/WSP as XZR/WZR
+65	open	Bug: encode_cinc accepts mixed x/w register widths
+64	open	Bug: encode_cinc accepts FP/SIMD register names as GPRs
+63	open	Bug: encode_cinc ignores extra operands
+62	open	Bug: encode_cinc accepts condition codes AL and NV
+61	open	Bug: encode_ccmp_ccmn encodes SP/WSP as XZR/WZR
+60	open	Bug: encode_ccmp_ccmn accepts mixed x/w register widths
+59	open	Bug: encode_ccmp_ccmn truncates out-of-range imm5 and nzcv instead of rejecting them
+58	open	Bug: encode_ccmp_ccmn accepts FP/SIMD register names as GPRs
+57	open	Bug: encode_ccmp_ccmn ignores extra operands
+56	open	Bug: encode_cbz treats SP as XZR
+55	open	Bug: encode_cbz rejects immediate PC-offset form `cbz/cbnz Rt, #imm`
+54	open	Bug: encode_cbz accepts FP/SIMD register names as Rt
+53	open	Bug: encode_cbz ignores extra operands
+52	open	Bug: encode_branch accepts :lo12: / modifier operands as Jump26 symbols
+51	open	Bug: encode_branch rejects immediate PC-offset form `b #imm`
+50	open	Bug: encode_branch ignores extra operands
+49	open	Bug: encode_br accepts 32-bit W registers as BR Rn
+48	open	Bug: encode_br treats SP as XZR
+47	open	Bug: encode_br accepts FP/SIMD register names as GPR Rn
+46	open	Bug: encode_br ignores extra operands
+45	open	Bug: encode_blr accepts 32-bit W registers as BLR Rn
+44	open	Bug: encode_blr treats SP as XZR
+43	open	Bug: encode_blr accepts FP/SIMD register names as GPR Rn
+42	open	Bug: encode_blr ignores extra operands
+41	open	Bug: encode_neon_three_diff_narrow ignores Rm arrangement Ta
+40	open	Bug: encode_neon_three_diff_narrow ignores destination arrangement Tb
+39	open	Bug: encode_neon_three_diff_narrow accepts GPR/FP names as NEON Vd
+38	open	Bug: encode_neon_three_diff_narrow silently ignores a fourth operand
+37	open	Bug: encode_bl accepts :lo12: / modifier operands as Call26 symbols
+36	open	Bug: encode_bl rejects immediate PC-offset form `bl #imm`
+35	open	Bug: encode_bl ignores extra operands
+34	open	Bug: encode_bics treats unknown shift kinds as LSL
+33	open	Bug: encode_bics accepts SP/WSP as register 31
+32	open	Bug: encode_bics accepts out-of-range shift amounts
+31	open	Bug: encode_bics accepts mixed-width GPR operands
+30	open	Bug: encode_bics rejects the GNU BICS-immediate alias
+29	open	Bug: encode_bics accepts FP/SIMD register names as GPRs
+28	open	Bug: encode_bics ignores a trailing non-shift 4th operand
+27	open	Bug: encode_bic maps unknown shift kinds to LSL
+26	open	Bug: encode_bic register form accepts SP/WSP as a GPR
+25	open	Bug: encode_bic masks out-of-range shift amounts instead of rejecting them
+24	open	Bug: encode_bic accepts mixed-width GPR operands
+23	open	Bug: encode_bic NEON form accepts arrangements other than 8b/16b
+22	open	Bug: encode_bic immediate form treats XZR/WZR as SP/WSP
+21	open	Bug: encode_bic accepts FP/SIMD register names as GPRs
+20	open	Bug: encode_adr accepts 32-bit W registers as ADR Rd
+19	open	Bug: encode_adr treats SP as XZR
+18	open	Bug: encode_adr accepts :lo12:/:got: modifiers as a bare ADR reloc
+17	open	Bug: encode_adr silently truncates immediates outside the 21-bit signed range
+16	open	Bug: encode_adr accepts FP/SIMD register names as GPR Rd
+15	open	Bug: ADD/SUB with SP/WSP and LSL #N uses shifted-register form (XZR) instead of extended-register form
+14	open	Bug: ADD/SUB silently encodes ROR (and other invalid shifts/extends)
+13	open	Bug: ADD/SUB accepts mixed x/w register widths
+12	open	Bug: ADD/SUB immediate form silently ignores a non-LSL#12 fourth operand
+11	open	Bug: explicit lsl #12 ADD/SUB immediate masks overflow instead of rejecting
+10	open	Bug: ADD/SUB encodes FP/SIMD register names as GPRs
+9	open	Bug: ADDS/SUBS with Rd=SP/WSP encodes as XZR/WZR (CMP/CMN)
+8	open	Bug: encode_adc treats SP/WSP as XZR/WZR
+7	open	Bug: encode_adc accepts mixed 32/64-bit register operands
+6	open	Bug: encode_adc accepts FP/SIMD register names as GPRs
+5	open	Bug: encode_adc silently ignores a trailing shift operand
+4	open	Bug: Ptr is not treated as U64/U32 for float and F128 casts
+3	open	Bug: float-to-unsigned casts store U8/U16 as signed I8/I16, so to_i64() sign-extends
+2	open	Bug: cast_float_to_target panics on f64 subnormals when targeting F128
+1	closed	Double-check found bugs
+518	open	Bug: __builtin_bswap32 constant folding stores sign-extended I32 instead of zero-extended U32
+517	open	Bug: f128_bytes_to_f64 truncates instead of round-to-nearest — long-double constants up to 1 ulp low on ARM64/RISC-V
+516	open	Bug: f64_to_x87_bytes_simple mis-encodes subnormal doubles — 5e-324 decodes back as +0.0
