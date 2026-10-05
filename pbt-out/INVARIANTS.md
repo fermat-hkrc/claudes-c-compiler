@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_neon_rev64)
+
+- Valid REV64 Vd.T, Vn.T with T in {8b,16b,4h,8h,2s,4s}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases).
+- Changing only Rd differs only in bits[4:0]; only Rn in bits[9:5] (1000 cases).
+- Success-path word: bit31=0, Q at bit30 = 1 iff T in {16b,8h,4s}, bits[29:24]=001110, size bits[23:22] = B:00 H:01 S:10, bits[21:16]=100000, bits[15:10]=000010, Rn at [9:5], Rd at [4:0] = 0x0e200800 | (Q<<30) | (size<<22) | (Rn<<5) | Rd.
+- Arity 0–1 returns Err (1000 cases).
+- Uppercase V prefix with lowercase T matches llvm-mc (1000 cases).
+- Dest GPR/SP/bare-V/FP scalar returns Err via empty arrangement rejected by neon_arr_to_q_size.
+- Known-answer: `rev64 v0.8b, v1.8b` = 0x0e200820; `rev64 v0.16b, v1.16b` = 0x4e200820; `rev64 v0.4h, v1.4h` = 0x0e600820; `rev64 v0.4s, v1.4s` = 0x4ea00820; `rev64 v31.8b, v31.8b` = 0x0e200bff; `rev64 v31.4s, v0.4s` = 0x4ea0081f.
+- Extra operand, T in {1d,2d} (size=11 reserved), mismatched T, and GPR source currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_neon_rev64)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding. Range/error contract: aarch64-linux-gnu-as (README claims gas).
+- ARM ARM Advanced SIMD two-register miscellaneous (REV64): 0 Q 0 01110 size 10 0000 0000 10 Rn Rd. T in {8B,16B,4H,8H,2S,4S} only. size=11 reserved. Q=1 iff T in {16B,8H,4S}.
+- Dispatch: encoder/mod.rs:750 `"rev64" => encode_neon_rev64`.
+- Sibling encode_cnt / encode_neon_not / encode_neon_rbit are different two-misc opcodes, not same-job differentials. encode_rev is scalar REV.
+- llvm-mc aliases `rev64 x0, x1` to scalar `rev`; gas rejects GPR `rev64`. encode_neon_rev64 dest GPR Errs (empty arrangement); source GPR encodes.
+- encode_neon_rev64 checks operands.len() < 2; extra ignored; source arrangement discarded; neon_arr_to_q_size accepts 1d/2d.
+- Parser lowercases arrangement; parse_reg_num lowercases V/X/W prefixes.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered. 1000 cases.
+- `coverage_gaps` had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit (uppercase V alt-spellings).
+- Four failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_neon_rev64_*.md.
+
 # Confirmed invariants (encode_neon_not)
 
 - Valid NOT Vd.T, Vn.T with T in {8b,16b}, v0–v31 matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc canonicalizes `not` to `mvn`.

@@ -40,6 +40,8 @@ mod encode_neon_mvni_pbt;
 mod encode_cnt_pbt;
 #[cfg(test)]
 mod encode_neon_not_pbt;
+#[cfg(test)]
+mod encode_neon_rev64_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
