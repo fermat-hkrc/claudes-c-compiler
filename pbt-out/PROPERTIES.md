@@ -1,295 +1,292 @@
-# Properties: encode_neon_ushr
+# Properties: encode_neon_sshr
 
-## encode_neon_ushr_diff_llvm_mc
-- Tier: 2
-- Rationale: Strongest applicable oracle is Differential vs llvm-mc (independent GNU-style assembler of the same textual assembly the SUT claims to accept). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree USHR decoder). Sibling encode_neon_shift_imm rejected (independence gate: near-copy of this body). encode_neon_sshr rejected (same-job gate: SSHR / U=0). encode_neon_shift_right rejected (generic shift-right opcode table).
-- Doc contract: neon.rs:1179 "Encode NEON USHR (unsigned shift right immediate)" — asserted fingerprint 42c4ff29
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_diff_llvm_mc
-- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_ushr([Vd.T, Vn.T, #shift]) = llvm-mc("ushr Vd.T, Vn.T, #shift")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_diff_llvm_mc
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc. README.md:12 claims gas-compatible textual assembly; README.md:228 lists sshr; encoder/mod.rs:699 dispatches sshr to this function with operands passed through. ARM Advanced SIMD SSHR encoding is independently realized by llvm-mc. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree SSHR decoder). Differential vs encode_neon_ushr rejected (same-job gate: USHR U=1). Differential vs encode_neon_shift_imm rejected (independence gate: near-copy USHR body).
+- Doc contract: neon.rs:1204 "Encode NEON SSHR (signed shift right immediate)" — asserted fingerprint 4256ae10
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:247 encode_neon_ushr_diff_llvm_mc
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_sshr([Vd.T, Vn.T, #shift]) = Word(w) ∧ w = llvm-mc("sshr Vd.T, Vn.T, #shift")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: differential
 predicate:
   quantifier: forall
   vars: [rd, rn, t, shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
+  domain: { rd: v0..v31, rn: v0..v31, t: {8b,16b,4h,8h,2s,4s,2d}, shift: 1..=esize(t) }
   relation:
     op: eq
-    lhs: encode_neon_ushr([Vd.T, Vn.T, Imm(shift)])
-    rhs: llvm_mc(ushr Vd.T, Vn.T, #shift)
+    lhs: encode_neon_sshr([RegArrangement(v{rd}, t), RegArrangement(v{rn}, t), Imm(shift)])
+    rhs: llvm_mc("sshr v{rd}.{t}, v{rn}.{t}, #{shift}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  shift: { gen: int, min: 1, max: 64, type: i64 }
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint 10d52c4c
+  t_shift: { gen: tuple, elems: [{ gen: string }, { gen: int, min: 1, max: 64, type: i64 }] }
+evidence: src/backend/arm/assembler/README.md:12; README.md:228; encoder/mod.rs:699; neon.rs:1204
 ```
 
-## encode_neon_ushr_metamorphic_rd_rn_q
-- Tier: 3
-- Rationale: ARM shift-by-immediate layout isolates Rd[4:0], Rn[9:5], Q[30]. Stronger differential is p1; this metamorphic check does not need llvm-mc and catches field-packing bugs. 8b vs 16b at the same shift must differ only in Q.
-- Doc contract: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd" — asserted fingerprint 726e0020
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_metamorphic_rd_rn_rm_u
-- Formal: ∀ rd1,rd2,rn1,rn2 ∈ {0..31}. changing only Rd (resp. Rn) of encode_neon_ushr on T=8b shift=1 differs only in bits[4:0] (resp. [9:5]); 8b vs 16b at the same rd,rn,shift=1 differs only in bit 30
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_metamorphic_rd_rn_q
+- Tier: 4
+- Rationale: ARM SSHR layout isolates Rd at [4:0], Rn at [9:5], Q at bit 30. Changing only Rd/Rn/Q must differ only in that field. Stronger differential covers the full word vs llvm-mc; this metamorphic check isolates field packing independently of the assembler. State machine / round-trip rejected as above.
+- Doc contract: neon.rs:1216 "0 Q 0 0 11110 immh:immb 000001 Rn Rd  (U=0)" — asserted fingerprint 70f4105c
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:264 encode_neon_ushr_metamorphic_rd_rn_q
+- Formal: ∀ rd1,rd2,rn1,rn2 ∈ {0..31}. let w11=sshr(rd1,rn1,8b,#1), w21=sshr(rd2,rn1,8b,#1), w12=sshr(rd1,rn2,8b,#1), w16=sshr(rd1,rn1,16b,#1). (w11 ⊕ w21) ∧ ¬0x1F = 0 ∧ (w21 ∧ 0x1F) = rd2 ∧ (w11 ⊕ w12) ∧ ¬(0x1F≪5) = 0 ∧ ((w12≫5) ∧ 0x1F) = rn2 ∧ (w11 ⊕ w16) ∧ ¬(1≪30) = 0 ∧ Q(w11)=0 ∧ Q(w16)=1
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [rd1, rd2, rn1, rn2]
-  domain: { rd1: u32_0_31, rd2: u32_0_31, rn1: u32_0_31, rn2: u32_0_31 }
-  body: changing only Rd differs only in bits[4:0]; only Rn in bits[9:5]; 8b vs 16b differs only in Q bit 30
+  domain: { rd1: 0..31, rd2: 0..31, rn1: 0..31, rn2: 0..31 }
+  body: changing only Rd/Rn/Q differs only in bits[4:0]/[9:5]/bit30
 generators:
   rd1: { gen: int, min: 0, max: 31, type: u32 }
   rd2: { gen: int, min: 0, max: 31, type: u32 }
   rn1: { gen: int, min: 0, max: 31, type: u32 }
   rn2: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd"
+evidence: neon.rs:1216
 ```
 
-## encode_neon_ushr_invariant_arm_fields
-- Tier: 3
-- Rationale: ARM Advanced SIMD shift-by-immediate USHR encoding is an exact structural predicate on the success-path word. Weaker than differential; pins bit layout even if llvm-mc is unavailable.
-- Doc contract: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd" — asserted fingerprint 726e0020
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_invariant_arm_fields
-- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. let w = encode_neon_ushr([Vd.T,Vn.T,#shift]). bit31(w)=0 ∧ Q(w)=Q(T) ∧ U(w)=1 ∧ bits[28:23](w)=011110 ∧ immh:immb(w)=2*esize(T)-shift ∧ bits[15:10](w)=000001 ∧ Rn(w)=rn ∧ Rd(w)=rd
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_invariant_arm_fields
+- Tier: 4
+- Rationale: ARM Advanced SIMD SSHR word: bit31=0, Q from T, U=0, bits[28:23]=011110, immh:immb=2*esize-shift, opcode=000001, Rn, Rd. Independent of llvm-mc. Documented by neon.rs:1216.
+- Doc contract: neon.rs:1216 "0 Q 0 0 11110 immh:immb 000001 Rn Rd  (U=0)" — asserted fingerprint 70f4105c
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:305 encode_neon_ushr_invariant_arm_fields
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. let w = encode_neon_sshr(...). bit31(w)=0 ∧ Q(w)=Q(T) ∧ U(w)=0 ∧ bits[28:23]=0b011110 ∧ bits[22:16]=(2*esize(T)-shift) ∧ bits[15:10]=0b000001 ∧ Rn=rn ∧ Rd=rd
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rd, rn, t, shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
-  body: ARM USHR fields of encode_neon_ushr word match Q(T), U=1, bits[28:23]=011110, immh:immb=2*esize-shift, opcode=000001, Rn, Rd
+  domain: { rd: 0..31, rn: 0..31, t: valid SSHR T, shift: 1..=esize(t) }
+  body: ARM SSHR fields of encode_neon_sshr word match bit31=0 Q U=0 011110 immh:immb opcode=000001 Rn Rd
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  shift: { gen: int, min: 1, max: 64, type: i64 }
-evidence: neon.rs:1190 "0 Q 1 0 11110 immh:immb 000001 Rn Rd"
+  t_shift: { gen: tuple, elems: [{ gen: string }, { gen: int, min: 1, max: 64, type: i64 }] }
+evidence: neon.rs:1216
 ```
 
-## encode_neon_ushr_neg_arity
-- Tier: 4
-- Rationale: USHR is a three-operand instruction. llvm-mc / gas reject arity 0–2. The SUT documents "ushr requires 3 operands" at neon.rs:1181.
-- Doc contract: neon.rs:1181 "ushr requires 3 operands" — asserted fingerprint 33a152b7
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_arity
-- Formal: ∀ n ∈ {0,1,2}, rd,rn ∈ {0..31}. encode_neon_ushr(ops[:n]) = Err ∧ llvm-mc rejects the corresponding arity-n ushr
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_neg_arity
+- Tier: 3
+- Rationale: neon.rs:1206-1208 documents "sshr requires 3 operands". llvm-mc rejects arity 0/1/2. Negative/error contract: fewer than 3 operands must Err.
+- Doc contract: neon.rs:1207 "sshr requires 3 operands" — asserted fingerprint 51823b02
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:331 encode_neon_ushr_neg_arity
+- Formal: ∀ n ∈ {0,1,2}, rd,rn ∈ {0..31}. encode_neon_sshr(ops[0..n]) = Err ∧ llvm-mc(arity-n asm) rejects
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [n, rd, rn]
-  domain: { n: 0_2, rd: u32_0_31, rn: u32_0_31 }
+  domain: { n: 0..=2, rd: 0..31, rn: 0..31 }
   relation:
-    op: holds
-    lhs: encode_neon_ushr(ops.take(n)).is_err()
-expected_error: String
+    op: throws
+    expr: encode_neon_sshr(take(ops_t(rd,rn,8b,1), n))
 generators:
   n: { gen: int, min: 0, max: 2, type: usize }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-evidence: neon.rs:1181 "ushr requires 3 operands"
+expected_error: String
+evidence: neon.rs:1206-1208; llvm-mc rejects arity 0/1/2
 ```
 
-## encode_neon_ushr_neg_extra_operand
-- Tier: 4
-- Rationale: gas/llvm-mc reject a fourth operand on USHR. README claims the assembler accepts the same textual assembly gas would consume, so extra operands must Err. The SUT only checks len < 3.
-- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_extra_operand
-- Formal: ∀ rd,rn,extra ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. llvm-mc rejects "ushr Vd.T, Vn.T, #shift, v{extra}.T" ⇒ encode_neon_ushr([Vd.T,Vn.T,#shift,Vextra.T]) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_neg_extra_operand
+- Tier: 3
+- Rationale: GNU/llvm-mc reject a fourth operand (`sshr v0.8b, v1.8b, #1, v2.8b`). README.md:12 gas-compatible contract. The SUT only checks `operands.len() < 3`, so extra operands are a documented-valid rejection the code may miss.
+- Doc contract: neon.rs:1215 "SSHR Vd.T, Vn.T, #shift" — asserted fingerprint 0167e5c9
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:357 encode_neon_ushr_neg_extra_operand
+- Formal: ∀ rd,rn,extra ∈ {0..31}, T ∈ valid, shift ∈ [1, esize(T)]. llvm-mc rejects 4-operand sshr ∧ encode_neon_sshr([Vd.T, Vn.T, #shift, Vextra.T]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_ushr([v0.8b, v0.8b, #1, v0.8b])
-- Bug report: pbt-out/bug_reports/encode_neon_ushr_extra_operand.md
+- Counterexample: encode_neon_sshr([v0.8b, v0.8b, #1, v0.8b])
+- Bug report: pbt-out/bug_reports/encode_neon_sshr_extra_operand.md
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rn, extra, t, shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, extra: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
+  domain: { rd: 0..31, rn: 0..31, extra: 0..31, t: valid SSHR T, shift: 1..=esize(t) }
   relation:
-    op: holds
-    lhs: encode_neon_ushr([Vd.T, Vn.T, Imm(shift), Vextra.T]).is_err()
-expected_error: String
+    op: throws
+    expr: encode_neon_sshr([Vd.T, Vn.T, Imm(shift), Vextra.T])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   extra: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  shift: { gen: int, min: 1, max: 64, type: i64 }
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint 10d52c4c
+  t_shift: { gen: tuple, elems: [{ gen: string }, { gen: int, min: 1, max: 64, type: i64 }] }
+expected_error: String
+evidence: README.md:12; llvm-mc rejects a fourth operand; neon.rs:1215 three-operand form
 ```
 
-## encode_neon_ushr_neg_invalid_t
-- Tier: 4
-- Rationale: ARM USHR vector form requires matching T in {8B,16B,4H,8H,2S,4S,2D}; 1D is reserved (immh encoding would collide with smaller esize); mismatched dest/src arrangements are invalid. llvm-mc rejects these. Source arrangement is discarded by the SUT.
-- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_invalid_t
-- Formal: ∀ rd,rn ∈ {0..31}, Td,Tn ∈ {8b,16b,4h,8h,2s,4s,1d,2d,1q}, shift ∈ [1, esize(Td) if valid else 1..64]. ¬(valid_ushr_t(Td) ∧ Td=Tn) ⇒ encode_neon_ushr([Vd.Td,Vn.Tn,#shift]) = Err ∧ llvm-mc rejects
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_neg_invalid_t
+- Tier: 3
+- Rationale: ARM SSHR T is {8B,16B,4H,8H,2S,4S,2D} with matching Vd/Vn arrangements; 1D is reserved. llvm-mc rejects mismatched/reserved T. Source arrangement discarded in SUT (`let (rn, _)`) so mismatch may encode.
+- Doc contract: neon.rs:1215 "SSHR Vd.T, Vn.T, #shift" — asserted fingerprint 0167e5c9
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:382 encode_neon_ushr_neg_invalid_t
+- Formal: ∀ rd,rn ∈ {0..31}, Td,Tn arrangements, shift. (Td ≠ Tn ∨ Td ∉ valid SSHR T) ⇒ encode_neon_sshr = Err ∧ llvm-mc rejects
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_ushr([v0.8b, v0.16b, #1])
-- Bug report: pbt-out/bug_reports/encode_neon_ushr_mismatched_t.md
+- Counterexample: encode_neon_sshr([v0.2s, v0.8b, #1])
+- Bug report: pbt-out/bug_reports/encode_neon_sshr_mismatched_t.md
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rn, td, tn, shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, td: any_neon_t, tn: any_neon_t, shift: 1_64 }
+  domain: { rd: 0..31, rn: 0..31, td: arrangements, tn: arrangements, shift: 1..=64 }
   relation:
-    op: holds
-    lhs: encode_neon_ushr([Vd.Td, Vn.Tn, Imm(shift)]).is_err()
-expected_error: String
+    op: throws
+    expr: encode_neon_sshr([Vd.Td, Vn.Tn, Imm(shift)])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  td: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
-  tn: { gen: element, of: ["8b","16b","4h","8h","2s","4s","1d","2d","1q"] }
+  td: { gen: string }
+  tn: { gen: string }
   shift: { gen: int, min: 1, max: 64, type: i64 }
-evidence: neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
+expected_error: String
+evidence: neon.rs:1215 matching T; ARM reserved 1D; llvm-mc rejects
 ```
 
-## encode_neon_ushr_neg_shift_oob
-- Tier: 4
-- Rationale: ARM/llvm-mc require shift in [1, esize(T)]. Bounds must be sampled at 0, 1, esize, esize+1. The SUT masks (2*esize - shift) which wraps OOB shifts into a valid-looking immh:immb. i64 values that truncate to a valid u32 shift are also out of the documented domain.
-- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
-- Seed: neon.rs encode_neon_shift_imm_neg_shift_oob
-- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ ℤ \ [1, esize(T)]. llvm-mc rejects "ushr Vd.T, Vn.T, #shift" ⇒ encode_neon_ushr([Vd.T,Vn.T,#shift]) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_neg_shift_oob
+- Tier: 3
+- Rationale: ARM/llvm-mc require shift in [1, esize(T)] (llvm-mc: "immediate must be an integer in range [1, 8]" for 8b). Documented bounds 1 and esize and bound±1 must be sampled. SUT masks `(2*esize - shift)` so OOB may wrap into a valid encoding.
+- Doc contract: neon.rs:1215 "SSHR Vd.T, Vn.T, #shift" — asserted fingerprint 0167e5c9
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:413 encode_neon_ushr_neg_shift_oob
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ valid, shift ∉ [1, esize(T)]. encode_neon_sshr = Err ∧ (for |shift|<10000, llvm-mc rejects)
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_ushr([v0.8b, v0.8b, #0])
-- Bug report: pbt-out/bug_reports/encode_neon_ushr_shift_oob.md
+- Counterexample: encode_neon_sshr([v0.8b, v0.8b, #0])
+- Bug report: pbt-out/bug_reports/encode_neon_sshr_shift_oob.md
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rn, t, shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: not_in_1_esize }
+  domain: { rd: 0..31, rn: 0..31, t: valid SSHR T, shift: {0, esize+1, -1, 2*esize, 1<<32} }
   relation:
-    op: holds
-    lhs: encode_neon_ushr([Vd.T, Vn.T, Imm(shift)]).is_err()
-expected_error: String
+    op: throws
+    expr: encode_neon_sshr([Vd.T, Vn.T, Imm(shift)])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
-  shift: { gen: int, min: -8, max: 128, type: i64 }
-evidence: llvm-mc "immediate must be an integer in range [1, esize]"
+  t_shift: { gen: tuple, elems: [{ gen: string }, { gen: int, type: i64 }] }
+expected_error: String
+evidence: ARM SSHR shift in [1, esize]; llvm-mc range error
 ```
 
-## encode_neon_ushr_neg_gpr_or_bare
-- Tier: 4
-- Rationale: gas/llvm-mc require Vd.T / Vn.T. GPR dest, bare V without arrangement, and xN.T are invalid. get_neon_reg accepts Operand::Reg and parse_reg_num accepts x/w prefixes, so these inputs are caller-reachable.
-- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_gpr_or_bare
-- Formal: ∀ rd,rn ∈ {0..31}, kind ∈ {gpr_dest, bare_src, x_arr_dest, bare_dest, fp_dest}. llvm-mc rejects the corresponding ushr ⇒ encode_neon_ushr(ops(kind)) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_neg_gpr_or_bare
+- Tier: 3
+- Rationale: llvm-mc requires Vd.T / Vn.T. GPR names (x0.8b), bare v0, and Operand::Reg dest/src are invalid. get_neon_reg accepts Operand::Reg and parse_reg_num accepts x/w/d/s/q/h/b prefixes, so non-V names may encode as Vd.
+- Doc contract: neon.rs:1215 "SSHR Vd.T, Vn.T, #shift" — asserted fingerprint 0167e5c9
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs:440 encode_neon_ushr_neg_gpr_or_bare
+- Formal: ∀ rd,rn ∈ {0..31}, kind ∈ GPR-dest | bare-Vn | bare-Vd | xN.8b dest | xN src. encode_neon_sshr = Err ∧ llvm-mc rejects
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: failing
-- Counterexample: encode_neon_ushr([x0.8b, v0.8b, #1])
-- Bug report: pbt-out/bug_reports/encode_neon_ushr_gpr_dest.md
+- Counterexample: encode_neon_sshr([v0.8b, Operand::Reg("v0"), #1])
+- Bug report: pbt-out/bug_reports/encode_neon_sshr_bare_src.md
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, kind]
-  domain: { rd: u32_0_31, rn: u32_0_31, kind: gpr_bare_kind }
+  vars: [rd, rn, kind, fp_prefix]
+  domain: { rd: 0..31, rn: 0..31, kind: 0..=4, fp_prefix: {x,w,d,s,q,h,b} }
   relation:
-    op: holds
-    lhs: encode_neon_ushr(ops(kind)).is_err()
-expected_error: String
+    op: throws
+    expr: encode_neon_sshr(gpr_or_bare_ops(kind))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   kind: { gen: int, min: 0, max: 4, type: u8 }
-evidence: neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
+  fp_prefix: { gen: string }
+expected_error: String
+evidence: neon.rs:1215 Vd.T Vn.T; llvm-mc rejects GPR/bare
 ```
 
-## encode_neon_ushr_diff_alt_spellings
-- Tier: 2
-- Rationale: Sweep — README gas-compatibility plus parse_reg_num lowercasing V prefixes. Differential vs llvm-mc on uppercase mnemonic/V with lowercase T.
-- Doc contract: neon.rs:1179 "Encode NEON USHR (unsigned shift right immediate)" — asserted fingerprint 42c4ff29
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_diff_alt_spellings
-- Formal: ∀ rd,rn ∈ {0..31}, T ∈ {8b,16b,4h,8h,2s,4s,2d}, shift ∈ [1, esize(T)]. encode_neon_ushr([Vd.T,Vn.T,#shift] with V prefix) = llvm-mc("USHR Vd.T, Vn.T, #shift")
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_diff_alt_spellings
+- Tier: 5
+- Rationale: Sweep: parse_reg_num lowercases names, so V0 must encode as v0. llvm-mc accepts SSHR Vd.T uppercase. Differential vs llvm-mc on that spelling.
+- Doc contract: neon.rs:1204 "Encode NEON SSHR (signed shift right immediate)" — asserted fingerprint 4256ae10
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs encode_neon_ushr_diff_alt_spellings
+- Formal: ∀ rd,rn ∈ {0..31}, T ∈ valid, shift ∈ [1, esize(T)]. encode_neon_sshr([V{rd}.T, V{rn}.T, #shift]) = llvm-mc("SSHR V{rd}.{T}, V{rn}.{T}, #{shift}")
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: differential
 predicate:
   quantifier: forall
   vars: [rd, rn, t, shift]
-  domain: { rd: u32_0_31, rn: u32_0_31, t: neon_ushr_t, shift: 1_esize_t }
+  domain: { rd: 0..31, rn: 0..31, t: valid SSHR T, shift: 1..=esize(t) }
   relation:
     op: eq
-    lhs: encode_neon_ushr([V{rd}.T, V{rn}.T, Imm(shift)])
-    rhs: llvm_mc(USHR Vd.T, Vn.T, #shift)
+    lhs: encode_neon_sshr([RegArrangement(V{rd}, t), RegArrangement(V{rn}, t), Imm(shift)])
+    rhs: llvm_mc("SSHR V{rd}.{T}, V{rn}.{T}, #{shift}")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  t: { gen: element, of: ["8b","16b","4h","8h","2s","4s","2d"] }
+  t: { gen: string }
   shift: { gen: int, min: 1, max: 64, type: i64 }
-evidence: src/backend/arm/assembler/README.md:12 "It accepts the same textual assembly that GCC's gas would consume" fingerprint 10d52c4c
+evidence: README.md:12; parse_reg_num lowercases
 ```
 
-## encode_neon_ushr_neg_nonreg
-- Tier: 4
-- Rationale: Sweep — Imm/Mem/Label at a register slot must Err (get_neon_reg error contract). llvm-mc rejects non-register dest.
-- Doc contract: neon.rs:1189 "USHR Vd.T, Vn.T, #shift" — asserted fingerprint b69265b4
-- Seed: encode_neon_add_sub_pbt.rs encode_neon_add_sub_neg_nonreg
-- Formal: ∀ rd,rn ∈ {0..31}, kind ∈ {Imm, Mem, Label}, slot ∈ {0,1}. encode_neon_ushr(ops with slot replaced by kind) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs
+## encode_neon_sshr_neg_nonreg
+- Tier: 3
+- Rationale: Sweep: get_neon_reg other-arm returns Err for Imm/Mem/Label. llvm-mc rejects those as dest.
+- Doc contract: neon.rs:1215 "SSHR Vd.T, Vn.T, #shift" — asserted fingerprint 0167e5c9
+- Seed: src/backend/arm/assembler/encoder/encode_neon_ushr_pbt.rs encode_neon_ushr_neg_nonreg
+- Formal: ∀ rd,rn ∈ {0..31}, kind ∈ {Imm, Mem, Label}, slot ∈ {0,1}. encode_neon_sshr with that slot replaced = Err
+- Test file: src/backend/arm/assembler/encoder/encode_neon_sshr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_neon_ushr
+function: encoder.encode_neon_sshr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rn, kind, slot]
-  domain: { rd: u32_0_31, rn: u32_0_31, kind: 0_2, slot: 0_1 }
+  domain: { rd: 0..31, rn: 0..31, kind: 0..=2, slot: 0..=1 }
   relation:
-    op: holds
-    lhs: encode_neon_ushr(ops_with_nonreg).is_err()
-expected_error: String
+    op: throws
+    expr: encode_neon_sshr(ops_with_nonreg(slot, kind))
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   kind: { gen: int, min: 0, max: 2, type: u8 }
   slot: { gen: int, min: 0, max: 1, type: usize }
-evidence: neon.rs:1189 "USHR Vd.T, Vn.T, #shift"
+expected_error: String
+evidence: neon.rs:17 get_neon_reg other => Err
 ```

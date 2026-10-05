@@ -1,23 +1,26 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 (campaign: encode_neon_ushr, English)
-> Files: 10/10 scanned | Functions: 122/289 total | PBT candidates: 122 | Tested this campaign: encode_neon_ushr
-> Coverage evidence: file-level (symbol presence) — no .gcda/.profraw; coverage_gaps listed unrelated C++ binaries and claimed NOT LINKED
+> Last updated: 2026-10-05
+> Campaign: encode_neon_sshr (standard)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw
 
 ## This campaign
 
 | Metric | Value |
 |--------|-------|
-| Target | encode_neon_ushr |
+| Target | encode_neon_sshr |
 | Properties | 10 |
 | Passing | 6 |
 | Failing | 4 |
 | Bugs | 4 |
-| Generator runs | 1000 (proptest cases) |
-| Sweep | 1/1 — manual arm audit + alt-spellings + nonreg |
+| Sweep | 1/1 (alt-spellings + nonreg; both passing) |
 
-## File Coverage (incremental)
+## Function
 
-| Source File | Notes |
-|-------------|-------|
-| neon.rs | encode_neon_ushr now has a COVERAGE row (6 passing / 4 failing + KAT + 4 regressions) |
+| Function | Source file | Tested | Notes |
+|----------|-------------|--------|-------|
+| encode_neon_sshr | neon.rs | yes | 6 passing / 4 failing; 4 medium bugs |
+
+## Sweep
+
+coverage_gaps had no LLVM profraw. Manual arm audit of encode_neon_sshr: arity Err, get_neon_reg, get_imm, neon_arr_to_q_size, match T, Ok Word driven. Added alt-spellings differential and Imm/Mem/Label negative-error (both passing). Closed: tier round spent.
