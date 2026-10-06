@@ -65,3 +65,4 @@
 | 26 | src/backend/arm/assembler | smull X-src silently truncated; CRC32 no +crc gate; umsubl/smnegl missing | **new issue filed** (19-form battery) | [#837](https://github.com/fermat-hkrc/claudes-c-compiler/issues/837) |
 | 26 | src/backend/arm/assembler | bti/rmif no arch gate; rev32-W silent X-width coercion | **new issue filed** (31-form battery) | [#838](https://github.com/fermat-hkrc/claudes-c-compiler/issues/838) |
 | 26 | src/backend/arm/assembler | scalar FP: GPR-as-FP silent coercion + fcmp #0.0→NOP + fnmul/fcmpe/fcsel missing | **new issue filed** (32-form battery) | [#839](https://github.com/fermat-hkrc/claudes-c-compiler/issues/839) |
+| 26 | src/backend/x86/assembler | cmpxchg reg-to-reg form rejected (mem form works) | **new issue filed** | [#840](https://github.com/fermat-hkrc/claudes-c-compiler/issues/840) |
