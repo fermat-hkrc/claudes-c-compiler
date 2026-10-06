@@ -46,3 +46,5 @@
 | 26 | src/backend/x86/assembler | SSE cvt/shuffle subset gaps (cvtt family entirely, mem-source cvtsi2*/pshuf*, maskmovq/dqu) | **new issue filed** (probe matrix, double-reference) | [818](https://github.com/fermat-hkrc/claudes-c-compiler/issues/818) |
 | 26 | src/backend/x86/assembler | x87 subset gaps (fst st, fcomi, fcmovcc family, fstsw/fsave aliases, ffree/fnop/fincstp/fdecstp) | **new issue filed** (51-form battery) | [819](https://github.com/fermat-hkrc/claudes-c-compiler/issues/819) |
 | 26 | src/backend/x86/assembler | AVX-512: zmm entirely + all {%k} mask forms rejected (README: "initial AVX-512") | **new issue filed** (17-form battery) | [820](https://github.com/fermat-hkrc/claudes-c-compiler/issues/820) |
+| 26 | src/backend/riscv/assembler | RISC-V assembler lacks part of the compressed (RVC) subset: c.lwsp/c.sw/c.be | **new issue filed** | [#821](https://github.com/fermat-hkrc/claudes-c-compiler/issues/821) |
+| 26 | src/backend/x86/assembler | x86 assembler silently accepts out-of-range SSE imm8 operands (pshufd $256 / | **new issue filed** | [#822](https://github.com/fermat-hkrc/claudes-c-compiler/issues/822) |
