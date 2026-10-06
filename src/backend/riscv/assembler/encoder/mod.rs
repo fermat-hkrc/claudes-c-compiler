@@ -30,6 +30,8 @@ mod encode_branch_instr_pbt;
 mod encode_load_pbt;
 #[cfg(test)]
 mod encode_store_pbt;
+#[cfg(test)]
+mod encode_alu_imm_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

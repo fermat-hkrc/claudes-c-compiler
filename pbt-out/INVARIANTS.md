@@ -1,3 +1,37 @@
+# Confirmed invariants (encode_alu_imm / requested encode_op_imm)
+
+- Requested `--func encode_op_imm` is absent from base.rs; the in-scope OP-IMM encoder is encode_alu_imm.
+- Valid `mn rd, rs1, imm` for mn in {addi,slti,sltiu,xori,ori,andi}, imm in [-2048, 2047], rd/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins addi x1,x2,1=0x00110093, addi x1,x2,-1=0xfff10093, andi x1,x2,8=0x00817093, xori x1,x2,1=0x00114093, addi x1,x2,2047=0x7ff10093, addi x1,x2,-2048=0x80010093, slti x1,x2,2047=0x7ff12093, ori x1,x2,-8=0xff816093, sltiu x1,x2,-2048=0x80013093.
+- I-type layout holds: opcode=0b0010011, funct3 in bits[14:12], rd in bits[11:7], rs1 in bits[19:15], reconstructed signed imm12 matches (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs1 (1000 cases).
+- Symbol %lo/%pcrel_lo/%tprel_lo word equals `mn rd, rs1, 0` with RelocType Lo12I/PcrelLo12I/TprelLo12I, symbol=s, addend=0 (1000 cases).
+- Empty operand list, missing rs1/imm, FP dest/rs1, and Label/SymbolOffset/Mem/MemSymbol/Csr/Fence/RoundingMode as 3rd operand return Err (1000 cases).
+- Extra operands, out-of-range immediates, %hi/%pcrel_hi/%tprel_hi, and %got_pcrel_hi/TLS/plain symbols currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_alu_imm)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_alu_imm_pbt.rs, cargo test --lib encode_alu_imm, proptest cases=1000.
+- Dispatch: encoder/mod.rs:497-502 addi/slti/sltiu/xori/ori/andi => encode_alu_imm.
+- Requested `--func encode_op_imm` is absent from base.rs; the in-scope symbol is encode_alu_imm.
+- Sibling encode_i / encode_shift_imm / encode_alu_imm_w / C.ADDI are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_alu_imm_neg_other_modifier. Closed: tier round spent; remaining documented gaps are the four filed bugs.
+- Four failing properties are SUT bugs. See pbt-out/bug_reports/encode_alu_imm_*.md.
+
+## Quirks (encode_alu_imm)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:357 GCC inline asm).
+- No operands.len() == 3 check; extra operands are ignored (see bugs).
+- Immediate is `*imm as i32` then encode_i masks with 0xFFF; values outside [-2048, 2047] wrap (see bugs).
+- Symbol %hi/%pcrel_hi/%tprel_hi is remapped to Lo12I/PcrelLo12I/TprelLo12I instead of rejected (see bugs).
+- GotHi20/Tls*/TprelAdd/plain-symbol fall through `other => other` or the PcrelHi20 remap and are accepted (see bugs).
+- Label and SymbolOffset are not matched and return "alu_imm: expected immediate" (agrees with llvm-mc, which also rejects bare labels and foo+4).
+- llvm-mc aliases addi rd,rs,0 to mv and xori rd,rs,-1 to not; encodings still match.
+- slli/srli/srai dispatch to encode_shift_imm, not this symbol.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 25-line body.
+
 # Confirmed invariants (encode_store)
 
 - Valid `mn rs2, off(rs1)` for mn in {sb,sh,sw,sd}, off in [-2048, 2047], rs2/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins sd x1,0(x2)=0x00113023, sb x0,0(x1)=0x00008023, sw x1,8(x2)=0x00112423, sd x1,-8(x2)=0xfe113c23, sd x1,2047(x2)=0x7e113fa3, sd x1,-2048(x2)=0x80113023, sh x1,-1(x2)=0xfe111fa3.
