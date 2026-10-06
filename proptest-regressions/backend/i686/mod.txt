@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 652d72729b3204515c3f1b2881b3610eb563d25f5f2574d7dde7398ba70795f6 # shrinks to fns = [FnSpec { n_args: 1, tokens: [(0, 0), (0, 0)] }], d0t = [(0, 0), (0, 0)], loop_n = 0, loop_k = 0
+cc de99e8e9721caa5bd92cfccb7df88be5a45deb42c2c37b0e246425f70af7e041 # shrinks to op = 0, dst_w = 0, src_w = 0, dst = 0, src = 0

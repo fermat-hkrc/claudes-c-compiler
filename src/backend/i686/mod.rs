@@ -188,3 +188,80 @@ mod pbt_e2e {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_witness {
+    //! Round 19: i686 assembler GPR-width-mixing witness (own assembler path,
+    //! sibling of the x86-64 #774 class). Double-reference: as --32 ∧ llvm-mc
+    //! -triple=i386.
+    use crate::driver::Driver;
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/19_cfeatures_deep/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// Generated width-mixed forms: dst/src taken from different width
+    /// classes (l/w/b) under a mnemonic whose suffix fixes the width.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_i686_width_mix_rejected(
+            op in 0u8..4, dst_w in any::<u8>(), src_w in any::<u8>(), dst in any::<u8>(), src in any::<u8>(),
+        ) {
+            let ops = ["mov", "xor", "add", "sub"];
+            const L: [&str; 8] = ["eax","ebx","ecx","edx","esi","edi","ebp","esp"];
+            const W: [&str; 8] = ["ax","bx","cx","dx","si","di","bp","sp"];
+            const B: [&str; 8] = ["al","bl","cl","dl","sil","dil","bpl","spl"];
+            let d = (dst % 8) as usize; let s = (src % 8) as usize;
+            // suffix says 32-bit; source deliberately from a different class
+            let src_reg = match src_w % 3 { 0 => W[s], 1 => B[s], _ => L[s] };
+            let form = format!("{}l %{}, %{}", ops[(op % 4) as usize], src_reg, L[d]);
+            let dir = run_dir();
+            let f = dir.join("w68.s");
+            std::fs::write(&f, format!(".text\n{}\n", form)).unwrap();
+            let gas = Command::new("as").args(["--32", "-o", dir.join("w68_g.o").to_str().unwrap(), f.to_str().unwrap()]).output().unwrap();
+            let mc = Command::new("llvm-mc").args(["-triple=i386", "-filetype=obj", "-o", dir.join("w68_m.o").to_str().unwrap(), f.to_str().unwrap()]).output().unwrap();
+            if !gas.status.success() && !mc.status.success() {
+                let argv: Vec<String> = vec![
+                    "ccc".into(), "-m32".into(), "-c".into(),
+                    "-o".into(), dir.join("w68_c.o").to_str().unwrap().into(), f.to_str().unwrap().into(),
+                ];
+                let mut d2 = Driver::new();
+                let parsed = d2.parse_cli_args(&argv).unwrap();
+                assert!(!parsed);
+                let cc_ok = d2.run().is_ok() && dir.join("w68_c.o").exists();
+                if cc_ok {
+                    panic!("ccc -m32 silently accepted a width-mixed form: {}", form);
+                }
+            }
+            let _ = std::fs::remove_file(&f); let _ = std::fs::remove_file(dir.join("w68_g.o"));
+            let _ = std::fs::remove_file(dir.join("w68_m.o")); let _ = std::fs::remove_file(dir.join("w68_c.o"));
+        }
+    }
+
+    /// RED WITNESS — round 19 (issue #800): i686 assembler GPR width
+    /// mixing silently accepted (own assembler path; sibling of x86-64 #774).
+    #[test]
+    fn test_i686asm_regression_width_mix_rejected() {
+        for form in ["movl %eax, %ax", "mov %al, %bx", "xorl %eax, %bx"] {
+            let dir = run_dir();
+            let src = dir.join("r68.s");
+            std::fs::write(&src, format!(".text\n{}\n", form)).unwrap();
+            let out = dir.join("r68.o");
+            let argv: Vec<String> = vec![
+                "ccc".into(), "-m32".into(), "-c".into(),
+                "-o".into(), out.to_str().unwrap().into(), src.to_str().unwrap().into(),
+            ];
+            let mut d = Driver::new();
+            let parsed = d.parse_cli_args(&argv).unwrap();
+            assert!(!parsed);
+            assert!(d.run().is_err() || !out.exists(), "#width-mix silently accepted: {}", form);
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&out);
+        }
+    }
+}

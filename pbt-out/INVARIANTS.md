@@ -193,3 +193,10 @@ Environment quirks (round 05):
   enumerators not visible in enclosing scope (gcc/clang accept).
   NOTE probe methodology: ALWAYS absolute paths to ccc in batch loops — a
   relative path yields exit 127 which reads as "rejection" (burned twice).
+
+- Round-19: C-features battery (structs incl. SSE/MIXED eightbyte classes,
+  varargs, fn-ptrs, __int128, VLA, bitfields) — 16/16 match gcc at both opt
+  levels: the codegen feature surface is solid. i686 assembler shares the
+  width-mix gap (#800; own code path, sibling of #774). i686 imm handling is
+  GNU-compatible (addl $2^31 accepted by all three refs — imm32 bit pattern
+  fits; NOT a bug, unlike the x86-64 imm64→imm32 truncation #776).
