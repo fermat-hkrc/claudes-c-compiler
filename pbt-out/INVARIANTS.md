@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_jalr)
+
+- Valid `jalr rd, rs1, off` for off in [-2048, 2047] and rd/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins jalr x0,x1,0=0x00008067, jalr x1,x2,0=0x000100e7, jalr x1,x2,8=0x008100e7, jalr x1,x2,-8=0xff8100e7, jalr x1,x2,2047=0x7ff100e7, jalr x1,x2,-2048=0x800100e7, jalr x1,x2,1=0x001100e7 (odd imm accepted).
+- 1-operand `jalr rs1` equals `jalr ra, rs1, 0` and llvm-mc `jalr rs1` (1000 cases). KAT pins jalr x1=0x000080e7.
+- 2-operand `jalr rd, rs1` equals `jalr rd, rs1, 0` (1000 cases).
+- 2-operand `jalr rd, off(rs1)` equals `jalr rd, rs1, off` and llvm-mc (1000 cases).
+- I-type layout holds: opcode=0b1100111, funct3=0, rd in bits[11:7], rs1 in bits[19:15], reconstructed signed imm12 matches (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs1 (1000 cases).
+- Empty operand list, extra operand, and FP dest/src return Err (1000 cases).
+- Out-of-range immediates, 1-operand Mem, and MemSymbol %pcrel_lo/%lo currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_jalr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_jalr_pbt.rs, cargo test --lib encode_jalr, proptest cases=1000.
+- Dispatch: encoder/mod.rs:463 `"jalr" => encode_jalr(operands)`.
+- Sibling encode_i / encode_c_jalr / jr / ret / encode_jal are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_jalr_one_operand_mem / encode_jalr_reloc_lo. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+- Three failing properties are SUT bugs. See pbt-out/bug_reports/encode_jalr_*.md.
+
+## Quirks (encode_jalr)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:351 GCC inline asm).
+- operands.len() is matched exactly (1/2/3); extra operands return Err (unlike encode_jal).
+- Immediate is `imm as i32` then encode_i masks with 0xFFF; values outside [-2048, 2047] wrap (see bugs).
+- 1-operand arm only accepts Reg via get_reg; Mem `jalr off(rs1)` is rejected (see bugs).
+- 2-operand arm matches Reg and Mem only; MemSymbol %pcrel_lo/%lo is "jalr: invalid operands" (see bugs).
+- Odd immediates are valid for JALR (LSB of the computed target is cleared at execution).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 32-line body.
+
 # Confirmed invariants (encode_jal)
 
 - Valid `jal rd, off` for even off in [-1048576, 1048574] and rd in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins jal x0,0=0x0000006f, jal x1,0=0x000000ef, jal x1,4=0x004000ef, jal x1,-4=0xffdff0ef, jal x1,1048574=0x7ffff0ef, jal x1,-1048576=0x800000ef.
