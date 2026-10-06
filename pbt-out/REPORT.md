@@ -1,36 +1,72 @@
-# PBT Campaign Report: encode_sxtb
+# PBT Campaign Report: encode_uxth
 
 ## Summary
 
-**Verdict:** 4 medium: encode_sxtb silently encodes extra operands, SXTB Wd,Xn, SP/WSP, and FP/SIMD registers instead of rejecting them the way llvm-mc / GNU as do, so illegal assembly becomes a well-formed SBFM word.
+**Verdict:** 5 medium: encode_uxth encodes an X destination as 64-bit UBFM instead of the 32-bit UXTH alias, and silently encodes extra operands, X-register sources, SP/WSP, and FP/SIMD registers instead of rejecting them the way llvm-mc / GNU as do.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sxtb
-**Tests:** 12 properties (plus 4 KAT + 4 regression witnesses)
-**Result:** 8 passing, 4 bugs
-**Change surface:** 1 changed function (encode_sxtb), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps found no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_sxtb NOT LINKED). Sweep was a manual arm audit of the 8-line body.
+**Modules tested:** encode_uxth
+**Tests:** 12 properties (plus 3 KAT + 5 regression witnesses)
+**Result:** 7 passing, 5 bugs
+**Change surface:** 1 changed function (encode_uxth), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps found no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_uxth NOT LINKED). Sweep was a manual arm audit of the 7-line body.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sxtb | 12 properties (8 passing / 4 failing) + 4 KAT + 4 regressions | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_uxth | 12 properties (7 passing / 5 failing) + 3 KAT + 5 regressions | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_sxtb silently ignores a 3rd operand
+### B1: encode_uxth emits 64-bit UBFM for an X destination
 
-**Formal:** ∀ rd, rn ∈ {0..31}, is_64 ∈ Bool, extra ∈ Operand. encode_sxtb([Rd, Wn, extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `sxtb w0, w1, x0`; ARM C6 SXTB is two-operand)
+**Formal:** ∀ rd ∈ 0..31, rn ∈ 0..31, dest64 ∈ {0,1}. let dest = GPR(dest64, rd); src = W(rn). encode_uxth([Reg(dest), Reg(src)]) = llvm_mc("uxth dest, src") as Word
+**Contract evidence:** inferred (README.md:12 gas-compat; ARM C6 UXTH is 32-bit-only UBFM Wd,Wn,#0,#15; llvm-mc/gas canonicalize `uxth x0, w0` to `uxth w0, w0`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_sxtb([Reg("w0"), Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x13001c00))
-**Impact:** Illegal syntax such as `sxtb w0, w0, x0` assembles as two-operand SXTB; a leftover operand is silently dropped.
-**Root cause:** data_processing.rs:873-874 reads only operands 0 and 1 via get_reg and has no operands.len() upper bound, then returns Ok(Word) at data_processing.rs:878.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:873`
+**Counterexample:** encode_uxth([Reg("x0"), Reg("w0")])
+**Expected / Actual:** Ok(Word(0x53003C00)) / Ok(Word(0xD3403C00))
+**Impact:** `uxth x0, w0` assembles as `ubfx x0, x0, #0, #16`; object files diverge from GNU as / llvm-mc.
+**Root cause:** data_processing.rs:892-895 takes sf and N from Rd's width, so an X destination sets the 64-bit UBFM form.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:892`
+```rust
+    let (rd, is_64) = get_reg(operands, 0)?;
+    let (rn, _) = get_reg(operands, 1)?;
+    let sf = sf_bit(is_64);
+    let n = if is_64 { 1u32 } else { 0 };
+```
+**Suggested fix:** Always encode the 32-bit UXTH form; do not take sf from Rd.
+```rust
+    let (rd, _is_64) = get_reg(operands, 0)?;
+    let (rn, rn_is_64) = get_reg(operands, 1)?;
+    if rn_is_64 {
+        return Err("uxth: source must be a W register".to_string());
+    }
+    let word = (0b10u32 << 29) | (0b100110 << 23) | (15 << 10) | (rn << 5) | rd;
+```
+**Bug report:** bug_reports/encode_uxth_x_dest.md
+**Repro seed:** rd = 0, rn = 0, dest64 = true, use_lr = false
+**Raw output:**
+```text
+Test failed: assertion failed: `(left == right)`
+  left: `3544202240`,
+ right: `1392524288`: UXTH mismatch for uxth x0, w0 at src/backend/arm/assembler/encoder/encode_uxth_pbt.rs:233.
+minimal failing input: rd = 0, rn = 0, dest64 = true, use_lr = false
+```
+
+### B2: encode_uxth silently ignores a 3rd operand
+
+**Formal:** ∀ rd ∈ 0..31, rn ∈ 0..31, extra ∈ Operand. encode_uxth([W(rd), W(rn), extra]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `uxth w0, w1, x0`; ARM C6 UXTH is two-operand)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_uxth([Reg("w0"), Reg("w0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x53003C00))
+**Impact:** Illegal syntax such as `uxth w0, w0, x0` assembles as two-operand UXTH; a leftover operand is silently dropped.
+**Root cause:** data_processing.rs:892-893 reads only operands 0 and 1 via get_reg and has no operands.len() upper bound, then returns Ok(Word) at data_processing.rs:897.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:892`
 ```rust
     let (rd, is_64) = get_reg(operands, 0)?;
     let (rn, _) = get_reg(operands, 1)?;
@@ -38,101 +74,105 @@
 **Suggested fix:** Reject extra operands before encoding.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("sxtb: expected 2 operands, got {}", operands.len()));
+        return Err(format!("uxth: expected 2 operands, got {}", operands.len()));
     }
 ```
-**Bug report:** bug_reports/encode_sxtb_extra_operand.md
-**Repro seed:** rd = 0, rn = 0, is_64 = false, extra = Reg("x0")
+**Bug report:** bug_reports/encode_uxth_extra_operand.md
+**Repro seed:** rd = 0, rn = 0, extra = Reg("x0")
 **Raw output:**
 ```text
-Test failed: SXTB has no 3rd operand; extra operand must Err (llvm-mc rejects it) at src/backend/arm/assembler/encoder/encode_sxtb_pbt.rs:326.
-minimal failing input: rd = 0, rn = 0, is_64 = false, extra = Reg("x0")
+Test failed: UXTH has no 3rd operand; extra operand must Err (llvm-mc rejects it) at src/backend/arm/assembler/encoder/encode_uxth_pbt.rs:310.
+minimal failing input: rd = 0, rn = 0, extra = Reg("x0")
 ```
 
-### B2: encode_sxtb accepts SXTB Wd, Xn
+### B3: encode_uxth accepts an X-register source
 
-**Formal:** ∀ rd, rn ∈ {0..31}. encode_sxtb([Reg(wreg(rd)), Reg(xreg(rn))]) is Err
-**Contract evidence:** inferred (ARM C6 source is Wn; llvm-mc rejects `sxtb w0, x0`)
+**Formal:** ∀ rd ∈ 0..31, rn ∈ 0..31, dest64 ∈ {0,1}. encode_uxth([Reg(GPR(dest64, rd)), Reg(X(rn))]) is Err
+**Contract evidence:** inferred (ARM C6 source is Wn; llvm-mc/gas reject `uxth w0, x0`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_sxtb([Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x13001c00))
-**Impact:** Mixed-width `sxtb w0, x0` is encoded as 32-bit SXTB with Rn taken from the X register number.
-**Root cause:** data_processing.rs:874 binds `(rn, _)` and discards the source width; sf comes only from Rd at data_processing.rs:873-875.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:874`
+**Counterexample:** encode_uxth([Reg("w0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x53003C00))
+**Impact:** Mixed-width `uxth w0, x0` is encoded as 32-bit UXTH with Rn taken from the X register number.
+**Root cause:** data_processing.rs:893 binds `(rn, _)` and discards the source width.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:893`
 ```rust
     let (rn, _) = get_reg(operands, 1)?;
 ```
-**Suggested fix:** Require a W-register source when the destination is 32-bit.
+**Suggested fix:** Require a W-register source.
 ```rust
     let (rn, rn_is_64) = get_reg(operands, 1)?;
-    if !is_64 && rn_is_64 {
-        return Err("sxtb: 32-bit dest requires Wn source".to_string());
+    if rn_is_64 {
+        return Err("uxth: source must be a W register".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_sxtb_wd_xn.md
-**Repro seed:** rd = 0, rn = 0
+**Bug report:** bug_reports/encode_uxth_x_src.md
+**Repro seed:** rd = 0, rn = 0, dest64 = false
 **Raw output:**
 ```text
-Test failed: SXTB Wd, Xn must Err (llvm-mc rejects sxtb w0, x0) at src/backend/arm/assembler/encoder/encode_sxtb_pbt.rs:338.
-minimal failing input: rd = 0, rn = 0
+Test failed: UXTH w0, x0 must Err (llvm-mc rejects X-register source) at src/backend/arm/assembler/encoder/encode_uxth_pbt.rs:323.
+minimal failing input: rd = 0, rn = 0, dest64 = false
 ```
 
-### B3: encode_sxtb treats SP/WSP as ZR
+### B4: encode_uxth treats SP/WSP as ZR
 
-**Formal:** ∀ which ∈ {0,1}, sp ∈ {sp,wsp}, other GPR. encode_sxtb with SP/WSP in slot which is Err
-**Contract evidence:** inferred (ARM C6 register 31 is ZR not SP; llvm-mc rejects `sxtb wsp, w0`)
+**Formal:** ∀ which ∈ {0,1}, sp ∈ {sp, wsp}, a ∈ 0..30. encode_uxth with SP/WSP in slot which is Err
+**Contract evidence:** inferred (ARM C6 Rd/Rn are ZR not SP; llvm-mc rejects `uxth wsp, w0`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_sxtb([Reg("wsp"), Reg("w0")])
-**Expected / Actual:** Err / Ok(Word(0x13001c1f))
-**Impact:** `sxtb wsp, w0` is encoded as `sxtb wzr, w0` (rd=31); stack-pointer operands are silently rewritten to the zero register.
-**Root cause:** encode_sxtb does not distinguish SP from ZR; get_reg/parse_reg_num map both to 31, and data_processing.rs:878 returns Ok(Word) with rd=31.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:873`
+**Counterexample:** encode_uxth([Reg("wsp"), Reg("w0")])
+**Expected / Actual:** Err / Ok(Word)
+**Impact:** `uxth wsp, w0` encodes as `uxth wzr, w0`; using the stack pointer as a UXTH operand is silently rewritten to ZR.
+**Root cause:** data_processing.rs:892 calls get_reg → parse_reg_num, which maps SP/WSP and XZR/WZR both to 31; encode_uxth does not distinguish them.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:892`
 ```rust
     let (rd, is_64) = get_reg(operands, 0)?;
-    let (rn, _) = get_reg(operands, 1)?;
 ```
-**Suggested fix:** Reject SP/WSP by name before encoding.
+**Suggested fix:** Reject SP/WSP before encoding.
 ```rust
-    if matches!(name.to_lowercase().as_str(), "sp" | "wsp") {
-        return Err("sxtb: SP/WSP is not a valid operand (use ZR)".to_string());
+    fn is_sp(name: &str) -> bool {
+        matches!(name.to_ascii_lowercase().as_str(), "sp" | "wsp")
+    }
+    if operands.iter().any(|op| matches!(op, Operand::Reg(n) if is_sp(n))) {
+        return Err("uxth: SP/WSP is not a valid operand".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_sxtb_sp.md
+**Bug report:** bug_reports/encode_uxth_sp.md
 **Repro seed:** which = 0, is_64_sp = false, a = 0, dest64 = false
 **Raw output:**
 ```text
-Test failed: SP/WSP is not a valid SXTB operand (which=0 names=["wsp", "w0"]) at src/backend/arm/assembler/encoder/encode_sxtb_pbt.rs:360.
+Test failed: SP/WSP is not a valid UXTH operand (which=0 names=["wsp", "w0"]) at src/backend/arm/assembler/encoder/encode_uxth_pbt.rs:345.
 minimal failing input: which = 0, is_64_sp = false, a = 0, dest64 = false
 ```
 
-### B4: encode_sxtb accepts FP/SIMD registers as GPRs
+### B5: encode_uxth accepts FP/SIMD registers as GPRs
 
-**Formal:** ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_sxtb with FP register prefix+n in slot which is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `sxtb d0, w1`)
+**Formal:** ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_uxth with Reg(prefix+n) in slot which is Err
+**Contract evidence:** inferred (UXTH operands are GPRs; llvm-mc rejects `uxth d0, w1`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_sxtb([Reg("d0"), Reg("w1")])
-**Expected / Actual:** Err / Ok(Word(0x13001c20))
-**Impact:** `sxtb d0, w1` becomes the same word as `sxtb w0, w1`; illegal SIMD operands assemble as GPR SXTB.
-**Root cause:** encode_sxtb does not reject FP/SIMD names; parse_reg_num maps prefix+N to N, and data_processing.rs:878 returns Ok(Word) with rd=0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:873`
+**Counterexample:** encode_uxth([Reg("d0"), Reg("w1")])
+**Expected / Actual:** Err / Ok(Word(0x53003C20))
+**Impact:** `uxth d0, w1` encodes as `uxth w0, w1` because parse_reg_num accepts the `d` prefix and returns 0.
+**Root cause:** data_processing.rs:892 calls get_reg → parse_reg_num, which accepts prefixes d/s/q/v/h/b; encode_uxth does not reject FP/SIMD names.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:892`
 ```rust
     let (rd, is_64) = get_reg(operands, 0)?;
-    let (rn, _) = get_reg(operands, 1)?;
 ```
-**Suggested fix:** Reject floating-point / SIMD register names.
+**Suggested fix:** Reject FP/SIMD register names before encoding.
 ```rust
-    if is_fp_reg(name) {
-        return Err(format!("sxtb: FP/SIMD register {name} is not a valid operand"));
+    fn is_fp_name(name: &str) -> bool {
+        matches!(name.chars().next().unwrap_or(' ').to_ascii_lowercase(), 'd' | 's' | 'q' | 'v' | 'h' | 'b')
+    }
+    if operands.iter().any(|op| matches!(op, Operand::Reg(n) if is_fp_name(n))) {
+        return Err("uxth: FP/SIMD register is not a valid operand".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_sxtb_fp.md
+**Bug report:** bug_reports/encode_uxth_fp.md
 **Repro seed:** which = 0, prefix = "d", n = 0
 **Raw output:**
 ```text
-Test failed: FP/SIMD register d0 is not a valid SXTB operand (which=0) at src/backend/arm/assembler/encoder/encode_sxtb_pbt.rs:380.
+Test failed: FP/SIMD register d0 is not a valid UXTH operand (which=0) at src/backend/arm/assembler/encoder/encode_uxth_pbt.rs:365.
 minimal failing input: which = 0, prefix = "d", n = 0
 ```
 
@@ -144,38 +184,44 @@ minimal failing input: which = 0, prefix = "d", n = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_sxtb_pbt.rs | 12 properties + 4 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_uxth_pbt.rs | 12 properties + 3 KAT + 5 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_sxtb -- --test-threads=1
+cargo test --lib encode_uxth -- --test-threads=1
 ```
 
-B1 extra operand:
+B1 (X dest as 64-bit UBFM):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sxtb_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_uxth_regression_x_dest -- --test-threads=1
 ```
 
-B2 Wd,Xn:
+B2 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sxtb_regression_wd_xn -- --test-threads=1
+cargo test --lib test_encode_uxth_regression_extra_operand -- --test-threads=1
 ```
 
-B3 SP/WSP:
+B3 (X source):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sxtb_regression_sp -- --test-threads=1
+cargo test --lib test_encode_uxth_regression_x_src -- --test-threads=1
 ```
 
-B4 FP/SIMD:
+B4 (SP/WSP):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sxtb_regression_fp -- --test-threads=1
+cargo test --lib test_encode_uxth_regression_sp -- --test-threads=1
+```
+
+B5 (FP/SIMD):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_uxth_regression_fp -- --test-threads=1
 ```
 
 ## Output Directories
@@ -187,26 +233,27 @@ cargo test --lib test_encode_sxtb_regression_fp -- --test-threads=1
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_sxtb_extra_operand.md
-- pbt-out/bug_reports/encode_sxtb_extra_operand.html
-- pbt-out/bug_reports/encode_sxtb_wd_xn.md
-- pbt-out/bug_reports/encode_sxtb_wd_xn.html
-- pbt-out/bug_reports/encode_sxtb_sp.md
-- pbt-out/bug_reports/encode_sxtb_sp.html
-- pbt-out/bug_reports/encode_sxtb_fp.md
-- pbt-out/bug_reports/encode_sxtb_fp.html
-- pbt-out/run/encode_sxtb_round1.log
-- pbt-out/run/encode_sxtb_round2.log
-- proptest-regressions/backend/arm/assembler/encoder/encode_sxtb_pbt.txt
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_uxth_x_dest.md
+- pbt-out/bug_reports/encode_uxth_x_dest.html
+- pbt-out/bug_reports/encode_uxth_extra_operand.md
+- pbt-out/bug_reports/encode_uxth_extra_operand.html
+- pbt-out/bug_reports/encode_uxth_x_src.md
+- pbt-out/bug_reports/encode_uxth_x_src.html
+- pbt-out/bug_reports/encode_uxth_sp.md
+- pbt-out/bug_reports/encode_uxth_sp.html
+- pbt-out/bug_reports/encode_uxth_fp.md
+- pbt-out/bug_reports/encode_uxth_fp.html
+- pbt-out/run/encode_uxth_round1.log
+- pbt-out/run/encode_uxth_round2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 08:17 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 172/307 total | PBT candidates: 172 | Tested: 172 (100%) | 1 pass, 172 fail
+> Last updated: 2026-10-06 08:35 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 173/307 total | PBT candidates: 173 | Tested: 173 (100%) | 1 pass, 173 fail
 
 ## Summary
 
@@ -215,10 +262,10 @@ cargo test --lib test_encode_sxtb_regression_fp -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 172 |
-| **Tested (of PBT candidates)** | **172 / 172 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 172 / -1 |
-| **Overall (tested / all functions)** | **172 / 307 (56%)** |
+| PBT candidates (from FUNCTION_INDEX) | 173 |
+| **Tested (of PBT candidates)** | **173 / 173 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 173 / -1 |
+| **Overall (tested / all functions)** | **173 / 307 (56%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -226,13 +273,13 @@ cargo test --lib test_encode_sxtb_regression_fp -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 172 | 172 | 0 | 100% |
+|  | 173 | 173 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 172 | 172 | 0 | 100% |
+| unknown | 173 | 173 | 0 | 100% |
 
 ## File Coverage
 
@@ -241,7 +288,7 @@ cargo test --lib test_encode_sxtb_regression_fp -- --test-threads=1
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 20 | 20 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 28 | 28 | 100% | covered |
+| data_processing.rs | 36 | 29 | 29 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 14 | 14 | 100% | covered |
@@ -427,3 +474,4 @@ cargo test --lib test_encode_sxtb_regression_fp -- --test-threads=1
 | encode_smaddl | data_processing.rs |
 | encode_mneg | data_processing.rs |
 | encode_sxtb | data_processing.rs |
+| encode_uxth | data_processing.rs |
