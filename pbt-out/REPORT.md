@@ -1,128 +1,112 @@
-# PBT Campaign Report: encode_csri
+# PBT Campaign Report: encode_float_load
 
 ## Summary
 
-**Verdict:** 3 high: encode_csri silently accepts extra operands, wraps zimm outside 0..=31 via `& 0x1F`, and wraps csr outside 0..=4095 via encode_i's 12-bit mask, so mistyped CSR-immediate assembly becomes a different well-formed instruction instead of an error.
+**Verdict:** 3 bugs (2 high, 1 medium): encode_float_load truncates out-of-range immediates (2048 encodes as -2048), silently drops extra operands, and remaps %hi/%pcrel_hi to lo12 relocs instead of rejecting them.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_csri
-**Tests:** 8 properties (plus 2 KAT + 3 regression witnesses)
+**Modules tested:** encode_float_load
+**Tests:** 8
 **Result:** 5 passing, 3 bugs
-**Change surface:** 1 changed function (encode_csri), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_csri). Execution evidence is `cargo test --lib encode_csri` (5 passing / 3 failing properties).
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_float_load). The cargo test run executed the Rust symbol; the C++ coverage reporter cannot see it.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_csri | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_float_load | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_csri ignores extra operands
+### B1: encode_float_load silently truncates out-of-range I-type immediates
 
-**Formal:** ∀ mn ∈ {csrrwi,csrrsi,csrrci}, rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ 0..=31, extra ∈ Operand. encode_csri([Reg(rd), Csr(csr), Imm(zimm), extra], funct3(mn)) = Err(_)
-**Contract evidence:** inferred (llvm-mc rejects extra operands; encode_instruction at encoder/mod.rs:706-708 passes operands through unchanged)
+**Formal:** ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, imm ∉ [-2048, 2047]. llvm-mc rejects mn rd, imm(rs1) ∧ encode_float_load([Reg(rd), Mem{rs1, imm}], funct3(mn)) = Err(_)
+**Contract evidence:** inferred (RISC-V I-type imm[11:0] at encoder/mod.rs:317; llvm-mc rejects integers outside [-2048, 2047]; encode_instruction passes operands through)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_csri([Reg("x0"), Csr("fflags"), Imm(0), Imm(0)], funct3=0b101)
-**Expected / Actual:** Err / Ok(Word(1069171)) = 0x00105073 = csrrwi x0, fflags, 0
-**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed SYSTEM CSR-immediate word instead of diagnosing the line.
-**Root cause:** system.rs:56-62 reads only operands[0..2] via get_reg/get_csr_num/get_imm and never checks operands.len(), so any trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:61`
+**Counterexample:** encode_float_load([Reg("f0"), Mem { base: "x0", offset: 2048 }], 0b010)
+**Expected / Actual:** Err / Ok(Word(2147491847)) = 0x80002007 (flw f0, -2048(x0))
+**Impact:** A load whose offset is 2048 is assembled as offset -2048 (off by 4096), so the runtime reads the wrong address.
+**Root cause:** float.rs:10 passes `*offset as i32` into encode_i, which masks to 12 bits with no range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:10`
 ```rust
-    Ok(EncodeResult::Word(encode_i(OP_SYSTEM, rd, funct3, rs1, csr as i32)))
+            Ok(EncodeResult::Word(encode_i(OP_LOAD_FP, rd, funct3, rs1, *offset as i32)))
 ```
-**Suggested fix:** Reject anything other than exactly three operands before packing.
+**Suggested fix:** Reject offsets outside signed imm12 before packing.
 ```rust
-    if operands.len() != 3 {
-        return Err("csri: expected rd, csr, zimm".to_string());
-    }
+            if !(-2048..=2047).contains(offset) {
+                return Err(format!("float load immediate out of range: {}", offset));
+            }
+            Ok(EncodeResult::Word(encode_i(OP_LOAD_FP, rd, funct3, rs1, *offset as i32)))
 ```
-**Bug report:** bug_reports/encode_csri_extra_operand.md
-**Repro seed:** (deterministic regression; shrunk input Imm(0) extra)
+**Bug report:** bug_reports/encode_float_load_imm_oob.md
+**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_load_regression_imm_oob)
 **Raw output:**
-```text
-Test failed: extra operand must Err for csrrwi x0, fflags, 0 (llvm-mc rejects extra operands); got Ok(Word(1069171)) at src/backend/riscv/assembler/encoder/encode_csri_pbt.rs:484.
-minimal failing input: (mn, f3) = (
-    "csrrwi",
-    5,
-), rd = "x0", (csr_name, _num) = (
-    "fflags",
-    1,
-), zimm = 0, extra = Imm(
-    0,
-)
+```
+Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147491847)) at src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs:481.
+minimal failing input: (mn, f3) = ("flw", 2), rd = "f0", rs1 = "x0", imm = 2048
 ```
 
-### B2: encode_csri masks out-of-range zimm instead of rejecting
+### B2: encode_float_load ignores extra operands
 
-**Formal:** ∀ rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ ℤ \ [0,31], f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(rd), Csr(csr), Imm(zimm)], f3) = Err(_)
-**Contract evidence:** inferred (RISC-V uimm5; llvm-mc "immediate must be an integer in the range [0, 31]")
+**Formal:** ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, imm ∈ [-2048, 2047], extra ∈ Operands. encode_float_load([Reg(rd), Mem{rs1, imm}, extra], funct3(mn)) = Err(_)
+**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on a third operand; encode_instruction at mod.rs:715/743 passes the full operand slice through)
 **Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_csri([Reg("x0"), Csr("fflags"), Imm(-1)], funct3=0b101)
-**Expected / Actual:** Err / Ok(Word(2084979)) = 0x001FD073 = csrrwi x0, fflags, 31
-**Impact:** `csrrwi rd, csr, 32` is assembled as `csrrwi rd, csr, 0` and `csrrwi rd, csr, -1` as `csrrwi rd, csr, 31`, silently writing the wrong immediate into a CSR.
-**Root cause:** system.rs:59-60 casts the immediate to u32 and masks with 0x1F, so -1 becomes zimm 31 and 32 becomes zimm 0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:59`
+**Severity:** medium
+**Counterexample:** encode_float_load([Reg("f0"), Mem { base: "x0", offset: 0 }, Imm(0)], 0b010)
+**Expected / Actual:** Err / Ok(Word(8199)) = 0x00002007 (flw f0, 0(x0))
+**Impact:** A third operand is dropped; malformed FLW/FLD still assembles.
+**Root cause:** float.rs:7 matches only operands.get(1) and never checks operands.len().
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:7`
 ```rust
-    let zimm = get_imm(operands, 2)? as u32;
-    let rs1 = zimm & 0x1F;
+    match &operands.get(1) {
 ```
-**Suggested fix:** Reject zimm outside 0..=31 before masking.
+**Suggested fix:** Require exactly two operands before encoding.
 ```rust
-    let zimm = get_imm(operands, 2)?;
-    if !(0..=31).contains(&zimm) {
-        return Err("csri: zimm out of range 0..=31".to_string());
+    if operands.len() != 2 {
+        return Err("float load: unexpected extra operand".to_string());
     }
-    let rs1 = (zimm as u32) & 0x1F;
+    match &operands.get(1) {
 ```
-**Bug report:** bug_reports/encode_csri_zimm_oob.md
-**Repro seed:** (deterministic regression; shrunk input zimm=-1)
+**Bug report:** bug_reports/encode_float_load_extra_operand.md
+**Repro seed:** cc dbd5062a5b0302848715acddbe367c05ad0e1c9b5239180e68fe5f5e8efcd16d
 **Raw output:**
-```text
-Test failed: zimm -1 outside 0..=31 must Err (llvm-mc uimm5); got Ok(Word(2084979)) at src/backend/riscv/assembler/encoder/encode_csri_pbt.rs:501.
-minimal failing input: (_mn, f3) = (
-    "csrrwi",
-    5,
-), rd = "x0", (csr_name, _num) = (
-    "fflags",
-    1,
-), zimm = -1
+```
+Test failed: extra operand must Err for flw f0, 0(x0) (llvm-mc rejects extra operands); got Ok(Word(8199)) at src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs:499.
+minimal failing input: (mn, f3) = ("flw", 2), rd = "f0", rs1 = "x0", off = 0, extra = Imm(0)
 ```
 
-### B3: encode_csri masks out-of-range CSR numbers instead of rejecting
+### B3: encode_float_load accepts %hi/%pcrel_hi/%tprel_hi on FLW/FLD
 
-**Formal:** ∀ rd ∈ GPR, csr ∈ ℤ \ [0,4095], zimm ∈ 0..=31, f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(rd), Imm(csr), Imm(zimm)], f3) = Err(_)
-**Contract evidence:** inferred (RISC-V csr[11:0]; llvm-mc "immediate must be an integer in the range [0, 4095]")
-**Documentation conflict:** (none)
+**Formal:** ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, s ∈ Idents, hi ∈ {%hi, %pcrel_hi, %tprel_hi}. llvm-mc rejects mn rd, hi(s)(rs1) ∧ encode_float_load([Reg(rd), MemSymbol{rs1, hi(s)}], funct3(mn)) = Err(_)
+**Contract evidence:** inferred (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on LOAD-FP; encoder/mod.rs:95 documents PCREL_LO12_I for loads)
+**Documentation conflict:** (none) — float.rs:15-18 remaps hi to lo without a comment declaring hi-type modifiers valid
 **Severity:** high
-**Counterexample:** encode_csri([Reg("x0"), Imm(-1), Imm(0)], funct3=0b101)
-**Expected / Actual:** Err / Ok(Word(4293939315)) = 0xFFF05073 = csrrwi x0, 4095, 0
-**Impact:** `csrrwi rd, 4096, zimm` is assembled as `csrrwi rd, 0, zimm` and `csrrwi rd, -1, zimm` as `csrrwi rd, 4095, zimm`, silently targeting the wrong CSR.
-**Root cause:** system.rs:58 takes csr via get_csr_num (Imm is `*v as u32` with no range check) and system.rs:61 passes `csr as i32` into encode_i, which masks with 0xFFF, so -1 becomes csr 4095 and 4096 becomes csr 0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:61`
+**Counterexample:** encode_float_load([Reg("f0"), MemSymbol { base: "x0", symbol: "%hi(foo)", modifier: "" }], 0b010)
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 8199, reloc_type: Lo12I, symbol: "foo", addend: 0 })
+**Impact:** A high reloc requested by the author is emitted as R_RISCV_LO12_I, so the linker patches the wrong 12 bits of the symbol.
+**Root cause:** float.rs:16 remaps PcrelHi20 to PcrelLo12I and Hi20 to Lo12I instead of rejecting hi-type modifiers.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:16`
 ```rust
-    Ok(EncodeResult::Word(encode_i(OP_SYSTEM, rd, funct3, rs1, csr as i32)))
+                RelocType::PcrelHi20 => RelocType::PcrelLo12I,
 ```
-**Suggested fix:** Reject csr outside 0..=4095 before packing.
+**Suggested fix:** Accept only lo12 reloc kinds on LOAD-FP; reject hi-type modifiers.
 ```rust
-    let csr = get_csr_num(operands, 1)?;
-    if csr > 4095 {
-        return Err("csri: csr out of range 0..=4095".to_string());
-    }
+            let reloc_type = match reloc_type {
+                RelocType::PcrelLo12I | RelocType::Lo12I | RelocType::TprelLo12I => reloc_type,
+                other => {
+                    return Err(format!("float load: unsupported reloc modifier {:?}", other));
+                }
+            };
 ```
-**Bug report:** bug_reports/encode_csri_csr_oob.md
-**Repro seed:** cc 745a50d4ca1ed424861fb6e37158bb42b51798a074ddde021732699eb810294a
+**Bug report:** bug_reports/encode_float_load_hi_modifier.md
+**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_load_regression_hi_modifier)
 **Raw output:**
-```text
-Test failed: csr -1 outside 0..=4095 must Err (llvm-mc csr[11:0]); got Ok(Word(4293939315)) at src/backend/riscv/assembler/encoder/encode_csri_pbt.rs:518.
-minimal failing input: (_mn, f3) = (
-    "csrrwi",
-    5,
-), rd = "x0", zimm = 0, csr_num = -1
+```
+Test failed: hi-type modifier %hi(foo) must Err on float load (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 8199, reloc: Relocation { reloc_type: Lo12I, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs:568.
+minimal failing input: (mn, f3) = ("flw", 2), rd = "f0", rs1 = "x0", s = "foo", hi = "%hi"
 ```
 
 ## Design Caveats
@@ -133,33 +117,32 @@ minimal failing input: (_mn, f3) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_csri_pbt.rs | 8 properties + 2 KAT + 3 regression witnesses |
-| src/backend/riscv/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_csri_pbt;` registration |
+| src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs | 8 properties + 4 KAT + 3 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csri -- --test-threads=1
+cargo test --lib encode_float_load -- --test-threads=1
 ```
 
-B1 extra operand:
+B1 (imm oob):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csri_neg_extra -- --test-threads=1
+cargo test --lib encode_float_load_neg_imm_oob -- --test-threads=1
 ```
 
-B2 zimm OOB:
+B2 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csri_neg_zimm_oob -- --test-threads=1
+cargo test --lib encode_float_load_neg_extra -- --test-threads=1
 ```
 
-B3 csr OOB:
+B3 (hi modifier):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csri_neg_csr_oob -- --test-threads=1
+cargo test --lib encode_float_load_neg_hi_modifier -- --test-threads=1
 ```
 
 ## Output Directories
@@ -170,35 +153,35 @@ cargo test --lib encode_csri_neg_csr_oob -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_csri_extra_operand.md
-- pbt-out/bug_reports/encode_csri_extra_operand.html
-- pbt-out/bug_reports/encode_csri_zimm_oob.md
-- pbt-out/bug_reports/encode_csri_zimm_oob.html
-- pbt-out/bug_reports/encode_csri_csr_oob.md
-- pbt-out/bug_reports/encode_csri_csr_oob.html
-- pbt-out/run/encode_csri_test.log
+- pbt-out/bug_reports/encode_float_load_imm_oob.md
+- pbt-out/bug_reports/encode_float_load_imm_oob.html
+- pbt-out/bug_reports/encode_float_load_extra_operand.md
+- pbt-out/bug_reports/encode_float_load_extra_operand.html
+- pbt-out/bug_reports/encode_float_load_hi_modifier.md
+- pbt-out/bug_reports/encode_float_load_hi_modifier.html
+- pbt-out/run/encode_float_load_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 17:16 (campaign: coverage)
-> Files: 13/13 scanned (100%) | Functions: 199/337 total | PBT candidates: 199 | Tested: 199 (100%) | 1 pass, 199 fail
+> Last updated: 2026-10-06 17:35 (campaign: coverage)
+> Files: 14/14 scanned (100%) | Functions: 200/351 total | PBT candidates: 200 | Tested: 200 (100%) | 1 pass, 200 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 13 |
-| Files scanned | 13 / 13 (100%) |
-| Total functions (all files) | 337 |
-| PBT candidates (from FUNCTION_INDEX) | 199 |
-| **Tested (of PBT candidates)** | **199 / 199 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 199 / -1 |
-| **Overall (tested / all functions)** | **199 / 337 (59%)** |
+| Total source files | 14 |
+| Files scanned | 14 / 14 (100%) |
+| Total functions (all files) | 351 |
+| PBT candidates (from FUNCTION_INDEX) | 200 |
+| **Tested (of PBT candidates)** | **200 / 200 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 200 / -1 |
+| **Overall (tested / all functions)** | **200 / 351 (57%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -206,13 +189,13 @@ cargo test --lib encode_csri_neg_csr_oob -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 199 | 199 | 0 | 100% |
+|  | 200 | 200 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 199 | 199 | 0 | 100% |
+| unknown | 200 | 200 | 0 | 100% |
 
 ## File Coverage
 
@@ -434,3 +417,4 @@ cargo test --lib encode_csri_neg_csr_oob -- --test-threads=1
 | encode_sc | atomics.rs |
 | encode_sfence_vma | system.rs |
 | encode_csri | system.rs |
+| encode_float_load | float.rs |

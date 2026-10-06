@@ -1,4 +1,4 @@
-> Total files: 13 | Total functions: 337 | PBT candidates: 200 | Excluded: 137
+> Total files: 14 | Total functions: 351 | PBT candidates: 201 | Excluded: 150
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -339,3 +339,17 @@
 | encode_sc_suffixed | atomics.rs | 44 | function | no | out of campaign scope |
 | encode_amo_suffixed | atomics.rs | 59 | function | no | out of campaign scope |
 | parse_aq_rl | atomics.rs | 89 | function | no | helper; campaign is single-symbol |
+| encode_float_load | float.rs | 5 | function | yes | - |
+| encode_float_store | float.rs | 33 | function | no | HARD: test only encode_float_load |
+| encode_fp_arith | float.rs | 61 | function | no | HARD: test only encode_float_load |
+| encode_fp_arith_d | float.rs | 77 | function | no | HARD: test only encode_float_load |
+| encode_fp_unary | float.rs | 81 | function | no | HARD: test only encode_float_load |
+| encode_fp_sgnj | float.rs | 95 | function | no | HARD: test only encode_float_load |
+| encode_fp_cmp | float.rs | 102 | function | no | HARD: test only encode_float_load |
+| encode_fclass | float.rs | 110 | function | no | HARD: test only encode_float_load |
+| encode_fcvt_int | float.rs | 116 | function | no | HARD: test only encode_float_load |
+| encode_fcvt_from_int | float.rs | 131 | function | no | HARD: test only encode_float_load |
+| encode_fcvt_fp | float.rs | 146 | function | no | HARD: test only encode_float_load |
+| encode_fmv_x_f | float.rs | 161 | function | no | HARD: test only encode_float_load |
+| encode_fmv_f_x | float.rs | 168 | function | no | HARD: test only encode_float_load |
+| encode_fma | float.rs | 175 | function | no | HARD: test only encode_float_load |

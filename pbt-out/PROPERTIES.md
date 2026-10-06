@@ -1,246 +1,245 @@
-# Properties: encode_csri
+# Properties: encode_float_load
 
-## encode_csri_diff_llvm_mc
-- Tier: 4
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent RISC-V assembler of the same I-type SYSTEM CSR-immediate encoding the SUT claims (encoder/mod.rs:3, README.md:311-312). State machine rejected (pure function). Algebraic round-trip rejected (no in-tree SYSTEM/CSR decoder). encode_i / encode_csr / encode_csrw rejected as primary differential (same-job gate: private packer / register-form sibling / pseudo with rd=x0).
-- Doc contract: (none) — encode_csri has no function-level rustdoc. encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint 077a9290. encoder/mod.rs:706 `"csrrwi" => encode_csri(operands, 0b101)` — asserted fingerprint a994f39a. README.md:311-312 "csrr/csrw/csrs/csrc and their immediate variants (csrwi, csrsi, csrci)." — asserted fingerprint 2f3e3590.
-- Seed: encode_csr_pbt.rs:encode_csr_diff_llvm_mc
-- Formal: ∀ mn ∈ {csrrwi,csrrsi,csrrci}, rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ 0..=31. encode_csri([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn)) = llvm-mc("mn rd, csr, zimm")
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
+## encode_float_load_diff_imm_llvm_mc
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (LLVM 15.0.6), the independent RISC-V assembler. SUT-boundary is internal-helper of the in-tree assembler; encode_instruction (mod.rs:715/743) passes operands through for flw/fld. Mapping: [Reg(rd), Mem{base, offset}] <-> `mn rd, offset(rs1)` with -triple=riscv64 -mattr=+f,+d (RV64GC includes F/D). Stronger rejected: state machine (pure function, no lifecycle). Algebraic round-trip rejected — no in-tree LOAD-FP decoder. encode_i / encode_load / C.FLW / encode_float_store rejected as primary differential (same-job gate: private packer / integer load / compressed / stores).
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:3 "//! Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint b0c6d4db
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_diff_imm_llvm_mc
+- Formal: ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, imm ∈ [-2048, 2047]. encode_float_load([Reg(rd), Mem{rs1, imm}], funct3(mn)) = Word(w) ∧ w = llvm-mc(mn rd, imm(rs1))
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csri
+function: encoder.encode_float_load
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mn, rd, csr, zimm]
-  domain: { mn: {csrrwi,csrrsi,csrrci}, rd: gpr, csr: known_csr, zimm: 0..=31 }
+  vars: [mn, rd, rs1, imm]
+  domain: { mn: {flw, fld}, rd: FPRegs, rs1: GPRs, imm: i12 }
   relation:
     op: eq
-    lhs: encode_csri([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn))
-    rhs: llvm_mc("mn rd, csr, zimm")
+    lhs: encode_float_load([Reg(rd), Mem{rs1, imm}], funct3(mn))
+    rhs: llvm_mc(mn + " " + rd + ", " + imm + "(" + rs1 + ")")
 generators:
-  mn: { gen: oneof, items: ["csrrwi", "csrrsi", "csrrci"] }
-  rd: { gen: string }
-  csr: { gen: string }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:3 encoder/mod.rs:706-708 README.md:311-312
+  mn: { gen: oneof, options: ["flw", "fld"] }
+  rd: { gen: string, type: String }
+  rs1: { gen: string, type: String }
+  imm: { gen: int, min: -2048, max: 2047, type: i64 }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:715 flw; mod.rs:743 fld; RISC-V Unprivileged ISA LOAD-FP
 ```
 
-## encode_csri_i_type_fields
-- Tier: 3
-- Rationale: Algebraic invariant from the documented I-type layout (encoder/mod.rs:313, README.md:353) and RISC-V SYSTEM CSR-immediate encoding: opcode=OP_SYSTEM, funct3 as given, rd in bits[11:7], zimm in rs1 bits[19:15], csr in imm[11:0]. Stronger differential is the sibling property; this unpacks the word independently of llvm-mc.
-- Doc contract: encoder/mod.rs:313 "I-type: imm[31:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 274cd4b0.
-- Seed: encode_csr_pbt.rs:encode_csr_i_type_fields
-- Formal: ∀ rd ∈ 0..=31, csr ∈ 0..=4095, zimm ∈ 0..=31, f3 ∈ {0b101,0b110,0b111}. let w = encode_csri([Reg(x{rd}), Imm(csr), Imm(zimm)], f3) in unpack_i(w) = (OP_SYSTEM, f3, rd, zimm, csr)
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
+## encode_float_load_i_type_fields
+- Tier: 4
+- Rationale: RISC-V I-type layout is documented at encoder/mod.rs:317 independently of encode_i. Unpack via ISA field positions (not a copy of encode_i). Weaker than differential (does not check agreement with llvm-mc) but pins opcode=OP_LOAD_FP and field placement. Stronger rejected as above.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:317 "/// I-type: imm[31:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint a1e0fcc3
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_i_type_fields
+- Formal: ∀ rd ∈ 0..31, rs1 ∈ 0..31, f3 ∈ {0b010, 0b011}, imm ∈ [-2048, 2047]. let w = encode_float_load([Reg(fN(rd)), Mem{xN(rs1), imm}], f3) in Word. unpack_i(w) = (OP_LOAD_FP, rd, f3, rs1, imm)
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csri
+function: encoder.encode_float_load
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, csr, zimm, f3]
-  domain: { rd: 0..=31, csr: 0..=4095, zimm: 0..=31, f3: {0b101,0b110,0b111} }
+  vars: [rd, rs1, f3, imm]
+  domain: { rd: u5, rs1: u5, f3: {2, 3}, imm: i12 }
   relation:
     op: eq
-    lhs: unpack_i(encode_csri([Reg(x{rd}), Imm(csr), Imm(zimm)], f3))
-    rhs: (OP_SYSTEM, f3, rd, zimm, csr)
+    lhs: unpack_i(word(encode_float_load([Reg(fN(rd)), Mem{xN(rs1), imm}], f3)))
+    rhs: (OP_LOAD_FP, rd, f3, rs1, imm)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  csr: { gen: int, min: 0, max: 4095, type: u32 }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-  f3: { gen: oneof, items: [5, 6, 7] }
-evidence: encoder/mod.rs:313 README.md:353
+  rs1: { gen: int, min: 0, max: 31, type: u32 }
+  f3: { gen: oneof, options: [2, 3] }
+  imm: { gen: int, min: -2048, max: 2047, type: i64 }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:317
 ```
 
-## encode_csri_abi_xn_alias
-- Tier: 3
-- Rationale: Algebraic metamorphic: ABI names, xN, and fp=s0/x8 encode the same rd (parser.rs:22-23 Register: x0-x31, zero, ra, ...; get_reg accepts Imm 0..=31 as GCC bare register numbers — caller helper, not encode_csri's own contract). Stronger differential covers the xN/ABI surface via llvm-mc; this checks alias equality without the reference.
-- Doc contract: parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7" — asserted fingerprint 00db3ff1. encoder/mod.rs:386 "GCC sometimes emits bare register numbers (0-31) in inline asm" — other fingerprint f1b1a1fb.
-- Seed: encode_csr_pbt.rs:encode_csr_abi_xn_alias
-- Formal: ∀ n ∈ 0..=31, csr ∈ KNOWN_CSR, zimm ∈ 0..=31, f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(x{n}), Csr(csr), Imm(zimm)], f3) = encode_csri([Reg(ABI[n]), Csr(csr), Imm(zimm)], f3) ∧ (n=8 ⇒ also equals encode_csri([Reg("fp"), ...], f3)) ∧ encode_csri([Imm(n), Csr(csr), Imm(zimm)], f3) = encode_csri([Reg(x{n}), ...], f3)
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
+## encode_float_load_abi_fn_alias
+- Tier: 4
+- Rationale: Metamorphic alias invariance: FP ABI names (ft0/fa0/fs0/...) encode the same rd as fN, and GPR ABI names (including fp=s0=x8) encode the same rs1 as xN. Documented by parser.rs register comment. Not a differential (same SUT, two namings). Stronger rejected as above.
+- Doc contract: src/backend/riscv/assembler/parser.rs:22 "    /// Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7," — asserted fingerprint a60fc01d
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_abi_xn_alias
+- Formal: ∀ n,m ∈ 0..31, f3 ∈ {0b010, 0b011}, imm ∈ [-2048, 2047]. encode_float_load([Reg(fN(n)), Mem{xN(m), imm}], f3) = encode_float_load([Reg(FABI(n)), Mem{GABI(m), imm}], f3) ∧ (m=8 ⇒ Mem{fp, imm} agrees)
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csri
+function: encoder.encode_float_load
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, csr, zimm, f3]
-  domain: { n: 0..=31, csr: known_csr, zimm: 0..=31, f3: {0b101,0b110,0b111} }
+  vars: [n, m, f3, imm]
+  domain: { n: u5, m: u5, f3: {2, 3}, imm: i12 }
   relation:
     op: eq
-    lhs: encode_csri([Reg(x{n}), Csr(csr), Imm(zimm)], f3)
-    rhs: encode_csri([Reg(ABI[n]), Csr(csr), Imm(zimm)], f3)
+    lhs: encode_float_load([Reg(fN(n)), Mem{xN(m), imm}], f3)
+    rhs: encode_float_load([Reg(FABI(n)), Mem{GABI(m), imm}], f3)
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
-  csr: { gen: string }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-  f3: { gen: oneof, items: [5, 6, 7] }
-evidence: parser.rs:22 encoder/mod.rs:386
+  m: { gen: int, min: 0, max: 31, type: u32 }
+  f3: { gen: oneof, options: [2, 3] }
+  imm: { gen: int, min: -2048, max: 2047, type: i64 }
+evidence: src/backend/riscv/assembler/parser.rs:22
 ```
 
-## encode_csri_name_vs_imm
-- Tier: 3
-- Rationale: Algebraic metamorphic: CSR as Csr(name), Imm(number), Symbol(name), Csr("0xNNN"), Csr(decimal), and Reg(name) ("sometimes CSR names look like regs", system.rs:69) must encode the same word. get_csr_num accepts all of those kinds.
-- Doc contract: parser.rs:40 "CSR register name or number" — asserted fingerprint 37a2a045. system.rs:69 "sometimes CSR names look like regs" — other fingerprint 76a7ce01.
-- Seed: encode_csr_pbt.rs:encode_csr_name_vs_imm
-- Formal: ∀ rd ∈ GPR, (name,num) ∈ KNOWN_CSR, zimm ∈ 0..=31, f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(rd), Csr(name), Imm(zimm)], f3) = encode_csri([Reg(rd), Imm(num), Imm(zimm)], f3) = encode_csri([Reg(rd), Symbol(name), Imm(zimm)], f3) = encode_csri([Reg(rd), Csr("0x{num:x}"), Imm(zimm)], f3) = encode_csri([Reg(rd), Csr(decimal(num)), Imm(zimm)], f3) = encode_csri([Reg(rd), Reg(name), Imm(zimm)], f3)
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
+## encode_float_load_reloc_lo
+- Tier: 4
+- Rationale: llvm-mc accepts only %lo/%pcrel_lo/%tprel_lo on FLW/FLD memory operands and emits an I-type word with imm=0 plus the corresponding lo12 fixup. Reloc-form encodings from llvm-mc contain unresolved fixup bits, so the oracle is algebraic: WordWithReloc.word equals the offset-0 Mem encoding, reloc_type is Lo12I / PcrelLo12I / TprelLo12I, addend=0, symbol is the identifier. Stronger llvm-mc byte differential rejected — unresolved fixups are not a stable 32-bit word.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:95 "    /// R_RISCV_PCREL_LO12_I - for ADDI/LW/LD (low 12 bits of PC-relative, I-type)" — asserted fingerprint abd2c21c
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_reloc_lo
+- Formal: ∀ rd ∈ FPRegs, rs1 ∈ GPRs, s ∈ Idents, f3 ∈ {0b010, 0b011}, mod ∈ {%lo, %pcrel_lo, %tprel_lo}. encode_float_load([Reg(rd), MemSymbol{rs1, mod(s)}], f3) = WordWithReloc{word = encode_float_load([Reg(rd), Mem{rs1, 0}], f3), reloc_type = lo12_of(mod), symbol = s, addend = 0}
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csri
-oracle: algebraic.metamorphic
+function: encoder.encode_float_load
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, name, num, zimm, f3]
-  domain: { rd: gpr, (name,num): known_csr, zimm: 0..=31, f3: {0b101,0b110,0b111} }
+  vars: [rd, rs1, s, f3]
+  domain: { rd: FPRegs, rs1: GPRs, s: ident, f3: {2, 3} }
   relation:
     op: eq
-    lhs: encode_csri([Reg(rd), Csr(name), Imm(zimm)], f3)
-    rhs: encode_csri([Reg(rd), Imm(num), Imm(zimm)], f3)
+    lhs: reloc_word(encode_float_load([Reg(rd), MemSymbol{rs1, "%lo("+s+")"}], f3))
+    rhs: word(encode_float_load([Reg(rd), Mem{rs1, 0}], f3))
 generators:
-  rd: { gen: string }
-  name: { gen: string }
-  num: { gen: int, min: 0, max: 4095, type: u32 }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-  f3: { gen: oneof, items: [5, 6, 7] }
-evidence: parser.rs:40 system.rs:69
+  rd: { gen: string, type: String }
+  rs1: { gen: string, type: String }
+  s: { gen: string, type: String }
+  f3: { gen: oneof, options: [2, 3] }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:95
 ```
 
-## encode_csri_neg_extra
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc ("invalid operand for instruction" on a fourth operand) and the public encode_instruction surface which passes operands through. RISC-V csrrwi/csrrsi/csrrci take exactly three operands. Extra operands must Err, not silently encode.
-- Doc contract: (none) — encode_csri has no rustdoc declaring extra operands valid. Contract evidence: inferred (llvm-mc rejects extra operands; encode_instruction passes operands through at encoder/mod.rs:706-708).
-- Seed: encode_csr_pbt.rs:encode_csr_neg_extra
-- Formal: ∀ mn ∈ {csrrwi,csrrsi,csrrci}, rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ 0..=31, extra ∈ Operand. encode_csri([Reg(rd), Csr(csr), Imm(zimm), extra], funct3(mn)) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
+## encode_float_load_neg_imm_oob
+- Tier: 4
+- Rationale: Negative/error contract from llvm-mc: immediates outside [-2048, 2047] are rejected. Documented I-type imm[11:0] at encoder/mod.rs:317. Bounds 2047/2048/-2048/-2049 pinned in the generator. Not a domain restriction on encode_float_load's Operand::Mem offset (i64) — the API accepts the value; llvm-mc and the ISA require rejection.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:317 "/// I-type: imm[31:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint a1e0fcc3
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_neg_imm_oob
+- Formal: ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, imm ∉ [-2048, 2047]. llvm-mc rejects mn rd, imm(rs1) ∧ encode_float_load([Reg(rd), Mem{rs1, imm}], funct3(mn)) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
 - Status: failing
-- Counterexample: encode_csri([Reg("x0"), Csr("fflags"), Imm(0), Imm(0)], funct3=0b101) -> Ok(Word(1069171))
-- Bug report: pbt-out/bug_reports/encode_csri_extra_operand.md
+- Counterexample: encode_float_load([Reg("f0"), Mem{base:"x0", offset:2048}], 0b010) = Ok(Word(2147491847))  // 0x80002007, 2048 truncated to -2048
+- Bug report: bug_reports/encode_float_load_imm_oob.md
 
 ```property
-function: encoder.encode_csri
+function: encoder.encode_float_load
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mn, rd, csr, zimm, extra]
-  domain: { mn: csrrwi_csrrsi_csrrci, rd: gpr, csr: known_csr, zimm: 0..=31, extra: operand }
+  vars: [mn, rd, rs1, imm]
+  domain: { mn: {flw, fld}, rd: FPRegs, rs1: GPRs, imm: i64_oob_i12 }
   relation:
-    op: throws
-    expr: encode_csri([Reg(rd), Csr(csr), Imm(zimm), extra], funct3(mn))
+    op: holds
+    expr: encode_float_load([Reg(rd), Mem{rs1, imm}], funct3(mn)).is_err()
 expected_error: String
 generators:
-  mn: { gen: oneof, items: ["csrrwi", "csrrsi", "csrrci"] }
-  rd: { gen: string }
-  csr: { gen: string }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: string }
-evidence: encoder/mod.rs:706-708 llvm-mc extra-operand error
+  mn: { gen: oneof, options: ["flw", "fld"] }
+  rd: { gen: string, type: String }
+  rs1: { gen: string, type: String }
+  imm: { gen: int, min: 2048, max: 9223372036854775807, type: i64 }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:317 I-type imm[11:0]
 ```
 
-## encode_csri_neg_zimm_oob
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc ("immediate must be an integer in the range [0, 31]") and RISC-V uimm5 zimm field. encode_csri currently masks `zimm & 0x1F` (system.rs:59-60) instead of rejecting. Bound 0 and 31 are in the valid differential;  -1 and 32 must Err.
-- Doc contract: (none). parser.rs:26 "Immediate value: 42, -1, 0x1000" — other fingerprint 37c3d55b (does not declare zimm unbounded). Contract evidence: inferred (RISC-V uimm5; llvm-mc range [0, 31]).
-- Seed: encode_csr_pbt.rs:encode_csr_neg_zimm_oob
-- Formal: ∀ rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ ℤ \ [0,31], f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(rd), Csr(csr), Imm(zimm)], f3) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
+## encode_float_load_neg_extra
+- Tier: 4
+- Rationale: llvm-mc rejects a third operand (`flw fa0, 0(x1), x2` → "invalid operand for instruction"). encode_instruction passes the full operand slice through. Extra operands are Operand values the public assembler accepts as input and must reject.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:715 "        \"flw\" => encode_float_load(operands, 0b010)," — asserted fingerprint f7a9159f
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_neg_extra
+- Formal: ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, imm ∈ [-2048, 2047], extra ∈ Operands. encode_float_load([Reg(rd), Mem{rs1, imm}, extra], funct3(mn)) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
 - Status: failing
-- Counterexample: encode_csri([Reg("x0"), Csr("fflags"), Imm(-1)], funct3=0b101) -> Ok(Word(2084979))
-- Bug report: pbt-out/bug_reports/encode_csri_zimm_oob.md
+- Counterexample: encode_float_load([Reg("f0"), Mem{base:"x0", offset:0}, Imm(0)], 0b010) = Ok(Word(8199))
+- Bug report: bug_reports/encode_float_load_extra_operand.md
 
 ```property
-function: encoder.encode_csri
+function: encoder.encode_float_load
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, csr, zimm, f3]
-  domain: { rd: gpr, csr: known_csr, zimm: i64_outside_0_to_31, f3: csri_funct3 }
+  vars: [mn, rd, rs1, imm, extra]
+  domain: { mn: {flw, fld}, rd: FPRegs, rs1: GPRs, imm: i12, extra: Operand }
   relation:
-    op: throws
-    expr: encode_csri([Reg(rd), Csr(csr), Imm(zimm)], f3)
+    op: holds
+    expr: encode_float_load([Reg(rd), Mem{rs1, imm}, extra], funct3(mn)).is_err()
 expected_error: String
 generators:
-  rd: { gen: string }
-  csr: { gen: string }
-  zimm: { gen: int, min: -9223372036854775808, max: 9223372036854775807, type: i64 }
-  f3: { gen: oneof, items: [5, 6, 7] }
-evidence: RISC-V uimm5 llvm-mc range [0, 31]
+  mn: { gen: oneof, options: ["flw", "fld"] }
+  rd: { gen: string, type: String }
+  rs1: { gen: string, type: String }
+  imm: { gen: int, min: -2048, max: 2047, type: i64 }
+  extra: { gen: string, type: Operand }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:715 operands passed through
 ```
 
-## encode_csri_neg_csr_oob
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc ("immediate must be an integer in the range [0, 4095]") and RISC-V csr[11:0]. encode_csri passes `csr as i32` into encode_i which masks `& 0xFFF`. Bound 0 and 4095 are in the I-type invariant; -1 and 4096 must Err.
-- Doc contract: (none). parser.rs:40 "CSR register name or number" — asserted fingerprint 37a2a045 (does not declare csr unbounded). Contract evidence: inferred (RISC-V csr[11:0]; llvm-mc range [0, 4095]).
-- Seed: encode_csr_pbt.rs:encode_csr_neg_csr_oob
-- Formal: ∀ rd ∈ GPR, csr ∈ ℤ \ [0,4095], zimm ∈ 0..=31, f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(rd), Imm(csr), Imm(zimm)], f3) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
-- Status: failing
-- Counterexample: encode_csri([Reg("x0"), Imm(-1), Imm(0)], funct3=0b101) -> Ok(Word(4293939315))
-- Bug report: pbt-out/bug_reports/encode_csri_csr_oob.md
-
-```property
-function: encoder.encode_csri
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, csr, zimm, f3]
-  domain: { rd: gpr, csr: i64_outside_0_to_4095, zimm: 0..=31, f3: csri_funct3 }
-  relation:
-    op: throws
-    expr: encode_csri([Reg(rd), Imm(csr), Imm(zimm)], f3)
-expected_error: String
-generators:
-  rd: { gen: string }
-  csr: { gen: int, min: -9223372036854775808, max: 9223372036854775807, type: i64 }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-  f3: { gen: oneof, items: [5, 6, 7] }
-evidence: RISC-V csr[11:0] llvm-mc range [0, 4095]
-```
-
-## encode_csri_neg_arity_fp_unknown
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc ("too few operands" / "invalid operand") and get_reg/get_csr_num/get_imm Err paths. Empty, missing csr/zimm, FP rd, invalid GPR name, unknown CSR name, and non-Imm zimm (e.g. a register) must Err.
-- Doc contract: (none). get_reg / get_imm / get_csr_num return Err on missing/wrong-kind operands. llvm-mc rejects the same cases.
-- Seed: encode_csr_pbt.rs:encode_csr_neg_arity_fp_unknown
-- Formal: ∀ f3 ∈ {0b101,0b110,0b111}, rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ 0..=31, fp ∈ FPR, bad ∈ invalid_gpr, unknown ∈ unknown_csr. encode_csri([], f3) = Err ∧ encode_csri([Reg(rd)], f3) = Err ∧ encode_csri([Reg(rd), Csr(csr)], f3) = Err ∧ encode_csri([Reg(fp), Csr(csr), Imm(zimm)], f3) = Err ∧ encode_csri([Reg(bad), Csr(csr), Imm(zimm)], f3) = Err ∧ encode_csri([Reg(rd), Csr(unknown), Imm(zimm)], f3) = Err ∧ encode_csri([Reg(rd), Csr(csr), Reg(rd)], f3) = Err
-- Test file: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs
+## encode_float_load_neg_arity_gpr
+- Tier: 4
+- Rationale: llvm-mc rejects empty/missing operands ("too few operands"), GPR dest (`flw x1, 0(x2)` "invalid operand"), FP base (`flw fa0, 0(fa1)` "invalid operand"), and a non-memory 2nd operand. get_freg / reg_num / the `_` arm are the SUT paths.
+- Doc contract: src/backend/riscv/assembler/encoder/float.rs:29 "        _ => Err(\"float load: expected memory operand\".to_string())," — asserted fingerprint bfb0fc21
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_neg_arity_fp
+- Formal: ∀ f3 ∈ {0b010, 0b011}, rd ∈ FPRegs, gpr ∈ GPRs, fp ∈ FPRegs, off ∈ [-2048, 2047], bad ∈ {Imm, Csr, FenceArg, RoundingMode}. encode_float_load([], f3)=Err ∧ encode_float_load([Reg(rd)], f3)=Err ∧ encode_float_load([Reg(gpr), Mem{gpr, off}], f3)=Err ∧ encode_float_load([Reg(rd), Mem{fp, off}], f3)=Err ∧ encode_float_load([Reg(rd), bad], f3)=Err
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csri
+function: encoder.encode_float_load
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [f3, rd, csr, zimm, fp, bad, unknown]
-  domain: { f3: csri_funct3, rd: gpr, csr: known_csr, zimm: 0..=31, fp: fpr, bad: invalid_gpr, unknown: unknown_csr }
+  vars: [f3, rd, gpr, fp, off, bad]
+  domain: { f3: {2, 3}, rd: FPRegs, gpr: GPRs, fp: FPRegs, off: i12, bad: non_mem }
   relation:
-    op: throws
-    expr: encode_csri([], f3)
+    op: holds
+    expr: encode_float_load([], f3).is_err()
 expected_error: String
 generators:
-  f3: { gen: oneof, items: [5, 6, 7] }
-  rd: { gen: string }
-  csr: { gen: string }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-  fp: { gen: string }
-  bad: { gen: string }
-  unknown: { gen: string }
-evidence: llvm-mc too-few/invalid-operand get_reg/get_imm/get_csr_num Err
+  f3: { gen: oneof, options: [2, 3] }
+  rd: { gen: string, type: String }
+  gpr: { gen: string, type: String }
+  fp: { gen: string, type: String }
+  off: { gen: int, min: -2048, max: 2047, type: i64 }
+  bad: { gen: string, type: Operand }
+evidence: src/backend/riscv/assembler/encoder/float.rs:29
+```
+
+## encode_float_load_neg_hi_modifier
+- Tier: 4
+- Rationale: llvm-mc rejects %hi/%pcrel_hi/%tprel_hi on FLW/FLD. The SUT remaps PcrelHi20→PcrelLo12I and Hi20→Lo12I (float.rs:15-18) instead of rejecting, and does not remap TprelHi20. Documented valid modifiers are the lo12 family only (mod.rs:95).
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:95 "    /// R_RISCV_PCREL_LO12_I - for ADDI/LW/LD (low 12 bits of PC-relative, I-type)" — asserted fingerprint abd2c21c
+- Seed: src/backend/riscv/assembler/encoder/encode_load_pbt.rs:encode_load_neg_hi_modifier
+- Formal: ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, s ∈ Idents, hi ∈ {%hi, %pcrel_hi, %tprel_hi}. llvm-mc rejects mn rd, hi(s)(rs1) ∧ encode_float_load([Reg(rd), MemSymbol{rs1, hi(s)}], funct3(mn)) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs
+- Status: failing
+- Counterexample: encode_float_load([Reg("f0"), MemSymbol{base:"x0", symbol:"%hi(foo)"}], 0b010) = Ok(WordWithReloc { word: 8199, reloc_type: Lo12I, symbol: "foo", addend: 0 })
+- Bug report: bug_reports/encode_float_load_hi_modifier.md
+
+```property
+function: encoder.encode_float_load
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mn, rd, rs1, s, hi]
+  domain: { mn: {flw, fld}, rd: FPRegs, rs1: GPRs, s: ident, hi: hi_mods }
+  relation:
+    op: holds
+    expr: encode_float_load([Reg(rd), MemSymbol{rs1, hi+"("+s+")"}], funct3(mn)).is_err()
+expected_error: String
+generators:
+  mn: { gen: oneof, options: ["flw", "fld"] }
+  rd: { gen: string, type: String }
+  rs1: { gen: string, type: String }
+  s: { gen: string, type: String }
+  hi: { gen: oneof, options: ["pct_hi", "pct_pcrel_hi", "pct_tprel_hi"] }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:95 PCREL_LO12_I for loads
 ```
