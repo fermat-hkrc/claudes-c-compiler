@@ -2,7 +2,7 @@
 
 ## Summary
 
-**Verdict:** 2 medium miscompiles to fix: (b1) constant_fold's 32-bit fast path sign-extends I8/I16 operands before logical ops, so `LShr((I8)0xB8,1)` folds to -36 instead of 92 (latent silent-wrong-constant path — narrow Phase 1 creates exactly those sub-int-typed instructions and the pipeline re-runs constant_fold); (b2) narrow Phase 2 rewrites an I64 `Or` of sign-extended operands down to I32 with no re-extension when the single use is the I64 return — `run_passes(-O2, x86-64)` then computes `f(1,-1) = 4294967295` instead of `-1`, violating the pass README's own "restricted to I32/U32 output" restriction. Both carry deterministic red regression tests and reproduce serially.
+**Verdict:** 2 medium miscompiles to fix: (b1, issue #759) constant_fold's 32-bit fast path sign-extends I8/I16 operands before logical ops, so `LShr((I8)0xB8,1)` folds to -36 instead of 92 (latent silent-wrong-constant path — narrow Phase 1 creates exactly those sub-int-typed instructions and the pipeline re-runs constant_fold); (b2, issue #760) narrow Phase 2 rewrites an I64 `Or` of sign-extended operands down to I32 with no re-extension when the single use is the I64 return — `run_passes(-O2, x86-64)` then computes `f(1,-1) = 4294967295` instead of `-1`, violating the pass README's own "restricted to I32/U32 output" restriction. Both carry deterministic red regression tests and reproduce serially.
 **Date:** 2026-10-05
 **Repository:** claudes-c-compiler (/home/shuhao/fermat-users/leo/github/claudes-c-compiler)
 **Modules tested:** src/passes (div_by_const, constant_fold, simplify, gvn+copy_prop, dce, if_convert, cfg_simplify, narrow, pipeline integration)

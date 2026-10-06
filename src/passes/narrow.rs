@@ -1105,8 +1105,7 @@ mod pbt_tests {
             }
         }
     }
-    /// RED WITNESS — round 07 bug (issue pending, see
-    /// pbt-out/rounds/07_passes/bug_reports/): narrow Phase 2 rewrites an I64
+    /// RED WITNESS — round 07 bug (issue #760): narrow Phase 2 rewrites an I64
     /// bitwise op with sign-extended operands down to I32 even when its single
     /// use needs the full I64 value (here the function return) and inserts no
     /// re-extension — run_passes(-O2, x86-64) then computes the zero-extended

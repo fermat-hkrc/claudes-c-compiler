@@ -1,4 +1,6 @@
 # Bug: narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value
+> **Filed as [issue #760](https://github.com/fermat-hkrc/claudes-c-compiler/issues/760)**
+
 **Law:** A rewrite pass must preserve the value of the function it transforms (the pipeline's own contract: every pass preserves interpreted values; README pipeline overview). Narrowing `Or(sext(a), sext(b))` at I64 to `Or` at I32 is only value-preserving when the result is re-sign-extended to I64 at the consumer; with no re-extension the I64 consumer reads the zero-extended 32-bit pattern.
 **Impact:** Pipeline-level silent miscompile: `f(a: i32, b: i32) -> i64 { Or((i64)a, (i64)b) }` compiled through run_passes(-O2, x86-64) returns 4294967295 for f(1, -1) instead of -1 (confirmed by interpreting the post-pipeline IR: `Or` survives at I32 feeding an I64 Return with no Cast). And/Xor share the code path (same missing use-check); on x86-64 a 32-bit result register move zero-extends. No C-level repro found with straightforward sources (the frontend emits Or-at-I32 + single cast for `(long long)a|(long long)b`), but any IR producer that emits the widen-widen-bitwise shape (e.g. future frontend paths, other pass interleavings, or LTO-style module input) is miscompiled by the documented pipeline.
 **Function:** narrow_binops_without_cast (Phase 2)

@@ -1,4 +1,6 @@
 # Bug: constant_fold's 32-bit fast path sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)
+> **Filed as [issue #759](https://github.com/fermat-hkrc/claudes-c-compiler/issues/759)**
+
 **Law:** A BinOp typed I8/I16 denotes an operation on the 8/16-bit value domain: `LShr` is a LOGICAL shift of the zero-extended sub-int bit pattern. Folding `LShr((I8)0xB8, 1)` must yield 92.
 **Impact:** Any I8/I16-typed logical shift / unsigned div / unsigned rem instruction that reaches constant_fold with a negative constant operand silently folds to the wrong constant (the sign bits dragged down into the result). The pipeline re-runs constant_fold after narrow has moved ops down to sub-int types (narrow Phase 1 targets the narrowing cast's type, including I8/I16), so this is a latent silent-miscompile path in `-O` pipelines.
 **Function:** fold_binop (called from try_fold_with_map's `is_32bit` arms)

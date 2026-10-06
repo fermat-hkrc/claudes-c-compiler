@@ -1352,8 +1352,7 @@ mod pbt_tests {
         }
     }
 
-    /// RED WITNESS — round 07 bug (issue pending, see
-    /// pbt-out/rounds/07_passes/bug_reports/): constant_fold's `is_32bit`
+    /// RED WITNESS — round 07 bug (issue #759): constant_fold's `is_32bit`
     /// fast path sign-extends sub-int operands to 32 bits before LOGICAL
     /// operations (LShr/UDiv/URem), so negative I8/I16 constants fold wrong:
     /// LShr((I8)0xB8, 1) must be 92 but folds to -36 (0xFFFFFFB8 >> 1 low
