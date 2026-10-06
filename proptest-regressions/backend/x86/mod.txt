@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5e96eff526b8b355c0aa1dc1d32ca8bcddf3aaac30d896b854c26d828cd355a9 # shrinks to fns = [FnSpec { n_args: 4, tokens: [(0, 0), (0, 0), (0, 0), (122, -4356743081147969760), (0, 0), (0, 0), (15, -1)] }], loop_n = 0, loop_k = 0

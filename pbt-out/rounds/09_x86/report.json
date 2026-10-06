@@ -1,0 +1,70 @@
+{
+ "schemaVersion": 3,
+ "generator": {
+  "tool": "pi-pbt",
+  "version": "0.1.25 (pi 0.87.1)"
+ },
+ "run": {
+  "date": "2026-10-05",
+  "revision": "20533174",
+  "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "target": "src/backend/x86",
+  "tier": "standard"
+ },
+ "build": {
+  "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+  "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "result": "success"
+ },
+ "properties": [
+  {
+   "id": "p1",
+   "name": "e2e_codegen_matches_gcc",
+   "formal": "\u2200 generated C programs P: stdout(run(ccc -O0 compile of P)) == stdout(run(gcc compile of P))",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/x86/mod.rs",
+   "sourceLine": 1,
+   "functionName": "backend::x86 full pipeline (driver::Driver)",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/x86/mod.rs",
+   "testTarget": "cargo test --lib backend::x86::pbt_e2e",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p2",
+   "name": "e2e_o2_preserves_o0",
+   "formal": "\u2200 P: stdout(run(ccc -O2 P)) == stdout(run(ccc -O0 P))",
+   "oracle": "algebraic.invariant",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/x86/mod.rs",
+   "sourceLine": 1,
+   "functionName": "backend::x86 optimized pipeline",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/x86/mod.rs",
+   "testTarget": "cargo test --lib backend::x86::pbt_e2e",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p3",
+   "name": "e2e_double_codegen",
+   "formal": "\u2200 double expr programs P (NaN-free): stdout(ccc -O0/-O2) == stdout(gcc)",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/x86/mod.rs",
+   "sourceLine": 1,
+   "functionName": "backend::x86 SSE paths",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/x86/mod.rs",
+   "testTarget": "cargo test --lib backend::x86::pbt_e2e",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  }
+ ],
+ "bugs": [],
+ "totals": {
+  "properties": 3,
+  "passing": 3,
+  "failing": 0,
+  "bugs": 0
+ }
+}
