@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_c_li)
+
+- Valid 2-operand C.LI with rd ∈ {x0..x31} and imm ∈ [-32, 31] matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.li x1, 0 = 0x4081, c.li x1, 1 = 0x4085, c.li x1, 31 = 0x40fd, c.li x1, -1 = 0x50fd, c.li x1, -32 = 0x5081, c.li a0, 5 = 0x4515.
+- CI-type layout holds for signed 6-bit imm ∈ [-32, 31]: op=01, funct3=010, rd, imm[5] in bit 12, imm[4:0] in bits 6:2 (1000 cases).
+- ABI names (zero/ra/sp/a0/t6/fp/s0/…) encode the same halfword as xN (1000 cases).
+- Field isolation: rd bits[11:7] independent of imm; imm/op/funct3 bits independent of rd (1000 cases).
+- Empty/1-operand and FP dest return Err (1000 cases).
+- Extra operand and out-of-range imm currently disagree with llvm-mc (see bugs): extra ignored; 32 truncated to imm=-32.
+
+## Environment (encode_c_li)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+c -show-encoding (LLVM 15.0.6). Default riscv64 without +c rejects C.LI.
+- Harness: src/backend/riscv/assembler/encoder/encode_c_li_pbt.rs, cargo test --lib encode_c_li, proptest cases=1000.
+- Dispatch: encoder/mod.rs:918 "c.li" => encode_c_li(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_c_li NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / CI-type / ABI / isolation / arity-FP / extra / oob. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_c_li)
+
+- llvm-mc prints `c.li x1, 0` as `li ra, 0` with a 16-bit encoding ([0x81,0x40]). Signed immediates are accepted as decimal (`c.li x1, -1`).
+- llvm-mc encodes `c.li x0, 1` as a HINT; SUT also encodes it (no rd=x0 rejection, unlike C.LUI). ISA: C.LI with rd=x0 is HINT.
+- C.LI allows rd=x2 and imm=0 (unlike C.LUI).
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number. llvm-mc rejects numeric rd.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_c_lui)
 
 - Valid 2-operand C.LUI with rd ∉ {x0,x2} and imm in [1,31]∪[1048544,1048575] matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.lui x1, 1 = 0x6085, c.lui x1, 31 = 0x60fd, c.lui x1, 1048544 = 0x7081, c.lui x1, 1048575 = 0x70fd, c.lui a0, 1 = 0x6505, c.lui x31, 1 = 0x6f85.
