@@ -68,3 +68,4 @@
 | 26 | src/backend/x86/assembler | cmpxchg reg-to-reg form rejected (mem form works) | **new issue filed** | [#840](https://github.com/fermat-hkrc/claudes-c-compiler/issues/840) |
 | 26 | src/backend/x86/assembler | suffix-less movzx/movsx + cwde/cdqe rejected (8 forms; suffixed forms all byte-exact) | **new issue filed** | [#841](https://github.com/fermat-hkrc/claudes-c-compiler/issues/841) |
 | 26 | src/backend/arm/assembler | ldursb/ldursh/ldursw unscaled sign-ext loads missing | **new issue filed** (21-form battery) | [#842](https://github.com/fermat-hkrc/claudes-c-compiler/issues/842) |
+| 26 | src/frontend/sema | named zero-width bit-field accepted (C11 constraint violation) | **new issue filed** | [#848](https://github.com/fermat-hkrc/claudes-c-compiler/issues/848) |
