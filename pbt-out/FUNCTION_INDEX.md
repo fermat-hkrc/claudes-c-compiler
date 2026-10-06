@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 181 | Excluded: 126
+> Total files: 11 | Total functions: 307 | PBT candidates: 182 | Excluded: 125
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -78,7 +78,7 @@
 | classify_float_binop | cast.rs | 208 | function | no | out of campaign scope |
 | f128_cmp_libcall | cast.rs | 239 | function | no | out of campaign scope |
 | f128_const_halves | cast.rs | 253 | function | no | out of campaign scope |
-| encode_ldr_str_auto | load_store.rs | 7 | function | no | out of campaign scope |
+| encode_ldr_str_auto | load_store.rs | 7 | function | yes | - |
 | encode_ldr_str | load_store.rs | 33 | function | yes | - |
 | encode_ldur_stur | load_store.rs | 248 | function | yes | - |
 | encode_ldtr_sized | load_store.rs | 292 | function | yes | - |

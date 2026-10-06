@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_ldr_str_auto)
+
+- Valid unsigned LDR/STR Wt/Xt, [Xn|SP, #pimm] with auto-detected size matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins ldr x0,[x1]=0xF9400020, ldr w0,[x1]=0xB9400020, str x0,[x1]=0xF9000020.
+- Valid unsigned LDR/STR St/Dt/Qt matches llvm-mc including Q opc=11/10 and shift=4 (1000 cases). KAT pins ldr s0,[x1]=0xBD400020, ldr d0,[x1]=0xFD400020, ldr q0,[x1]=0x3DC00020.
+- Load XOR store = bit 22 for W/X/S/D/Q/B/H at offset 0; W XOR X at equal Rt/Rn = bit 30 (1000 cases).
+- Empty / non-Reg first operand / arity-1 Reg returns Err (1000 cases).
+- Aliases lr, xzr, wzr, XZR, WZR, X0, W0, x31, w31 match llvm-mc (1000 cases).
+- LDR literal Symbol is WordWithReloc Ldr19 addend 0 matching llvm-mc `ldr Rt, #0`; STR literal returns Err (1000 cases).
+- Bt/Ht, bare Vn, GNU fp, and SP dest currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_ldr_str_auto)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). GNU as 2.38 agrees on Wt/Xt/Bt/Ht/St/Dt/Qt and rejects bare Vn / SP dest / STR-literal.
+- Harness: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs, cargo test --lib encode_ldr_str_auto, proptest cases=1000.
+- Dispatch: encoder/mod.rs:484-486 `"ldr" => encode_ldr_str_auto(operands, true)`, `"str" => encode_ldr_str_auto(operands, false)`.
+- Sibling encode_ldr_str is not a same-job independent differential (callee, explicit size).
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_ldr_str_auto_neg_v_reg / encode_ldr_str_auto_diff_fp_alias. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+- Five failing properties are 4 SUT bugs (B/H size, bare V, fp alias, SP dest). See pbt-out/bug_reports/encode_ldr_str_auto_*.md.
+
+## Quirks (encode_ldr_str_auto)
+
+- ASCII case of register names is accepted (to_lowercase).
+- parse_reg_num maps xzr/wzr/x31/w31 to 31 (ZR). SP as Rt is a separate failing property (see bugs).
+- Default unknown prefix is 64-bit; V and B/H currently hit that path (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 25-line body.
+
 # Confirmed invariants (encode_cond_branch)
 
 - Reloc-form B.cond word (imm19=0) matches llvm-mc `b.{cond} #0` for all 18 condition names including cs/hs, cc/lo, al, nv, and ASCII case (1000 cases). KAT pins b.eq foo word=0x54000000 CondBr19 ELF 280; llvm-mc b.eq #0=0x54000000, b.ne #0=0x54000001, b.nv #0=0x5400000f, b.al #0=0x5400000e, b.hs/cs #0=0x54000002, b.lo/cc #0=0x54000003.

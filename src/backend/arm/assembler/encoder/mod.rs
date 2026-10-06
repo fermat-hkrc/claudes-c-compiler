@@ -169,6 +169,8 @@ mod encode_uxtb_pbt;
 #[cfg(test)]
 mod encode_ldr_str_pbt;
 #[cfg(test)]
+mod encode_ldr_str_auto_pbt;
+#[cfg(test)]
 mod encode_ldp_stp_pbt;
 #[cfg(test)]
 mod encode_ldnp_stnp_pbt;

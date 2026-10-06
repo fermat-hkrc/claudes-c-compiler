@@ -1,108 +1,151 @@
-# PBT Campaign Report: encode_cond_branch
+# PBT Campaign Report: encode_ldr_str_auto
 
 ## Summary
 
-**Verdict:** 1 high, 2 medium: encode_cond_branch rejects every immediate PC offset (`b.eq #0` is Err), ignores extra operands, and treats `:lo12:` modifiers as plain symbols, so gas-compatible `b.eq`/`b.ne`/… assembly is wrong or silently accepted.
+**Verdict:** 1 high: encode_ldr_str_auto maps Bt/Ht to 64-bit D-form (ldr b0,[x1] emits 0xfd400020 instead of 0x3d400020), so SIMD byte/halfword loads assemble as 8-byte transfers; 1 high: SP dest is accepted and encoded as D31; plus 2 medium (bare Vn silently becomes D-form; GNU `fp` alias is rejected).
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_cond_branch
+**Modules tested:** encode_ldr_str_auto
 **Tests:** 11
-**Result:** 8 passing, 3 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual audit of the 14-line body plus three targeted properties.
+**Result:** 6 passing, 5 failing properties, 4 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes (the documented non-Reg first-operand Err path has encode_ldr_str_auto_neg_first_operand)
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 25-line body plus encode_ldr_str_auto_neg_v_reg / encode_ldr_str_auto_diff_fp_alias.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_cond_branch | 11 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_ldr_str_auto | 11 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_cond_branch rejects a valid immediate PC offset
+### B1: encode_ldr_str_auto encodes Bt/Ht as 64-bit D-form
 
-**Formal:** ∀ cond ∈ {eq,ne,cs,hs,cc,lo,mi,pl,vs,vc,hi,ls,ge,lt,gt,le,al,nv}, ∀ imm ∈ {k·4 | k ∈ ℤ, −1048576 ≤ k·4 ≤ 1048572}. encode_cond_branch(cond, [Imm(imm)]) = Word(w) ∧ w = llvm-mc(`b.{cond} #imm`)
-**Contract evidence:** documented compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" plus README.md:12 gas contract — ARM/gas/llvm-mc all accept a 19-bit immediate displacement
-**Documentation conflict:** (none) — the encoding comment states imm19 is part of the instruction; the code never handles Imm
+**Formal:** ∀ is_load ∈ {false,true}, rt ∈ [0,31], rn ∈ [0,31], imm12 ∈ [0,4095], pref ∈ {b,h}. encode_ldr_str_auto([Reg(pref+rt), Mem{Xn|SP, imm12*(1<<shift)}], is_load) = Word(llvm-mc(`ldr|str PrefRt, [Xn|SP, #pimm]`)) where (b→size=00 shift=0), (h→size=01 shift=1)
+**Contract evidence:** documented README.md:12 "It accepts the same textual assembly that GCC's gas would consume"; ARM SIMD&FP LDR/STR Bt size=00 / Ht size=01 V=1. load_store.rs:9 names S/D/Q but does not declare B/H invalid.
+**Documentation conflict:** load_store.rs:8-9 lists W/X/S/D/Q only — it does not declare Bt/Ht invalid (not an input-domain restriction). parse_reg_num and is_fp_reg accept b/h. Classified as undocumented gap on an accepted input, not a documented limitation.
 **Severity:** high
-**Counterexample:** encode_cond_branch("eq", [Imm(-1048576)]) — `b.eq #-1048576`
-**Expected / Actual:** Word matching llvm-mc 0x54800000 / Err("expected symbol at operand 0, got Some(Imm(-1048576))")
-**Impact:** Immediate-form conditional branches that GNU as and llvm-mc assemble (`b.eq #0`, `b.ne #4`, …) cannot be produced by this encoder.
-**Root cause:** compare_branch.rs:199 always calls get_symbol, which has no Operand::Imm arm, so every immediate form is rejected instead of encoding 01010100 imm19 0 cond.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:199`
+**Counterexample:** encode_ldr_str_auto([Reg("b0"), Mem{base:"x0", offset:0}], is_load=false) then compare to llvm-mc `str b0, [x0]`
+**Expected / Actual:** 0x3d000000 / 0xfd000000
+**Impact:** SIMD byte and halfword load/store instructions assemble as 64-bit FP D-form; wrong transfer size and scale.
+**Root cause:** load_store.rs:26 unknown prefixes including `b`/`h` take `else { 0b11 }`, so Bt/Ht inherit D-form size=11 V=1.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:26`
 ```rust
-    let (sym, addend) = get_symbol(operands, 0)?;
+    } else {
+        0b11 // default 64-bit
+    };
 ```
-**Suggested fix:** Handle Operand::Imm: require a 4-byte-aligned offset in [-1048576, 1048572] and emit Word with imm19 = imm/4.
+**Suggested fix:** Map `h`→size=01 and `b`→size=00 before the default; keep `is_128bit` only for `q`.
 ```rust
-    if let Some(Operand::Imm(imm)) = operands.get(0) {
-        if operands.len() != 1 {
-            return Err(format!("b.{}: extra operand", cond));
-        }
-        if imm % 4 != 0 || *imm < -1_048_576 || *imm > 1_048_572 {
-            return Err(format!("b.{} offset {} unaligned or out of range", cond, imm));
-        }
-        let imm19 = ((*imm as i32) >> 2) as u32 & 0x7ffff;
-        return Ok(EncodeResult::Word((0b01010100 << 24) | (imm19 << 5) | cond_val));
-    }
-    let (sym, addend) = get_symbol(operands, 0)?;
+    } else if reg_name.starts_with('h') {
+        0b01
+    } else if reg_name.starts_with('b') {
+        0b00
+    } else {
+        0b11
+    };
 ```
-**Bug report:** bug_reports/encode_cond_branch_imm_offset.md
-**Repro seed:** cc c4c8a4a11772a960febcea7927a7b6864b93d2b36271b77ac170ddb03c77b231
-**Raw output:** Test failed: SUT rejected valid B.cond b.eq #-1048576: Err("expected symbol at operand 0, got Some(Imm(-1048576))"). minimal failing input: cond = "eq", imm = -1048576
+**Bug report:** bug_reports/encode_ldr_str_auto_byte_half_size.md
+**Repro seed:** is_load=false, rt=0, rn=0, imm12=0, is_h=false (proptest cc 9180621a6e20b55ab1bd167fa93b0c060a965641616fcc60a9895cc3b3072241)
+**Raw output:**
+```text
+Test failed: assertion failed: `(left == right)`
+  left: `4244635648`,
+ right: `1023410176`: SUT vs llvm-mc mismatch for str b0, [x0]
+minimal failing input: is_load = false, rt = 0, rn = 0, imm12 = 0, is_h = false
+```
 
-### B2: encode_cond_branch ignores extra operands
+### B2: encode_ldr_str_auto encodes bare Vn as D-form instead of rejecting it
 
-**Formal:** ∀ cond ∈ 18 names, ∀ s, ∀ extra ∈ {Reg,Imm,Symbol,Mem}. encode_cond_branch(cond, [Symbol(s), extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas contract; llvm-mc/gas reject a second operand on b.eq)
-**Documentation conflict:** (none)
+**Formal:** ∀ is_load ∈ {false,true}, rt ∈ [0,31], rn ∈ [0,31]. encode_ldr_str_auto([Reg("v"+rt), Mem{Xn|SP, 0}], is_load) = Err
+**Contract evidence:** documented README.md:12 gas contract; llvm-mc rejects `ldr v0, [x1]` as invalid operand. Operand::Reg documents v0-v31 so the name is in-domain for the parser.
+**Documentation conflict:** (none) — the size-detect comment does not mention V; the else default is the producing statement, not an exclusion.
 **Severity:** medium
-**Counterexample:** encode_cond_branch("eq", [Symbol("labl0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(WordWithReloc CondBr19 labl0)
-**Impact:** `b.eq foo, x0` is assembled as `b.eq foo`; invalid assembly is silently accepted.
-**Root cause:** compare_branch.rs:199-209 calls get_symbol(operands, 0) and returns success without checking operands.len().
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:199`
+**Counterexample:** encode_ldr_str_auto([Reg("v0"), Mem{base:"x0", offset:0}], is_load=false)
+**Expected / Actual:** Err / Ok(Word(0xfd000000))
+**Impact:** Bare V-form LDR/STR silently become 64-bit FP D-form with no diagnostic.
+**Root cause:** load_store.rs:26 `v` falls into default size=11; is_fp_reg('v') sets V=1, producing D-form.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:26`
 ```rust
-    let (sym, addend) = get_symbol(operands, 0)?;
+    } else {
+        0b11 // default 64-bit
+    };
 ```
-**Suggested fix:** Reject any operand list whose length is not exactly 1.
+**Suggested fix:** Return Err for a `v` prefix (bare Vn is not a scalar LDR/STR Rt).
 ```rust
-    if operands.len() != 1 {
-        return Err(format!("b.{}: expected 1 operand, got {}", cond, operands.len()));
-    }
-    let (sym, addend) = get_symbol(operands, 0)?;
+    } else if reg_name.starts_with('v') {
+        return Err("ldr/str: bare Vn is not a valid scalar Rt".to_string());
+    } else {
+        0b11
+    };
 ```
-**Bug report:** bug_reports/encode_cond_branch_extra_operand.md
-**Repro seed:** (deterministic; fails on first case cond="eq", suffix=0, which=0)
-**Raw output:** Test failed: b.eq label, extra (which=0) must Err (llvm-mc: invalid operand). minimal failing input: cond = "eq", suffix = 0, which = 0
+**Bug report:** bug_reports/encode_ldr_str_auto_bare_v.md
+**Repro seed:** is_load=false, rt=0, rn=0
+**Raw output:**
+```text
+Test failed: bare Vn must Err (llvm-mc: invalid operand); got Ok(Word(4244635648))
+minimal failing input: is_load = false, rt = 0, rn = 0
+```
 
-### B3: encode_cond_branch accepts :lo12: modifiers as branch targets
+### B3: encode_ldr_str_auto rejects the GNU fp alias of X29
 
-**Formal:** ∀ cond ∈ 18 names. encode_cond_branch(cond, [Modifier{lo12, foo}|ModifierOffset{lo12, foo, 8}]) is Err
-**Contract evidence:** inferred (README.md:12 gas contract; llvm-mc/gas reject b.eq :lo12:foo)
-**Documentation conflict:** (none)
+**Formal:** ∀ is_load ∈ {false,true}, rn ∈ [0,30]. encode_ldr_str_auto([Reg("fp"), Mem{Xn, 0}], is_load) = Word(llvm-mc(`ldr|str fp, [Xn]`))
+**Contract evidence:** documented README.md:12 "It accepts the same textual assembly that GCC's gas would consume"; llvm-mc `ldr fp, [x1]` = 0xf940003d = `ldr x29, [x1]`. lr is already special-cased in this function.
+**Documentation conflict:** (none) — parse_reg_num lists lr/sp/xzr/wzr but not fp; that is an omission, not an exclusion of fp.
 **Severity:** medium
-**Counterexample:** encode_cond_branch("eq", [Modifier { kind: "lo12", symbol: "foo" }])
-**Expected / Actual:** Err / Ok(WordWithReloc CondBr19 symbol foo addend 0)
-**Impact:** `:lo12:` is dropped and the inner symbol is used as a CondBr19 target, which is not a valid B.cond addressing mode.
-**Root cause:** compare_branch.rs:199 calls get_symbol, whose Modifier/ModifierOffset arms return the inner symbol and drop the modifier kind.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:199`
+**Counterexample:** encode_ldr_str_auto([Reg("fp"), Mem{base:"x0", offset:0}], is_load=false)
+**Expected / Actual:** Word(llvm-mc `str fp, [x0]`) / Err("invalid register: fp")
+**Impact:** GNU assembly using `fp` as an LDR/STR data register fails to assemble.
+**Root cause:** parse_reg_num (encoder/mod.rs:294) has no `fp => 29` alias; get_reg then fails inside encode_ldr_str. encode_ldr_str_auto's default 64-bit size would have been correct.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/mod.rs:294`
 ```rust
-    let (sym, addend) = get_symbol(operands, 0)?;
+        "sp" | "wsp" => Some(31),
+        "xzr" | "wzr" => Some(31),
+        "lr" => Some(30),
+        _ => {
 ```
-**Suggested fix:** Reject Operand::Modifier and Operand::ModifierOffset before calling get_symbol.
+**Suggested fix:** Alias `fp` to 29 next to `lr`.
 ```rust
-    match operands.get(0) {
-        Some(Operand::Modifier { .. }) | Some(Operand::ModifierOffset { .. }) => {
-            return Err(format!("b.{} does not take a relocation modifier", cond));
-        }
-        _ => {}
+        "lr" => Some(30),
+        "fp" => Some(29),
+```
+**Bug report:** bug_reports/encode_ldr_str_auto_fp_alias.md
+**Repro seed:** is_load=false, rn=0
+**Raw output:**
+```text
+Test failed: SUT rejected valid str fp, [x0]: invalid register: fp.
+minimal failing input: is_load = false, rn = 0
+```
+
+### B4: encode_ldr_str_auto accepts SP as LDR/STR Rt and encodes it as D31
+
+**Formal:** ∀ is_load ∈ {false,true}, rn ∈ [0,31]. encode_ldr_str_auto([Reg("sp"), Mem{Xn|SP, 0}], is_load) = Err
+**Contract evidence:** documented README.md:12 gas contract; llvm-mc rejects `ldr sp, [x0]`; ARM Rt=31 is ZR not SP.
+**Documentation conflict:** load_store.rs:17 names `sp` as 64-bit for size detection — that is a size map for the first operand, not a declaration that SP is a valid Rt. llvm-mc/gas reject SP dest.
+**Severity:** high
+**Counterexample:** encode_ldr_str_auto([Reg("sp"), Mem{base:"x0", offset:0}], is_load=false)
+**Expected / Actual:** Err / Ok(Word(0xfd00001f)) (`str d31, [x0]`)
+**Impact:** `ldr/str sp, [Xn]` assembles as a 64-bit FP store of D31 instead of being rejected.
+**Root cause:** load_store.rs:17 maps `sp` to size=11 then encode_ldr_str does not reject SP as Rt; is_fp_reg("sp") is true (prefix s) so V=1.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:17`
+```rust
+    } else if reg_name.starts_with('x') || reg_name == "sp" || reg_name == "xzr" || reg_name == "lr" {
+        0b11 // 64-bit
+```
+**Suggested fix:** Reject SP/WSP as the data register before delegating.
+```rust
+    if reg_name == "sp" || reg_name == "wsp" {
+        return Err("ldr/str: SP is not a valid Rt".to_string());
     }
-    let (sym, addend) = get_symbol(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_cond_branch_modifier.md
-**Repro seed:** (deterministic; fails on first case cond="eq", which=0)
-**Raw output:** Test failed: b.eq :lo12:foo must Err (which=0); llvm-mc/gas reject modifiers. minimal failing input: cond = "eq", which = 0
+**Bug report:** bug_reports/encode_ldr_str_auto_sp_dest.md
+**Repro seed:** is_load=false, rn=0
+**Raw output:**
+```text
+Test failed: SP dest must Err (llvm-mc: invalid operand); got Ok(Word(4244635679))
+minimal failing input: is_load = false, rn = 0
+```
 
 ## Design Caveats
 
@@ -112,63 +155,72 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs | 11 properties + 4 KAT + 3 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_cond_branch_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs | 11 properties + 2 passing KAT + 6 failing regression witnesses |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_cond_branch -- --test-threads=1
+cargo test --lib encode_ldr_str_auto -- --test-threads=1
 ```
 
-B1 immediate offset:
+B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_cond_branch_diff_imm_llvm_mc -- --test-threads=1
+cargo test --lib test_encode_ldr_str_auto_regression_byte_reg -- --test-threads=1
+cargo test --lib encode_ldr_str_auto_diff_fp_bh -- --test-threads=1
 ```
 
-B2 extra operand:
+B2:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_cond_branch_neg_extra_operand -- --test-threads=1
+cargo test --lib test_encode_ldr_str_auto_regression_bare_v -- --test-threads=1
 ```
 
-B3 modifier:
+B3:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_cond_branch_neg_modifier -- --test-threads=1
+cargo test --lib test_encode_ldr_str_auto_regression_fp_alias -- --test-threads=1
 ```
+
+B4:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_ldr_str_auto_regression_sp_dest -- --test-threads=1
+```
+
+Build contract reused: `cargo test --lib encode_ldr_str_auto -- --test-threads=1` (target swapped from `encode_ldrsw_kat_llvm_mc_x0_x1`).
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_cond_branch_imm_offset.md
-- pbt-out/bug_reports/encode_cond_branch_imm_offset.html
-- pbt-out/bug_reports/encode_cond_branch_extra_operand.md
-- pbt-out/bug_reports/encode_cond_branch_extra_operand.html
-- pbt-out/bug_reports/encode_cond_branch_modifier.md
-- pbt-out/bug_reports/encode_cond_branch_modifier.html
-- pbt-out/build.log
-- pbt-out/run/ (scratch; cargo used the repo target/ dir)
-
-Tier: standard. Sweep round 1/1 spent (coverage_gaps file-level NOT LINKED; manual body audit + neg_bad_operand / symbol_misclassified / neg_modifier). Closed: every documented behavior of encode_cond_branch has a property; remaining gaps are the three filed bugs.
+- pbt-out/INVARIANTS.md
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/run/encode_ldr_str_auto.log
+- pbt-out/bug_reports/encode_ldr_str_auto_byte_half_size.md
+- pbt-out/bug_reports/encode_ldr_str_auto_byte_half_size.html
+- pbt-out/bug_reports/encode_ldr_str_auto_bare_v.md
+- pbt-out/bug_reports/encode_ldr_str_auto_bare_v.html
+- pbt-out/bug_reports/encode_ldr_str_auto_fp_alias.md
+- pbt-out/bug_reports/encode_ldr_str_auto_fp_alias.html
+- pbt-out/bug_reports/encode_ldr_str_auto_sp_dest.md
+- pbt-out/bug_reports/encode_ldr_str_auto_sp_dest.html
+- proptest-regressions/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.txt (framework shrunk witnesses)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 11:31 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 180/307 total | PBT candidates: 180 | Tested: 180 (100%) | 1 pass, 180 fail
+> Last updated: 2026-10-06 12:02 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 181/307 total | PBT candidates: 181 | Tested: 181 (100%) | 1 pass, 181 fail
 
 ## Summary
 
@@ -177,10 +229,10 @@ Tier: standard. Sweep round 1/1 spent (coverage_gaps file-level NOT LINKED; manu
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 180 |
-| **Tested (of PBT candidates)** | **180 / 180 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 180 / -1 |
-| **Overall (tested / all functions)** | **180 / 307 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 181 |
+| **Tested (of PBT candidates)** | **181 / 181 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 181 / -1 |
+| **Overall (tested / all functions)** | **181 / 307 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -188,13 +240,13 @@ Tier: standard. Sweep round 1/1 spent (coverage_gaps file-level NOT LINKED; manu
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 180 | 180 | 0 | 100% |
+|  | 181 | 181 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 180 | 180 | 0 | 100% |
+| unknown | 181 | 181 | 0 | 100% |
 
 ## File Coverage
 
@@ -206,7 +258,7 @@ Tier: standard. Sweep round 1/1 spent (coverage_gaps file-level NOT LINKED; manu
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 18 | 18 | 100% | covered |
+| load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -397,3 +449,4 @@ Tier: standard. Sweep round 1/1 spent (coverage_gaps file-level NOT LINKED; manu
 | encode_adrp | load_store.rs |
 | encode_mov | data_processing.rs |
 | encode_cond_branch | compare_branch.rs |
+| encode_ldr_str_auto | load_store.rs |
