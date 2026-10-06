@@ -1,4 +1,4 @@
-> Total files: 13 | Total functions: 330 | PBT candidates: 194 | Excluded: 136
+> Total files: 13 | Total functions: 330 | PBT candidates: 195 | Excluded: 135
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -326,7 +326,7 @@
 | encode_zbb_unary_f5 | base.rs | 301 | function | no | out of campaign scope
 | encode_zbb_unary_w | base.rs | 309 | function | no | out of campaign scope
 | encode_zbb_zexth | base.rs | 316 | function | no | out of campaign scope |
-| encode_fence | system.rs | 5 | function | no | out of campaign scope |
+| encode_fence | system.rs | 5 | function | yes | - |
 | encode_sfence_vma | system.rs | 30 | function | no | out of campaign scope |
 | encode_csr | system.rs | 40 | function | yes | - |
 | encode_csri | system.rs | 56 | function | no | out of campaign scope |

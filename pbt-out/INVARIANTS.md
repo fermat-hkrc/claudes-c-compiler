@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_fence)
+
+- Requested `--func encode_fence` is absent from base.rs; the FENCE I-type encoder is encode_fence (system.rs:5), dispatched from encoder/mod.rs:682 with operands passed through.
+- Valid `fence pred, succ` with in-order subsequences of iorw matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins bare fence / fence iorw, iorw = 0x0ff0000f, fence rw, rw = 0x0330000f, fence r, rw = 0x0230000f, fence rw, w = 0x0310000f, fence i, o = 0x0840000f.
+- Empty operands equal FenceArg iorw,iorw and 0x0FF0000F (system.rs:7).
+- I-type layout holds: opcode=0b0001111, rd=0, funct3=0, rs1=0, fm=0, pred in bits[27:24], succ in bits[23:20] (1000 cases).
+- Imm(0), extra operands, arity 1, out-of-order letters, and non-FenceArg kinds currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_fence)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs, cargo test --lib encode_fence, proptest cases=1000.
+- Dispatch: encoder/mod.rs:682 fence => encode_fence.
+- Requested `--func encode_fence` is absent from base.rs; the in-scope symbol is system.rs:encode_fence.
+- Sibling encode_i / fence.i / fence.tso are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries). Sweep was a manual arm audit of empty / FenceArg / non-FenceArg / len==1. Closed: tier round spent; remaining documented gaps are the five filed bugs.
+
+## Quirks (encode_fence)
+
+- parse_fence_bits and is_fence_arg fold ASCII case; llvm-mc fence letter operands are case-sensitive. Uppercase is covered by the out-of-order negative property (B4).
+- Numeric 0 is a valid llvm-mc fence operand; the parser emits Imm(0), not FenceArg (see B1).
+- encode_fence always returns Ok today (never Err).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_csr / requested encode_system)
 
 - Requested `--func encode_system` is absent from base.rs; the SYSTEM I-type CSR encoder is encode_csr (system.rs:40), dispatched for csrrw/csrrs/csrrc.

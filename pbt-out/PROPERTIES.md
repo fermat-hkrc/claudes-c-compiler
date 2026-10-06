@@ -1,307 +1,222 @@
-# Properties: encode_csr (requested encode_system)
+# Properties: encode_fence
 
-## encode_csr_diff_llvm_mc
+## encode_fence_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent RISC-V assembler. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree SYSTEM/CSR decoder). encode_i / encode_csri / encode_csrr rejected as primary differential (same-job gate: private packer / explicit-imm sibling / pseudo).
-- Doc contract: encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint b8df2b19
-- Seed: encode_alu_reg_w_pbt.rs:encode_alu_reg_w_diff_llvm_mc
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, csr ∈ KnownCsrNames. encode_csr([Reg(rd), Csr(csr), Reg(rs1)], funct3(mn)) = Word(w) ∧ w = llvm-mc("mn rd, csr, rs1")
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent RISC-V assembler. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree FENCE decoder). encode_i / fence.i / fence.tso rejected as same-job siblings (private packer / different mnemonics). Domain is llvm-mc-valid letter combinations: non-empty subsequences of iorw selected in order.
+- Doc contract: encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint 077a9290
+- Seed: encode_csr_pbt.rs:368 encode_csr_diff_llvm_mc
+- Formal: ∀ pred, succ ∈ in-order-subsequences(iorw). encode_fence([FenceArg(pred), FenceArg(succ)]) = Word(w) ∧ w = llvm-mc("fence pred, succ")
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csr
+function: encoder.encode_fence
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mn, rd, csr, rs1]
-  domain: { mn: csr_reg_mnemonic, rd: gpr_name, csr: known_csr_name, rs1: gpr_name }
+  vars: [pred, succ]
+  domain: { pred: in_order_iorw, succ: in_order_iorw }
   relation:
     op: eq
-    lhs: encode_csr([Reg(rd), Csr(csr), Reg(rs1)], funct3(mn))
-    rhs: llvm_mc("mn rd, csr, rs1")
+    lhs: sut_word([FenceArg(pred), FenceArg(succ)])
+    rhs: llvm_mc_word("fence " + pred + ", " + succ)
 generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  csr: { gen: string }
-  rs1: { gen: string }
-evidence: src/backend/riscv/assembler/README.md:311-312 System csrr/csrw/csrs/csrc; encoder/mod.rs:691-693 csrrw/csrrs/csrrc dispatch to encode_csr
+  pred: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+evidence: encoder/mod.rs:682 fence => encode_fence; llvm-mc -triple=riscv64 -show-encoding
 ```
 
-## encode_csr_imm_auto_diff_llvm_mc
-- Tier: 2
-- Rationale: Documented GNU-as auto-select: a bare Imm as operand 2 encodes the immediate CSR form. Differential vs llvm-mc which also rewrites `csrrc t0, sstatus, 2` to csrrci. Stronger state machine rejected. This is the required metamorphic/differential angle on the Imm branch.
-- Doc contract: system.rs:45 "GNU as allows e.g. `csrrc t0, sstatus, 2` and auto-selects the immediate form." — asserted fingerprint b89ccc22
-- Seed: (none) — GNU as comment on encode_csr itself
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd ∈ GPRNames, csr ∈ KnownCsrNames, zimm ∈ 0..31. encode_csr([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn)) = Word(w) ∧ w = llvm-mc("mn rd, csr, zimm")
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
+## encode_fence_empty_is_iorw
+- Tier: 3
+- Rationale: Algebraic metamorphic from system.rs:7 and llvm-mc (bare `fence` encodes identically to `fence iorw, iorw`). Stronger differential for the empty case is included as a KAT; this property checks the SUT identity independently of llvm-mc so a packer regression still fails.
+- Doc contract: system.rs:7 "fence iorw, iorw" — asserted fingerprint 525bd367
+- Seed: (none)
+- Formal: ∀. encode_fence([]) = encode_fence([FenceArg("iorw"), FenceArg("iorw")]) = Word(0x0FF0000F)
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csr
-oracle: differential
+function: encoder.encode_fence
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [mn, rd, csr, zimm]
-  domain: { mn: csr_reg_mnemonic, rd: gpr_name, csr: known_csr_name, zimm: u32_0_31 }
+  vars: [unit]
+  domain: { unit: unit }
   relation:
     op: eq
-    lhs: encode_csr([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn))
-    rhs: llvm_mc("mn rd, csr, zimm")
+    lhs: sut_word([])
+    rhs: sut_word([FenceArg("iorw"), FenceArg("iorw")])
 generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  csr: { gen: string }
-  zimm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: system.rs:42-45 GNU as auto-selects immediate CSR encoding; llvm-mc matches
+  unit: { gen: const, value: 0 }
+evidence: system.rs:7 empty operands comment fence iorw, iorw; llvm-mc fence encoding [0x0f,0x00,0xf0,0x0f]
 ```
 
-## encode_csr_i_type_fields
+## encode_fence_i_type_fields
 - Tier: 4
-- Rationale: Algebraic invariant from the documented I-type layout. Stronger differential is the sibling property; this pins opcode OP_SYSTEM and field placement independently of llvm-mc.
-- Doc contract: encoder/mod.rs:300 "I-type: imm[31:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint c3260c7a
-- Seed: encode_alu_reg_w_pbt.rs:encode_alu_reg_w_r_type_fields
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ 0..31, csr ∈ 0..4095. let w = encode_csr([Reg(x{rd}), Imm(csr), Reg(x{rs1})], funct3(mn)) in Word form. unpack_i(w) = (opcode=0b1110011, funct3(mn), rd, rs1, csr)
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
+- Rationale: Algebraic invariant from RISC-V ISA / README.md:353 / encoder/mod.rs:303 I-type layout. Weaker than differential (does not pin pred/succ bit assignment against an independent assembler) but catches rd/rs1/funct3/fm/opcode packing bugs even if llvm-mc is unavailable. Independent unpack, not a copy of encode_i.
+- Doc contract: encoder/mod.rs:303 "I-type: imm[31:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 274cd4b0
+- Seed: encode_csr_pbt.rs:399 encode_csr_i_type_fields
+- Formal: ∀ pred, succ ∈ in-order-subsequences(iorw). let w = encode_fence([FenceArg(pred), FenceArg(succ)]) in opcode(w)=0b0001111 ∧ rd(w)=0 ∧ funct3(w)=0 ∧ rs1(w)=0 ∧ fm(w)=0 ∧ pred_bits(w)=iorw_mask(pred) ∧ succ_bits(w)=iorw_mask(succ)
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_csr
+function: encoder.encode_fence
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mn, rd, csr, rs1]
-  domain: { mn: csr_reg_mnemonic, rd: u32_0_31, csr: u32_0_4095, rs1: u32_0_31 }
+  vars: [pred, succ]
+  domain: { pred: in_order_iorw, succ: in_order_iorw }
   relation:
-    op: eq
-    lhs: unpack_i(encode_csr([Reg(x{rd}), Imm(csr), Reg(x{rs1})], funct3(mn)))
-    rhs: (0b1110011, funct3(mn), rd, rs1, csr)
+    op: holds
+    expr: unpack_fence_ok(sut_word([FenceArg(pred), FenceArg(succ)]), pred, succ)
 generators:
-  mn: { gen: string }
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  csr: { gen: int, min: 0, max: 4095, type: u32 }
-  rs1: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:300 I-type layout; encoder/mod.rs:354 OP_SYSTEM; README.md:353
+  pred: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+evidence: README.md:353 I-type layout; encoder/mod.rs:303 I-type; encoder/mod.rs:357 OP_MISC_MEM; RISC-V ISA FENCE fm|pred|succ
 ```
 
-## encode_csr_abi_xn_alias
-- Tier: 4
-- Rationale: Metamorphic: ABI names, xN, and fp=s0/x8 name the same GPR. Imm 0..=31 as rd is the get_reg GCC bare-number contract. Imm as operand 2 is the GNU-as zimm path, not xN. Stronger differential is the sibling property.
-- Doc contract: src/backend/riscv/assembler/parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7," — asserted fingerprint 8f55b73d
-- Seed: encode_alu_reg_w_pbt.rs:encode_alu_reg_w_abi_xn_alias
-- Formal: ∀ n, k ∈ 0..31, mn ∈ {csrrw,csrrs,csrrc}, csr ∈ KnownCsrNames. encode_csr([Reg(x{n}), Csr(csr), Reg(x{k})], f3) = encode_csr([Reg(ABI[n]), Csr(csr), Reg(ABI[k])], f3). When n=8 or k=8, Reg("fp") agrees. Imm(n) as rd agrees with x{n}.
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_fence_imm0_diff_llvm_mc
+- Tier: 2
+- Rationale: llvm-mc accepts numeric 0 as a fence operand ("or be 0"). The parser emits Operand::Imm(0) for `fence 0, ...` (is_fence_arg rejects '0'). Differential over Imm(0) mixed with in-order letter args. Stronger than a crash-only check because the encoding is specified.
+- Doc contract: (none) on encode_fence for numeric 0. Contract inferred from llvm-mc operand rule and parser.rs:1004 is_fence_arg (digits are not FenceArg). fingerprint (none)
+- Seed: encode_csr_pbt.rs:384 encode_csr_imm_auto_diff_llvm_mc
+- Formal: ∀ a, b ∈ in-order-subsequences(iorw) ∪ {0}. encode_fence(op(a), op(b)) = llvm-mc("fence a, b") where op(0)=Imm(0) and op(letters)=FenceArg(letters)
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
+- Status: failing
+- Counterexample: encode_fence([Imm(0), Imm(0)])
+- Bug report: pbt-out/bug_reports/encode_fence_imm0_as_full_barrier.md
 
 ```property
-function: encoder.encode_csr
-oracle: algebraic.metamorphic
+function: encoder.encode_fence
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [n, k, mn, csr]
-  domain: { n: u32_0_31, k: u32_0_31, mn: csr_reg_mnemonic, csr: known_csr_name }
+  vars: [a, b]
+  domain: { a: in_order_iorw_or_zero, b: in_order_iorw_or_zero }
   relation:
     op: eq
-    lhs: encode_csr([Reg(x{n}), Csr(csr), Reg(x{k})], funct3(mn))
-    rhs: encode_csr([Reg(ABI[n]), Csr(csr), Reg(ABI[k])], funct3(mn))
+    lhs: sut_word([op_fence(a), op_fence(b)])
+    rhs: llvm_mc_word("fence " + a + ", " + b)
 generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  k: { gen: int, min: 0, max: 31, type: u32 }
-  mn: { gen: string }
-  csr: { gen: string }
-evidence: parser.rs:22 GPR names; encoder/mod.rs:370 get_reg
+  a: { gen: oneof, options: [0, i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+  b: { gen: oneof, options: [0, i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+evidence: llvm-mc "operand must be formed of letters selected in-order from 'iorw' or be 0"; parser.rs:1004 is_fence_arg
 ```
 
-## encode_csr_name_vs_imm
-- Tier: 4
-- Rationale: Metamorphic: Csr(name), Imm(number), Symbol(name), and hex Csr("0xNNN") are documented get_csr_num alternatives for the same 12-bit CSR. Stronger differential is the sibling property.
-- Doc contract: system.rs:64-68 get_csr_num accepts Imm, Csr, Symbol, Reg — helper of encode_csr
+## encode_fence_neg_extra
+- Tier: 5
+- Rationale: llvm-mc rejects a third operand (`invalid operand for instruction`). encode_instruction passes operands through, so extra operands are caller-reachable. Negative/error contract: encode_fence must Err. Stronger differential does not apply on the error path (no encoding to compare).
+- Doc contract: (none) on encode_fence for extra operands. Contract inferred (llvm-mc + public wrapper encode_instruction passes operands through). fingerprint (none)
+- Seed: encode_csr_pbt.rs:474 encode_csr_neg_extra
+- Formal: ∀ pred, succ ∈ in-order-subsequences(iorw), extra ∈ Operand. encode_fence([FenceArg(pred), FenceArg(succ), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
+- Status: failing
+- Counterexample: encode_fence([FenceArg("i"), FenceArg("i"), Imm(0)]) = Ok(Word)
+- Bug report: pbt-out/bug_reports/encode_fence_extra_operand.md
+
+```property
+function: encoder.encode_fence
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [pred, succ, extra]
+  domain: { pred: in_order_iorw, succ: in_order_iorw, extra: Operand }
+  relation:
+    op: throws
+    expr: encode_fence([FenceArg(pred), FenceArg(succ), extra])
+expected_error: String
+generators:
+  pred: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+  extra: { gen: oneof, options: [Imm(0), Imm(-1), Reg(x0), Symbol(foo), FenceArg(iorw)] }
+evidence: llvm-mc fence iorw, iorw, x0 -> invalid operand; encoder/mod.rs:682 operands passed through
+```
+
+## encode_fence_neg_arity
+- Tier: 5
+- Rationale: llvm-mc rejects a single fence operand (`too few operands for instruction`). Empty is valid (defaults to iorw,iorw); one operand is not. Negative/error contract: encode_fence must Err for len==1.
+- Doc contract: (none) on encode_fence for arity 1. Contract inferred (llvm-mc). fingerprint (none)
+- Seed: encode_csr_pbt.rs:544 encode_csr_neg_arity_fp_unknown
+- Formal: ∀ op ∈ Operand. encode_fence([op]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
+- Status: failing
+- Counterexample: encode_fence([FenceArg("iorw")]) = Ok(Word(0x0ff0000f))
+- Bug report: pbt-out/bug_reports/encode_fence_arity_one.md
+
+```property
+function: encoder.encode_fence
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [op]
+  domain: { op: Operand }
+  relation:
+    op: throws
+    expr: encode_fence([op])
+expected_error: String
+generators:
+  op: { gen: oneof, options: [FenceArg(iorw), FenceArg(rw), Imm(0), Reg(x0), Symbol(foo)] }
+evidence: llvm-mc fence iorw -> too few operands; llvm-mc fence 0 -> too few operands
+```
+
+## encode_fence_neg_out_of_order
+- Tier: 5
+- Rationale: llvm-mc requires letters selected in-order from iorw (rejects wroi, irow, ii, IORW). parse_fence_bits uses contains() so order/duplicates/case are ignored. Negative/error: encode_fence must Err (or at least not silently encode a valid-looking fence) for out-of-order, duplicate, and uppercase letter strings that llvm-mc rejects.
+- Doc contract: encoder/mod.rs:442 "Parse a fence ordering string (e.g., \"iorw\") into a 4-bit mask." — asserted fingerprint 7cb05145. The helper comment does not declare out-of-order input invalid; llvm-mc does. Classification: asserted (mask from iorw letters) not a domain restriction excluding order.
 - Seed: (none)
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, (name, num) ∈ KnownCsrs. encode_csr([Reg(rd), Csr(name), Reg(rs1)], f3) = encode_csr([Reg(rd), Imm(num), Reg(rs1)], f3) = encode_csr([Reg(rd), Symbol(name), Reg(rs1)], f3) = encode_csr([Reg(rd), Csr("0x{num:x}"), Reg(rs1)], f3)
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_csr
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [mn, rd, name, num, rs1]
-  domain: { mn: csr_reg_mnemonic, rd: gpr_name, name: known_csr_name, num: csr_number_of(name), rs1: gpr_name }
-  relation:
-    op: eq
-    lhs: encode_csr([Reg(rd), Csr(name), Reg(rs1)], funct3(mn))
-    rhs: encode_csr([Reg(rd), Imm(num), Reg(rs1)], funct3(mn))
-generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  name: { gen: string }
-  num: { gen: int, min: 0, max: 4095, type: u32 }
-  rs1: { gen: string }
-evidence: system.rs:64-68 get_csr_num Imm/Csr/Symbol/Reg
-```
-
-## encode_csr_neg_extra
-- Tier: 4
-- Rationale: Negative/error: llvm-mc rejects a fourth operand (`invalid operand for instruction`). encode_instruction passes operands through; extra must Err. Documented by llvm-mc / assembler contract (README.md:6-7 textual assembly).
-- Doc contract: encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint b8df2b19
-- Seed: encode_alu_reg_w_pbt.rs:encode_alu_reg_w_neg_extra
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, csr ∈ KnownCsrNames, extra ∈ Operands. encode_csr([Reg(rd), Csr(csr), Reg(rs1), extra], funct3(mn)) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
+- Formal: ∀ pred ∈ {wroi, irow, ri, wi, oi, wr, ro, wo, ii, rr, ww, IORW, I, Rw}, succ ∈ in-order-subsequences(iorw). encode_fence([FenceArg(pred), FenceArg(succ)]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
 - Status: failing
-- Counterexample: encode_csr([Reg("x0"), Csr("fflags"), Reg("x0"), Imm(0)], 0b001) => Ok(Word(1052787))
-- Bug report: pbt-out/bug_reports/encode_csr_extra_operand.md
+- Counterexample: encode_fence([FenceArg("wroi"), FenceArg("i")]) = Ok(Word)
+- Bug report: pbt-out/bug_reports/encode_fence_out_of_order_letters.md
 
 ```property
-function: encoder.encode_csr
+function: encoder.encode_fence
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mn, rd, csr, rs1, extra]
-  domain: { mn: csr_reg_mnemonic, rd: gpr_name, csr: known_csr_name, rs1: gpr_name, extra: operand }
+  vars: [pred, succ]
+  domain: { pred: invalid_fence_letters, succ: in_order_iorw }
   relation:
     op: throws
-    expr: encode_csr([Reg(rd), Csr(csr), Reg(rs1), extra], funct3(mn))
-generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  csr: { gen: string }
-  rs1: { gen: string }
-  extra: { gen: string }
+    expr: encode_fence([FenceArg(pred), FenceArg(succ)])
 expected_error: String
-evidence: llvm-mc rejects extra operands on csrrw; README.md:6-7 assembler emits textual assembly
+generators:
+  pred: { gen: oneof, options: [wroi, irow, ri, wi, oi, wr, ro, wo, ii, rr, ww, IORW, I, Rw] }
+  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
+evidence: llvm-mc operand must be formed of letters selected in-order from iorw or be 0
 ```
 
-## encode_csr_neg_zimm_oob
-- Tier: 4
-- Rationale: Negative/error: llvm-mc requires zimm in [0, 31]. Documented uimm5 bound must be sampled at bound±1. Field masking of out-of-range values is the recurring assembler bug class.
-- Doc contract: system.rs:45 "GNU as allows e.g. `csrrc t0, sstatus, 2` and auto-selects the immediate form." — asserted fingerprint b89ccc22. The comment documents auto-select for a valid zimm, not wrapping of out-of-range values.
-- Seed: encode_alu_reg_w_pbt.rs:encode_alu_reg_w_neg_oob_imm
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd ∈ GPRNames, csr ∈ KnownCsrNames, zimm ∉ 0..31. encode_csr([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn)) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
+## encode_fence_neg_invalid_operand
+- Tier: 5
+- Rationale: llvm-mc rejects registers, symbols, and numeric values other than 0 as fence operands. encode_fence currently maps any non-FenceArg to 0xF. Negative/error: those operands must Err.
+- Doc contract: (none) on encode_fence for operand kinds. Contract inferred (llvm-mc). fingerprint (none)
+- Seed: encode_csr_pbt.rs:544 encode_csr_neg_arity_fp_unknown
+- Formal: ∀ kind ∈ {Reg, Symbol, Csr, RoundingMode, Mem, Imm(n) where n≠0}. encode_fence([kind, FenceArg("rw")]) is Err ∧ encode_fence([FenceArg("rw"), kind]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
 - Status: failing
-- Counterexample: encode_csr([Reg("x0"), Csr("fflags"), Imm(-1)], 0b001) => Ok(Word(2084979))
-- Bug report: pbt-out/bug_reports/encode_csr_zimm_oob.md
+- Counterexample: encode_fence([Reg("x0"), FenceArg("rw")]) = Ok(Word)
+- Bug report: pbt-out/bug_reports/encode_fence_invalid_operand.md
 
 ```property
-function: encoder.encode_csr
+function: encoder.encode_fence
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mn, rd, csr, zimm]
-  domain: { mn: csr_reg_mnemonic, zimm: i64_outside_0_31 }
+  vars: [bad]
+  domain: { bad: non_fence_operand }
   relation:
     op: throws
-    expr: encode_csr([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn))
-generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  csr: { gen: string }
-  zimm: { gen: int, type: i64 }
+    expr: encode_fence([bad, FenceArg("rw")])
 expected_error: String
-evidence: llvm-mc "immediate must be an integer in the range [0, 31]"
-```
-
-## encode_csr_neg_csr_oob
-- Tier: 4
-- Rationale: Negative/error: llvm-mc requires CSR number in [0, 4095]. Documented 12-bit csr[11:0] bound must be sampled at bound±1.
-- Doc contract: encoder/mod.rs:300 "I-type: imm[31:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint c3260c7a. CSR occupies the 12-bit imm field.
-- Seed: encode_alu_reg_w_pbt.rs:encode_alu_reg_w_neg_oob_imm
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, csr_num ∉ 0..4095. encode_csr([Reg(rd), Imm(csr_num), Reg(rs1)], funct3(mn)) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
-- Status: failing
-- Counterexample: encode_csr([Reg("x0"), Imm(-1), Reg("x0")], 0b001) => Ok(Word(4293922931))
-- Bug report: pbt-out/bug_reports/encode_csr_csr_oob.md
-
-```property
-function: encoder.encode_csr
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mn, rd, csr_num, rs1]
-  domain: { mn: csr_reg_mnemonic, csr_num: i64_outside_0_4095 }
-  relation:
-    op: throws
-    expr: encode_csr([Reg(rd), Imm(csr_num), Reg(rs1)], funct3(mn))
 generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  csr_num: { gen: int, type: i64 }
-  rs1: { gen: string }
-expected_error: String
-evidence: llvm-mc "immediate must be an integer in the range [0, 4095]"
-```
-
-## encode_csr_reg_and_decimal_csr
-- Tier: 4
-- Rationale: Sweep: documented get_csr_num arms Operand::Reg ("sometimes CSR names look like regs") and decimal name.parse::<u32>(). Metamorphic vs Csr(name). Stronger differential is the sibling property.
-- Doc contract: system.rs:69 "sometimes CSR names look like regs" — asserted fingerprint 9281a0d6
-- Seed: (none)
-- Formal: ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, (name, num) ∈ KnownCsrs. encode_csr([Reg(rd), Reg(name), Reg(rs1)], f3) = encode_csr([Reg(rd), Csr(name), Reg(rs1)], f3) = encode_csr([Reg(rd), Csr(num.to_string()), Reg(rs1)], f3)
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_csr
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [mn, rd, name, num, rs1]
-  domain: { mn: csr_reg_mnemonic, rd: gpr_name, name: known_csr_name, num: csr_number_of(name), rs1: gpr_name }
-  relation:
-    op: eq
-    lhs: encode_csr([Reg(rd), Reg(name), Reg(rs1)], funct3(mn))
-    rhs: encode_csr([Reg(rd), Csr(name), Reg(rs1)], funct3(mn))
-generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  name: { gen: string }
-  num: { gen: int, min: 0, max: 4095, type: u32 }
-  rs1: { gen: string }
-evidence: system.rs:69 sometimes CSR names look like regs; system.rs:110-114 parse as number
-```
-
-## encode_csr_neg_arity_fp_unknown
-- Tier: 4
-- Rationale: Negative/error: empty/missing operands, FP registers as rd/rs1, unknown CSR names, and invalid GPR names must Err (get_reg / get_csr_num contracts).
-- Doc contract: encoder/mod.rs:370 "GCC sometimes emits bare register numbers (0-31) in inline asm" — caller precondition (get_reg) fingerprint 27d70208. system.rs:110 "unknown CSR: {}"
-- Seed: encode_alu_reg_w_pbt.rs:encode_alu_reg_w_neg_arity_fp
-- Formal: ∀ f3 ∈ {001,010,011}. encode_csr([], f3) = Err(_). encode_csr([Reg(rd)], f3) = Err(_). encode_csr([Reg(rd), Csr(csr)], f3) = Err(_) (missing rs1). FP dest/rs1 Err. unknown CSR name Err. invalid GPR name Err.
-- Test file: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_csr
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mn, rd, csr, rs1, fp, bad, unknown]
-  domain: { mn: csr_reg_mnemonic, fp: fp_name, bad: invalid_gpr_name, unknown: unknown_csr_name }
-  relation:
-    op: throws
-    expr: encode_csr(&[], funct3(mn))
-generators:
-  mn: { gen: string }
-  rd: { gen: string }
-  csr: { gen: string }
-  rs1: { gen: string }
-  fp: { gen: string }
-  bad: { gen: string }
-  unknown: { gen: string }
-expected_error: String
-evidence: get_reg expected register; get_csr_num unknown CSR; llvm-mc rejects FP/unknown
+  bad: { gen: oneof, options: [Reg(x0), Symbol(foo), Csr(mstatus), RoundingMode(rne), Imm(1), Imm(15), Imm(-1), Imm(16)] }
+evidence: llvm-mc fence x0, x0 / fence 1, 2 / fence 15, 15 -> operand must be letters in-order from iorw or be 0
 ```

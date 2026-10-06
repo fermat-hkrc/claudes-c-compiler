@@ -1,20 +1,31 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_csr / requested encode_system)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter listed unrelated binaries).
-
-## This campaign
-
-| Metric | Value |
-|--------|-------|
-| Target | encode_csr (requested encode_system) |
-| Source | src/backend/riscv/assembler/encoder/system.rs:40 |
-| Properties | 10 (7 passing, 3 failing) |
-| KAT | 3 passing |
-| Regression witnesses | 3 failing (as expected) |
-| Bugs | 3 |
-| Sweep | 1/1 spent (Reg-as-CSR + decimal CSR name) |
+> Last updated: 2026-10-06 (campaign: encode_fence)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw
+> This campaign: encode_fence tested (3 passing / 5 failing properties)
 
 ## Summary
 
-Requested `--func encode_system` is absent from base.rs. Mapped to encode_csr, the SYSTEM I-type CSR encoder (csrrw/csrrs/csrrc). encode_csr is exercised by cargo test --lib encode_csr. Remaining documented gaps are the three filed bugs (extra operand, zimm oob, csr oob).
+| Metric | Value |
+|--------|-------|
+| Campaign target | encode_fence |
+| Properties this campaign | 8 |
+| Passing / failing | 3 / 5 |
+| Bugs | 5 |
+| Coverage evidence | file-level (symbol presence) |
+| Sweep | 1/1 manual arm audit (empty, FenceArg pair, non-FenceArg wildcard, len==1) |
+
+## File Coverage (this campaign)
+
+| Source File | Funcs | Candidates | Tested | Coverage | Status |
+|-------------|-------|------------|--------|----------|--------|
+| system.rs (encode_fence; requested via base.rs scope) | 1 | 1 | 1 | 100% | covered |
+
+## Oracle Type Distribution (this campaign)
+
+| Oracle Type | Total | Covered |
+|-------------|-------|---------|
+| differential | 2 | 2 |
+| algebraic.metamorphic | 1 | 1 |
+| algebraic.invariant | 1 | 1 |
+| negative_error | 4 | 4 |

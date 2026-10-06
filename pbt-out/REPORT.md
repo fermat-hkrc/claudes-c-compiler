@@ -1,130 +1,160 @@
-# PBT Campaign Report: encode_csr (requested encode_system)
+# PBT Campaign Report: encode_fence
 
 ## Summary
 
-**Verdict:** 3 high: encode_csr silently accepts extra operands, wraps zimm outside 0..=31 into csrrwi/csrrsi/csrrci, and truncates CSR numbers outside 0..=4095, so mistyped CSR instructions assemble to the wrong SYSTEM word.
+**Verdict:** 1 high: encode_fence maps Imm(0) to a full iorw barrier, so `fence 0, 0` assembles as `fence iorw, iorw` (0x0ff0000f instead of 0x0000000f); plus 4 medium bugs (extra operand ignored, arity-1 defaults to full fence, out-of-order letters accepted, invalid operand kinds default to iorw).
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_csr
-**Tests:** 10 properties (plus 3 KAT, 3 regression witnesses)
-**Result:** 7 passing, 3 bugs
-**Change surface:** (no change source given) — requested encode_system was unresolved in base.rs; mapped to encode_csr
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test; C++ reporter listed unrelated binaries). Manual arm audit of encode_csr plus sweep property for get_csr_num Reg/decimal paths.
+**Modules tested:** encode_fence
+**Tests:** 8
+**Result:** 3 passing, 5 bugs
+**Change surface:** requested encode_fence not in base.rs; mapped to system.rs:5 (1 function, 8 properties, 4 error-path properties)
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries). Manual arm audit of encode_fence: empty, FenceArg pair, non-FenceArg wildcard, and len==1 else-arm all executed.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_csr | 10 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fence | 8 | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_csr ignores extra operands
+### B1: encode_fence treats Imm(0) as a full iorw barrier
 
-**Formal:** ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, csr ∈ KnownCsrNames, extra ∈ Operands. encode_csr([Reg(rd), Csr(csr), Reg(rs1), extra], funct3(mn)) = Err(_)
-**Contract evidence:** inferred (llvm-mc rejects extra operands on csrrw; README.md:6-7 assembler consumes textual assembly)
+**Formal:** ∀ a, b ∈ in-order-subsequences(iorw) ∪ {0}. encode_fence(op(a), op(b)) = llvm-mc("fence a, b") where op(0)=Imm(0) and op(letters)=FenceArg(letters)
+**Contract evidence:** inferred (llvm-mc accepts `fence 0, 0` as 0x0000000f; parser.rs emits Imm(0) for numeric 0; encode_instruction passes operands through)
+**Documentation conflict:** (none). system.rs:7 documents empty operands as fence iorw, iorw, not Imm(0).
+**Severity:** high
+**Counterexample:** encode_fence([Imm(0), Imm(0)])
+**Expected / Actual:** 0x0000000f / 0x0ff0000f
+**Impact:** Valid GNU/LLVM `fence 0, 0` and mixed `fence 0, rw` assemble as a stronger barrier than requested.
+**Root cause:** system.rs:11 and system.rs:15 — any non-FenceArg, including Imm(0), is replaced with 0xF.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:11`
+```rust
+            _ => 0xF,
+```
+**Suggested fix:** Decode Imm(0) as 0; reject other non-FenceArg kinds.
+```rust
+            Operand::Imm(0) => 0,
+            Operand::FenceArg(s) => parse_fence_bits(s)?,
+            other => return Err(format!("invalid fence operand: {:?}", other)),
+```
+**Bug report:** bug_reports/encode_fence_imm0_as_full_barrier.md
+**Repro seed:** cc cbebc82bb67bed29b7cfeaa6f5a50554524258cf63e6ab94585cd6b2924c7fa2
+**Raw output:**
+```text
+SUT 0ff0000f != llvm-mc 0000000f for fence 0, 0
+minimal failing input: a = "0", b = "0"
+```
+
+### B2: encode_fence ignores extra operands
+
+**Formal:** ∀ pred, succ ∈ in-order-subsequences(iorw), extra ∈ Operand. encode_fence([FenceArg(pred), FenceArg(succ), extra]) is Err
+**Contract evidence:** inferred (llvm-mc `fence iorw, iorw, x0` → invalid operand; wrapper passes operands through)
 **Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_csr([Reg("x0"), Csr("fflags"), Reg("x0"), Imm(0)], funct3=0b001)
-**Expected / Actual:** Err / Ok(Word(1052787))  // 0x00101073 = csrrw x0, fflags, x0
-**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed SYSTEM CSR word instead of diagnosing the line.
-**Root cause:** system.rs:40-53 reads only operands[0..2] via get_reg/get_csr_num and never checks operands.len(), so any trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:53`
+**Severity:** medium
+**Counterexample:** encode_fence([FenceArg("i"), FenceArg("i"), Imm(0)])
+**Expected / Actual:** Err / Ok(Word)
+**Impact:** Extra tokens after a valid fence are dropped; typos assemble.
+**Root cause:** system.rs:8 `operands.len() >= 2` uses only the first two operands.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:8`
 ```rust
-    Ok(EncodeResult::Word(encode_i(OP_SYSTEM, rd, funct3, rs1, csr as i32)))
+    } else if operands.len() >= 2 {
 ```
-**Suggested fix:** Reject anything other than exactly three operands before packing.
+**Suggested fix:** Require exactly two operands on the non-empty path.
 ```rust
-    if operands.len() != 3 {
-        return Err("csr: expected rd, csr, rs1/zimm".to_string());
-    }
+    } else if operands.len() == 2 {
 ```
-**Bug report:** bug_reports/encode_csr_extra_operand.md
-**Repro seed:** (none — deterministic extra Imm(0); proptest shrunk to csrrw x0, fflags, x0 + Imm(0))
+**Bug report:** bug_reports/encode_fence_extra_operand.md
+**Repro seed:** (first example; successes: 0)
 **Raw output:**
 ```text
-Test failed: extra operand must Err for csrrw x0, fflags, x0 (llvm-mc rejects extra operands); got Ok(Word(1052787)) at src/backend/riscv/assembler/encoder/encode_csr_pbt.rs:485.
-minimal failing input: (mn, f3) = (
-    "csrrw",
-    1,
-), rd = "x0", (csr_name, _num) = (
-    "fflags",
-    1,
-), rs1 = "x0", extra = Imm(
-    0,
-)
+extra operand must Err for fence i, i; got Ok(Word(142606351))
+minimal failing input: pred = "i", succ = "i", extra = Imm(0)
 ```
 
-### B2: encode_csr masks out-of-range zimm instead of rejecting
+### B3: encode_fence with one operand encodes fence iorw, iorw
 
-**Formal:** ∀ mn ∈ {csrrw,csrrs,csrrc}, rd ∈ GPRNames, csr ∈ KnownCsrNames, zimm ∉ 0..31. encode_csr([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn)) = Err(_)
-**Contract evidence:** inferred (llvm-mc "immediate must be an integer in the range [0, 31]"; RISC-V uimm5)
-**Documentation conflict:** system.rs:45 "GNU as allows e.g. `csrrc t0, sstatus, 2` and auto-selects the immediate form." documents auto-select for a valid zimm, not wrapping of out-of-range values. Does not declare zimm=-1/32 invalid or admit a limitation.
-**Severity:** high
-**Counterexample:** encode_csr([Reg("x0"), Csr("fflags"), Imm(-1)], funct3=0b001)
-**Expected / Actual:** Err / Ok(Word(2084979))  // 0x001FD073 = csrrwi x0, fflags, 31
-**Impact:** `csrrw rd, csr, 32` is assembled as `csrrwi rd, csr, 0` and `csrrw rd, csr, -1` as `csrrwi rd, csr, 31`, silently writing the wrong immediate into a CSR.
-**Root cause:** system.rs:47-49 casts the immediate to u32 and masks with 0x1F, so -1 becomes zimm 31 and 32 becomes zimm 0, then encodes the immediate CSR form.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:49`
+**Formal:** ∀ op ∈ Operand. encode_fence([op]) is Err
+**Contract evidence:** inferred (llvm-mc `fence iorw` / `fence 0` → too few operands)
+**Documentation conflict:** (none). system.rs:7 documents the empty default only.
+**Severity:** medium
+**Counterexample:** encode_fence([FenceArg("iorw")])
+**Expected / Actual:** Err / Ok(Word(0x0ff0000f))
+**Impact:** A truncated `fence rw` becomes a full barrier instead of an error.
+**Root cause:** system.rs:18-19 else branch (len == 1) hard-codes (0xF, 0xF) and always returns Ok.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:19`
 ```rust
-        let rs1 = zimm & 0x1F;
+        (0xF, 0xF)
 ```
-**Suggested fix:** Reject zimm outside 0..=31 before masking.
+**Suggested fix:** Reject arity 1.
 ```rust
-        let zimm = get_imm(operands, 2)?;
-        if !(0..=31).contains(&zimm) {
-            return Err("csr: zimm out of range 0..=31".to_string());
-        }
-        let rs1 = (zimm as u32) & 0x1F;
+        return Err("fence requires 0 or 2 operands".into());
 ```
-**Bug report:** bug_reports/encode_csr_zimm_oob.md
-**Repro seed:** (none — deterministic zimm=-1; proptest shrunk to csrrw x0, fflags, -1)
+**Bug report:** bug_reports/encode_fence_arity_one.md
+**Repro seed:** (first example; successes: 0)
 **Raw output:**
 ```text
-Test failed: zimm -1 outside 0..=31 must Err (llvm-mc uimm5); got Ok(Word(2084979)) at src/backend/riscv/assembler/encoder/encode_csr_pbt.rs:502.
-minimal failing input: (_mn, f3) = (
-    "csrrw",
-    1,
-), rd = "x0", (csr_name, _num) = (
-    "fflags",
-    1,
-), zimm = -1
+single operand must Err; got Ok(Word(267386895))
+minimal failing input: op = FenceArg("iorw")
 ```
 
-### B3: encode_csr truncates CSR numbers outside 0..=4095
+### B4: encode_fence accepts out-of-order and duplicate iorw letters
 
-**Formal:** ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, csr_num ∉ 0..4095. encode_csr([Reg(rd), Imm(csr_num), Reg(rs1)], funct3(mn)) = Err(_)
-**Contract evidence:** inferred (llvm-mc "immediate must be an integer in the range [0, 4095]"; RISC-V csr[11:0])
+**Formal:** ∀ pred ∈ {wroi, irow, ri, wi, oi, wr, ro, wo, ii, rr, ww, IORW, I, Rw}, succ ∈ in-order-subsequences(iorw). encode_fence([FenceArg(pred), FenceArg(succ)]) is Err
+**Contract evidence:** inferred (llvm-mc: letters selected in-order from iorw or be 0). Parser is_fence_arg accepts any i/o/r/w combo of length 1..=4, so wroi is caller-reachable.
+**Documentation conflict:** encoder/mod.rs:442 "Parse a fence ordering string (e.g., \"iorw\") into a 4-bit mask." — asserted, not a domain restriction excluding order.
+**Severity:** medium
+**Counterexample:** encode_fence([FenceArg("wroi"), FenceArg("i")])
+**Expected / Actual:** Err / Ok(Word) with pred=0xF
+**Impact:** Mistyped fence arguments still assemble as if the letters were in order.
+**Root cause:** encoder/mod.rs:446-449 parse_fence_bits uses contains() per letter.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/mod.rs:446`
+```rust
+    if s.contains('i') { bits |= 8; }
+    if s.contains('o') { bits |= 4; }
+    if s.contains('r') { bits |= 2; }
+    if s.contains('w') { bits |= 1; }
+```
+**Suggested fix:** Accept only in-order subsequences of iorw.
+```rust
+fn parse_fence_bits(s: &str) -> Result<u32, String> { /* in-order scan of iorw */ }
+```
+**Bug report:** bug_reports/encode_fence_out_of_order_letters.md
+**Repro seed:** (first example; successes: 0)
+**Raw output:**
+```text
+out-of-order/duplicate/uppercase wroi must Err; got Ok(Word(260046863))
+minimal failing input: pred = "wroi", succ = "i"
+```
+
+### B5: encode_fence maps registers and non-zero immediates to iorw
+
+**Formal:** ∀ kind ∈ {Reg, Symbol, Csr, RoundingMode, Mem, Imm(n) where n≠0}. encode_fence([kind, FenceArg("rw")]) is Err ∧ encode_fence([FenceArg("rw"), kind]) is Err
+**Contract evidence:** inferred (llvm-mc rejects `fence x0, x0` and `fence 1, 2`)
 **Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_csr([Reg("x0"), Imm(-1), Reg("x0")], funct3=0b001)
-**Expected / Actual:** Err / Ok(Word(4293922931))  // 0xFFF01073 = csrrw x0, 0xfff, x0
-**Impact:** `csrrw x1, 4096, x2` is assembled as CSR 0 (fflags) and `csrrw x0, -1, x0` as CSR 4095, silently targeting the wrong control/status register.
-**Root cause:** get_csr_num (system.rs:66) accepts any Imm as u32 with no 12-bit range check; encode_csr then passes `csr as i32` to encode_i, which masks with 0xFFF, so -1 becomes 0xFFF and 4096 becomes 0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:66`
+**Severity:** medium
+**Counterexample:** encode_fence([Reg("x0"), FenceArg("rw")])
+**Expected / Actual:** Err / Ok(Word) with pred=0xF
+**Impact:** Invalid assembly is emitted as a real FENCE full (or mixed) barrier.
+**Root cause:** system.rs:11 `_ => 0xF` wildcard (same arm as B1, different invalid kinds).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:11`
 ```rust
-        Some(Operand::Imm(v)) => Ok(*v as u32),
+            _ => 0xF,
 ```
-**Suggested fix:** Reject CSR numbers outside 0..=4095 in get_csr_num.
+**Suggested fix:** Accept only FenceArg and Imm(0); Err otherwise.
 ```rust
-        Some(Operand::Imm(v)) => {
-            if *v < 0 || *v > 4095 {
-                Err(format!("CSR number {} out of range 0..=4095", v))
-            } else {
-                Ok(*v as u32)
-            }
-        }
+            Operand::FenceArg(s) => parse_fence_bits(s)?,
+            Operand::Imm(0) => 0,
+            other => return Err(format!("invalid fence operand: {:?}", other)),
 ```
-**Bug report:** bug_reports/encode_csr_csr_oob.md
-**Repro seed:** (none — deterministic csr_num=-1; proptest shrunk to csrrw x0, -1, x0)
+**Bug report:** bug_reports/encode_fence_invalid_operand.md
+**Repro seed:** (first example; successes: 0)
 **Raw output:**
 ```text
-Test failed: csr -1 outside 0..=4095 must Err (llvm-mc csr[11:0]); got Ok(Word(4293922931)) at src/backend/riscv/assembler/encoder/encode_csr_pbt.rs:519.
-minimal failing input: (_mn, f3) = (
-    "csrrw",
-    1,
-), rd = "x0", rs1 = "x0", csr_num = -1
+invalid pred Reg("x0") must Err; got Ok(Word(254803983))
+minimal failing input: bad = Reg("x0")
 ```
 
 ## Design Caveats
@@ -135,68 +165,75 @@ minimal failing input: (_mn, f3) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_csr_pbt.rs | 10 properties + 3 KAT + 3 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_fence_pbt.rs | 8 properties + 3 KAT + 5 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (from the campaign run directory):
 ```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csr -- --test-threads=1
+cd /home/toan/github/claudes-c-compiler/pbt-out/run
+cargo test --manifest-path /home/toan/github/claudes-c-compiler/Cargo.toml --lib encode_fence -- --test-threads=1
 ```
 
-B1 extra operand:
+B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csr_neg_extra -- --test-threads=1
+cargo test --lib encode_fence_imm0_diff_llvm_mc -- --test-threads=1
 ```
 
-B2 zimm oob:
+B2:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csr_neg_zimm_oob -- --test-threads=1
+cargo test --lib encode_fence_neg_extra -- --test-threads=1
 ```
 
-B3 csr oob:
+B3:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csr_neg_csr_oob -- --test-threads=1
+cargo test --lib encode_fence_neg_arity -- --test-threads=1
 ```
 
-Build command (user contract, target swapped):
+B4:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_csr -- --test-threads=1
+cargo test --lib encode_fence_neg_out_of_order -- --test-threads=1
+```
+
+B5:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_fence_neg_invalid_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (rendered from report.json)
-- pbt-out/report.json
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_csr_extra_operand.md
-- pbt-out/bug_reports/encode_csr_extra_operand.html
-- pbt-out/bug_reports/encode_csr_zimm_oob.md
-- pbt-out/bug_reports/encode_csr_zimm_oob.html
-- pbt-out/bug_reports/encode_csr_csr_oob.md
-- pbt-out/bug_reports/encode_csr_csr_oob.html
-- pbt-out/run/encode_csr_test.log
-- pbt-out/run/encode_csr_test2.log
-- pbt-out/run/encode_csr_test3.log
-- pbt-out/run/encode_csr_test4.log
+- pbt-out/bug_reports/encode_fence_imm0_as_full_barrier.md
+- pbt-out/bug_reports/encode_fence_imm0_as_full_barrier.html
+- pbt-out/bug_reports/encode_fence_extra_operand.md
+- pbt-out/bug_reports/encode_fence_extra_operand.html
+- pbt-out/bug_reports/encode_fence_arity_one.md
+- pbt-out/bug_reports/encode_fence_arity_one.html
+- pbt-out/bug_reports/encode_fence_out_of_order_letters.md
+- pbt-out/bug_reports/encode_fence_out_of_order_letters.html
+- pbt-out/bug_reports/encode_fence_invalid_operand.md
+- pbt-out/bug_reports/encode_fence_invalid_operand.html
+- pbt-out/run/ (cargo test CWD)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 15:53 (campaign: coverage)
-> Files: 12/13 scanned (92%) | Functions: 193/330 total | PBT candidates: 193 | Tested: 193 (100%) | 1 pass, 193 fail
+> Last updated: 2026-10-06 16:12 (campaign: coverage)
+> Files: 12/13 scanned (92%) | Functions: 194/330 total | PBT candidates: 194 | Tested: 194 (100%) | 1 pass, 194 fail
 
 ## Summary
 
@@ -205,10 +242,10 @@ cargo test --lib encode_csr -- --test-threads=1
 | Total source files | 13 |
 | Files scanned | 12 / 13 (92%) |
 | Total functions (all files) | 330 |
-| PBT candidates (from FUNCTION_INDEX) | 193 |
-| **Tested (of PBT candidates)** | **193 / 193 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 193 / -1 |
-| **Overall (tested / all functions)** | **193 / 330 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 194 |
+| **Tested (of PBT candidates)** | **194 / 194 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 194 / -1 |
+| **Overall (tested / all functions)** | **194 / 330 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -216,13 +253,13 @@ cargo test --lib encode_csr -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 193 | 193 | 0 | 100% |
+|  | 194 | 194 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 193 | 193 | 0 | 100% |
+| unknown | 194 | 194 | 0 | 100% |
 
 ## File Coverage
 
@@ -438,3 +475,4 @@ cargo test --lib encode_csr -- --test-threads=1
 | encode_alu_imm_w | base.rs |
 | encode_alu_reg_w | base.rs |
 | encode_csr | system.rs |
+| encode_fence | system.rs |
