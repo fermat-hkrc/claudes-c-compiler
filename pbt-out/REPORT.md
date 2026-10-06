@@ -1,92 +1,92 @@
-# PBT Campaign Report: encode_c_jr
+# PBT Campaign Report: encode_c_jalr
 
 ## Summary
 
-**Verdict:** 2 medium: encode_c_jr silently encodes `c.jr x0` as reserved halfword 0x8002, and extra operands are ignored instead of rejected.
+**Verdict:** 2 medium: encode_c_jalr silently encodes `c.jalr x0` as C.EBREAK halfword 0x9002, and extra operands are ignored instead of rejected.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_c_jr
+**Modules tested:** encode_c_jalr
 **Tests:** 7 properties (plus 6 KAT + 2 regression witnesses)
 **Result:** 5 passing, 2 bugs
-**Change surface:** 1 changed function (encode_c_jr), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries) and listed encode_c_jr as NOT LINKED in those binaries. Manual audit of the documented C.JR surface (1-op CR-type / ABI / isolation / arity-FP / extra / rs1=x0) drove every contract; remaining gaps are the two filed bugs.
+**Change surface:** 1 changed function (encode_c_jalr), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries) and listed encode_c_jalr as NOT LINKED in those binaries. Manual audit of the documented C.JALR surface (1-op CR-type / ABI / isolation / arity-FP / extra / rs1=x0) drove every contract; remaining gaps are the two filed bugs.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_c_jr | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_c_jalr | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_c_jr encodes rs1=x0 as a reserved halfword
+### B1: encode_c_jalr encodes rs1=x0 as C.EBREAK
 
-**Formal:** ∀ name ∈ {x0, zero}. llvm-mc rejects `c.jr name` ∧ encode_c_jr([Reg(name)])=Err
-**Contract evidence:** inferred (RISC-V Unprivileged ISA: C.JR is only valid when rs1≠x0; the code point with rs1=x0 is reserved; llvm-mc rejects `c.jr x0`; one-operand mnemonic `c.jr rs1`; compress.rs:566 requires rs1 != 0)
-**Documentation conflict:** (none) — compressed.rs:49 only states the mnemonic `c.jr rs1`; it does not declare rs1=x0 invalid on this function, nor admit a limitation
+**Formal:** ∀ name ∈ {x0, zero}. llvm-mc rejects `c.jalr name` ∧ encode_c_jalr([Reg(name)])=Err
+**Contract evidence:** inferred (RISC-V Unprivileged ISA: C.JALR is only valid when rs1≠x0; the code point with rs1=x0 and rs2=0 is C.EBREAK 0x9002; llvm-mc rejects `c.jalr x0`; one-operand mnemonic `c.jalr rs1`; compress.rs:571 requires rs1 != 0)
+**Documentation conflict:** (none) — compressed.rs:55 only states the mnemonic `c.jalr rs1`; it does not declare rs1=x0 invalid on this function, nor admit a limitation
 **Severity:** medium
-**Counterexample:** encode_c_jr([Reg("x0")])
-**Expected / Actual:** Err / Ok(Half(0x8002)) — reserved CR-type encoding (funct4=1000, rs1=0, rs2=0)
-**Impact:** Handwritten or generated `c.jr x0` / `c.jr zero` becomes a reserved 16-bit encoding rather than an assembler error.
-**Root cause:** compressed.rs:50-53 packs CR-type bits with no rs1≠0 check, so rs1=x0 falls into the reserved pattern (funct4=1000, rs1=0, rs2=0).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:51`
+**Counterexample:** encode_c_jalr([Reg("x0")])
+**Expected / Actual:** Err / Ok(Half(0x9002)) — C.EBREAK (funct4=1001, rs1=0, rs2=0)
+**Impact:** Handwritten or generated `c.jalr x0` / `c.jalr zero` becomes a breakpoint rather than an assembler error.
+**Root cause:** compressed.rs:56-59 packs CR-type bits with no rs1≠0 check, so rs1=x0 falls into the C.EBREAK pattern (funct4=1001, rs1=0, rs2=0).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:57`
 ```rust
     let rs1 = get_reg(operands, 0)?;
-    Ok(EncodeResult::Half(0b10 | ((rs1 as u16) << 7) | (0b100 << 13)))
+    Ok(EncodeResult::Half(0b10 | ((rs1 as u16) << 7) | (1 << 12) | (0b100 << 13)))
 ```
 **Suggested fix:** Reject rs1 == 0 before packing.
 ```rust
 if rs1 == 0 {
-    return Err("c.jr: rs1 cannot be x0 (that encoding is reserved)".into());
+    return Err("c.jalr: rs1 cannot be x0 (that encoding is c.ebreak)".into());
 }
 ```
-**Bug report:** bug_reports/encode_c_jr_rs1_x0.md
+**Bug report:** bug_reports/encode_c_jalr_rs1_x0.md
 **Repro seed:** (deterministic regression; PBT shrunk to name="x0")
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_c_jr_pbt::encode_c_jr_neg_rs1_x0' (2852478) panicked at src/backend/riscv/assembler/encoder/encode_c_jr_pbt.rs:253:1:
-Test failed: rs1=x0 must Err (llvm-mc rejects; encoding is reserved); got Ok(Half(32770)) at src/backend/riscv/assembler/encoder/encode_c_jr_pbt.rs:313.
+thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::encode_c_jalr_neg_rs1_x0' (2854339) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:253:1:
+Test failed: rs1=x0 must Err (llvm-mc rejects; encoding is C.EBREAK); got Ok(Half(36866)) at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:313.
 minimal failing input: name = "x0"
 	successes: 0
 	local rejects: 0
 	global rejects: 0
 
-thread 'backend::riscv::assembler::encoder::encode_c_jr_pbt::test_encode_c_jr_regression_rs1_x0' (2852481) panicked at src/backend/riscv/assembler/encoder/encode_c_jr_pbt.rs:246:5:
-c.jr x0 must Err (rs1=x0 is reserved); got Ok(Half(32770))
+thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::test_encode_c_jalr_regression_rs1_x0' (2854343) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:246:5:
+c.jalr x0 must Err (rs1=x0 is C.EBREAK); got Ok(Half(36866))
 ```
 
-### B2: encode_c_jr ignores extra operands
+### B2: encode_c_jalr ignores extra operands
 
-**Formal:** ∀ rs1 ∈ GPR-names\{x0}, extra ∈ Operand. encode_c_jr([Reg(rs1), extra]) = Err
-**Contract evidence:** inferred (one-operand mnemonic `c.jr rs1` at compressed.rs:49; llvm-mc rejects a second operand)
+**Formal:** ∀ rs1 ∈ GPR-names\{x0}, extra ∈ Operand. encode_c_jalr([Reg(rs1), extra]) = Err
+**Contract evidence:** inferred (one-operand mnemonic `c.jalr rs1` at compressed.rs:55; llvm-mc rejects a second operand)
 **Documentation conflict:** (none) — the comment names the one-operand form and does not declare extra operands invalid in so many words, nor admit a limitation
 **Severity:** medium
-**Counterexample:** encode_c_jr([Reg("x1"), Imm(0)])
-**Expected / Actual:** Err / Ok(Half(0x8082)) — encoding of `c.jr x1` / `ret`
-**Impact:** Accidental extra tokens are dropped, so a malformed instruction still assembles as a valid 16-bit jump.
-**Root cause:** compressed.rs:50-53 reads only operands[0] via get_reg and never checks operands.len().
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:51`
+**Counterexample:** encode_c_jalr([Reg("x1"), Imm(0)])
+**Expected / Actual:** Err / Ok(Half(0x9082)) — encoding of `c.jalr x1` / `jalr ra`
+**Impact:** Accidental extra tokens are dropped, so a malformed instruction still assembles as a valid 16-bit linked jump.
+**Root cause:** compressed.rs:56-59 reads only operands[0] via get_reg and never checks operands.len().
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:57`
 ```rust
     let rs1 = get_reg(operands, 0)?;
-    Ok(EncodeResult::Half(0b10 | ((rs1 as u16) << 7) | (0b100 << 13)))
+    Ok(EncodeResult::Half(0b10 | ((rs1 as u16) << 7) | (1 << 12) | (0b100 << 13)))
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 1 before packing.
 ```rust
 if operands.len() != 1 {
-    return Err(format!("c.jr: expected 1 operand, got {}", operands.len()));
+    return Err(format!("c.jalr: expected 1 operand, got {}", operands.len()));
 }
 ```
-**Bug report:** bug_reports/encode_c_jr_extra_operand.md
-**Repro seed:** cc 76196dcd79a75097626af2f2f10d1b194c259b99dee69d29bb8415247c6fc7ab
+**Bug report:** bug_reports/encode_c_jalr_extra_operand.md
+**Repro seed:** cc e3d16e17f40f453d0c80bfd3ae37b5bcb03515a09b54d73108935401b3ef5c12
 **Raw output:**
 ```text
-proptest: Saving this and future failures in /home/toan/github/claudes-c-compiler/proptest-regressions/backend/riscv/assembler/encoder/encode_c_jr_pbt.txt
+proptest: Saving this and future failures in /home/toan/github/claudes-c-compiler/proptest-regressions/backend/riscv/assembler/encoder/encode_c_jalr_pbt.txt
 proptest: If this test was run on a CI system, you may wish to add the following line to your copy of the file. (You may need to create it.)
-cc 76196dcd79a75097626af2f2f10d1b194c259b99dee69d29bb8415247c6fc7ab
+cc e3d16e17f40f453d0c80bfd3ae37b5bcb03515a09b54d73108935401b3ef5c12
 
-thread 'backend::riscv::assembler::encoder::encode_c_jr_pbt::encode_c_jr_neg_extra' (2852477) panicked at src/backend/riscv/assembler/encoder/encode_c_jr_pbt.rs:253:1:
-Test failed: extra operand must Err for c.jr x1 (llvm-mc rejects extra operands); got Ok(Half(32898)) at src/backend/riscv/assembler/encoder/encode_c_jr_pbt.rs:325.
+thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::encode_c_jalr_neg_extra' (2854338) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:253:1:
+Test failed: extra operand must Err for c.jalr x1 (llvm-mc rejects extra operands); got Ok(Half(36994)) at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:325.
 minimal failing input: rs1 = "x1", extra = Imm(
     0,
 )
@@ -94,8 +94,8 @@ minimal failing input: rs1 = "x1", extra = Imm(
 	local rejects: 0
 	global rejects: 0
 
-thread 'backend::riscv::assembler::encoder::encode_c_jr_pbt::test_encode_c_jr_regression_extra_operand' (2852480) panicked at src/backend/riscv/assembler/encoder/encode_c_jr_pbt.rs:235:5:
-c.jr x1 with a second operand must Err; got Ok(Half(32898))
+thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::test_encode_c_jalr_regression_extra_operand' (2854342) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:235:5:
+c.jalr x1 with a second operand must Err; got Ok(Half(36994))
 ```
 
 ## Design Caveats
@@ -106,26 +106,26 @@ c.jr x1 with a second operand must Err; got Ok(Half(32898))
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_c_jr_pbt.rs | 7 properties + 6 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs | 7 properties + 6 KAT + 2 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_c_jr -- --test-threads=1
+cargo test --lib encode_c_jalr -- --test-threads=1
 ```
 
 B1 rs1=x0:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_c_jr_regression_rs1_x0 -- --test-threads=1
+cargo test --lib test_encode_c_jalr_regression_rs1_x0 -- --test-threads=1
 ```
 
 B2 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_c_jr_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_c_jalr_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
@@ -134,24 +134,24 @@ cargo test --lib test_encode_c_jr_regression_extra_operand -- --test-threads=1
 - pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — coverage ledger (append encode_c_jr row)
+- pbt-out/COVERAGE.md — coverage ledger (append encode_c_jalr row)
 - pbt-out/COVERAGE_STATUS.md — this-campaign coverage summary
 - pbt-out/INVARIANTS.md — confirmed invariants for later campaigns
 - pbt-out/report.json — machine-readable report
 - pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/bug_reports/encode_c_jr_rs1_x0.md — B1
-- pbt-out/bug_reports/encode_c_jr_rs1_x0.html — B1 HTML
-- pbt-out/bug_reports/encode_c_jr_extra_operand.md — B2
-- pbt-out/bug_reports/encode_c_jr_extra_operand.html — B2 HTML
+- pbt-out/bug_reports/encode_c_jalr_rs1_x0.md — B1
+- pbt-out/bug_reports/encode_c_jalr_rs1_x0.html — B1 HTML
+- pbt-out/bug_reports/encode_c_jalr_extra_operand.md — B2
+- pbt-out/bug_reports/encode_c_jalr_extra_operand.html — B2 HTML
 - pbt-out/run/ — scratch dir for test CWD
-- proptest-regressions/backend/riscv/assembler/encoder/encode_c_jr_pbt.txt — proptest failure cache
+- proptest-regressions/backend/riscv/assembler/encoder/encode_c_jalr_pbt.txt — proptest failure cache
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 22:21 (campaign: coverage)
-> Files: 15/15 scanned (100%) | Functions: 219/367 total | PBT candidates: 219 | Tested: 219 (100%) | 1 pass, 219 fail
+> Last updated: 2026-10-06 22:31 (campaign: coverage)
+> Files: 15/15 scanned (100%) | Functions: 220/367 total | PBT candidates: 220 | Tested: 220 (100%) | 1 pass, 220 fail
 
 ## Summary
 
@@ -160,10 +160,10 @@ cargo test --lib test_encode_c_jr_regression_extra_operand -- --test-threads=1
 | Total source files | 15 |
 | Files scanned | 15 / 15 (100%) |
 | Total functions (all files) | 367 |
-| PBT candidates (from FUNCTION_INDEX) | 219 |
-| **Tested (of PBT candidates)** | **219 / 219 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 219 / -1 |
-| **Overall (tested / all functions)** | **219 / 367 (60%)** |
+| PBT candidates (from FUNCTION_INDEX) | 220 |
+| **Tested (of PBT candidates)** | **220 / 220 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 220 / -1 |
+| **Overall (tested / all functions)** | **220 / 367 (60%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -171,13 +171,13 @@ cargo test --lib test_encode_c_jr_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 219 | 219 | 0 | 100% |
+|  | 220 | 220 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 219 | 219 | 0 | 100% |
+| unknown | 220 | 220 | 0 | 100% |
 
 ## File Coverage
 
@@ -419,3 +419,4 @@ cargo test --lib test_encode_c_jr_regression_extra_operand -- --test-threads=1
 | encode_c_mv | compressed.rs |
 | encode_c_add | compressed.rs |
 | encode_c_jr | compressed.rs |
+| encode_c_jalr | compressed.rs |

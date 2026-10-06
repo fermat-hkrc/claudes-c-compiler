@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_c_jalr)
+
+- Valid 1-operand C.JALR with rs1 ∈ {x1..x31} matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.jalr ra = 0x9082, c.jalr x1 = 0x9082, c.jalr sp = 0x9102, c.jalr a0 = 0x9502, c.jalr x31 = 0x9f82, c.jalr t0 = 0x9282.
+- CR-type layout holds: op=10, funct4=1001, rs1 in bits[11:7], rs2 bits[6:2]=0 (1000 cases).
+- ABI names (ra/sp/a0/t6/fp/s0/…) encode the same halfword as xN (1000 cases).
+- Field isolation: op/funct4/rs2 bits independent of rs1; rs1 field equals rs1 (1000 cases).
+- Empty operand list and FP src return Err (1000 cases).
+- Extra operand and rs1=x0 currently disagree with llvm-mc (see bugs): extra ignored; rs1=x0 encodes C.EBREAK halfword 0x9002.
+
+## Environment (encode_c_jalr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+c -show-encoding (LLVM 15.0.6). Default riscv64 without +c rejects C.JALR.
+- Harness: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs, cargo test --lib encode_c_jalr, proptest cases=1000.
+- Dispatch: encoder/mod.rs:933 "c.jalr" => encode_c_jalr(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_c_jalr NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 1-op / CR-type / ABI / isolation / arity-FP / extra / rs1=x0. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_c_jalr)
+
+- llvm-mc prints `c.jalr ra` / `c.jalr x1` as `jalr ra` with a 16-bit encoding ([0x82,0x90]). Other rs1 print as `jalr rs1`.
+- C.JALR allows rs1=x2 (unlike C.LUI).
+- llvm-mc rejects `c.jalr x0` / `c.jalr zero` because rs1=x0 is C.EBREAK (0x9002), not C.JALR. SUT currently emits 0x9002 (bug).
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number. llvm-mc rejects numeric rs1.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_c_jr)
 
 - Valid 1-operand C.JR with rs1 ∈ {x1..x31} matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.jr ra = 0x8082, c.jr x1 = 0x8082, c.jr sp = 0x8102, c.jr a0 = 0x8502, c.jr x31 = 0x8f82, c.jr t0 = 0x8282.
