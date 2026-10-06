@@ -144,6 +144,8 @@ mod encode_tlbi_pbt;
 mod encode_swp_pbt;
 #[cfg(test)]
 mod encode_ldop_pbt;
+#[cfg(test)]
+mod encode_stop_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

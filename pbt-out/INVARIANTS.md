@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_stop)
+
+- Valid STADD/STCLR/STEOR/STSET variants (4 ops × 6 release/byte/half suffixes; no acquire) with Rs in {w/x 0..30, wzr/xzr} (W-only for byte/half) and base Xn|SP match llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). KAT pins stadd w0,[x1]=0xB820003F, stadd x0,[x1]=0xF820003F, staddl w0,[x1]=0xB860003F, staddb w0,[x1]=0x3820003F, staddh w0,[x1]=0x7820003F, stclr w0,[x1]=0xB820103F, steor w0,[x1]=0xB820203F, stset w0,[x1]=0xB820303F, stadd xzr,[sp]=0xF83F03FF.
+- ARM STADD alias layout holds: bits[29:24]=0b111000; bit21=1; bit15=0; bits[11:10]=0; A=0; Rt=31; size/R/opc/Rs/Rn match the generated fields (1000 cases).
+- Encodings of the same registers differ only in the mutated field; STADDL XOR STADD = 1<<22; STCLR/STEOR/STSET XOR STADD = opc<<12; uppercase STADD matches lowercase (1000 cases).
+- Arity < 2 and non-Mem second operand return Err (1000 cases).
+- Unparsable register/base names (foo, x32, empty, r0) return Err (sweep, 1000 cases).
+- Unknown mnemonics that do not start with stadd/stclr/steor/stset return Err (sweep, 1000 cases).
+- ASCII case-fold of the mnemonic matches llvm-mc (sweep, 1000 cases).
+- Extra operands, SP/WSP as Rs, XZR/W as base, FP Rs, STADDB with X, and nonzero Mem offset currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_stop)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+lse -show-encoding (LLVM 15.0.6).
+- ARM ARM STADD is the store alias of LDADD with Rt=WZR/XZR: size 111000 A R 1 Rs 0 opc 00 Rn Rt. A=0; Rt=31. opc STADD=000 STCLR=001 STEOR=010 STSET=011. R=release. Rs is ZR not SP; Rn is Xn|SP not ZR. STADDB/STADDH require W registers. Optional offset only #0.
+- Dispatch: encoder/mod.rs:1065-1068 stadd*|stclr*|steor*|stset* => encode_stop(mnemonic, operands).
+- Sibling encode_cas / encode_swp / encode_ldop are not same-job differentials (different LSE class / operand grammar).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_stop_neg_invalid_name, encode_stop_diff_alt_spellings, encode_stop_neg_unknown_op. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_stop_*.md.
+
+## Quirks (encode_stop)
+
+- ASCII case of the mnemonic is accepted (to_lowercase).
+- parse_reg_num maps SP and XZR both to 31; encode_stop does not distinguish them (see bugs).
+- get_reg accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- operands.len() < 2 does not reject extra operands (see bugs).
+- Operand::Mem { base, .. } ignores offset (see bugs).
+- llvm-mc aliases `ldadd xzr, xzr, [sp]` to `stadd xzr, [sp]`; encodings still compare.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 45-line body.
+
 # Confirmed invariants (encode_ldop)
 
 - Valid LDADD/LDCLR/LDEOR/LDSET variants (4 ops × 12 acquire/release/byte/half suffixes) with Rs/Rt in {w/x 0..30, wzr/xzr} (W-only for byte/half) and base Xn|SP match llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). KAT pins ldadd x0,x1,[x2]=0xF8200041, ldadd w0,w1,[x2]=0xB8200041, ldadda w0,w1,[x2]=0xB8A00041, ldaddl w0,w1,[x2]=0xB8600041, ldaddal w0,w1,[x2]=0xB8E00041, ldaddb w0,w1,[x2]=0x38200041, ldaddh w0,w1,[x2]=0x78200041, ldclr w0,w1,[x2]=0xB8201041, ldeor w0,w1,[x2]=0xB8202041, ldset w0,w1,[x2]=0xB8203041, ldadd xzr,xzr,[sp]=0xF83F03FF.

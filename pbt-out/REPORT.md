@@ -1,150 +1,142 @@
-# PBT Campaign Report: encode_ldop
+# PBT Campaign Report: encode_stop
 
 ## Summary
 
-**Verdict:** 4 medium: encode_ldop silently accepts extra operands, SP/WSP as Rs/Rt (and W/XZR as base), mixed W/X plus FP and X-on-byte/half, and nonzero Mem offsets that llvm-mc/gas reject, so GNU-style assembly that should fail is encoded as a valid LSE atomic.
+**Verdict:** 4 medium: encode_stop silently accepts extra operands, SP as Rs / XZR-or-W as base, FP Rs / STADDB-with-X, and nonzero Mem offsets that llvm-mc/gas reject, so callers get a wrong encoding instead of an assembler error.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ldop
+**Modules tested:** encode_stop
 **Tests:** 11
 **Result:** 7 passing, 4 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_ldop NOT LINKED). Manual arm audit of the 45-line body plus three sweep properties.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter, unrelated binaries, claimed NOT LINKED). Cargo tests executed encode_stop (9 KATs passed). Sweep round 1/1 spent on a manual arm audit plus invalid-name / alt-spellings / unknown-op properties.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ldop | 11 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_stop | 11 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_ldop ignores a fourth operand
+### B1: encode_stop ignores a third operand
 
-**Formal:** ∀ op,suf,rs,rt,rn,is_64 in the valid domain, ∀ extra ∈ Operand. encode_ldop(v, valid_ops ++ [extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc/gas reject a fourth operand; encode_instruction passes operands through)
+**Formal:** ∀ valid (op,suf,Rs,Rn,wide), extra ∈ Operand. encode_stop(op+suf, [Reg(Rs), Mem{base,0}, extra]) is Err
+**Contract evidence:** inferred (README gas-compat plus llvm-mc rejecting a 3rd STADD operand; body checks only `len() < 2`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_ldop("ldadd", [Reg("w0"), Reg("w0"), Mem{base:"x0", offset:0}, Reg("x2")])
+**Counterexample:** encode_stop("stadd", [Reg("w0"), Mem{base:"x0", offset:0}, Reg("x2")])
 **Expected / Actual:** Err / Ok(Word) — extra operand ignored
-**Impact:** `ldadd w0, w0, [x0], x2` is assembled as `ldadd w0, w0, [x0]`. Callers that pass a trailing operand get a silent wrong encoding instead of an assembler error
-**Root cause:** load_store.rs:883 checks `operands.len() < 3` and never rejects `len() > 3`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:883`
+**Impact:** `stadd w0, [x0], x2` is assembled as `stadd w0, [x0]`. Callers that pass a trailing operand get a silent wrong encoding instead of an assembler error
+**Root cause:** load_store.rs:928 checks `operands.len() < 2` and never rejects `len() > 2`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:928`
 ```rust
-    if operands.len() < 3 {
-        return Err(format!("{} requires 3 operands", mnemonic));
+    if operands.len() < 2 {
+        return Err(format!("{} requires 2 operands", mnemonic));
     }
 ```
-**Suggested fix:** Require exactly three operands
+**Suggested fix:** Require exactly two operands
 ```rust
-    if operands.len() != 3 {
-        return Err(format!("{} requires 3 operands", mnemonic));
+    if operands.len() != 2 {
+        return Err(format!("{} requires 2 operands", mnemonic));
     }
 ```
-**Bug report:** bug_reports/encode_ldop_extra_operand.md
-**Repro seed:** cc 573a81fb157a3eb187d6bf5fa7a9a68da01c3f930beda93337d353f6208238b3
+**Bug report:** bug_reports/encode_stop_extra_operand.md
+**Repro seed:** cc b3dea4defd2d280c2de41066705f582787b224ec3f0aace6a7306f56cf06297f
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:830:5:
-ldadd w0, w0, [x0], x2 must Err; llvm-mc/gas reject a 4th operand
+thread 'backend::arm::assembler::encoder::encode_stop_pbt::test_encode_stop_regression_extra_operand' (2610720) panicked at src/backend/arm/assembler/encoder/encode_stop_pbt.rs:657:5:
+stadd w0, [x0], x2 must Err; llvm-mc/gas reject a 3rd operand
 ```
 
-### B2: encode_ldop accepts SP/WSP as Rs or Rt and W/XZR as base
+### B2: encode_stop accepts SP as Rs and XZR/W as base
 
-**Formal:** ∀ op,suf in the documented variants, ∀ n ∈ [0,30]. encode_ldop(v, [Reg(sp|wsp), …]) is Err ∧ encode_ldop(v, […, Mem{xzr|x31|wN|wsp|wzr, 0}]) is Err
-**Contract evidence:** inferred (ARM ARM Rs/Rt are ZR not SP; Rn is Xn|SP not ZR; llvm-mc/gas reject)
+**Formal:** ∀ valid (op,suf), kind ∈ {SP-as-Rs, WSP-as-Rs, W-base, WSP-base, XZR-base, x31-base, WZR-base}. encode_stop(op+suf, ops(kind)) is Err
+**Contract evidence:** inferred (ARM Rs is ZR not SP; Rn=31 is SP not XZR; llvm-mc rejects `stadd sp, [x1]` and `stadd w0, [xzr]`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_ldop("ldadd", [Reg("sp"), Reg("w1"), Mem{base:"x2", offset:0}])
-**Expected / Actual:** Err / Ok(Word) — SP encoded as register 31 (ZR)
-**Impact:** `ldadd sp, w1, [x2]` is assembled as `ldadd wzr, w1, [x2]`. The stack pointer is silently rewritten as the zero register
-**Root cause:** load_store.rs:886-887 call get_reg, and parse_reg_num maps "sp"/"wsp" to 31 with no LDADD-specific rejection of SP
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:886`
+**Counterexample:** encode_stop("stadd", [Reg("sp"), Mem{base:"x1", offset:0}])
+**Expected / Actual:** Err / Ok(Word) — SP encoded as XZR (register 31)
+**Impact:** `stadd sp, [x1]` encodes as `stadd xzr, [x1]`; `stadd w0, [xzr]` encodes as `stadd w0, [sp]`
+**Root cause:** load_store.rs:931-933 uses get_reg/parse_reg_num, which map both SP and XZR to 31 and accept W names as a base
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:931`
 ```rust
     let (rs, is_64) = get_reg(operands, 0)?;
-    let (rt, _) = get_reg(operands, 1)?;
-```
-**Suggested fix:** Reject SP/WSP as Rs and Rt
-```rust
-    let (rs, is_64) = get_reg(operands, 0)?;
-    let (rt, _) = get_reg(operands, 1)?;
-    if is_sp_name(operands, 0) || is_sp_name(operands, 1) {
-        return Err("ldop: Rs/Rt cannot be SP".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_ldop_sp_as_rs.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_sp_as_rs' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:846:5:
-ldadd sp, w1, [x2] must Err; llvm-mc/gas reject SP as Rs
-```
-
-### B3: encode_ldop accepts mixed W/X, FP registers, and X registers on byte/half variants
-
-**Formal:** ∀ n ∈ [0,30], ∀ fp ∈ {b,h,s,d,q,v}. encode_ldop("ldadd", [Reg(xN), Reg(wN), Mem{xN',0}]) is Err ∧ encode_ldop("ldadd", [Reg(fpN), …]) is Err ∧ encode_ldop("ldaddb"|"ldaddh"|"ldaddab"|"ldsetlh", [Reg(xN), Reg(xN'), Mem{xN'',0}]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc/gas reject mixed W/X, FP, and X-on-byte/half)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_ldop("ldadd", [Reg("x0"), Reg("w0"), Mem{base:"x1", offset:0}])
-**Expected / Actual:** Err / Ok(Word) — size from Rs; Rt width ignored
-**Impact:** Mixed-width, FP, and `ldaddb x0, x1, [x2]` assemble instead of failing, producing encodings llvm-mc/gas refuse
-**Root cause:** load_store.rs:886-887 take is_64 only from Rs and discard Rt's width; parse_reg_num accepts FP prefixes
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:886`
-```rust
-    let (rs, is_64) = get_reg(operands, 0)?;
-    let (rt, _) = get_reg(operands, 1)?;
-```
-**Suggested fix:** Require matching GPR widths and reject FP prefixes
-```rust
-    let (rs, is_64) = get_reg(operands, 0)?;
-    let (rt, rt_64) = get_reg(operands, 1)?;
-    if is_64 != rt_64 {
-        return Err("ldop: Rs and Rt must be the same width".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_ldop_mixed_width.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_mixed_width' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:894:5:
-ldadd x0, w0, [x1] must Err; llvm-mc/gas reject mixed W/X
-```
-
-### B4: encode_ldop ignores a nonzero Mem offset
-
-**Formal:** ∀ op,suf,rs,rt in the valid domain, ∀ rn ∈ [0,30], ∀ off ∈ ℤ\{0}. encode_ldop(v, [Reg(gpr(rs)), Reg(gpr(rt)), Mem{base(rn), off}]) is Err
-**Contract evidence:** inferred (ARM optional offset only #0; llvm-mc/gas reject [Xn, #1])
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_ldop("ldadd", [Reg("w0"), Reg("w0"), Mem{base:"x0", offset:-1}])
-**Expected / Actual:** Err / Ok(Word) — offset ignored
-**Impact:** `ldadd w0, w0, [x0, #-1]` is assembled as `ldadd w0, w0, [x0]`. A nonzero offset is silently dropped
-**Root cause:** load_store.rs:888-889 matches `Operand::Mem { base, .. }` and never inspects offset
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:888`
-```rust
-    let rn = match operands.get(2) {
-        Some(Operand::Mem { base, .. }) => parse_reg_num(base).ok_or("ldop: invalid base")?,
+    let rn = match operands.get(1) {
+        Some(Operand::Mem { base, .. }) => parse_reg_num(base).ok_or_else(|| format!("{}: invalid base", mnemonic))?,
         _ => return Err(format!("{} requires memory operand [Xn]", mnemonic)),
     };
+```
+**Suggested fix:** Reject SP/WSP as Rs; require the base to be Xn or SP
+```rust
+    let (rs, is_64) = get_reg(operands, 0)?;
+    if matches_sp_name(operands, 0) {
+        return Err(format!("{}: SP is not a valid Rs", mnemonic));
+    }
+```
+**Bug report:** bug_reports/encode_stop_sp_as_rs.md
+**Repro seed:** (deterministic regression; property shrunk to op=0, suf=0, n=0, kind=0, is_64=false)
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_stop_pbt::test_encode_stop_regression_sp_as_rs' (2610723) panicked at src/backend/arm/assembler/encoder/encode_stop_pbt.rs:672:5:
+stadd sp, [x1] must Err; llvm-mc/gas reject SP as Rs
+```
+
+### B3: encode_stop accepts FP/SIMD Rs and X registers on STADDB/STADDH
+
+**Formal:** ∀ n ∈ {0..30}, kind ∈ {FP-Rs, STADDB-X, STADDH-X, STADDLB-X, STADDLH-X}. encode_stop(mnem(kind), ops(kind,n)) is Err
+**Contract evidence:** inferred (llvm-mc rejects `stadd s0, [x1]` and `staddb x0, [x1]`; ARM STADDB/STADDH require W registers)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_stop("stadd", [Reg("b0"), Mem{base:"x1", offset:0}])
+**Expected / Actual:** Err / Ok(Word) — b0 parsed as register 0, 32-bit
+**Impact:** A SIMD or 64-bit source is silently recoded as a 32-bit GPR
+**Root cause:** load_store.rs:931 get_reg/parse_reg_num accept b/h/s/d/q/v prefixes; size comes from a 'b'/'h' suffix so X registers still encode for STADDB/STADDH
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:931`
+```rust
+    let (rs, is_64) = get_reg(operands, 0)?;
+```
+**Suggested fix:** Require a GPR Rs; for byte/half variants require a W register
+```rust
+    let (rs, is_64) = get_gpr_rs(operands, 0)?;
+    if is_byte_or_half && is_64 {
+        return Err(format!("{} requires a W register", mnemonic));
+    }
+```
+**Bug report:** bug_reports/encode_stop_fp_reg.md
+**Repro seed:** (deterministic regression; property shrunk to n=0, kind=0, fp='b')
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_stop_pbt::test_encode_stop_regression_fp_reg' (2610721) panicked at src/backend/arm/assembler/encoder/encode_stop_pbt.rs:687:5:
+stadd b0, [x1] must Err; llvm-mc/gas require integer registers
+```
+
+### B4: encode_stop ignores a nonzero Mem offset
+
+**Formal:** ∀ valid (op,suf,Rs,Rn,wide), off ∈ Z excluding 0. encode_stop(op+suf, [Reg(Rs), Mem{base, off}]) is Err
+**Contract evidence:** inferred (llvm-mc rejects `stadd w0, [x1, #1]`; ARM optional offset can only be #0)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_stop("stadd", [Reg("w0"), Mem{base:"x0", offset:-1}])
+**Expected / Actual:** Err / Ok(Word) — offset ignored
+**Impact:** An offset the programmer wrote is silently dropped
+**Root cause:** load_store.rs:933 matches `Operand::Mem { base, .. }` and never reads `offset`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:933`
+```rust
+        Some(Operand::Mem { base, .. }) => parse_reg_num(base).ok_or_else(|| format!("{}: invalid base", mnemonic))?,
 ```
 **Suggested fix:** Reject a nonzero offset
 ```rust
-    let rn = match operands.get(2) {
-        Some(Operand::Mem { base, offset }) if *offset == 0 => {
-            parse_reg_num(base).ok_or("ldop: invalid base")?
-        }
-        Some(Operand::Mem { .. }) => return Err(format!("{}: offset must be #0", mnemonic)),
-        _ => return Err(format!("{} requires memory operand [Xn]", mnemonic)),
-    };
+        Some(Operand::Mem { base, offset }) if *offset == 0 => parse_reg_num(base).ok_or_else(|| format!("{}: invalid base", mnemonic))?,
+        Some(Operand::Mem { offset, .. }) => return Err(format!("{}: offset must be #0, got {}", mnemonic, offset)),
 ```
-**Bug report:** bug_reports/encode_ldop_nonzero_offset.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_stop_nonzero_offset.md
+**Repro seed:** (deterministic regression; property shrunk to op=0, suf=0, rs=0, rn=0, is_64=false, off=-1)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_nonzero_offset' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:942:5:
-ldadd w0, w0, [x0, #-1] must Err; gas: optional immediate offset can only be 0
+thread 'backend::arm::assembler::encoder::encode_stop_pbt::test_encode_stop_regression_nonzero_offset' (2610722) panicked at src/backend/arm/assembler/encoder/encode_stop_pbt.rs:702:5:
+stadd w0, [x0, #-1] must Err; gas: optional immediate offset can only be 0
 ```
 
 ## Design Caveats
@@ -155,39 +147,34 @@ ldadd w0, w0, [x0, #-1] must Err; gas: optional immediate offset can only be 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_ldop_pbt.rs | 11 properties + 11 KAT + 8 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_ldop_pbt` |
+| src/backend/arm/assembler/encoder/encode_stop_pbt.rs | 11 properties + 9 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_stop_pbt` |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_ldop -- --test-threads=1
+cargo test --lib encode_stop -- --test-threads=1
 ```
 
-B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ldop_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_stop_regression_extra_operand -- --test-threads=1
 ```
 
-B2 SP as Rs:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ldop_regression_sp_as_rs -- --test-threads=1
+cargo test --lib test_encode_stop_regression_sp_as_rs -- --test-threads=1
 ```
 
-B3 mixed width:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ldop_regression_mixed_width -- --test-threads=1
+cargo test --lib test_encode_stop_regression_fp_reg -- --test-threads=1
 ```
 
-B4 nonzero offset:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ldop_regression_nonzero_offset -- --test-threads=1
+cargo test --lib test_encode_stop_regression_nonzero_offset -- --test-threads=1
 ```
 
 ## Output Directories
@@ -198,27 +185,27 @@ cargo test --lib test_encode_ldop_regression_nonzero_offset -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/report.json
 - pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
 - pbt-out/CHANGE_SURFACE.md
-- pbt-out/bug_reports/encode_ldop_extra_operand.md
-- pbt-out/bug_reports/encode_ldop_extra_operand.html
-- pbt-out/bug_reports/encode_ldop_sp_as_rs.md
-- pbt-out/bug_reports/encode_ldop_sp_as_rs.html
-- pbt-out/bug_reports/encode_ldop_mixed_width.md
-- pbt-out/bug_reports/encode_ldop_mixed_width.html
-- pbt-out/bug_reports/encode_ldop_nonzero_offset.md
-- pbt-out/bug_reports/encode_ldop_nonzero_offset.html
-- pbt-out/run/encode_ldop_test.log
-- pbt-out/run/encode_ldop_test2.log
+- pbt-out/bug_reports/encode_stop_extra_operand.md
+- pbt-out/bug_reports/encode_stop_extra_operand.html
+- pbt-out/bug_reports/encode_stop_sp_as_rs.md
+- pbt-out/bug_reports/encode_stop_sp_as_rs.html
+- pbt-out/bug_reports/encode_stop_fp_reg.md
+- pbt-out/bug_reports/encode_stop_fp_reg.html
+- pbt-out/bug_reports/encode_stop_nonzero_offset.md
+- pbt-out/bug_reports/encode_stop_nonzero_offset.html
+- pbt-out/run/ (scratch)
+- proptest-regressions/backend/arm/assembler/encoder/encode_stop_pbt.txt (proptest failure file from the extra-operand property)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 04:59 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 164/307 total | PBT candidates: 164 | Tested: 164 (100%) | 1 pass, 164 fail
+> Last updated: 2026-10-06 05:26 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 165/307 total | PBT candidates: 165 | Tested: 165 (100%) | 1 pass, 165 fail
 
 ## Summary
 
@@ -227,10 +214,10 @@ cargo test --lib test_encode_ldop_regression_nonzero_offset -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 164 |
-| **Tested (of PBT candidates)** | **164 / 164 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 164 / -1 |
-| **Overall (tested / all functions)** | **164 / 307 (53%)** |
+| PBT candidates (from FUNCTION_INDEX) | 165 |
+| **Tested (of PBT candidates)** | **165 / 165 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 165 / -1 |
+| **Overall (tested / all functions)** | **165 / 307 (54%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -238,13 +225,13 @@ cargo test --lib test_encode_ldop_regression_nonzero_offset -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 164 | 164 | 0 | 100% |
+|  | 165 | 165 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 164 | 164 | 0 | 100% |
+| unknown | 165 | 165 | 0 | 100% |
 
 ## File Coverage
 
@@ -256,7 +243,7 @@ cargo test --lib test_encode_ldop_regression_nonzero_offset -- --test-threads=1
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 13 | 13 | 100% | covered |
+| load_store.rs | 20 | 14 | 14 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -431,3 +418,4 @@ cargo test --lib test_encode_ldop_regression_nonzero_offset -- --test-threads=1
 | encode_tlbi | system.rs |
 | encode_swp | load_store.rs |
 | encode_ldop | load_store.rs |
+| encode_stop | load_store.rs |

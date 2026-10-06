@@ -1,343 +1,374 @@
-# Properties: encode_ldop
+# Properties: encode_stop
 
-## encode_ldop_diff_llvm_mc
-- Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree LDADD decoder). Sibling encode_cas / encode_swp / encode_stop rejected (same-job gate: different LSE class / operand grammar). README.md:12 gas-compat plus encoder/mod.rs:3 32-bit words. SUT-boundary: internal-helper, operands passed through from encode_instruction.
-- Doc contract: load_store.rs:879 "Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics)." — asserted fingerprint 028cc568
-- Seed: encode_swp_pbt.rs:encode_swp_diff_llvm_mc
-- Formal: ∀ op ∈ {ldadd,ldclr,ldeor,ldset}, ∀ suf ∈ {ε,a,al,l,b,ab,alb,lb,h,ah,alh,lh}, ∀ rs,rt,rn ∈ [0,31], ∀ is_64 ∈ Bool. let v = op+suf. let wide = byte(suf)∨half(suf) ? false : is_64. encode_ldop(v, [Reg(gpr(rs,wide)), Reg(gpr(rt,wide)), Mem{base(rn),0}]) = llvm-mc("-triple=aarch64 -mattr=+lse", "v gpr(rs,wide), gpr(rt,wide), [base(rn)]")
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_diff_llvm_mc
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree STADD decoder; ST* is a one-way LD* alias with Rt=ZR). Sibling encode_cas / encode_swp / encode_ldop rejected (same-job gate: different LSE class / operand grammar). SUT-boundary: internal-helper, operands passed through from encode_instruction.
+- Doc contract: load_store.rs:923 "/// Encode STADD/STCLR/STEOR/STSET and their release/byte/halfword variants." — asserted fingerprint 02b72f5c
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:379 encode_ldop_diff_llvm_mc
+- Formal: ∀ op ∈ {stadd,stclr,steor,stset}, suf ∈ {ε,l,b,lb,h,lh}, Rs ∈ {0..31}, Rn ∈ {0..31}, wide ∈ {W,X if suf ∈ {ε,l} else W}. encode_stop(op+suf, [Reg(Rs), Mem{Xn|SP, 0}]) = llvm-mc("-triple=aarch64 -mattr=+lse", "op+suf Rs, [Xn|SP]")
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [op, suf, rs, rt, rn, is_64]
-  domain: { op: ldop_base, suf: ldop_suffix, rs: u32_0_31, rt: u32_0_31, rn: u32_0_31, is_64: bool }
+  vars: [op, suf, rs, rn, is_64]
+  domain:
+    op: "0..3"
+    suf: "0..5"
+    rs: "0..31"
+    rn: "0..31"
+    is_64: bool
   relation:
     op: eq
-    lhs: encode_ldop(mnemonic(op,suf), valid_ops(op,suf,rs,rt,rn,is_64))
-    rhs: llvm_mc(asm(op,suf,rs,rt,rn,is_64))
+    lhs: encode_stop(mnemonic(op, suf), valid_ops(suf, rs, rn, is_64)).word
+    rhs: llvm_mc_word(asm_line(op, suf, rs, rn, is_64))
 generators:
   op: { gen: int, min: 0, max: 3, type: u32 }
-  suf: { gen: int, min: 0, max: 11, type: u32 }
+  suf: { gen: int, min: 0, max: 5, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-evidence: load_store.rs:879 Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics).
+evidence: encoder/mod.rs:3 32-bit words; encoder/mod.rs:1065-1068 dispatch; ARM ARM STADD alias of LDADD Rt=ZR
 ```
 
-## encode_ldop_arm_fields
+## encode_stop_arm_fields
 - Tier: 4
-- Rationale: ARM ARM LDADD layout is an independent structural invariant (size 111000 A R 1 Rs 0 opc 00 Rn Rt). Stronger differential is the sibling property; this unpacks fields from the ARM formula, not a copy of the SUT packer. Round-trip rejected (no decoder).
-- Doc contract: load_store.rs:880 "LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt" — asserted fingerprint 5c1b199d
-- Seed: encode_swp_pbt.rs:encode_swp_arm_fields
-- Formal: ∀ op,suf,rs,rt,rn,is_64 in the valid domain. let w = encode_ldop(...). (w[31:30]=expected_size(suf,wide)) ∧ (w[29:24]=0b111000) ∧ (w[23]=A(suf)) ∧ (w[22]=R(suf)) ∧ (w[21]=1) ∧ (w[20:16]=rs) ∧ (w[15]=0) ∧ (w[14:12]=opc(op)) ∧ (w[11:10]=0) ∧ (w[9:5]=rn) ∧ (w[4:0]=rt)
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+- Rationale: ARM LDADD layout is an independent structural invariant (A=0, Rt=31 for the store alias). Weaker than differential (does not pin the exact word against llvm-mc) but checks every field. Round-trip rejected (no decoder).
+- Doc contract: load_store.rs:924 "/// These are aliases for LDADD/LDCLR/LDEOR/LDSET with Rt=XZR (register 31)." — asserted fingerprint 5fcf94c4
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:398 encode_ldop_arm_fields
+- Formal: ∀ valid (op,suf,Rs,Rn,wide). let w = encode_stop(...).word. bits[31:30]=size(suf,wide) ∧ bits[29:24]=0b111000 ∧ bit23=0 ∧ bit22=R(suf) ∧ bit21=1 ∧ bits[20:16]=Rs ∧ bit15=0 ∧ bits[14:12]=opc(op) ∧ bits[11:10]=0 ∧ bits[9:5]=Rn ∧ bits[4:0]=31
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [op, suf, rs, rt, rn, is_64]
-  domain: { op: ldop_base, suf: ldop_suffix, rs: u32_0_31, rt: u32_0_31, rn: u32_0_31, is_64: bool }
+  vars: [op, suf, rs, rn, is_64]
+  domain:
+    op: "0..3"
+    suf: "0..5"
+    rs: "0..31"
+    rn: "0..31"
+    is_64: bool
   relation:
     op: holds
-    expr: arm_ldop_fields_match(encode_ldop(mnemonic(op,suf), valid_ops(op,suf,rs,rt,rn,is_64)), op, suf, rs, rt, rn, is_64)
+    expr: arm_stadd_fields_hold(encode_stop(mnemonic(op, suf), valid_ops(suf, rs, rn, is_64)).word, op, suf, rs, rn, is_64)
 generators:
   op: { gen: int, min: 0, max: 3, type: u32 }
-  suf: { gen: int, min: 0, max: 11, type: u32 }
+  suf: { gen: int, min: 0, max: 5, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-evidence: "load_store.rs:880 LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt"
+evidence: load_store.rs:924 Rt=XZR; ARM ARM LDADD size 111000 A R 1 Rs 0 opc 00 Rn Rt with A=0 Rt=31
 ```
 
-## encode_ldop_metamorphic_regs_ar_opc
+## encode_stop_metamorphic_regs_r_opc
 - Tier: 4
-- Rationale: Rs/Rt/Rn occupy disjoint bit-fields; A (bit 23) and R (bit 22) are independent of the register fields; opc (bits[14:12]) distinguishes LDADD/LDCLR/LDEOR/LDSET; ASCII case of the mnemonic is behavior-preserving (mnemonic.to_lowercase). Stronger differential covers the valid domain; this isolates field independence.
-- Doc contract: load_store.rs:880 "LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt" — asserted fingerprint 5c1b199d
-- Seed: encode_swp_pbt.rs:encode_swp_metamorphic_regs_ar
-- Formal: ∀ rs,rt,rn ∈ [0,30], ∀ is_64. let b = encode_ldop("ldadd", ops(rs,rt,rn)). encode_ldop("ldadd", ops(rs,rt+1,rn)) differs only in bits[4:0]; encode_ldop("ldadd", ops(rs,rt,rn+1)) differs only in bits[9:5]; encode_ldop("ldadd", ops(rs+1,rt,rn)) differs only in bits[20:16]; encode_ldop("ldadda", ops) ⊕ b = 1<<23; encode_ldop("ldaddl", ops) ⊕ b = 1<<22; encode_ldop("ldaddal", ops) ⊕ b = (1<<23)|(1<<22); encode_ldop("ldclr", ops) ⊕ b = 1<<12; encode_ldop("ldeor", ops) ⊕ b = 2<<12; encode_ldop("ldset", ops) ⊕ b = 3<<12; encode_ldop("LDADD", ops) = b
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+- Rationale: Independent field isolation: mutating Rs/Rn/R/opc must change only that field; STADDL XOR STADD = 1<<22; STCLR/STEOR/STSET XOR STADD = opc<<12; uppercase matches lowercase. Stronger oracles already used above; this is the required metamorphic angle.
+- Doc contract: load_store.rs:925 "/// STADD Ws, [Xn] encodes as LDADD Ws, WZR, [Xn]" — asserted fingerprint 0e17ede8
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:426 encode_ldop_metamorphic_regs_ar_opc
+- Formal: ∀ Rs,Rn ∈ {0..30}, wide ∈ {W,X}. let b = encode_stop("stadd", [Rs,[Rn]]). (encode_stop("stadd",[Rs+1,[Rn]]) ⊕ b) ⊆ bits[20:16] ∧ (encode_stop("stadd",[Rs,[Rn+1]]) ⊕ b) ⊆ bits[9:5] ∧ encode_stop("staddl",...) ⊕ b = 1<<22 ∧ encode_stop("stclr",...) ⊕ b = 1<<12 ∧ encode_stop("steor",...) ⊕ b = 2<<12 ∧ encode_stop("stset",...) ⊕ b = 3<<12 ∧ encode_stop("STADD",...) = b
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rs, rt, rn, is_64]
-  domain: { rs: u32_0_30, rt: u32_0_30, rn: u32_0_30, is_64: bool }
+  vars: [rs, rn, is_64]
+  domain:
+    rs: "0..30"
+    rn: "0..30"
+    is_64: bool
   relation:
     op: holds
-    expr: field_isolation_and_opc_ar_case(encode_ldop, rs, rt, rn, is_64)
+    expr: stadd_field_isolation(rs, rn, is_64)
 generators:
   rs: { gen: int, min: 0, max: 30, type: u32 }
-  rt: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
   is_64: { gen: bool }
-evidence: "load_store.rs:880 LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt"
+evidence: ARM ARM LDADD field layout; load_store.rs:925 alias identity; mnemonic.to_lowercase at load_store.rs:937
 ```
 
-## encode_ldop_neg_extra_operand
-- Tier: 4
-- Rationale: llvm-mc/gas reject a fourth operand on LDADD. README.md:12 gas-compat. Body `operands.len() < 3` does not declare extra operands invalid; they stay in the generator. Negative/error contract from the independent assembler, not from the SUT body.
-- Doc contract: load_store.rs:879 "Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics)." — asserted fingerprint 028cc568
-- Seed: encode_swp_pbt.rs:encode_swp_neg_extra_operand
-- Formal: ∀ op,suf,rs,rt,rn,is_64 in the valid domain, ∀ extra ∈ Operand. encode_ldop(v, valid_ops ++ [extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_neg_extra_operand
+- Tier: 3
+- Rationale: llvm-mc/gas reject a 3rd STADD operand. Body uses `operands.len() < 2`, so extra operands are currently accepted. Not a documented input-domain restriction on encode_stop itself.
+- Doc contract: load_store.rs:926 "/// Variants: stadd/stclr/steor/stset, plus 'l' (release), 'b' (byte), 'h' (half)." — asserted fingerprint 2f5d3000
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:493 encode_ldop_neg_extra_operand
+- Formal: ∀ valid (op,suf,Rs,Rn,wide), extra ∈ Operand. encode_stop(op+suf, [Reg(Rs), Mem{base,0}, extra]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: failing
-- Counterexample: encode_ldop("ldadd", [Reg("w0"), Reg("w0"), Mem{base:"x0", offset:0}, Reg("x2")])
-- Bug report: pbt-out/bug_reports/encode_ldop_extra_operand.md
+- Counterexample: encode_stop("stadd", [Reg("w0"), Mem{base:"x0", offset:0}, Reg("x2")])
+- Bug report: pbt-out/bug_reports/encode_stop_extra_operand.md
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [op, suf, rs, rt, rn, is_64, extra]
-  domain: { op: ldop_base, suf: ldop_suffix, rs: u32_0_31, rt: u32_0_31, rn: u32_0_31, is_64: bool, extra: Operand }
+  vars: [op, suf, rs, rn, is_64, extra]
+  domain:
+    op: "0..3"
+    suf: "0..5"
+    rs: "0..31"
+    rn: "0..31"
+    is_64: bool
   relation:
     op: throws
-    expr: encode_ldop(mnemonic(op,suf), valid_ops(op,suf,rs,rt,rn,is_64) ++ [extra])
-    error: Err
+    expr: encode_stop(mnemonic(op, suf), valid_ops(suf, rs, rn, is_64) ++ [extra])
 generators:
   op: { gen: int, min: 0, max: 3, type: u32 }
-  suf: { gen: int, min: 0, max: 11, type: u32 }
+  suf: { gen: int, min: 0, max: 5, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
-  extra: { gen: oneof, options: [Reg, Imm, Symbol, Mem] }
-expected_error: Err
-evidence: load_store.rs:879 Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics).
+  extra: { gen: oneof, options: [{ gen: const, value: "Reg" }, { gen: const, value: "Imm" }] }
+expected_error: String
+evidence: llvm-mc rejects extra STADD operand; encoder/mod.rs:3 32-bit words
 ```
 
-## encode_ldop_neg_sp_zr_base
-- Tier: 4
-- Rationale: ARM LDADD Rs/Rt are ZR not SP; Rn is Xn|SP not ZR. llvm-mc/gas reject SP/WSP as Rs/Rt and W/WSP/XZR/x31 as base. parse_reg_num maps both SP and XZR to 31; that is not a domain restriction on encode_ldop.
-- Doc contract: load_store.rs:880 "LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt" — asserted fingerprint 5c1b199d
-- Seed: encode_swp_pbt.rs:encode_swp_neg_sp_zr_base
-- Formal: ∀ op,suf in the documented variants, ∀ n ∈ [0,30]. encode_ldop(v, [Reg(sp|wsp), …]) is Err ∧ encode_ldop(v, […, Mem{xzr|x31|wN|wsp|wzr, 0}]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_neg_sp_zr_base
+- Tier: 3
+- Rationale: ARM Rs is ZR not SP; Rn is Xn|SP not ZR. llvm-mc/gas reject SP/WSP as Rs and W/WSP/XZR/x31 as base. parse_reg_num maps both SP and XZR to 31, so the SUT currently cannot distinguish them.
+- Doc contract: load_store.rs:925 "/// STADD Ws, [Xn] encodes as LDADD Ws, WZR, [Xn]" — asserted fingerprint 0e17ede8
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:515 encode_ldop_neg_sp_zr_base
+- Formal: ∀ valid (op,suf), kind ∈ {SP-as-Rs, WSP-as-Rs, W-base, WSP-base, XZR-base, x31-base, WZR-base}. encode_stop(op+suf, ops(kind)) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: failing
-- Counterexample: encode_ldop("ldadd", [Reg("sp"), Reg("w1"), Mem{base:"x2", offset:0}])
-- Bug report: pbt-out/bug_reports/encode_ldop_sp_as_rs.md
+- Counterexample: encode_stop("stadd", [Reg("sp"), Mem{base:"x1", offset:0}])
+- Bug report: pbt-out/bug_reports/encode_stop_sp_as_rs.md
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [op, suf, n, kind, is_64]
-  domain: { op: ldop_base, suf: ldop_suffix, n: u32_0_30, kind: sp_zr_kind, is_64: bool }
+  domain:
+    op: "0..3"
+    suf: "0..5"
+    n: "0..30"
+    kind: "0..6"
+    is_64: bool
   relation:
     op: throws
-    expr: encode_ldop(mnemonic(op,suf), sp_zr_ops(kind,n,suf,is_64))
-    error: Err
+    expr: encode_stop(mnemonic(op, suf), sp_zr_base_ops(kind, n, suf, is_64))
 generators:
   op: { gen: int, min: 0, max: 3, type: u32 }
-  suf: { gen: int, min: 0, max: 11, type: u32 }
+  suf: { gen: int, min: 0, max: 5, type: u32 }
   n: { gen: int, min: 0, max: 30, type: u32 }
-  kind: { gen: int, min: 0, max: 8, type: u32 }
+  kind: { gen: int, min: 0, max: 6, type: u32 }
   is_64: { gen: bool }
-expected_error: Err
-evidence: "load_store.rs:880 LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt"
+expected_error: String
+evidence: llvm-mc rejects STADD SP and STADD with XZR base; ARM Rn=31 is SP not XZR
 ```
 
-## encode_ldop_neg_mixed_fp_xbyte
-- Tier: 4
-- Rationale: llvm-mc/gas reject mixed W/X, FP/SIMD Rs/Rt, and byte/half variants with X registers. get_reg/parse_reg_num accept d/s/q/v/h/b prefixes; encode_ldop does not check matching widths. Those inputs stay in the generator.
-- Doc contract: load_store.rs:879 "Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics)." — asserted fingerprint 028cc568
-- Seed: encode_swp_pbt.rs:encode_swp_neg_mixed_fp_xbyte
-- Formal: ∀ n ∈ [0,30], ∀ fp ∈ {b,h,s,d,q,v}. encode_ldop("ldadd", [Reg(xN), Reg(wN), Mem{xN',0}]) is Err ∧ encode_ldop("ldadd", [Reg(fpN), …]) is Err ∧ encode_ldop("ldaddb"|"ldaddh"|"ldaddab"|"ldsetlh", [Reg(xN), Reg(xN'), Mem{xN'',0}]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_neg_fp_xbyte
+- Tier: 3
+- Rationale: llvm-mc/gas require integer GPR Rs; STADDB/STADDH require W registers. get_reg accepts FP prefixes; size is taken from the 'b'/'h' suffix so X registers currently encode.
+- Doc contract: load_store.rs:926 "/// Variants: stadd/stclr/steor/stset, plus 'l' (release), 'b' (byte), 'h' (half)." — asserted fingerprint 2f5d3000
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:592 encode_ldop_neg_mixed_fp_xbyte
+- Formal: ∀ n ∈ {0..30}, kind ∈ {FP-Rs, STADDB-X, STADDH-X, STADDLB-X, STADDLH-X}. encode_stop(mnem(kind), ops(kind,n)) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: failing
-- Counterexample: encode_ldop("ldadd", [Reg("x0"), Reg("w0"), Mem{base:"x1", offset:0}])
-- Bug report: pbt-out/bug_reports/encode_ldop_mixed_width.md
+- Counterexample: encode_stop("stadd", [Reg("b0"), Mem{base:"x1", offset:0}])
+- Bug report: pbt-out/bug_reports/encode_stop_fp_reg.md
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [n, kind, fp]
-  domain: { n: u32_0_30, kind: mixed_fp_kind, fp: fp_prefix }
+  domain:
+    n: "0..30"
+    kind: "0..5"
+    fp: "b,h,s,d,q,v"
   relation:
     op: throws
-    expr: encode_ldop(mixed_fp_mnem(kind), mixed_fp_ops(kind,n,fp))
-    error: Err
+    expr: encode_stop(mnem_fp_xbyte(kind), fp_or_xbyte_ops(kind, n, fp))
 generators:
   n: { gen: int, min: 0, max: 30, type: u32 }
-  kind: { gen: int, min: 0, max: 8, type: u32 }
-  fp: { gen: oneof, options: [b, h, s, d, q, v] }
-expected_error: Err
-evidence: load_store.rs:879 Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics).
+  kind: { gen: int, min: 0, max: 5, type: u32 }
+  fp: { gen: oneof, options: [{ gen: const, value: "b" }, { gen: const, value: "s" }, { gen: const, value: "d" }] }
+expected_error: String
+evidence: llvm-mc rejects STADD with FP Rs and STADDB with X registers
 ```
 
-## encode_ldop_neg_arity_and_shape
-- Tier: 4
-- Rationale: llvm-mc reports "too few operands" for arity < 3; gas requires a memory operand [Xn|SP], not Imm/Symbol/pre/post/reg-offset/Cond. Body returns Err on len() < 3 and non-Mem third operand; the contract is the assembler grammar, not the producing if.
-- Doc contract: load_store.rs:880 "LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt" — asserted fingerprint 5c1b199d
-- Seed: encode_swp_pbt.rs:encode_swp_neg_arity_and_shape
-- Formal: ∀ shape ∈ {empty, 1-reg, 2-reg, Imm, Symbol, MemPreIndex, MemPostIndex, MemRegOffset, Cond}, ∀ n ∈ [0,30]. encode_ldop("ldadd", ops(shape,n)) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_neg_arity_and_shape
+- Tier: 3
+- Rationale: Documented form is 2 operands, second a bare [Xn]. Body returns Err for len < 2 or non-Mem second operand; this pins that documented error path.
+- Doc contract: load_store.rs:925 "/// STADD Ws, [Xn] encodes as LDADD Ws, WZR, [Xn]" — asserted fingerprint 0e17ede8
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:666 encode_ldop_neg_arity_and_shape
+- Formal: ∀ shape ∈ {[], [Rs], [Rs, Imm], [Rs, Symbol], [Rs, MemPreIndex], [Rs, MemPostIndex], [Rs, MemRegOffset], [Rs, Cond]}. encode_stop("stadd", ops(shape)) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [shape, n, off]
-  domain: { shape: arity_shape, n: u32_0_30, off: i64_m8_8 }
+  domain:
+    shape: "0..7"
+    n: "0..30"
+    off: "-8..8"
   relation:
     op: throws
-    expr: encode_ldop("ldadd", arity_ops(shape,n,off))
-    error: Err
+    expr: encode_stop("stadd", arity_shape_ops(shape, n, off))
 generators:
-  shape: { gen: int, min: 0, max: 8, type: u32 }
+  shape: { gen: int, min: 0, max: 7, type: u32 }
   n: { gen: int, min: 0, max: 30, type: u32 }
   off: { gen: int, min: -8, max: 8, type: i64 }
-expected_error: Err
-evidence: "load_store.rs:880 LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt"
+expected_error: String
+evidence: load_store.rs:928-935 len() < 2 and requires memory operand [Xn]
 ```
 
-## encode_ldop_neg_nonzero_offset
-- Tier: 4
-- Rationale: ARM optional immediate offset on LDADD is only #0; llvm-mc/gas reject [Xn, #imm] when imm ≠ 0. Body `Mem { base, .. }` ignores offset; that is not a domain restriction. Offset ≠ 0 stays in the generator.
-- Doc contract: load_store.rs:880 "LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt" — asserted fingerprint 5c1b199d
-- Seed: encode_swp_pbt.rs:encode_swp_neg_nonzero_offset
-- Formal: ∀ op,suf,rs,rt in the valid domain, ∀ rn ∈ [0,30], ∀ off ∈ ℤ\{0}. encode_ldop(v, [Reg(gpr(rs)), Reg(gpr(rt)), Mem{base(rn), off}]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_neg_nonzero_offset
+- Tier: 3
+- Rationale: ARM/gas optional offset on LSE atomics can only be #0. Body matches `Mem { base, .. }` and ignores offset, so nonzero offsets currently encode.
+- Doc contract: load_store.rs:925 "/// STADD Ws, [Xn] encodes as LDADD Ws, WZR, [Xn]" — asserted fingerprint 0e17ede8
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:721 encode_ldop_neg_nonzero_offset
+- Formal: ∀ valid (op,suf,Rs,Rn,wide), off ∈ Z excluding 0. encode_stop(op+suf, [Reg(Rs), Mem{base, off}]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: failing
-- Counterexample: encode_ldop("ldadd", [Reg("w0"), Reg("w0"), Mem{base:"x0", offset:-1}])
-- Bug report: pbt-out/bug_reports/encode_ldop_nonzero_offset.md
+- Counterexample: encode_stop("stadd", [Reg("w0"), Mem{base:"x0", offset:-1}])
+- Bug report: pbt-out/bug_reports/encode_stop_nonzero_offset.md
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [op, suf, rs, rt, rn, is_64, off]
-  domain: { op: ldop_base, suf: ldop_suffix, rs: u32_0_31, rt: u32_0_31, rn: u32_0_30, is_64: bool, off: nonzero_i64 }
+  vars: [op, suf, rs, rn, is_64, off]
+  domain:
+    op: "0..3"
+    suf: "0..5"
+    rs: "0..31"
+    rn: "0..30"
+    is_64: bool
+    off: nonzero_i64
   relation:
     op: throws
-    expr: encode_ldop(mnemonic(op,suf), [Reg(gpr(rs,wide)), Reg(gpr(rt,wide)), Mem{base(rn), off}])
-    error: Err
+    expr: encode_stop(mnemonic(op, suf), ops_with_offset(suf, rs, rn, is_64, off))
 generators:
   op: { gen: int, min: 0, max: 3, type: u32 }
-  suf: { gen: int, min: 0, max: 11, type: u32 }
+  suf: { gen: int, min: 0, max: 5, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
   is_64: { gen: bool }
   off: { gen: int, min: -4096, max: 4096, type: i64 }
-expected_error: Err
-evidence: "load_store.rs:880 LDADD Rs, Rt, [Xn]: size 111000 A R 1 Rs 0 opc 00 Rn Rt"
+expected_error: String
+evidence: llvm-mc rejects STADD with nonzero Mem offset
 ```
 
-## encode_ldop_neg_invalid_name
-- Tier: 4
-- Rationale: Sweep of parse_reg_num None on Rs/Rt/base (foo, x32, empty, r0). Documented by get_reg returning Err on unparsable names. Strengthening/coverage-gaps round.
-- Doc contract: load_store.rs:879 "Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics)." — asserted fingerprint 028cc568
-- Seed: encode_swp_pbt.rs:encode_swp_neg_invalid_name
-- Formal: ∀ slot ∈ {Rs,Rt,Rn}, ∀ name ∈ {foo,x32,w32,"",r0,x-1,31}. encode_ldop("ldadd", ops_with(slot,name)) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_neg_invalid_name
+- Tier: 3
+- Rationale: Sweep of unparsable register/base names. parse_reg_num returns None for foo/x32/empty/r0; encode_stop must Err. Documented error path of get_reg/parse_reg_num.
+- Doc contract: load_store.rs:923 "/// Encode STADD/STCLR/STEOR/STSET and their release/byte/halfword variants." — asserted fingerprint 02b72f5c
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:746 encode_ldop_neg_invalid_name
+- Formal: ∀ slot ∈ {Rs, base}, name ∈ {foo, x32, w32, ε, r0, x-1, 31}. encode_stop("stadd", ops_with_name(slot, name)) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [slot, name]
-  domain: { slot: {0,1,2}, name: invalid_reg_name }
+  domain:
+    slot: "0..1"
+    name: "foo,x32,w32,empty,r0,x-1,31"
   relation:
     op: throws
-    expr: encode_ldop("ldadd", ops_with(slot, name))
-    error: Err
+    expr: encode_stop("stadd", ops_with_invalid_name(slot, name))
 generators:
-  slot: { gen: int, min: 0, max: 2, type: u32 }
-  name: { gen: oneof, options: [foo, x32, w32, empty, r0, x-1, 31] }
-expected_error: Err
-evidence: load_store.rs:879 Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics).
+  slot: { gen: int, min: 0, max: 1, type: u32 }
+  name: { gen: oneof, options: [{ gen: const, value: "foo" }, { gen: const, value: "x32" }] }
+expected_error: String
+evidence: load_store.rs:931 get_reg; load_store.rs:933 parse_reg_num None
 ```
 
-## encode_ldop_diff_alt_spellings
-- Tier: 2
-- Rationale: mnemonic.to_lowercase is behavior-preserving; llvm-mc accepts LDADD/Ldadd. Sweep of the to_lowercase arm.
-- Doc contract: load_store.rs:879 "Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics)." — asserted fingerprint 028cc568
-- Seed: encode_swp_pbt.rs:encode_swp_diff_alt_spellings
-- Formal: ∀ op,suf,rs,rt,rn,is_64 in the valid domain, ∀ mode ∈ {upper, title, lower}. encode_ldop(casefold(v,mode), valid_ops) = llvm-mc(casefold(v,mode) …)
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_diff_alt_spellings
+- Tier: 5
+- Rationale: Sweep of ASCII case. mnemonic.to_lowercase is documented behavior; llvm-mc accepts STADD/Stadd. Differential vs llvm-mc on cased mnemonics.
+- Doc contract: load_store.rs:936 "    let mn = mnemonic.to_lowercase();" — asserted fingerprint 54365599
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:781 encode_ldop_diff_alt_spellings
+- Formal: ∀ valid (op,suf,Rs,Rn,wide), mode ∈ {upper, title, lower}. encode_stop(case(op+suf, mode), ops) = llvm-mc(case(op+suf, mode) + " Rs, [Xn]")
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [op, suf, rs, rt, rn, is_64, mode]
-  domain: { op: ldop_base, suf: ldop_suffix, rs: u32_0_31, rt: u32_0_31, rn: u32_0_31, is_64: bool, mode: case_mode }
+  vars: [op, suf, rs, rn, is_64, mode]
+  domain:
+    op: "0..3"
+    suf: "0..5"
+    rs: "0..31"
+    rn: "0..31"
+    is_64: bool
+    mode: "0..2"
   relation:
     op: eq
-    lhs: encode_ldop(casefold(mnemonic(op,suf), mode), valid_ops(op,suf,rs,rt,rn,is_64))
-    rhs: llvm_mc(casefold(asm(op,suf,rs,rt,rn,is_64), mode))
+    lhs: encode_stop(cased(mnemonic(op, suf), mode), valid_ops(suf, rs, rn, is_64)).word
+    rhs: llvm_mc_word(cased_asm(op, suf, rs, rn, is_64, mode))
 generators:
   op: { gen: int, min: 0, max: 3, type: u32 }
-  suf: { gen: int, min: 0, max: 11, type: u32 }
+  suf: { gen: int, min: 0, max: 5, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   is_64: { gen: bool }
   mode: { gen: int, min: 0, max: 2, type: u32 }
-evidence: load_store.rs:879 Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics).
+evidence: load_store.rs:937 mnemonic.to_lowercase
 ```
 
-## encode_ldop_neg_unknown_op
-- Tier: 4
-- Rationale: Sweep of the unknown-mnemonic else branch. encode_ldop returns Err for names that do not start with ldadd/ldclr/ldeor/ldset.
-- Doc contract: load_store.rs:879 "Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics)." — asserted fingerprint 028cc568
-- Seed: (none)
-- Formal: ∀ name ∈ {ldfoo,swp,cas,ld,add,"",stadd}. encode_ldop(name, [Reg(x0), Reg(x1), Mem{x2,0}]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs
+## encode_stop_neg_unknown_op
+- Tier: 3
+- Rationale: Sweep of mnemonics that do not start with stadd/stclr/steor/stset. Body returns "unknown st atomic op".
+- Doc contract: load_store.rs:947 "        return Err(format!(\"unknown st atomic op: {}\", mnemonic));" — asserted fingerprint f2617f8e
+- Seed: src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:817 encode_ldop_neg_unknown_op
+- Formal: ∀ name ∈ {stfoo, swp, cas, st, add, ε, ldadd}. encode_stop(name, [Reg("x0"), Mem{x1,0}]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_stop_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldop
+function: encoder.load_store.encode_stop
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [name]
-  domain: { name: unknown_ldop_mnemonic }
+  domain:
+    name: "stfoo,swp,cas,st,add,empty,ldadd"
   relation:
     op: throws
-    expr: encode_ldop(name, valid_ops(0,0,1,2,true))
-    error: Err
+    expr: encode_stop(name, valid_ops(0, 0, 1, true))
 generators:
-  name: { gen: oneof, options: [ldfoo, swp, cas, ld, add, empty, stadd] }
-expected_error: Err
-evidence: load_store.rs:879 Encode LDADD/LDCLR/LDEOR/LDSET and their acquire/release/byte/halfword variants (LSE atomics).
+  name: { gen: oneof, options: [{ gen: const, value: "stfoo" }, { gen: const, value: "ldadd" }] }
+expected_error: String
+evidence: load_store.rs:947-948 unknown st atomic op
 ```
