@@ -48,3 +48,5 @@
 | 26 | src/backend/x86/assembler | AVX-512: zmm entirely + all {%k} mask forms rejected (README: "initial AVX-512") | **new issue filed** (17-form battery) | [820](https://github.com/fermat-hkrc/claudes-c-compiler/issues/820) |
 | 26 | src/backend/riscv/assembler | RISC-V assembler lacks part of the compressed (RVC) subset: c.lwsp/c.sw/c.be | **new issue filed** | [#821](https://github.com/fermat-hkrc/claudes-c-compiler/issues/821) |
 | 26 | src/backend/x86/assembler | x86 assembler silently accepts out-of-range SSE imm8 operands (pshufd $256 / | **new issue filed** | [#822](https://github.com/fermat-hkrc/claudes-c-compiler/issues/822) |
+| 26 | src/backend/arm/assembler | writeback imm9 range unvalidated (ldr [x1,#504]! encodes [x1,#248]!) | **new issue filed** (byte-level boundary battery) | [#823](https://github.com/fermat-hkrc/claudes-c-compiler/issues/823) |
+| 26 | src/backend/riscv/assembler | imm ranges unvalidated on 4 more paths (auipc/jalr/csrrw/sb) — #796 class systemic | **new issue filed** (boundary battery, byte evidence) | [#824](https://github.com/fermat-hkrc/claudes-c-compiler/issues/824) |
