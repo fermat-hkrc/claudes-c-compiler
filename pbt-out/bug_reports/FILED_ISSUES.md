@@ -61,3 +61,4 @@
 | 26 | src/backend/riscv/assembler | atomics encoded without +a extension gate (17 forms; encodings correct) | **new issue filed** (#832 class) | [#833](https://github.com/fermat-hkrc/claudes-c-compiler/issues/833) |
 | 26 | src/backend/x86/assembler | SIB: %rsp as index silently dropped (160/1280 matrix forms; wrong address) | **new issue filed** (1280-form full SIB matrix) | [#834](https://github.com/fermat-hkrc/claudes-c-compiler/issues/834) |
 | 26 | src/backend/x86/assembler | symbol-immediate to symbol-memory rejected (addq $sym, sym2; 5 forms) | **new issue filed** | [#835](https://github.com/fermat-hkrc/claudes-c-compiler/issues/835) |
+| 26 | src/backend/arm/assembler | reg-offset extend forms: bare sxtw/uxtw silently dropped (7); ldr b0 byte mismatch (1) | **new issue filed** (20-form battery) | [#836](https://github.com/fermat-hkrc/claudes-c-compiler/issues/836) |
