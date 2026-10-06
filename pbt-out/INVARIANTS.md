@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_fnmadd_fnmsub)
+
+- Valid FNMADD/FNMSUB with matching S or D registers 0..31 (lowercase or uppercase) match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins fnmadd s0,s1,s2,s3=0x1f220c20, fnmadd d0,d1,d2,d3=0x1f620c20, fnmsub s0,s1,s2,s3=0x1f228c20, fnmsub d0,d1,d2,d3=0x1f628c20, fnmadd s31,s31,s31,s31=0x1f3f7fff, uppercase S0..S3=0x1f220c20.
+- ARM FP 3-source layout with o1=1 holds: bits[31:24]=0b00011111; bit21=1; ftype/o0/Rm/Ra/Rn/Rd match the generated fields (1000 cases).
+- Encodings of the same registers differ only in the mutated field; FNMADD XOR FNMSUB = 1<<15; S vs D flips only bit 22 (1000 cases).
+- Arity < 4 and non-register operands return Err (1000 cases).
+- Unparsable register names (foo, s32, empty, r0) return Err (sweep, 1000 cases).
+- Extra operands, mixed S/D, GPR, Q/V/B, SP, and H-register ftype currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_fnmadd_fnmsub)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6); half-precision -mattr=+fullfp16.
+- ARM ARM Floating-point data-processing (3 source): M=0 S=0 11111 ftype o1 Rm o0 Ra Rn Rd. FNMADD o1=1 o0=0, FNMSUB o1=1 o0=1. ftype 00=S, 01=D, 11=H.
+- Dispatch: encoder/mod.rs:565-566 fnmadd/fnmsub => encode_fnmadd_fnmsub(operands, is_sub).
+- Sibling encode_fmadd_fmsub is not a same-job differential (o1=0 non-negated class).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_fnmadd_fnmsub_neg_invalid_name. Closed: every documented behavior has a property; tier round spent.
+- Three failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_fnmadd_fnmsub_*.md.
+
+## Quirks (encode_fnmadd_fnmsub)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_fnmadd_fnmsub does not distinguish them (see bugs).
+- get_reg accepts FP prefixes (d/s/q/v/h/b) and GPR (see bugs).
+- No operands.len() check; extra operands are ignored (see bugs).
+- ftype is only `rd_name.starts_with('d')` else 00, so H encodes as S (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 16-line body.
+
 # Confirmed invariants (encode_stop)
 
 - Valid STADD/STCLR/STEOR/STSET variants (4 ops × 6 release/byte/half suffixes; no acquire) with Rs in {w/x 0..30, wzr/xzr} (W-only for byte/half) and base Xn|SP match llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). KAT pins stadd w0,[x1]=0xB820003F, stadd x0,[x1]=0xF820003F, staddl w0,[x1]=0xB860003F, staddb w0,[x1]=0x3820003F, staddh w0,[x1]=0x7820003F, stclr w0,[x1]=0xB820103F, steor w0,[x1]=0xB820203F, stset w0,[x1]=0xB820303F, stadd xzr,[sp]=0xF83F03FF.

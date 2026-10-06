@@ -1,27 +1,27 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_stop, English, standard)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw
-> Files: 11/11 scanned | Functions: 307 total | PBT candidates: 166 | This campaign tested: encode_stop
+> Last updated: 2026-10-06 (campaign: encode_fnmadd_fnmsub, English)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw; C++ reporter listed unrelated binaries and claimed NOT LINKED. The cargo test binary executed encode_fnmadd_fnmsub (7 KATs + 9 properties).
+> Files: 11/11 scanned | Functions: 307 total | PBT candidates: 167 | This campaign tested: encode_fnmadd_fnmsub
+> Effort tier: standard | Sweep round 1/1 spent (manual arm audit + encode_fnmadd_fnmsub_neg_invalid_name)
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 11 |
-| Files scanned | 11 / 11 |
-| Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 166 |
-| This campaign target | encode_stop (load_store.rs:927) |
-| This campaign properties | 11 (7 passing, 4 failing) |
-| Coverage evidence | file-level (symbol presence); cargo tests executed encode_stop (KATs passed) |
+| Target | encode_fnmadd_fnmsub |
+| Properties | 9 (6 passing / 3 failing) |
+| KAT | 7 passing |
+| Regression witnesses | 5 failing |
+| Bugs | 3 |
+| Sweep | encode_fnmadd_fnmsub_neg_invalid_name passing |
 
 ## This campaign
 
-| Function | Source file | Test file | Result |
-|----------|-------------|-----------|--------|
-| encode_stop | load_store.rs | encode_stop_pbt.rs | 7 passing / 4 failing (4 bugs); sweep invalid-name/alt-spellings/unknown-op passing |
+| Function | Source File | Tested | Result |
+|----------|-------------|--------|--------|
+| encode_fnmadd_fnmsub | fp_scalar.rs | yes | 6 pass / 3 fail |
 
 ## Sweep
 
-Round 1/1 spent. coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of the 45-line body plus encode_stop_neg_invalid_name, encode_stop_diff_alt_spellings, encode_stop_neg_unknown_op. Closed: every documented behavior has a property.
+coverage_gaps: no .gcda/.profraw; file-level evidence claimed NOT LINKED against unrelated C++ binaries. Manual audit of the 16-line body: arity, extra operand, wrong types, H ftype, S/D ftype, o0/o1, nonreg, invalid name all have properties. Closed: every documented behavior has a property; tier round spent.
