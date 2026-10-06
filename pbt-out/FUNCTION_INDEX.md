@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 150 | Excluded: 157
+> Total files: 11 | Total functions: 307 | PBT candidates: 151 | Excluded: 156
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -293,7 +293,7 @@
 | encode_crc32 | bitfield.rs | 226 | function | no | out of campaign scope |
 | encode_dmb | system.rs | 6 | function | yes | - |
 | encode_dsb | system.rs | 30 | function | yes | - |
-| encode_mrs | system.rs | 54 | function | no | out of campaign scope |
+| encode_mrs | system.rs | 54 | function | yes | - |
 | sysreg_encoding | system.rs | 184 | function | no | out of campaign scope |
 | parse_numbered_sysreg | system.rs | 190 | function | no | out of campaign scope |
 | parse_generic_sysreg | system.rs | 241 | function | no | out of campaign scope |

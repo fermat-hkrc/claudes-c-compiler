@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_mrs)
+
+- Generic S-form with in-range fields (op0 0..=3, op1 0..=7, CRn/CRm 0..=15, op2 0..=7) × Xt matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc word equals the unmasked ARM MRS formula 0xD5200000 | (enc << 5) | Rt.
+- Numbered families dbgbcr/dbgbvr/dbgwcr/dbgwvr n∈0..=15 and pmevcntr/pmevtyper n∈0..=30 match llvm-mc (1000 cases).
+- ARM MRS layout holds for named sysregs: bits[31:21]=0b11010101001 (group + L=1); bits[4:0]=Rt; different Xt differ only in bits[4:0] (1000 cases).
+- ASCII case-fold of a named sysreg is encoding-invariant (1000 cases).
+- Known-answer: `mrs x0, tpidr_el0` = 0xd53bd040; `mrs x0, nzcv` = 0xd53b4200; `mrs xzr, nzcv` = 0xd53b421f; llvm-mc `mrs x0, cntv_cval_el0` = 0xd53be340 (SUT disagrees).
+- Named table vs llvm-mc currently disagrees on oslar_el1 (write-only, SUT encodes) and cntv_cval_el0 (wrong op2). Extra operands, Wt/SP/FP dest, and out-of-range S-form currently disagree (see bugs).
+
+## Environment (encode_mrs)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM MRS: 1101 0101 00 1 op0 op1 CRn CRm op2 Rt = 0xD5200000 | (sysreg << 5) | Rt; Xt is a 64-bit GPR (not SP).
+- Dispatch: encoder/mod.rs:971 `"mrs" => encode_mrs(operands)`. Operands passed through unchanged.
+- Sibling encode_msr is not a same-job differential (MSR L=0 write, reversed operands, immediate PSTATE form).
+- encode_mrs uses get_reg on operand 0 (discards is_64) and requires operand 1 to be Symbol; extra operands ignored; unknown names fall through to parse_generic_sysreg / parse_numbered_sysreg; sysreg_encoding masks out-of-range fields.
+- Callers: codegen/globals.rs:25 and codegen/intrinsics.rs:241 emit `mrs x0, tpidr_el0`.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of named/generic/numbered/layout/case-fold/extra/wrong-dest/oob. Closed: tier round spent.
+- Five failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_mrs_*.md.
+
 # Confirmed invariants (encode_dsb)
 
 - Named DSB options (sy/st/ld/ish/ishst/ishld/nsh/nshst/nshld/osh/oshst/oshld), including case folds, match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). Barrier vs Symbol encodings are identical.

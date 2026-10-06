@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 23:44 (campaign: encode_dsb)
-> Files: 11/11 scanned (100%) | Functions: 150/307 total | PBT candidates: 150 | Tested: 150 (100%) | 0 pass, 150 fail
+> Last updated: 2026-10-06 (campaign: encode_mrs)
+> Files: 11/11 scanned (100%) | Functions: 151/307 total | PBT candidates: 151 | Tested: 151 (100%) | 0 pass, 151 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 150 |
-| **Tested (of PBT candidates)** | **150 / 150 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 150 / 0 |
-| **Overall (tested / all functions)** | **150 / 307 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 151 |
+| **Tested (of PBT candidates)** | **151 / 151 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 151 / 0 |
+| **Overall (tested / all functions)** | **151 / 307 (49%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 150 | 150 | 0 | 100% |
+|  | 151 | 151 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 150 | 150 | 0 | 100% |
+| unknown | 151 | 151 | 0 | 100% |
 
 ## File Coverage
 
@@ -42,7 +42,7 @@
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
-| system.rs | 18 | 2 | 2 | 100% | covered |
+| system.rs | 18 | 3 | 3 | 100% | covered |
 
 ## Recommended Focus
 
@@ -201,3 +201,8 @@
 | encode_neon_two_misc_narrow | neon.rs |
 | encode_dmb | system.rs |
 | encode_dsb | system.rs |
+| encode_mrs | system.rs |
+
+## Coverage evidence
+
+file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). cargo test --lib encode_mrs executed encode_mrs (KAT + 1000-case properties). Sweep: tier round spent.

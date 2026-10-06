@@ -114,6 +114,8 @@ mod encode_neon_two_misc_narrow_pbt;
 mod encode_dmb_pbt;
 #[cfg(test)]
 mod encode_dsb_pbt;
+#[cfg(test)]
+mod encode_mrs_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

@@ -1,134 +1,159 @@
-# PBT Campaign Report: encode_dsb
+# PBT Campaign Report: encode_mrs
 
 ## Summary
 
-**Verdict:** 1 high, 3 medium: encode_dsb ignores Operand::Imm so `dsb #0` encodes as `dsb sy` (wrong barrier), and it silently encodes extra, omitted, and non-barrier operands as SY instead of rejecting them the way GNU as and llvm-mc do.
-**Date:** 2026-10-05
+**Verdict:** 1 high: encode_mrs encodes `cntv_cval_el0` as S3_3_C14_C3_4 (op2=4) instead of ARM CNTV_CVAL_EL0 S3_3_C14_C3_2, so a virtual-timer compare-value read hits the wrong sysreg; plus 4 medium (write-only OSLAR_EL1 accepted, extra operands ignored, Wt dest accepted, out-of-range S-form masked).
+**Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_dsb
-**Tests:** 8 properties (plus 3 KAT, 4 regression witnesses)
-**Result:** 4 passing, 4 bugs
-**Change surface:** 1 changed function (encode_dsb), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed encode_dsb NOT LINKED because it inspected unrelated C++ binaries. `cargo test --lib encode_dsb` executed the real production symbol (4 passing / 4 failing properties).
-**Tier:** standard
+**Modules tested:** encode_mrs
+**Tests:** 9 properties (plus 4 KAT + 5 regression witnesses)
+**Result:** 4 passing, 5 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). cargo test --lib encode_mrs executed the production symbol (KAT + 1000-case properties). Sweep: tier round spent; documented behaviors have properties.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_dsb | 8 | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_mrs | 9 | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_dsb ignores Imm and encodes SY
+### B1: encode_mrs encodes write-only OSLAR_EL1
 
-**Formal:** ∀ crm ∈ {0,…,15}. encode_dsb([Imm(crm)]) = llvm-mc("dsb #" + crm) as Word
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as and llvm-mc encode `dsb #imm` for imm in 0..=15 as CRm=imm; parser.rs produces Operand::Imm for `#n`; encode() at mod.rs:967 passes operands through)
-**Documentation conflict:** (none) — encode_dsb has no rustdoc covering Imm; system.rs:49 "DSB: 0xD503309F | (option << 8)" states the encoding formula but does not mention immediates
-**Severity:** high
-**Counterexample:** encode_dsb(&[Operand::Imm(0)])  (`dsb #0`)
-**Expected / Actual:** Word(0xd503309f) / Word(0xd5033f9f)
-**Impact:** Valid GNU-style `dsb #imm` assembles as a full-system barrier. Requested CRm values 0–14 become SY, changing memory-ordering semantics.
-**Root cause:** system.rs:47 `_ => 0b1111` — Imm is not matched, so every immediate falls through to SY.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:47`
-```rust
-        _ => 0b1111,
-```
-**Suggested fix:** Treat Imm in 0..=15 as CRm; reject immediates outside that range.
-```rust
-        Some(Operand::Imm(n)) if (0..=15).contains(n) => *n as u32,
-        Some(Operand::Imm(n)) => return Err(format!("dsb immediate out of range: {}", n)),
-```
-**Bug report:** bug_reports/encode_dsb_imm_ignored.md
-**Repro seed:** cc c5614437345ff82a5cc5a5d8c06e99a694c826b52825b26e31c45e7e2f0f733d
-**Raw output:**
-```text
-Test failed: assertion failed: `(left == right)`
-  left: `3573759903`,
- right: `3573756063`: SUT vs llvm-mc for dsb #0
-minimal failing input: crm = 0
-```
-
-### B2: encode_dsb ignores extra operands
-
-**Formal:** ∀ name ∈ NamedDsb, ∀ extra ∈ Operand. llvm-mc("dsb " + name + ", …") is Err ⇒ encode_dsb([Barrier(name), extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as rejects `dsb sy, x0`; llvm-mc rejects extra operands)
+**Formal:** ∀ name ∈ NAMED, xt ∈ Xt. let asm = "mrs "+xt+", "+name; let sut = encode_mrs([Reg(xt), Symbol(name)]); (llvm-mc(asm)=Ok(w) ∧ sut=Ok(Word(w))) ∨ (llvm-mc(asm)=Err ∧ sut=Err)
+**Contract evidence:** inferred (llvm-mc / ARM MRS requires a readable system register; README.md:12 gas-compatible assembly)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_dsb(&[Operand::Barrier("sy".into()), Operand::Reg("x0".into())])  (`dsb sy, x0`)
-**Expected / Actual:** Err / Ok(Word(0xd5033f9f))
-**Impact:** Extra operands are dropped; `dsb sy, x0` silently becomes `dsb sy`.
-**Root cause:** system.rs:31 `operands.first()` — only the first operand is examined; length is never checked.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:31`
+**Counterexample:** encode_mrs([Reg("x0"), Symbol("oslar_el1")])  (`mrs x0, oslar_el1`)
+**Expected / Actual:** Err (llvm-mc: expected readable system register) / Ok(Word(0xd5301080))
+**Impact:** A write-only OS-lock register is assembled as MRS; the object file contains a read the architecture does not define.
+**Root cause:** system.rs:131 `"oslar_el1" => 0x8084` is in the MRS named table; OSLAR_EL1 is MSR-only.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:131`
 ```rust
-    let option = match operands.first() {
+        "oslar_el1" => 0x8084,
 ```
-**Suggested fix:** Reject a slice longer than one operand.
+**Suggested fix:** Drop oslar_el1 from the MRS table so unknown-name handling returns Err.
 ```rust
-    if operands.len() > 1 {
-        return Err("dsb: extra operand".to_string());
+        // oslar_el1 is write-only (MSR); do not match it here
+```
+**Bug report:** bug_reports/encode_mrs_oslar_el1_write_only.md
+**Repro seed:** cc bcdcbef1e10d742ca3362a6c8cb12669a33a82305d4a6265718d96d9cb96118a
+**Raw output:**
+```text
+Test failed: SUT encoded mrs x0, oslar_el1 as d5301080, llvm-mc rejected: llvm-mc error: <stdin>:1:9: error: expected readable system register
+minimal failing input: name = "oslar_el1", xt = "x0"
+```
+
+### B2: encode_mrs encodes CNTV_CVAL_EL0 with the wrong sysreg field
+
+**Formal:** ∀ name ∈ NAMED, xt ∈ Xt. llvm-mc("mrs "+xt+", "+name)=Ok(w) ⇒ encode_mrs([Reg(xt), Symbol(name)])=Ok(Word(w))
+**Contract evidence:** inferred (ARM CNTV_CVAL_EL0 is S3_3_C14_C3_2; llvm-mc encoding 0xd53be340; README.md:12 gas-compatible)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_mrs([Reg("x0"), Symbol("cntv_cval_el0")])  (`mrs x0, cntv_cval_el0`)
+**Expected / Actual:** Ok(Word(0xd53be340)) / Ok(Word(0xd53be380))
+**Impact:** A virtual-timer compare-value read hits S3_3_C14_C3_4 (op2=4) instead of CNTV_CVAL_EL0, so sampled timer values are wrong.
+**Root cause:** system.rs:125 `"cntv_cval_el0" => 0xdf1c` uses op2=4; ARM encoding is 0xdf1a (op2=2).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:125`
+```rust
+        "cntv_cval_el0" => 0xdf1c,
+```
+**Suggested fix:** Use the ARM encoding 0xdf1a.
+```rust
+        "cntv_cval_el0" => 0xdf1a,
+```
+**Bug report:** bug_reports/encode_mrs_cntv_cval_el0_encoding.md
+**Repro seed:** cc e031e081d69a61ee97d20c3f25ccd16f53422009f1be332f3b287082b8e4dc3d
+**Raw output:**
+```text
+Test failed: assertion failed: `(left == right)` left: `3577471872`, right: `3577471808`: SUT vs llvm-mc for mrs x0, cntv_cval_el0
+minimal failing input: name = "cntv_cval_el0", xt = "x0"
+```
+
+### B3: encode_mrs ignores extra operands
+
+**Formal:** ∀ name ∈ NAMED, xt ∈ Xt, extra ∈ Operand. llvm-mc("mrs "+xt+", "+name+", "+extra)=Err ⇒ encode_mrs([Reg(xt), Symbol(name), extra])=Err
+**Contract evidence:** inferred (llvm-mc rejects arity>2; system.rs:55 "MRS Xt, system_reg" is a two-operand form; README.md:12)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_mrs([Reg("x0"), Symbol("sp_el0"), Reg("x0")])  (`mrs x0, sp_el0, x0`)
+**Expected / Actual:** Err (llvm-mc: invalid operand) / Ok(Word(0xd5384100))
+**Impact:** Trailing typos assemble as a silent two-operand MRS.
+**Root cause:** system.rs:56–57 read only operands[0] and operands[1]; len is never checked.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:56`
+```rust
+    let (rt, _) = get_reg(operands, 0)?;
+```
+**Suggested fix:** Reject a slice whose length is not 2.
+```rust
+    if operands.len() != 2 {
+        return Err("mrs: expected Xt, system_reg".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_dsb_extra_operand.md
-**Repro seed:** (deterministic; name = "sy", extra = Reg("x0"))
+**Bug report:** bug_reports/encode_mrs_extra_operand.md
+**Repro seed:** (none — first generated case)
 **Raw output:**
 ```text
-Test failed: extra operand must Err (llvm-mc rejects dsb sy, x0)
-minimal failing input: name = "sy", extra = Reg("x0")
+Test failed: extra operand must Err (llvm-mc rejects mrs x0, sp_el0, x0)
+minimal failing input: name = "sp_el0", xt = "x0", extra = Reg("x0")
 ```
 
-### B3: encode_dsb encodes omitted option as SY
+### B4: encode_mrs accepts a 32-bit Wt destination
 
-**Formal:** encode_dsb([]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as: "missing immediate expression at operand 1"; llvm-mc: "too few operands")
-**Documentation conflict:** (none) — ARM ARM lists the option as optional with default SY, but this assembler claims gas compatibility and gas requires an operand
+**Formal:** ∀ dest ∈ {w0..w30, wzr, sp, wsp, d0, s0, q0, v0, h0, b0}, name ∈ NAMED. llvm-mc("mrs "+dest+", "+name)=Err ⇒ encode_mrs([Reg(dest), Symbol(name)])=Err
+**Contract evidence:** documented system.rs:55 "MRS Xt, system_reg" (Xt, not Wt/SP/FP); llvm-mc rejects `mrs w0, sp_el0`
+**Documentation conflict:** system.rs:55 states the form is MRS Xt; the code discards is_64. The comment states the behavior IS handled as Xt — contract the code violates.
 **Severity:** medium
-**Counterexample:** encode_dsb(&[])
-**Expected / Actual:** Err / Ok(Word(0xd5033f9f))
-**Impact:** A `dsb` with no operand, rejected by gas and llvm-mc, is encoded as a full-system barrier.
-**Root cause:** system.rs:47 `_ => 0b1111` — `operands.first()` is None and defaults CRm to SY.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:47`
+**Counterexample:** encode_mrs([Reg("w0"), Symbol("sp_el0")])  (`mrs w0, sp_el0`)
+**Expected / Actual:** Err (llvm-mc: invalid operand) / Ok(Word(0xd5384100))
+**Impact:** A width typo is rewritten to the 64-bit Xt encoding; SP and FP dests are accepted the same way.
+**Root cause:** system.rs:56 `let (rt, _) = get_reg(operands, 0)?` discards is_64; parse_reg_num accepts w/sp/d/s/q/v/h/b.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:56`
 ```rust
-        _ => 0b1111,
+    let (rt, _) = get_reg(operands, 0)?;
 ```
-**Suggested fix:** Return Err when the operand list is empty.
+**Suggested fix:** Require a 64-bit GPR that is not SP.
 ```rust
-        None => return Err("dsb requires a barrier option".to_string()),
+    let (rt, is_64) = get_reg(operands, 0)?;
+    if !is_64 {
+        return Err("mrs: destination must be Xt".to_string());
+    }
 ```
-**Bug report:** bug_reports/encode_dsb_empty_defaults_sy.md
-**Repro seed:** (deterministic; _n = 0)
+**Bug report:** bug_reports/encode_mrs_w_dest.md
+**Repro seed:** (none — first generated case)
 **Raw output:**
 ```text
-Test failed: empty operands must Err (gas/llvm-mc reject omitted dsb option)
-minimal failing input: _n = 0
+Test failed: non-Xt dest must Err (llvm-mc rejects mrs w0, sp_el0), got Ok(Word(3577233664))
+minimal failing input: dest = "w0", name = "sp_el0"
 ```
 
-### B4: encode_dsb encodes non-barrier operands as SY
+### B5: encode_mrs masks out-of-range generic sysreg fields
 
-**Formal:** ∀ op ∈ {Imm(n) | n ∉ 0..=15} ∪ {Reg, Mem, Cond, Shift, Label, …}. llvm-mc rejects the corresponding assembly ⇒ encode_dsb([op]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; GNU as / llvm-mc reject registers and `#imm` outside 0..=15)
+**Formal:** ∀ bad ∈ UnknownName ∪ Empty ∪ MissingSysreg ∪ OobGeneric ∪ OobNumbered. llvm-mc(asm(bad))=Err ⇒ encode_mrs(ops(bad))=Err
+**Contract evidence:** inferred (llvm-mc rejects op0>3 / op1>7 / CRn>15 / CRm>15 / op2>7; ARM MRS field widths)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_dsb(&[Operand::Imm(-1)])  (`dsb #-1`)
-**Expected / Actual:** Err / Ok(Word(0xd5033f9f))
-**Impact:** Invalid operands such as `dsb #-1` and `dsb x0` encode as `dsb sy` instead of an assembler error.
-**Root cause:** system.rs:47 `_ => 0b1111` — Imm, Reg, Mem, and every other non-Barrier/non-Symbol kind take the SY default.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:47`
+**Counterexample:** encode_mrs([Reg("x0"), Symbol("s4_0_c1_c0_1")])  (`mrs x0, s4_0_c1_c0_1`)
+**Expected / Actual:** Err (llvm-mc: expected readable system register) / Ok(Word) with op0 masked to 0
+**Impact:** An out-of-range S-form silently becomes a different system register.
+**Root cause:** system.rs:185 sysreg_encoding masks `op0 & 3` (and the other fields) instead of rejecting; encode_mrs reaches this via parse_generic_sysreg.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:185`
 ```rust
-        _ => 0b1111,
+    ((op0 & 3) << 14) | ((op1 & 7) << 11) | ((crn & 0xF) << 7) | ((crm & 0xF) << 3) | (op2 & 7)
 ```
-**Suggested fix:** Reject non-barrier kinds and immediates outside 0..=15.
+**Suggested fix:** Range-check fields in parse_generic_sysreg before encoding.
 ```rust
-        Some(Operand::Imm(n)) if (0..=15).contains(n) => *n as u32,
-        Some(Operand::Imm(n)) => return Err(format!("dsb immediate out of range: {}", n)),
-        Some(_) => return Err("dsb: invalid operand".to_string()),
+        if op0 > 3 || op1 > 7 || crn > 15 || crm > 15 || op2 > 7 {
+            return Err(format!("unsupported system register: {}", name));
+        }
 ```
-**Bug report:** bug_reports/encode_dsb_wrong_kind_defaults_sy.md
-**Repro seed:** (deterministic; op = Imm(-1))
+**Bug report:** bug_reports/encode_mrs_oob_generic.md
+**Repro seed:** cc 5cb784c4cdba23f2241aeebc409e8f1b6554a1162bfd5a6d2e412a3b256c493e
 **Raw output:**
 ```text
-Test failed: non-named / out-of-range operand must Err, got Ok(Word(3573759903))
-minimal failing input: op = Imm(-1)
+Test failed: oob generic sysreg must Err (llvm-mc rejects mrs x0, s4_0_c1_c0_1)
+minimal failing input: kind = 3, unknown = "foo", oob_g = "s4_0_c1_c0_1", oob_n = "dbgbcr16_el1", xt = "x0"
 ```
 
 ## Design Caveats
@@ -139,65 +164,68 @@ minimal failing input: op = Imm(-1)
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_dsb_pbt.rs | 8 properties, 3 KAT, 4 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_dsb_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_mrs_pbt.rs | 9 properties + 4 KAT + 5 regressions |
 
 ## Reproduction
 
-Whole suite (serial, as run):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_dsb -- --test-threads=1
+cargo test --lib encode_mrs -- --test-threads=1
 ```
 
-B1 (`dsb #0` encodes as SY):
+B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dsb_regression_imm_crm0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_mrs_regression_oslar_el1 -- --test-threads=1 --nocapture
 ```
 
-B2 (extra operand):
+B2:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dsb_regression_extra_sy_x0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_mrs_regression_cntv_cval_el0 -- --test-threads=1 --nocapture
 ```
 
-B3 (omitted option):
+B3:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dsb_regression_empty -- --test-threads=1 --nocapture
+cargo test --lib test_encode_mrs_regression_extra_x0 -- --test-threads=1 --nocapture
 ```
 
-B4 (`dsb #-1`):
+B4:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_dsb_regression_imm_neg1 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_mrs_regression_w0_dest -- --test-threads=1 --nocapture
+```
+
+B5:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_mrs_regression_oob_generic_s4 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md — this campaign report
-- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — per-function coverage table
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/report.json — machine-readable report
-- pbt-out/INVARIANTS.md — confirmed invariants for later campaigns
-- pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/bug_reports/encode_dsb_imm_ignored.md + .html
-- pbt-out/bug_reports/encode_dsb_extra_operand.md + .html
-- pbt-out/bug_reports/encode_dsb_empty_defaults_sy.md + .html
-- pbt-out/bug_reports/encode_dsb_wrong_kind_defaults_sy.md + .html
-- pbt-out/run/encode_dsb.log — cargo test log
-- proptest-regressions/backend/arm/assembler/encoder/encode_dsb_pbt.txt — shrunk seeds
+- pbt-out/REPORT.md, pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md, pbt-out/PLAN.md
+- pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
+- pbt-out/INVARIANTS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_mrs_oslar_el1_write_only.md (+ .html)
+- pbt-out/bug_reports/encode_mrs_cntv_cval_el0_encoding.md (+ .html)
+- pbt-out/bug_reports/encode_mrs_extra_operand.md (+ .html)
+- pbt-out/bug_reports/encode_mrs_w_dest.md (+ .html)
+- pbt-out/bug_reports/encode_mrs_oob_generic.md (+ .html)
+- pbt-out/run/encode_mrs_kat.log, encode_mrs_full.log, encode_mrs_full2.log, encode_mrs_unknown.log
+- src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 23:51 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 150/307 total | PBT candidates: 150 | Tested: 150 (100%) | 0 pass, 150 fail
+> Last updated: 2026-10-06 00:17 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 151/307 total | PBT candidates: 151 | Tested: 151 (100%) | 0 pass, 151 fail
 
 ## Summary
 
@@ -206,10 +234,10 @@ cargo test --lib test_encode_dsb_regression_imm_neg1 -- --test-threads=1 --nocap
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 150 |
-| **Tested (of PBT candidates)** | **150 / 150 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 150 / 0 |
-| **Overall (tested / all functions)** | **150 / 307 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 151 |
+| **Tested (of PBT candidates)** | **151 / 151 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 151 / 0 |
+| **Overall (tested / all functions)** | **151 / 307 (49%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -217,13 +245,13 @@ cargo test --lib test_encode_dsb_regression_imm_neg1 -- --test-threads=1 --nocap
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 150 | 150 | 0 | 100% |
+|  | 151 | 151 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 150 | 150 | 0 | 100% |
+| unknown | 151 | 151 | 0 | 100% |
 
 ## File Coverage
 
@@ -396,3 +424,4 @@ cargo test --lib test_encode_dsb_regression_imm_neg1 -- --test-threads=1 --nocap
 | encode_neon_two_misc_narrow | neon.rs |
 | encode_dmb | system.rs |
 | encode_dsb | system.rs |
+| encode_mrs | system.rs |
