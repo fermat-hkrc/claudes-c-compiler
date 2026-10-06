@@ -230,3 +230,10 @@ Environment quirks (round 05):
 - Round-25 (second loop st.2): mem2reg semantics 5/5 == gcc (boundary
   sizes, address escape, volatile, phi gen, loop-carried); common's
   remaining untested files are I/O glue (skip-with-reason).
+
+- Round-26: x86 SSE cvt/shuffle subset gaps (#818 — cvtt family entirely
+  missing incl. reg forms; mem-source cvtsi2*/pshuf*; maskmov*). Clean:
+  x86 jcc/call/jmp byte-exact; ARM scvtf/fcvtzs/fmov + FP ldr/str 15/15;
+  RISC-V fcvt/fmv/fcmp 14/14; i686 -S roundtrip matches (no #807 class).
+  Probe hygiene: NEVER printf C asm with % — printf eats %xmm/%rsp as
+  format specs (use run_probe.sh style read-loop + printf '%s').

@@ -621,4 +621,20 @@ mod pbt_asm_deep {
         assert!(ccc_assemble(&src, &out).is_ok(), "#782: packed min/max family rejected");
         let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&out);
     }
+
+    /// RED WITNESS — round 26 (issue #818): SSE conversion/shuffle subset
+    /// missing (cvtt family entirely, mem-source cvtsi2*/pshuf*, maskmov*).
+    #[test]
+    fn test_x86asm_regression_cvt_shuffle_gaps() {
+        for form in ["cvttss2si %xmm0, %eax", "cvttsd2siq %xmm1, %rcx",
+                     "cvtsi2sdl 8(%rax), %xmm0", "pshuflw $1, 8(%rbx), %xmm4",
+                     "maskmovdqu %xmm1, %xmm2"] {
+            let dir = run_dir();
+            let src = dir.join("r818.s");
+            std::fs::write(&src, format!(".text\n{}\n", form)).unwrap();
+            let out = dir.join("r818.o");
+            assert!(ccc_assemble(&src, &out).is_ok(), "#818: rejected valid form: {}", form);
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&out);
+        }
+    }
 }
