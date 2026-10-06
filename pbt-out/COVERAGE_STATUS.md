@@ -1,21 +1,23 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_alu_imm_w / requested encode_op_imm32)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps had no .gcda/.profraw
+> Last updated: 2026-10-06 15:27 (campaign: encode_alu_reg_w / encode_op32)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw
+> This campaign tested encode_alu_reg_w (requested encode_op32) in base.rs: 7 passing / 1 failing properties.
 
 ## This campaign
 
+| Function | Source | Tested | Result |
+|----------|--------|--------|--------|
+| encode_alu_reg_w | base.rs | yes | 7 pass / 1 fail (extra operand) |
+
+## Summary
+
 | Metric | Value |
 |--------|-------|
-| Target | encode_alu_imm_w (base.rs:267) |
-| Properties | 9 |
-| Passing | 6 |
-| Failing (bugs) | 3 |
-| Sweep | 1/1 — encode_alu_imm_w_neg_invalid_name (passing) |
-| Tier | standard |
-
-## File Coverage (this campaign)
-
-| Source File | Funcs in scope | Candidates | Tested | Coverage | Status |
-|-------------|----------------|------------|--------|----------|--------|
-| base.rs | 1 (HARD: encode_alu_imm_w only) | 1 | 1 | 100% | covered with 3 bugs |
+| Campaign target | encode_alu_reg_w (requested encode_op32) |
+| Properties | 8 |
+| Passing | 7 |
+| Failing | 1 |
+| Bugs | 1 |
+| Coverage evidence | file-level (symbol presence) |
+| Sweep | 1/1 spent (manual get_reg arm audit) |

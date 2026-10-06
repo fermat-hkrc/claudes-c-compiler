@@ -1,3 +1,31 @@
+# Confirmed invariants (encode_alu_reg_w / requested encode_op32)
+
+- Requested `--func encode_op32` is absent from base.rs; the in-scope OP-32 R-type encoder is encode_alu_reg_w (base.rs:283).
+- Valid `mn rd, rs1, rs2` for the 12 OP-32 mnemonics (RV64I addw/subw/sllw/srlw/sraw, M mulw/divw/divuw/remw/remuw, Zbb rolw/rorw) with rd/rs1/rs2 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -mattr=+m,+zbb -show-encoding` (1000 cases). KAT pins addw x1,x2,x3=0x003100bb, subw=0x403100bb, sllw=0x003110bb, srlw=0x003150bb, sraw=0x403150bb, mulw=0x023100bb, divw=0x023140bb, divuw=0x023150bb, remw=0x023160bb, remuw=0x023170bb, rolw=0x603110bb, rorw=0x603150bb, addw x0,x0,x0=0x0000003b.
+- R-type layout holds: opcode=0b0111011, funct3 in bits[14:12], rd in bits[11:7], rs1 in bits[19:15], rs2 in bits[24:20], funct7 in bits[31:25] (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs1/rs2 (1000 cases).
+- Imm n in 0..=31 as rd/rs1/rs2 encodes as x{n} (get_reg GCC bare-register-number contract) (1000 cases).
+- Empty operand list, missing rs1/rs2, FP dest/rs1/rs2, non-register 3rd operand, Imm outside 0..=31, and invalid names (x32/foo/v0/xzr/w0) return Err (1000 cases).
+- Extra operands currently disagree with llvm-mc (see bug encode_alu_reg_w_extra_operand).
+
+## Environment (encode_alu_reg_w)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+m,+zbb -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_alu_reg_w_pbt.rs, cargo test --lib encode_alu_reg_w, proptest cases=1000.
+- Dispatch: encoder/mod.rs:569-638 addw/subw/sllw/srlw/sraw/mulw/divw/divuw/remw/remuw/rolw/rorw => encode_alu_reg_w.
+- Requested `--func encode_op32` is absent from base.rs; the in-scope symbol is encode_alu_reg_w.
+- Sibling encode_r / encode_alu_reg / C.ADDW are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of get_reg (Reg/Imm0-31/other). Closed: tier round spent; remaining documented gap is the one filed bug.
+
+## Quirks (encode_alu_reg_w)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:370 GCC inline asm).
+- No operands.len() == 3 check; extra operands are ignored (see bugs).
+- addw/sllw/srlw/sraw/rorw with Imm 3rd operand auto-convert at encode_instruction, not this symbol.
+- zext.h dispatches to encode_zbb_zexth, not this symbol.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_alu_imm_w / requested encode_op_imm32)
 
 - Requested `--func encode_op_imm32` is absent from base.rs; the in-scope OP-IMM-32 I-type encoder is encode_alu_imm_w (base.rs:267).
