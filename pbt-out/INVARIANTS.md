@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_csr / requested encode_system)
+
+- Requested `--func encode_system` is absent from base.rs; the SYSTEM I-type CSR encoder is encode_csr (system.rs:40), dispatched for csrrw/csrrs/csrrc.
+- Valid `mn rd, csr, rs1` for csrrw/csrrs/csrrc with known CSR names and rd/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins csrrw x1, mstatus, x2=0x300110f3, csrrs=0x300120f3, csrrc=0x300130f3.
+- GNU-as Imm auto-select: `csrrc t0, sstatus, 2` encodes as csrrci (0x100172f3); `csrrw x1, mstatus, 5` as csrrwi (0x3002d0f3) (1000 cases, zimm in 0..=31).
+- I-type layout holds: opcode=0b1110011, funct3 in bits[14:12], rd in bits[11:7], rs1 in bits[19:15], csr in bits[31:20] for csr in 0..=4095 (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs1; Imm n in 0..=31 as rd encodes as x{n} (1000 cases). Imm as operand 2 is zimm, not a register number.
+- Csr(name), Imm(num), Symbol(name), Csr("0xNNN"), Reg(name), and decimal Csr(num.to_string()) agree for known CSRs (1000 cases).
+- Empty operand list, missing csr/rs1, FP dest/rs1, unknown CSR names, and invalid GPR names (x32/foo/v0/xzr/w0) return Err (1000 cases).
+- Extra operands, zimm outside 0..=31, and CSR numbers outside 0..=4095 currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_csr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_csr_pbt.rs, cargo test --lib encode_csr, proptest cases=1000.
+- Dispatch: encoder/mod.rs:691-693 csrrw/csrrs/csrrc => encode_csr.
+- Requested `--func encode_system` is absent from base.rs; the in-scope symbol is encode_csr.
+- Sibling encode_csri / encode_i / encode_csrr are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_csr_reg_and_decimal_csr. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+
+## Quirks (encode_csr)
+
+- ASCII case of CSR and register names is accepted (to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers at rd (encoder/mod.rs:370 GCC inline asm).
+- Imm as operand 2 is the GNU-as zimm auto-select path (funct3 | 0b100), not a GCC bare register number.
+- No operands.len() == 3 check; extra operands are ignored (see bugs).
+- zimm is masked with 0x1F; values outside 0..=31 wrap (see bugs).
+- Numeric CSR Imm is truncated to 12 bits by encode_i; values outside 0..=4095 wrap (see bugs).
+- encode_csri is the explicit csrrwi/csrrsi/csrrci path, not this symbol.
+- ecall/ebreak/wfi/mret/sret are hardcoded in encode_instruction; encode_fence uses OP_MISC_MEM; encode_sfence_vma is a separate SYSTEM R-type helper.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_alu_reg_w / requested encode_op32)
 
 - Requested `--func encode_op32` is absent from base.rs; the in-scope OP-32 R-type encoder is encode_alu_reg_w (base.rs:283).

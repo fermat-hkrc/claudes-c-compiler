@@ -1,54 +1,131 @@
-# PBT Campaign Report: encode_alu_reg_w (requested encode_op32)
+# PBT Campaign Report: encode_csr (requested encode_system)
 
 ## Summary
 
-**Verdict:** 1 high: encode_alu_reg_w ignores extra operands, so addw/subw/sllw/srlw/sraw/mulw/divw/divuw/remw/remuw/rolw/rorw with a fourth operand still emit a well-formed OP-32 word instead of Err.
+**Verdict:** 3 high: encode_csr silently accepts extra operands, wraps zimm outside 0..=31 into csrrwi/csrrsi/csrrci, and truncates CSR numbers outside 0..=4095, so mistyped CSR instructions assemble to the wrong SYSTEM word.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_alu_reg_w
-**Tests:** 8
-**Result:** 7 passing, 1 bug
-**Change surface:** requested encode_op32 unresolved in base.rs; mapped to encode_alu_reg_w (1 function with properties, 4 error-path properties)
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (Rust cargo test is not the C++ gcov reporter); listed unrelated host binaries as NOT LINKED. Manual audit of encode_alu_reg_w: get_reg Reg/Imm0-31/other all exercised.
+**Modules tested:** encode_csr
+**Tests:** 10 properties (plus 3 KAT, 3 regression witnesses)
+**Result:** 7 passing, 3 bugs
+**Change surface:** (no change source given) — requested encode_system was unresolved in base.rs; mapped to encode_csr
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test; C++ reporter listed unrelated binaries). Manual arm audit of encode_csr plus sweep property for get_csr_num Reg/decimal paths.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_alu_reg_w | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_csr | 10 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_alu_reg_w ignores extra operands
+### B1: encode_csr ignores extra operands
 
-**Formal:** ∀ mn ∈ OP32, rd, rs1, rs2 ∈ GPRNames, extra ∈ Operand. encode_alu_reg_w([Reg(rd), Reg(rs1), Reg(rs2), extra], f3, f7) = Err(_)
-**Contract evidence:** inferred (llvm-mc rejects a fourth operand on addw x1, x2, x3, x4; sibling encode_alu_reg has the same arity contract)
+**Formal:** ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, csr ∈ KnownCsrNames, extra ∈ Operands. encode_csr([Reg(rd), Csr(csr), Reg(rs1), extra], funct3(mn)) = Err(_)
+**Contract evidence:** inferred (llvm-mc rejects extra operands on csrrw; README.md:6-7 assembler consumes textual assembly)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_alu_reg_w([Reg("x0"), Reg("x0"), Reg("x0"), Imm(0)], funct3=0, funct7=0)
-**Expected / Actual:** Err / Ok(Word(59)) which is 0x0000003b = addw x0, x0, x0
-**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed OP-32 word instead of diagnosing the line.
-**Root cause:** base.rs:283-287 reads only operands[0..2] via get_reg and never checks operands.len(), so any trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:287`
+**Counterexample:** encode_csr([Reg("x0"), Csr("fflags"), Reg("x0"), Imm(0)], funct3=0b001)
+**Expected / Actual:** Err / Ok(Word(1052787))  // 0x00101073 = csrrw x0, fflags, x0
+**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed SYSTEM CSR word instead of diagnosing the line.
+**Root cause:** system.rs:40-53 reads only operands[0..2] via get_reg/get_csr_num and never checks operands.len(), so any trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:53`
 ```rust
-    Ok(EncodeResult::Word(encode_r(OP_OP_32, rd, funct3, rs1, rs2, funct7)))
+    Ok(EncodeResult::Word(encode_i(OP_SYSTEM, rd, funct3, rs1, csr as i32)))
 ```
 **Suggested fix:** Reject anything other than exactly three operands before packing.
 ```rust
-pub(crate) fn encode_alu_reg_w(operands: &[Operand], funct3: u32, funct7: u32) -> Result<EncodeResult, String> {
     if operands.len() != 3 {
-        return Err("alu_reg_w: expected rd, rs1, rs2".to_string());
+        return Err("csr: expected rd, csr, rs1/zimm".to_string());
     }
-    let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
-    let rs2 = get_reg(operands, 2)?;
-    Ok(EncodeResult::Word(encode_r(OP_OP_32, rd, funct3, rs1, rs2, funct7)))
-}
 ```
-**Bug report:** bug_reports/encode_alu_reg_w_extra_operand.md
-**Repro seed:** cc 530c4c661a3119996d2909247c08f7fa857a49c3af322877f44f75380614f5f8
-**Raw output:** Test failed: extra operand must Err for addw x0, x0, x0 (llvm-mc rejects extra operands); got Ok(Word(59)) at src/backend/riscv/assembler/encoder/encode_alu_reg_w_pbt.rs:446. minimal failing input: (mn, f3, f7) = ("addw", 0, 0), rd = "x0", rs1 = "x0", rs2 = "x0", extra = Imm(0)
+**Bug report:** bug_reports/encode_csr_extra_operand.md
+**Repro seed:** (none — deterministic extra Imm(0); proptest shrunk to csrrw x0, fflags, x0 + Imm(0))
+**Raw output:**
+```text
+Test failed: extra operand must Err for csrrw x0, fflags, x0 (llvm-mc rejects extra operands); got Ok(Word(1052787)) at src/backend/riscv/assembler/encoder/encode_csr_pbt.rs:485.
+minimal failing input: (mn, f3) = (
+    "csrrw",
+    1,
+), rd = "x0", (csr_name, _num) = (
+    "fflags",
+    1,
+), rs1 = "x0", extra = Imm(
+    0,
+)
+```
+
+### B2: encode_csr masks out-of-range zimm instead of rejecting
+
+**Formal:** ∀ mn ∈ {csrrw,csrrs,csrrc}, rd ∈ GPRNames, csr ∈ KnownCsrNames, zimm ∉ 0..31. encode_csr([Reg(rd), Csr(csr), Imm(zimm)], funct3(mn)) = Err(_)
+**Contract evidence:** inferred (llvm-mc "immediate must be an integer in the range [0, 31]"; RISC-V uimm5)
+**Documentation conflict:** system.rs:45 "GNU as allows e.g. `csrrc t0, sstatus, 2` and auto-selects the immediate form." documents auto-select for a valid zimm, not wrapping of out-of-range values. Does not declare zimm=-1/32 invalid or admit a limitation.
+**Severity:** high
+**Counterexample:** encode_csr([Reg("x0"), Csr("fflags"), Imm(-1)], funct3=0b001)
+**Expected / Actual:** Err / Ok(Word(2084979))  // 0x001FD073 = csrrwi x0, fflags, 31
+**Impact:** `csrrw rd, csr, 32` is assembled as `csrrwi rd, csr, 0` and `csrrw rd, csr, -1` as `csrrwi rd, csr, 31`, silently writing the wrong immediate into a CSR.
+**Root cause:** system.rs:47-49 casts the immediate to u32 and masks with 0x1F, so -1 becomes zimm 31 and 32 becomes zimm 0, then encodes the immediate CSR form.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:49`
+```rust
+        let rs1 = zimm & 0x1F;
+```
+**Suggested fix:** Reject zimm outside 0..=31 before masking.
+```rust
+        let zimm = get_imm(operands, 2)?;
+        if !(0..=31).contains(&zimm) {
+            return Err("csr: zimm out of range 0..=31".to_string());
+        }
+        let rs1 = (zimm as u32) & 0x1F;
+```
+**Bug report:** bug_reports/encode_csr_zimm_oob.md
+**Repro seed:** (none — deterministic zimm=-1; proptest shrunk to csrrw x0, fflags, -1)
+**Raw output:**
+```text
+Test failed: zimm -1 outside 0..=31 must Err (llvm-mc uimm5); got Ok(Word(2084979)) at src/backend/riscv/assembler/encoder/encode_csr_pbt.rs:502.
+minimal failing input: (_mn, f3) = (
+    "csrrw",
+    1,
+), rd = "x0", (csr_name, _num) = (
+    "fflags",
+    1,
+), zimm = -1
+```
+
+### B3: encode_csr truncates CSR numbers outside 0..=4095
+
+**Formal:** ∀ mn ∈ {csrrw,csrrs,csrrc}, rd, rs1 ∈ GPRNames, csr_num ∉ 0..4095. encode_csr([Reg(rd), Imm(csr_num), Reg(rs1)], funct3(mn)) = Err(_)
+**Contract evidence:** inferred (llvm-mc "immediate must be an integer in the range [0, 4095]"; RISC-V csr[11:0])
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_csr([Reg("x0"), Imm(-1), Reg("x0")], funct3=0b001)
+**Expected / Actual:** Err / Ok(Word(4293922931))  // 0xFFF01073 = csrrw x0, 0xfff, x0
+**Impact:** `csrrw x1, 4096, x2` is assembled as CSR 0 (fflags) and `csrrw x0, -1, x0` as CSR 4095, silently targeting the wrong control/status register.
+**Root cause:** get_csr_num (system.rs:66) accepts any Imm as u32 with no 12-bit range check; encode_csr then passes `csr as i32` to encode_i, which masks with 0xFFF, so -1 becomes 0xFFF and 4096 becomes 0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:66`
+```rust
+        Some(Operand::Imm(v)) => Ok(*v as u32),
+```
+**Suggested fix:** Reject CSR numbers outside 0..=4095 in get_csr_num.
+```rust
+        Some(Operand::Imm(v)) => {
+            if *v < 0 || *v > 4095 {
+                Err(format!("CSR number {} out of range 0..=4095", v))
+            } else {
+                Ok(*v as u32)
+            }
+        }
+```
+**Bug report:** bug_reports/encode_csr_csr_oob.md
+**Repro seed:** (none — deterministic csr_num=-1; proptest shrunk to csrrw x0, -1, x0)
+**Raw output:**
+```text
+Test failed: csr -1 outside 0..=4095 must Err (llvm-mc csr[11:0]); got Ok(Word(4293922931)) at src/backend/riscv/assembler/encoder/encode_csr_pbt.rs:519.
+minimal failing input: (_mn, f3) = (
+    "csrrw",
+    1,
+), rd = "x0", rs1 = "x0", csr_num = -1
+```
 
 ## Design Caveats
 
@@ -58,55 +135,80 @@ pub(crate) fn encode_alu_reg_w(operands: &[Operand], funct3: u32, funct7: u32) -
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_alu_reg_w_pbt.rs | 8 properties + 3 KAT + 1 regression witness |
+| src/backend/riscv/assembler/encoder/encode_csr_pbt.rs | 10 properties + 3 KAT + 3 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_reg_w -- --test-threads=1
+cargo test --lib encode_csr -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_reg_w_neg_extra -- --test-threads=1
+cargo test --lib encode_csr_neg_extra -- --test-threads=1
+```
+
+B2 zimm oob:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_csr_neg_zimm_oob -- --test-threads=1
+```
+
+B3 csr oob:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_csr_neg_csr_oob -- --test-threads=1
+```
+
+Build command (user contract, target swapped):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_csr -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_alu_reg_w_extra_operand.md
-- pbt-out/bug_reports/encode_alu_reg_w_extra_operand.html
-- pbt-out/run/encode_alu_reg_w.log
+- pbt-out/bug_reports/encode_csr_extra_operand.md
+- pbt-out/bug_reports/encode_csr_extra_operand.html
+- pbt-out/bug_reports/encode_csr_zimm_oob.md
+- pbt-out/bug_reports/encode_csr_zimm_oob.html
+- pbt-out/bug_reports/encode_csr_csr_oob.md
+- pbt-out/bug_reports/encode_csr_csr_oob.html
+- pbt-out/run/encode_csr_test.log
+- pbt-out/run/encode_csr_test2.log
+- pbt-out/run/encode_csr_test3.log
+- pbt-out/run/encode_csr_test4.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 15:30 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 192/324 total | PBT candidates: 192 | Tested: 192 (100%) | 1 pass, 192 fail
+> Last updated: 2026-10-06 15:53 (campaign: coverage)
+> Files: 12/13 scanned (92%) | Functions: 193/330 total | PBT candidates: 193 | Tested: 193 (100%) | 1 pass, 193 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 12 |
-| Files scanned | 12 / 12 (100%) |
-| Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 192 |
-| **Tested (of PBT candidates)** | **192 / 192 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 192 / -1 |
-| **Overall (tested / all functions)** | **192 / 324 (59%)** |
+| Total source files | 13 |
+| Files scanned | 12 / 13 (92%) |
+| Total functions (all files) | 330 |
+| PBT candidates (from FUNCTION_INDEX) | 193 |
+| **Tested (of PBT candidates)** | **193 / 193 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 193 / -1 |
+| **Overall (tested / all functions)** | **193 / 330 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -114,13 +216,13 @@ cargo test --lib encode_alu_reg_w_neg_extra -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 192 | 192 | 0 | 100% |
+|  | 193 | 193 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 192 | 192 | 0 | 100% |
+| unknown | 193 | 193 | 0 | 100% |
 
 ## File Coverage
 
@@ -335,3 +437,4 @@ cargo test --lib encode_alu_reg_w_neg_extra -- --test-threads=1
 | encode_alu_reg | base.rs |
 | encode_alu_imm_w | base.rs |
 | encode_alu_reg_w | base.rs |
+| encode_csr | system.rs |

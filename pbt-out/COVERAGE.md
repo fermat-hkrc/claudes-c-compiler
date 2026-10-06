@@ -195,3 +195,4 @@
 | encode_alu_reg | base.rs | encode_alu_reg_pbt.rs | cargo test --lib encode_alu_reg | 7 passing / 1 failing properties (plus 5 passing KAT + 1 failing regression witness; 1 bug; sweep invalid-name passing, extra-operand failing) |
 | encode_alu_imm_w | base.rs | encode_alu_imm_w_pbt.rs | cargo test --lib encode_alu_imm_w | 6 passing / 3 failing properties (plus 4 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing, extra/oob/reloc failing) |
 | encode_alu_reg_w | base.rs | encode_alu_reg_w_pbt.rs | cargo test --lib encode_alu_reg_w | 7 passing / 1 failing properties (plus 3 passing KAT + 1 failing regression witness; 1 bug; sweep invalid-name passing, extra-operand failing) |
+| encode_csr | system.rs | encode_csr_pbt.rs | cargo test --lib encode_csr | 7 passing / 3 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 3 bugs; sweep Reg-as-CSR and decimal CSR name passing) |
