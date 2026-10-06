@@ -62,3 +62,4 @@
 | 26 | src/backend/x86/assembler | SIB: %rsp as index silently dropped (160/1280 matrix forms; wrong address) | **new issue filed** (1280-form full SIB matrix) | [#834](https://github.com/fermat-hkrc/claudes-c-compiler/issues/834) |
 | 26 | src/backend/x86/assembler | symbol-immediate to symbol-memory rejected (addq $sym, sym2; 5 forms) | **new issue filed** | [#835](https://github.com/fermat-hkrc/claudes-c-compiler/issues/835) |
 | 26 | src/backend/arm/assembler | reg-offset extend forms: bare sxtw/uxtw silently dropped (7); ldr b0 byte mismatch (1) | **new issue filed** (20-form battery) | [#836](https://github.com/fermat-hkrc/claudes-c-compiler/issues/836) |
+| 26 | src/backend/arm/assembler | smull X-src silently truncated; CRC32 no +crc gate; umsubl/smnegl missing | **new issue filed** (19-form battery) | [#837](https://github.com/fermat-hkrc/claudes-c-compiler/issues/837) |
