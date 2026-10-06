@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_dc)
+
+- Valid {civac, cvac, cvap, cvau, ivac, zva} with Xt in {x0..x30, xzr, x31, lr} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` (`-mattr=+ccpp` for CVAP) and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt (1000 cases). KAT pins civac x0=0xd50b7e20, cvac x0=0xd50b7a20, cvap x0=0xd50b7c20, cvau x0=0xd50b7b20, ivac x0=0xd5087620, zva x0=0xd50b7420, civac xzr=0xd50b7e3f.
+- ARM DC layout holds: bits[31:21]=0b11010101000; CRn=7; op2=1; CIVAC op1=3 CRm=14; CVAC CRm=10; CVAP CRm=12; CVAU CRm=11; IVAC op1=0 CRm=6; ZVA op1=3 CRm=4; Rt=t (1000 cases).
+- Encodings of the same op differ only in Rt bits[4:0]; CIVAC and CVAC encode distinctly (1000 cases).
+- ASCII case-fold and surrounding space/tab are behavior-preserving on the valid domain (1000 cases).
+- Malformed Xt (x32, empty, #0, foo) return Err containing "invalid register" or "unsupported dc variant" (sweep, 1000 cases).
+- Unknown op names that do not substring-match an implemented token return Err (sweep, 1000 cases).
+- Substring names (civacs, gzva), missing Xt, extra operands, and W/SP/SIMD Xt currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_dc)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6), -mattr=+ccpp for CVAP.
+- ARM ARM DC: CIVAC = SYS #3, C7, C14, #1, Xt; CVAC = SYS #3, C7, C10, #1, Xt; CVAP = SYS #3, C7, C12, #1, Xt; CVAU = SYS #3, C7, C11, #1, Xt; IVAC = SYS #0, C7, C6, #1, Xt; ZVA = SYS #3, C7, C4, #1, Xt.
+- Dispatch: encoder/mod.rs:983 `"dc" => encode_dc(operands, raw_operands)`. Parser emits Symbol+Reg; raw_operands passed through unchanged.
+- Sibling encode_ic / encode_tlbi / encode_at / encode_sys are not same-job differentials (different SYS encodings).
+- encode_dc lowercases the first Symbol (or the raw string), takes Rt from operands.get(1) or last Reg or 0, then `contains()`-matches the six names.
+- No ARM codegen caller currently emits `dc`; encode_instruction still routes the mnemonic.
+- Unimplemented ARM DC ops llvm-mc accepts on the default CPU (cisw, csw, isw) are a codegen subset (encoder/mod.rs:3), not in the positive domain.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_dc_neg_invalid_reg and encode_dc_neg_unknown_nonsubstr. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_dc_*.md.
+
+## Quirks (encode_dc)
+
+- Surrounding whitespace and ASCII case are accepted (to_lowercase on Symbol).
+- llvm-mc accepts `x31` as XZR; GNU gas rejects `x31`. The differential used llvm-mc.
+- parse_reg_num accepts `lr` as 30 (passing); it does not accept `fp` (x29), which gas/llvm-mc do.
+- llvm-mc needs `-mattr=+ccpp` to assemble CVAP; encodings then match the SUT.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 50-line body.
+
 # Confirmed invariants (encode_ic)
 
 - Valid IALLUIS / IALLU (no Xt) and IVAU with Xt in {x0..x30, xzr, x31, lr} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt (1000 cases). KAT pins ialluis=0xd508711f, iallu=0xd508751f, ivau x0=0xd50b7520, ivau xzr=0xd50b753f.

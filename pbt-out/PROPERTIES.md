@@ -1,251 +1,279 @@
-# Properties: encode_ic
+# Properties: encode_dc
 
-## encode_ic_diff_valid
+## encode_dc_diff_valid
 - Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the valid IC domain. README.md:12 claims GNU-gas-compatible assembly; encoder/mod.rs:3 claims 32-bit AArch64 words; encode_instruction at encoder/mod.rs:983 routes `"ic"` with raw_operands passed through. ARM ARM IC is SYS: IALLUIS = SYS #0, C7, C1, #0; IALLU = SYS #0, C7, C5, #0; IVAU = SYS #3, C7, C5, #1, Xt. llvm-mc and gas accept those three (ASCII case-insensitive) with Xt restricted to 64-bit GPR / XZR / LR. Stronger rejected: State machine (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree IC decoder). Sibling encode_dc / encode_tlbi / encode_at / encode_sys rejected by same-job gate (different SYS encodings and operand grammars). Weaker available: algebraic.metamorphic, algebraic.invariant, negative_error.
-- Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_bti_pbt.rs:269 (llvm-mc differential over the valid domain)
-- Formal: ∀ op ∈ {ialluis, iallu}. ∀ case ∈ ASCII-case-fold(op). ∀ pad ∈ {ε, space, tab}*. encode_ic(pad · case · pad) = Word(llvm-mc("ic " · case)) ∧ llvm-mc("ic " · op) = ARM_SYS(op, Rt=31). ∀ t ∈ 0..31 ∪ {xzr, lr}. ∀ case_op, case_reg. encode_ic(pad · case_fold("ivau") · pad · "," · pad · case_fold(xt(t)) · pad) = Word(llvm-mc("ic ivau, " · xt(t))) ∧ that word = ARM_SYS(op1=3, CRn=7, CRm=5, op2=1, Rt=num(t))
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc AArch64 assembler on the six implemented DC ops. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree DC decoder). Sibling encode_ic / encode_tlbi / encode_at / encode_sys rejected (same-job gate: different SYS encodings and operand grammars). README.md:12 gas-compat plus ARM ARM SYS encodings in body comments.
+- Doc contract: system.rs:591 "DC CIVAC: sys #3, c7, c14, #1, Xt" — asserted fingerprint b25dc9fa
+- Seed: encode_ic_pbt.rs:encode_ic_diff_valid
+- Formal: ∀ op ∈ {civac,cvac,cvap,cvau,ivac,zva}, ∀ xt ∈ {x0..x30,xzr,x31,lr}, ∀ case/ws variants. encode_dc([Symbol(op), Reg(xt)], raw) = Word(w) ∧ w = llvm-mc("dc op, xt" with +ccpp for cvap) = ARM SYS(op, Rt(xt))
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_ic
+function: encoder.encode_dc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [raw]
-  domain: { raw: ialluis|iallu with ASCII case and surrounding whitespace, or "ivau, Xt" for Xt in x0..x30|xzr|x31|lr with ASCII case and surrounding whitespace }
+  vars: [op, xt]
+  domain: { op: {civac,cvac,cvap,cvau,ivac,zva}, xt: x0..x30|xzr|x31|lr }
   relation:
     op: eq
-    lhs: encode_ic(raw)
-    rhs: Word(llvm_mc("ic " + raw))
+    lhs: encode_dc([Symbol(op), Reg(xt)], raw)
+    rhs: llvm_mc("dc " + op + ", " + xt)
 generators:
-  raw: { gen: string, type: String }
-evidence: src/backend/arm/assembler/README.md:12; encoder/mod.rs:3; encoder/mod.rs:983; ARM ARM IC as SYS #op1, C7, Cm, #op2; llvm-mc -triple=aarch64 -show-encoding
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
+  xt: { gen: oneof, options: ["x0..x30", "xzr", "x31", "lr"] }
+evidence: README.md:12 gas-compat; system.rs:591-607 ARM SYS encodings; encoder/mod.rs:983
 ```
 
-## encode_ic_inv_arm_layout
+## encode_dc_inv_arm_layout
 - Tier: 4
-- Rationale: Algebraic invariant from ARM ARM SYS field layout (not the SUT match table). bits[31:21]=0b11010101000, L=0, IALLUIS (op1=0,CRn=7,CRm=1,op2=0,Rt=31), IALLU (op1=0,CRn=7,CRm=5,op2=0,Rt=31), IVAU (op1=3,CRn=7,CRm=5,op2=1,Rt=t). Independent formula word = 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt. Stronger rejected: State machine (no lifecycle); Differential is the primary oracle (this is a field-level check that does not need llvm-mc); Round-trip (no decoder).
-- Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_bti_pbt.rs:279 (ARM layout invariant)
-- Formal: ∀ op ∈ {ialluis, iallu}. let w = encode_ic(op). Word(w) ⇒ w = ARM_SYS(op, 31) ∧ (w >> 21) = 0b11010101000 ∧ (w & 0x1F) = 31. ∀ t ∈ 0..31. let w = encode_ic("ivau, x"·t). Word(w) ⇒ w = ARM_SYS(3,7,5,1,t) ∧ ((w >> 16) & 7) = 3 ∧ ((w >> 12) & 0xF) = 7 ∧ ((w >> 8) & 0xF) = 5 ∧ ((w >> 5) & 7) = 1 ∧ (w & 0x1F) = t
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
+- Rationale: ARM ARM SYS field layout is an independent structural invariant (bits[31:21]=0b11010101000, op1/CRn/CRm/op2/Rt per named op). Stronger differential is the sibling property; this pins the documented SYS formula even if llvm-mc were unavailable.
+- Doc contract: system.rs:591 "DC CIVAC: sys #3, c7, c14, #1, Xt" — asserted fingerprint b25dc9fa
+- Seed: encode_ic_pbt.rs:encode_ic_inv_arm_layout
+- Formal: ∀ op ∈ {civac,cvac,cvap,cvau,ivac,zva}, ∀ t ∈ 0..=31. encode_dc([Symbol(op), Reg(x{t})], raw) = Word(w) ∧ w = 0xD5080000 | (op1<<16) | (7<<12) | (CRm<<8) | (1<<5) | t with (op1,CRm) = (3,14)/(3,10)/(3,12)/(3,11)/(0,6)/(3,4)
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_ic
+function: encoder.encode_dc
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [op, rt]
-  domain: { op: {ialluis, iallu, ivau}, rt: 0..31 }
+  vars: [op, t]
+  domain: { op: six DC names, t: 0..=31 }
   relation:
     op: eq
-    lhs: encode_ic(ic_raw(op, rt))
-    rhs: Word(arm_sys(op, rt))
+    lhs: encode_dc([Symbol(op), Reg("x"+t)], raw)
+    rhs: arm_sys(op1(op), 7, crm(op), 1, t)
 generators:
-  op: { gen: oneof, of: ["ialluis", "iallu", "ivau"], type: String }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM IC encoding SYS op1/CRn/CRm/op2/Rt; ARM ARM SYS 0xD5080000 template
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
+  t: { gen: int, min: 0, max: 31, type: u32 }
+evidence: system.rs:591-607; ARM ARM SYS template 0xD5080000
 ```
 
-## encode_ic_meta_rt_isolation
+## encode_dc_meta_rt_isolation
 - Tier: 4
-- Rationale: Metamorphic from ARM ARM: IVAU encodings differ only in Rt bits[4:0]; IALLUIS and IALLU differ only in CRm (1 vs 5) with Rt fixed at 31. encode("ivau, xt") XOR encode("ivau, x0") = t; encode("iallu") XOR encode("ialluis") = (5 XOR 1) << 8. Independent of llvm-mc. Stronger rejected: State machine; Round-trip (no decoder); Differential already covers value agreement.
-- Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_bti_pbt.rs:294 (flag-bit independence)
-- Formal: ∀ t ∈ 0..31. (encode_ic("ivau, x"·t) ⊕ encode_ic("ivau, x0") = t) ∧ ((encode_ic("ivau, x"·t) & !0x1F) = (encode_ic("ivau, x0") & !0x1F)). (encode_ic("iallu") ⊕ encode_ic("ialluis") = 0x400) ∧ (encode_ic("ialluis") & 0x1F = 31) ∧ (encode_ic("iallu") & 0x1F = 31)
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
+- Rationale: Metamorphic: changing only Xt must change only Rt bits[4:0]; distinct ops must produce distinct base words. Weaker than differential; still an independent algebraic check on the SYS packing.
+- Doc contract: system.rs:565 "Check for the operation type in the operands or raw string" — other fingerprint 8360abc6
+- Seed: encode_ic_pbt.rs:encode_ic_meta_rt_isolation
+- Formal: ∀ op ∈ six names, ∀ t ∈ 0..=31. encode_dc(op, x{t}) XOR encode_dc(op, x0) = t ∧ (encode_dc(op, x{t}) & !0x1F) = (encode_dc(op, x0) & !0x1F). Distinct ops have distinct bases.
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_ic
+function: encoder.encode_dc
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [t]
-  domain: { t: 0..31 }
+  vars: [op, t]
+  domain: { op: six DC names, t: 0..=31 }
   relation:
     op: eq
-    lhs: encode_ic("ivau, x" + t) XOR encode_ic("ivau, x0")
+    lhs: encode_dc(op, xt) XOR encode_dc(op, x0)
     rhs: t
 generators:
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
   t: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM IC IVAU Rt field bits[4:0]; IALLUIS CRm=1 vs IALLU CRm=5
+evidence: ARM ARM SYS Rt in bits[4:0]; system.rs:588 (word = base | rt)
 ```
 
-## encode_ic_meta_case_ws
+## encode_dc_meta_case_ws
 - Tier: 4
-- Rationale: Metamorphic: ASCII case-fold and surrounding space/tab on a valid IC operand string are behavior-preserving (parser stores raw_operands unlowercased; encode_ic trims and lowercases). Stronger rejected: State machine; Round-trip; Differential already covers value agreement with llvm-mc (this isolates the SUT's own case/ws invariance without spawning llvm-mc per case).
-- Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_bti_pbt.rs:312 (case/whitespace invariance)
-- Formal: ∀ raw ∈ valid_ic_raw. encode_ic(raw) = encode_ic(canonical(raw)) where canonical = trim ∘ ASCII-lowercase of op and Xt with a single comma separator
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
+- Rationale: Metamorphic invariance: ASCII case-fold and surrounding space/tab on the valid domain are behavior-preserving (trim+to_lowercase on Symbol; parser does not lowercase). README gas-compat: gas/llvm-mc accept mixed case and padding.
+- Doc contract: system.rs:565 "Check for the operation type in the operands or raw string" — other fingerprint 8360abc6
+- Seed: encode_ic_pbt.rs:encode_ic_meta_case_ws
+- Formal: ∀ op ∈ six names, ∀ xt ∈ X-regs, ∀ case/ws variant v of (op, xt). encode_dc(v) = encode_dc(canonical(op, xt))
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_ic
+function: encoder.encode_dc
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [raw]
-  domain: { raw: valid IC operand with ASCII case and surrounding whitespace }
+  vars: [op, xt]
+  domain: { op: six DC names, xt: X-regs, variant: ascii case + space/tab pad }
   relation:
     op: eq
-    lhs: encode_ic(raw)
-    rhs: encode_ic(canonical(raw))
+    lhs: encode_dc(variant)
+    rhs: encode_dc(canonical(op, xt))
 generators:
-  raw: { gen: string, type: String }
-evidence: system.rs:403 op_name = parts[0].trim().to_lowercase(); parser.rs:1746 raw_operands stored unlowercased
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
+  xt: { gen: oneof, options: ["x0..x30", "xzr", "lr"] }
+evidence: system.rs:567 s.to_lowercase(); parser.rs:1734-1746 does not lowercase raw_operands
 ```
 
-## encode_ic_neg_unknown_op
+## encode_dc_neg_unknown_op
 - Tier: 3
-- Rationale: Negative/error contract: llvm-mc and gas reject unknown IC operation names ("invalid operand for IC instruction" / "unknown or missing operation name"). encode_ic's `_` arm returns Err("unsupported ic operation: {}"). Empty operand string, near-miss names, and space-separated extras that become the op token are in the documented-invalid domain. Stronger rejected: State machine; Round-trip; Differential on the valid domain is a different property.
-- Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_bti_pbt.rs:321 (unknown target)
-- Formal: ∀ s ∈ UnknownIcOps (empty, near-miss names, garbage tokens; llvm-mc("ic " · s) = Err). encode_ic(s) = Err ∧ (error contains "unsupported ic operation" ∨ error contains "invalid register")
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Rationale: Negative/error contract: llvm-mc/gas reject unknown DC op names (including substring supersets like gzva, civacs). SUT must Err. Domain is names that are not exactly the six implemented ops after trim+casefold; substring matches stay in the domain (contains() is not a documented exact-match contract).
+- Doc contract: (none) — encode_dc has no rustdoc declaring unknown names out of domain via substring
+- Seed: encode_ic_pbt.rs:encode_ic_neg_unknown_op
+- Formal: ∀ name ∉ {civac,cvac,cvap,cvau,ivac,zva} (after trim+casefold of first comma field). llvm-mc("dc name, x0") = Err ⇒ encode_dc([Symbol(name), Reg("x0")], raw) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
+- Status: failing
+- Counterexample: encode_dc([Symbol("civacs"), Reg("x0")], "civacs, x0") = Ok(Word(0xd50b7e20))
+- Bug report: pbt-out/bug_reports/encode_dc_substring_op.md
 
 ```property
-function: encoder.system.encode_ic
+function: encoder.encode_dc
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [s]
-  domain: { s: string that is not a valid IC op after trim+casefold, including empty and near-miss names }
+  vars: [name]
+  domain: { name: DC op names that are not exactly the six implemented ops }
   relation:
-    op: throws
-    lhs: encode_ic(s)
-    rhs: unsupported ic operation | invalid register
+    op: holds
+    expr: encode_dc([Symbol(name), Reg("x0")], name + ", x0").is_err()
 generators:
-  s: { gen: string, type: String }
-expected_error: String
-evidence: system.rs:424 unsupported ic operation; llvm-mc "invalid operand for IC instruction"; gas "unknown or missing operation name"
+  name: { gen: string, minLen: 0, maxLen: 16 }
+expected_error: unsupported dc variant
+evidence: llvm-mc/gas reject unknown DC ops; system.rs:611 Err unsupported dc variant
 ```
 
-## encode_ic_neg_iallu_with_reg
+## encode_dc_neg_missing_xt
 - Tier: 3
-- Rationale: Negative/error contract: ARM syntax for IALLUIS/IALLU has no Xt. llvm-mc rejects `ic ialluis, xN` / `ic iallu, xN` ("specified ic op does not use a register"); gas rejects ("extraneous register at operand 2"). The SUT match arms do not declare a register out of domain — they still patch Rt — so the input stays in the generator. Stronger rejected: State machine; Round-trip; Differential on the valid (no-Xt) domain is a different property.
-- Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_bti_pbt.rs:340 (extra operand)
-- Formal: ∀ op ∈ {ialluis, iallu}. ∀ t ∈ 0..31 ∪ {xzr, lr, sp}. llvm-mc("ic " · op · ", " · xt(t)) = Err ⇒ encode_ic(op · ", " · xt(t)) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
+- Rationale: All six implemented DC ops require Xt. llvm-mc and gas reject `dc <op>` with no register. Body does not declare missing Xt out of domain; defaulting Rt to 0 would be silent wrong encoding.
+- Doc contract: (none) — encode_dc has no rustdoc declaring missing Xt invalid. gas "comma expected between operands at operand 2".
+- Seed: encode_ic_pbt.rs:encode_ic_neg_ivau_missing_reg
+- Formal: ∀ op ∈ {civac,cvac,cvap,cvau,ivac,zva}. encode_dc([Symbol(op)], op) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
 - Status: failing
-- Counterexample: encode_ic("ialluis, x0")
-- Bug report: bug_reports/encode_ic_iallu_with_reg.md
+- Counterexample: encode_dc([Symbol("civac")], "civac") = Ok(Word(0xd50b7e20))
+- Bug report: pbt-out/bug_reports/encode_dc_missing_xt.md
 
 ```property
-function: encoder.system.encode_ic
+function: encoder.encode_dc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [op]
+  domain: { op: six DC names }
+  relation:
+    op: holds
+    expr: encode_dc([Symbol(op)], op).is_err()
+generators:
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
+expected_error: Err
+evidence: llvm-mc/gas require Xt on every implemented DC op; ARM ARM SYS Xt required
+```
+
+## encode_dc_neg_extra_operand
+- Tier: 3
+- Rationale: llvm-mc/gas reject a third operand (`dc civac, x0, x1`). SUT must Err. Body ignores extras if get(1) is a Reg.
+- Doc contract: (none)
+- Seed: encode_ic_pbt.rs extra-operand negative
+- Formal: ∀ op ∈ six names, ∀ xt ∈ X-regs, ∀ extra. encode_dc([Symbol(op), Reg(xt), extra], raw) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
+- Status: failing
+- Counterexample: encode_dc([Symbol("civac"), Reg("x0"), Reg("x0")], "civac, x0, x0") = Ok(Word(0xd50b7e20))
+- Bug report: pbt-out/bug_reports/encode_dc_extra_operand.md
+
+```property
+function: encoder.encode_dc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [op, xt, extra]
+  domain: { op: six DC names, xt: X-regs, extra: additional operand }
+  relation:
+    op: holds
+    expr: encode_dc([Symbol(op), Reg(xt), extra], raw).is_err()
+generators:
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
+  xt: { gen: oneof, options: ["x0..x30", "xzr", "lr"] }
+  extra: { gen: oneof, options: ["x0", "x1", "xzr", "#0", "w0"] }
+expected_error: Err
+evidence: llvm-mc unexpected characters following instruction; gas same
+```
+
+## encode_dc_neg_wrong_reg_class
+- Tier: 3
+- Rationale: llvm-mc/gas require a 64-bit integer GPR. W/SP/WSP/SIMD registers are invalid. parse_reg_num accepts them, so the SUT may silently encode the number; that is the bug class.
+- Doc contract: (none)
+- Seed: encode_ic_pbt.rs:encode_ic_neg_wrong_reg_class
+- Formal: ∀ op ∈ six names, ∀ bad ∈ {w0..w30, wzr, wsp, sp, d/s/q/v/h/b0..31}. encode_dc([Symbol(op), Reg(bad)], raw) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
+- Status: failing
+- Counterexample: encode_dc([Symbol("civac"), Reg("w0")], "civac, w0") = Ok(Word(0xd50b7e20))
+- Bug report: pbt-out/bug_reports/encode_dc_wrong_reg_class.md
+
+```property
+function: encoder.encode_dc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [op, bad]
+  domain: { op: six DC names, bad: W/SP/SIMD register names }
+  relation:
+    op: holds
+    expr: encode_dc([Symbol(op), Reg(bad)], raw).is_err()
+generators:
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
+  bad: { gen: oneof, options: ["w0..w30", "wzr", "wsp", "sp", "d0..d31"] }
+expected_error: Err
+evidence: llvm-mc invalid operand; gas operand mismatch / must be an integer register
+```
+
+## encode_dc_neg_invalid_reg
+- Tier: 3
+- Rationale: Sweep — drive parse_reg_num None (system.rs:573) for Xt names llvm-mc also rejects (x32, empty, #0, foo). Distinct from wrong-class (those parse_reg_num accepts).
+- Doc contract: (none)
+- Seed: encode_ic_pbt.rs:encode_ic_neg_invalid_reg
+- Formal: ∀ op ∈ six names, ∀ xt ∈ {x32..x99, #0, ε, foo, 31, x}. llvm-mc("dc op, xt") = Err ⇒ encode_dc([Symbol(op), Reg(xt)], raw) = Err containing "invalid register" or "unsupported dc variant"
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_dc
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [op, xt]
-  domain: { op: {ialluis, iallu}, xt: x0..x30|xzr|lr|sp }
+  domain: { op: six DC names, xt: malformed Xt tokens }
   relation:
-    op: throws
-    lhs: encode_ic(op + ", " + xt)
-    rhs: error
+    op: holds
+    expr: encode_dc([Symbol(op), Reg(xt)], raw).is_err()
 generators:
-  op: { gen: oneof, of: ["ialluis", "iallu"], type: String }
-  xt: { gen: string, type: String }
-expected_error: String
-evidence: llvm-mc "specified ic op does not use a register"; gas "extraneous register at operand 2"; ARM ARM IC IALLUIS/IALLU have no Xt
+  op: { gen: oneof, options: ["civac", "cvac", "cvap", "cvau", "ivac", "zva"] }
+  xt: { gen: oneof, options: ["x32", "x33", "#0", "", "foo", "31", "x"] }
+expected_error: invalid register
+evidence: system.rs:573 parse_reg_num(name).ok_or("invalid register for dc"); llvm-mc rejects x32
 ```
 
-## encode_ic_neg_ivau_missing_reg
+## encode_dc_neg_unknown_nonsubstr
 - Tier: 3
-- Rationale: Negative/error contract: ARM syntax for IVAU requires Xt. llvm-mc rejects `ic ivau` ("specified ic op requires a register"); gas rejects ("missing register at operand 2"). encode_ic defaults a missing register to Rt=31 (XZR) without a domain-restriction comment, so the input stays in the generator. Stronger rejected: State machine; Round-trip; Differential on IVAU-with-Xt is a different property.
+- Rationale: Sweep — names that llvm-mc rejects and that do not substring-match the six implemented ops must take the final Err arm (system.rs:611). Complements the failing substring property so the documented unsupported-variant path is executed and asserted.
 - Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_bti_pbt.rs:321 (omitted-invalid analogue)
-- Formal: ∀ pad ∈ {ε, space, tab}*. ∀ case ∈ ASCII-case-fold("ivau"). llvm-mc("ic " · pad · case · pad) = Err ⇒ encode_ic(pad · case · pad) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
-- Status: failing
-- Counterexample: encode_ic("ivau")
-- Bug report: bug_reports/encode_ic_ivau_missing_reg.md
-
-```property
-function: encoder.system.encode_ic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [raw]
-  domain: { raw: case/ws variants of "ivau" with no comma/register }
-  relation:
-    op: throws
-    lhs: encode_ic(raw)
-    rhs: error
-generators:
-  raw: { gen: string, type: String }
-expected_error: String
-evidence: llvm-mc "specified ic op requires a register"; gas "missing register at operand 2"; ARM ARM IC IVAU requires Xt
-```
-
-## encode_ic_neg_wrong_reg_class
-- Tier: 3
-- Rationale: Negative/error contract: IVAU Xt must be a 64-bit integer register (Xn / XZR / LR). llvm-mc rejects W/SP/WZR/WSP/SIMD/FP ("invalid operand for instruction"); gas rejects ("operand mismatch" / "operand 2 must be an integer register"). parse_reg_num accepts W/SP/D/S/Q/V/H/B, and encode_ic has no class check, so those inputs stay in the generator. Stronger rejected: State machine; Round-trip; Differential on the valid X-register domain is a different property.
-- Doc contract: (none)
-- Seed: src/backend/arm/assembler/encoder/encode_dmb_pbt.rs extra_operand / wrong_kind
-- Formal: ∀ bad ∈ {w0..w30, wzr, wsp, sp, d0, s0, q0, v0, h0, b0}. llvm-mc("ic ivau, " · bad) = Err ⇒ encode_ic("ivau, " · bad) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
-- Status: failing
-- Counterexample: encode_ic("ivau, w0")
-- Bug report: bug_reports/encode_ic_wrong_reg_class.md
-
-```property
-function: encoder.system.encode_ic
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [bad]
-  domain: { bad: W-register | SP | WSP | WZR | SIMD/FP register }
-  relation:
-    op: throws
-    lhs: encode_ic("ivau, " + bad)
-    rhs: error
-generators:
-  bad: { gen: string, type: String }
-expected_error: String
-evidence: llvm-mc "invalid operand for instruction"; gas "operand mismatch" / "must be an integer register"; ARM ARM IC IVAU Xt is 64-bit GPR
-```
-
-## encode_ic_neg_invalid_reg
-- Tier: 3
-- Rationale: Sweep for the documented error path `ic: invalid register '{}'` (system.rs:406) that the first-batch generators did not reliably reach. llvm-mc rejects malformed Xt (x32, empty, extra operands, `#0`). Stronger rejected: State machine; Round-trip; Differential on the valid X-register domain is a different property.
-- Doc contract: (none)
-- Seed: encode_ic_pbt.rs encode_ic_neg_wrong_reg_class (malformed vs wrong-class)
-- Formal: ∀ xt ∈ {x32..x99, ε, "x0, x1", "#0", "foo", "31", "x"}. llvm-mc("ic ivau, " · xt) = Err ⇒ encode_ic("ivau, " · xt) = Err ∧ error contains "invalid register"
-- Test file: src/backend/arm/assembler/encoder/encode_ic_pbt.rs
+- Seed: encode_ic_pbt.rs:encode_ic_neg_unknown_op
+- Formal: ∀ name whose trim+casefold is not an exact implemented DC op, is not {cisw,csw,isw}, and does not contain civac|cvac|cvap|cvau|ivac|zva. llvm-mc("dc name, x0") = Err ⇒ encode_dc = Err
+- Test file: src/backend/arm/assembler/encoder/encode_dc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_ic
+function: encoder.encode_dc
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [xt]
-  domain: { xt: x32..x99 | empty | extra-operand | #imm | non-register token }
+  vars: [name]
+  domain: { name: unknown DC ops that do not substring-match implemented names }
   relation:
-    op: throws
-    lhs: encode_ic("ivau, " + xt)
-    rhs: invalid register
+    op: holds
+    expr: encode_dc([Symbol(name), Reg("x0")], name + ", x0").is_err()
 generators:
-  xt: { gen: string, type: String }
-expected_error: String
-evidence: system.rs:406 "ic: invalid register"; llvm-mc "expected register operand" / "unexpected token"
+  name: { gen: string, minLen: 0, maxLen: 16 }
+expected_error: unsupported dc variant
+evidence: system.rs:611 Err unsupported dc variant
 ```

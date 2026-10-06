@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 159 | Excluded: 148
+> Total files: 11 | Total functions: 307 | PBT candidates: 160 | Excluded: 147
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -308,4 +308,4 @@
 | encode_tlbi | system.rs | 477 | function | no | out of campaign scope |
 | encode_bti | system.rs | 542 | function | yes | - |
 | encode_hint | system.rs | 554 | function | yes | - |
-| encode_dc | system.rs | 564 | function | no | out of campaign scope |
+| encode_dc | system.rs | 564 | function | yes | - |

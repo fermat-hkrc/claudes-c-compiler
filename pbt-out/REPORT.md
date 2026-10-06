@@ -1,113 +1,136 @@
-# PBT Campaign Report: encode_ic
+# PBT Campaign Report: encode_dc
 
 ## Summary
 
-**Verdict:** 3 medium: encode_ic silently encodes invalid IC syntax that llvm-mc and GNU as reject — a register on IALLUIS/IALLU, a missing Xt on IVAU (becomes IVAU XZR), and W/SP/SIMD as IVAU Xt (W0 encodes as X0).
+**Verdict:** 4 medium: encode_dc silently encodes unknown substring op names (civacs/gzva), a missing Xt as x0, extra operands, and W/SP/SIMD registers, so typos assemble as real cache-maintenance instructions.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ic
-**Tests:** 9 properties + 4 KAT + 3 regression witnesses
-**Result:** 6 passing, 3 bugs
-**Change surface:** 1 changed function (encode_ic), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of the 17-line body plus a sweep property on the invalid-register Err path.
-**Tier:** standard
+**Modules tested:** encode_dc
+**Tests:** 10 properties (plus 7 KAT + 5 regression witnesses)
+**Result:** 6 passing, 4 bugs
+**Change surface:** 1 changed function (encode_dc), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit plus two sweep properties drove the invalid-register and non-substring Err arms. Tier: standard.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ic | 9 properties (6 passing / 3 failing) + 4 KAT + 3 regression | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_dc | 10 properties (7 KAT, 5 regression) | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_ic accepts a register on IALLUIS/IALLU
+### B1: encode_dc matches DC op names by substring
 
-**Formal:** ∀ op ∈ {ialluis, iallu}. ∀ t ∈ 0..31 ∪ {xzr, lr, sp}. llvm-mc("ic " · op · ", " · xt(t)) = Err ⇒ encode_ic(op · ", " · xt(t)) = Err
-**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM IALLUIS/IALLU have no Xt; llvm-mc "specified ic op does not use a register"; gas "extraneous register at operand 2")
+**Formal:** ∀ name ∉ {civac,cvac,cvap,cvau,ivac,zva} (after trim+casefold of first comma field). llvm-mc("dc name, x0") = Err ⇒ encode_dc([Symbol(name), Reg("x0")], raw) = Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc/gas reject unknown DC names; body uses contains() without documenting substring matching)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_ic("ialluis, x0")
-**Expected / Actual:** Err / Ok(Word(0xd5087100))
-**Impact:** A stray register on IALLUIS/IALLU is patched into Rt instead of being rejected, so a typo is not diagnosed.
-**Root cause:** system.rs:416 always writes `(base & !0x1F) | rt` after parsing an optional register; IALLUIS/IALLU never check that a second operand is forbidden.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:416`
+**Counterexample:** encode_dc([Symbol("civacs"), Reg("x0")], "civacs, x0")
+**Expected / Actual:** Err / Ok(Word(0xd50b7e20)) (DC CIVAC, x0). Related: gzva, x0 → Ok(Word(0xd50b7420)) (DC ZVA)
+**Impact:** Typos and other ARM DC names that merely contain an implemented token assemble as the wrong cache op. `dc gzva, x0` becomes DC ZVA (zero cache line) instead of being rejected.
+**Root cause:** system.rs:583 uses `op.contains("civac")` (and later contains("cvac")/contains("zva")) instead of an exact match.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:583`
 ```rust
-    let word = (base & !0x1F) | rt;
+    if op.contains("civac") {
 ```
-**Suggested fix:** Reject a register operand for IALLUIS and IALLU before encoding.
+**Suggested fix:** Match the trimmed op name exactly, not as a substring.
 ```rust
-    if matches!(op_name.as_str(), "ialluis" | "iallu") && parts.len() > 1 {
-        return Err(format!("ic: {} does not take a register", op_name));
+    if op.trim() == "civac" {
+```
+**Bug report:** bug_reports/encode_dc_substring_op.md
+**Repro seed:** s = "civacs"
+**Raw output:**
+```text
+Test failed: unknown DC op "civacs" must Err (llvm-mc rejects dc civacs, x0): Word(3574300192).
+minimal failing input: s = "civacs"
+```
+
+### B2: encode_dc encodes a missing Xt as x0
+
+**Formal:** ∀ op ∈ {civac,cvac,cvap,cvau,ivac,zva}. encode_dc([Symbol(op)], op) = Err
+**Contract evidence:** inferred (ARM ARM SYS Xt required; llvm-mc/gas reject `dc civac`; README.md:12 gas-compat)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_dc([Symbol("civac")], "civac")
+**Expected / Actual:** Err / Ok(Word(0xd50b7e20)) (DC CIVAC, x0)
+**Impact:** A dropped Xt is not diagnosed and silently targets x0.
+**Root cause:** system.rs:578 defaults Rt to 0 when no register operand is present.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:578`
+```rust
+                0
+```
+**Suggested fix:** Require a register operand; do not default Rt to x0.
+```rust
+                return Err("dc: missing Xt register".into())
+```
+**Bug report:** bug_reports/encode_dc_missing_xt.md
+**Repro seed:** op = "civac"
+**Raw output:**
+```text
+Test failed: DC civac without Xt must Err (llvm-mc rejects dc civac); SUT raw "civac": Word(3574300192).
+minimal failing input: op = "civac"
+```
+
+### B3: encode_dc ignores a third operand
+
+**Formal:** ∀ op ∈ six names, ∀ xt ∈ X-regs, ∀ extra. encode_dc([Symbol(op), Reg(xt), extra], raw) = Err
+**Contract evidence:** inferred (llvm-mc/gas reject extra operands; README.md:12 gas-compat)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_dc([Symbol("civac"), Reg("x0"), Reg("x0")], "civac, x0, x0")
+**Expected / Actual:** Err / Ok(Word(0xd50b7e20)) (DC CIVAC, x0)
+**Impact:** A stray third operand is not diagnosed.
+**Root cause:** system.rs:572 takes Rt from operands.get(1) and never checks operands.len().
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:572`
+```rust
+    let rt = match operands.get(1) {
+```
+**Suggested fix:** Reject anything other than exactly two operands (op, Xt).
+```rust
+    if operands.len() != 2 {
+        return Err(format!("dc: unexpected extra operand in {}", raw_operands));
     }
-    let word = (base & !0x1F) | rt;
+    let rt = match operands.get(1) {
 ```
-**Bug report:** bug_reports/encode_ic_iallu_with_reg.md
-**Repro seed:** op = "ialluis", xt = "x0"
+**Bug report:** bug_reports/encode_dc_extra_operand.md
+**Repro seed:** op = "civac", xt = "x0", extra = "x0"
 **Raw output:**
 ```text
-Test failed: IALLU* with register must Err (llvm-mc rejects ic ialluis, x0); SUT raw "ialluis, x0": Word(3574100224).
-minimal failing input: op = "ialluis", xt = "x0"
+Test failed: DC with extra operand must Err (llvm-mc rejects dc civac, x0, x0); SUT raw "civac, x0, x0": Word(3574300192).
+minimal failing input: op = "civac", xt = "x0", extra = "x0"
 ```
 
-### B2: encode_ic encodes IC IVAU without Xt as IVAU XZR
+### B4: encode_dc accepts W, SP, and SIMD registers as Xt
 
-**Formal:** ∀ pad ∈ {ε, space, tab}*. ∀ case ∈ ASCII-case-fold("ivau"). llvm-mc("ic " · pad · case · pad) = Err ⇒ encode_ic(pad · case · pad) = Err
-**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM IVAU requires Xt; llvm-mc "specified ic op requires a register"; gas "missing register at operand 2")
+**Formal:** ∀ op ∈ six names, ∀ bad ∈ {w0..w30, wzr, wsp, sp, d/s/q/v/h/b0..31}. encode_dc([Symbol(op), Reg(bad)], raw) = Err
+**Contract evidence:** inferred (llvm-mc invalid operand; gas operand mismatch / must be an integer register; README.md:12 gas-compat)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_ic("ivau")
-**Expected / Actual:** Err / Ok(Word(0xd50b753f))
-**Impact:** A dropped Xt becomes `ic ivau, xzr`, a real cache-maintenance instruction, instead of an assembler error.
-**Root cause:** system.rs:408 default Rt to 31 (XZR) whenever raw_operands contains no comma, including for IVAU which requires Xt.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:408`
+**Counterexample:** encode_dc([Symbol("civac"), Reg("w0")], "civac, w0")
+**Expected / Actual:** Err / Ok(Word(0xd50b7e20)) (DC CIVAC, x0). Related: sp → Ok(Word(0xd50b7e3f)) (XZR)
+**Impact:** A 32-bit, stack, or SIMD register is silently treated as the corresponding 5-bit number.
+**Root cause:** system.rs:573 calls parse_reg_num, which accepts w/sp/wsp/d/s/q/v/h/b, with no 64-bit GPR check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:573`
 ```rust
-        31 // xzr
+        Some(Operand::Reg(name)) => parse_reg_num(name).ok_or("invalid register for dc")?,
 ```
-**Suggested fix:** Require a register operand for IVAU.
+**Suggested fix:** Reject non-X GPRs (W, SP, SIMD) before encoding.
 ```rust
-    } else if op_name == "ivau" {
-        return Err("ic: ivau requires a register".to_string());
-    } else {
-        31 // xzr
-    };
-```
-**Bug report:** bug_reports/encode_ic_ivau_missing_reg.md
-**Repro seed:** raw = "ivau"
-**Raw output:**
-```text
-Test failed: IVAU without register must Err (llvm-mc rejects ic ivau); SUT raw "ivau": Word(3574297919).
-minimal failing input: raw = "ivau"
-```
-
-### B3: encode_ic accepts W/SP/SIMD registers as IVAU Xt
-
-**Formal:** ∀ bad ∈ {w0..w30, wzr, wsp, sp, d0, s0, q0, v0, h0, b0}. llvm-mc("ic ivau, " · bad) = Err ⇒ encode_ic("ivau, " · bad) = Err
-**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM IVAU Xt is a 64-bit GPR; llvm-mc "invalid operand for instruction"; gas "operand mismatch")
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_ic("ivau, w0")
-**Expected / Actual:** Err / Ok(Word(0xd50b7520)) (same as `ic ivau, x0`)
-**Impact:** A 32-bit, SP, or SIMD register is silently treated as the corresponding 5-bit encoding, so a width/class typo is not diagnosed.
-**Root cause:** system.rs:406 uses parse_reg_num, which accepts W/SP/WZR/WSP and SIMD/FP prefixes as 5-bit numbers, with no 64-bit GPR check for IVAU Xt.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:406`
-```rust
-        parse_reg_num(reg_str).ok_or_else(|| format!("ic: invalid register '{}'", reg_str))?
-```
-**Suggested fix:** Restrict IVAU Xt to 64-bit integer registers (Xn / XZR / LR).
-```rust
-        let rt = parse_reg_num(reg_str).ok_or_else(|| format!("ic: invalid register '{}'", reg_str))?;
-        let low = reg_str.trim().to_lowercase();
-        let is_x = low.starts_with('x') || low == "xzr" || low == "lr";
-        if !is_x {
-            return Err(format!("ic: Xt must be a 64-bit GPR, got '{}'", reg_str));
+        Some(Operand::Reg(name)) => {
+            let low = name.trim().to_lowercase();
+            let is_x = low.starts_with('x') || low == "xzr" || low == "lr";
+            if !is_x {
+                return Err(format!("dc: Xt must be a 64-bit GPR, got {name}"));
+            }
+            parse_reg_num(name).ok_or("invalid register for dc")?
         }
 ```
-**Bug report:** bug_reports/encode_ic_wrong_reg_class.md
-**Repro seed:** bad = "w0"
+**Bug report:** bug_reports/encode_dc_wrong_reg_class.md
+**Repro seed:** op = "civac", bad = "w0"
 **Raw output:**
 ```text
-Test failed: IVAU with non-X register must Err (llvm-mc rejects ic ivau, w0); SUT raw "ivau, w0": Word(3574297888).
-minimal failing input: bad = "w0"
+Test failed: DC with non-X register must Err (llvm-mc rejects dc civac, w0); SUT raw "civac, w0": Word(3574300192).
+minimal failing input: op = "civac", bad = "w0"
 ```
 
 ## Design Caveats
@@ -118,58 +141,69 @@ minimal failing input: bad = "w0"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_ic_pbt.rs | 9 properties (6 passing / 3 failing) + 4 KAT + 3 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_ic_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_dc_pbt.rs | 10 properties, 7 KAT, 5 regression witnesses |
 
 ## Reproduction
 
-Whole suite (expected: 10 passed, 6 failed — 3 properties + 3 regression witnesses):
+Valid-domain / full suite (fails on the four bugs):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_ic -- --test-threads=1
+cargo test --lib encode_dc -- --test-threads=1
 ```
 
-B1:
+B1 substring:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ic_regression_ialluis_x0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_dc_regression_gzva -- --test-threads=1 --nocapture
 ```
 
-B2:
+B2 missing Xt:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ic_regression_ivau_missing -- --test-threads=1 --nocapture
+cargo test --lib test_encode_dc_regression_missing_xt -- --test-threads=1 --nocapture
 ```
 
-B3:
+B3 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ic_regression_ivau_w0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_dc_regression_extra_operand -- --test-threads=1 --nocapture
+```
+
+B4 wrong register class:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_dc_regression_w0 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md — this report
-- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — coverage table
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/INVARIANTS.md — confirmed invariants
-- pbt-out/FUNCTION_INDEX.md — function index (encode_ic marked yes)
-- pbt-out/report.json — machine-readable report
-- pbt-out/bug_reports/encode_ic_iallu_with_reg.md + .html
-- pbt-out/bug_reports/encode_ic_ivau_missing_reg.md + .html
-- pbt-out/bug_reports/encode_ic_wrong_reg_class.md + .html
-- pbt-out/build.log — pre-campaign user build log
-- proptest-regressions/backend/arm/assembler/encoder/encode_ic_pbt.txt — shrunk seeds
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
+- pbt-out/INVARIANTS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/run/encode_dc_test.log
+- pbt-out/run/encode_dc_test_sweep.log
+- pbt-out/bug_reports/encode_dc_substring_op.md
+- pbt-out/bug_reports/encode_dc_substring_op.html
+- pbt-out/bug_reports/encode_dc_missing_xt.md
+- pbt-out/bug_reports/encode_dc_missing_xt.html
+- pbt-out/bug_reports/encode_dc_extra_operand.md
+- pbt-out/bug_reports/encode_dc_extra_operand.html
+- pbt-out/bug_reports/encode_dc_wrong_reg_class.md
+- pbt-out/bug_reports/encode_dc_wrong_reg_class.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 02:16 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 158/307 total | PBT candidates: 158 | Tested: 158 (100%) | 1 pass, 158 fail
+> Last updated: 2026-10-06 02:35 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 159/307 total | PBT candidates: 159 | Tested: 159 (100%) | 1 pass, 159 fail
 
 ## Summary
 
@@ -178,10 +212,10 @@ cargo test --lib test_encode_ic_regression_ivau_w0 -- --test-threads=1 --nocaptu
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 158 |
-| **Tested (of PBT candidates)** | **158 / 158 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 158 / -1 |
-| **Overall (tested / all functions)** | **158 / 307 (51%)** |
+| PBT candidates (from FUNCTION_INDEX) | 159 |
+| **Tested (of PBT candidates)** | **159 / 159 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 159 / -1 |
+| **Overall (tested / all functions)** | **159 / 307 (52%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -189,13 +223,13 @@ cargo test --lib test_encode_ic_regression_ivau_w0 -- --test-threads=1 --nocaptu
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 158 | 158 | 0 | 100% |
+|  | 159 | 159 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 158 | 158 | 0 | 100% |
+| unknown | 159 | 159 | 0 | 100% |
 
 ## File Coverage
 
@@ -376,3 +410,4 @@ cargo test --lib test_encode_ic_regression_ivau_w0 -- --test-threads=1 --nocaptu
 | encode_hint | system.rs |
 | encode_bti | system.rs |
 | encode_ic | system.rs |
+| encode_dc | system.rs |
