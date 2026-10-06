@@ -1,3 +1,29 @@
+# Confirmed invariants (encode_fcvt_fp)
+
+- Valid 2-operand FCVT.S.D with FP rd and FP rs1 matches llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). Default omitted rm is DYN (111). rs2 encodes source format (00001 D). KAT pins fcvt.s.d fa0, fa1 = 0x4015f553, fcvt.s.d ft0, ft1 = 0x4010f053, fcvt.s.d fs0, fs1 = 0x4014f453, fcvt.s.d ft11, ft0 = 0x40107fd3, fcvt.s.d f0, f1 = 0x4010f053.
+- Valid 3rd RoundingMode in {rne,rtz,rdn,rup,rmm,dyn} matches llvm-mc for FCVT.S.D (1000 cases). KAT pins fcvt.s.d fa0, fa1, rne = 0x40158553 and ..., rtz = 0x40159553.
+- R-type OP-FP layout holds for both mnemonics including FCVT.D.S: opcode=0b1010011, rm in funct3[14:12], rd/rs1/rs2/funct7 as given (1000 cases).
+- FP ABI names (ft0/fa0/fs0/...) encode the same rd/rs1 as fN (1000 cases).
+- Omitted rm equals explicit RoundingMode("dyn") and unpacks rm=111 for both mnemonics (1000 cases).
+- Empty, 1-operand, GPR rd, GPR rs1, and non-Reg rd return Err (1000 cases).
+- A 4th operand and a 3rd non-RoundingMode operand currently disagree with llvm-mc (see bugs): extra ignored; non-RM 3rd mapped to rm=DYN.
+- 2-operand FCVT.D.S currently disagrees with llvm-mc (see bugs): SUT omitted-rm=DYN, llvm-mc omitted-rm=RNE.
+
+## Environment (encode_fcvt_fp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+f,+d -show-encoding (LLVM 15.0.6). Default riscv64 without +f,+d rejects F/D; RV64GC includes both (README.md:13).
+- Harness: src/backend/riscv/assembler/encoder/encode_fcvt_fp_pbt.rs, cargo test --lib encode_fcvt_fp, proptest cases=1000.
+- Dispatch: encoder/mod.rs:785 fcvt.s.d => encode_fcvt_fp(operands, 0b0100000, 0b00001); encoder/mod.rs:786 fcvt.d.s => encode_fcvt_fp(operands, 0b0100001, 0b00000). Operands passed through with ISA funct7 and rs2.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_fcvt_fp NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / rm / R-type / ABI / dyn-default / arity-GPR / extra / non-rm 3rd. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+
+## Quirks (encode_fcvt_fp)
+
+- llvm-mc prints `fcvt.s.d f0, f1` as ft0, ft1 (same encoding). `fcvt.s.d ..., dyn` is printed without the dyn token; encoding still has rm=111.
+- llvm-mc 15 special-cases FCVT.D.S (float32→double is exact): it hardwires rm=RNE (000) and rejects an rm operand. This encoder uses omitted-rm=DYN. Filed as B3 (encoding mismatch vs llvm-mc).
+- parse_rm lowercases and maps unknown strings to 0b111; the parser only constructs RoundingMode for the closed set {rne,rtz,rdn,rup,rmm,dyn}, so unknown RM strings are not caller-reachable through encode_instruction.
+- encode_fcvt_fp does not range-check funct7 or rs2; callers supply the ISA values.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_fcvt_from_int)
 
 - Valid 2-operand FCVT.S.{W,WU,L,LU} and FCVT.D.{L,LU} with FP rd and GPR rs1 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). Default omitted rm is DYN (111). rs2 encodes src width/sign (00000 W, 00001 WU, 00010 L, 00011 LU). KAT pins fcvt.s.w fa0, a1 = 0xd005f553, fcvt.s.wu ft0, t0 = 0xd012f053, fcvt.s.l fs0, s0 = 0xd0247453, fcvt.s.lu fa0, a1 = 0xd035f553, fcvt.d.l ft11, t6 = 0xd22fffd3, fcvt.s.w f0, x31 = 0xd00ff053, fcvt.s.w ft0, fp = 0xd0047053, fcvt.s.w f8, s0 = 0xd0047453.

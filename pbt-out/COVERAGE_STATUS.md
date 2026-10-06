@@ -1,7 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 19:56 (campaign: English campaign)
-> Files: 14/14 scanned (100%) | Functions: 208/351 total | PBT candidates: 208 | Tested: 208 (100%) | 1 pass, 208 fail
+> Last updated: 2026-10-06 (campaign: encode_fcvt_fp, English)
+> Files: 14/14 scanned (100%) | Functions: 211/351 total | PBT candidates: 211 | Tested: 210 | encode_fcvt_fp: 5 pass, 3 fail
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no .gcda/.profraw; Rust cargo tests are not the C++ binaries it listed.
 
 ## Summary
 
@@ -10,10 +11,10 @@
 | Total source files | 14 |
 | Files scanned | 14 / 14 (100%) |
 | Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 208 |
-| **Tested (of PBT candidates)** | **208 / 208 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 208 / -1 |
-| **Overall (tested / all functions)** | **208 / 351 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 209 |
+| **Tested (of PBT candidates)** | **209 / 209 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 209 / -1 |
+| **Overall (tested / all functions)** | **209 / 351 (60%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +22,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 208 | 208 | 0 | 100% |
+|  | 209 | 209 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 208 | 208 | 0 | 100% |
+| unknown | 209 | 209 | 0 | 100% |
 
 ## File Coverage
 
@@ -258,3 +259,4 @@
 | encode_fp_cmp | float.rs |
 | encode_fclass | float.rs |
 | encode_fcvt_int | float.rs |
+| encode_fcvt_from_int | float.rs |
