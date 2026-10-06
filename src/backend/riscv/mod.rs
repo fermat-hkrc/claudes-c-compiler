@@ -104,3 +104,137 @@ mod pbt_asm {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_regression_asm {
+    use crate::driver::Driver;
+    /// RED WITNESSES — round 17 (issues filed from the deep sweep):
+    /// llvm-mc rejects every form below (ISA encoding limits / formats);
+    /// ccc currently accepts them silently.
+    fn check_reject(form: &str, tag: &str) {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/17_riscv_asm_deep/run");
+        let _ = std::fs::create_dir_all(&dir);
+        let src = dir.join(format!("r{}.s", tag));
+        std::fs::write(&src, format!(".text\n{}\n", form)).unwrap();
+        let out = dir.join(format!("r{}.o", tag));
+        let argv: Vec<String> = vec![
+            "ccc-riscv".into(), "-c".into(),
+            "-o".into(), out.to_str().unwrap().into(), src.to_str().unwrap().into(),
+        ];
+        let mut d = Driver::new();
+        let parsed = d.parse_cli_args(&argv).unwrap();
+        assert!(!parsed);
+        let result = d.run();
+        let produced = out.exists();
+        assert!(result.is_err() || !produced, "silently accepted: {}", form);
+        let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn test_riscvasm_regression_imm12_range() {
+        check_reject("addi a0, a1, 2048", "imm12a");
+        check_reject("addi a0, a1, -2049", "imm12b");
+        check_reject("andi a0, a1, 4096", "imm12c");
+        check_reject("ld a0, 2048(a1)", "imm12d");
+    }
+
+    #[test]
+    fn test_riscvasm_regression_shamt_range() {
+        check_reject("slli a0, a1, 64", "shamt1");
+        check_reject("slli a0, a1, -1", "shamt2");
+        check_reject("slliw a0, a1, 32", "shamt3");
+    }
+
+    #[test]
+    fn test_riscvasm_regression_malformed() {
+        check_reject("add a0, a1, 2048", "mf1");
+        check_reject("beq a0, a1, 4096", "mf2");
+        check_reject("fence.i a0, a1", "mf3");
+    }
+}
+
+#[cfg(test)]
+mod pbt_witness {
+    //! Round 17b: PBT witnesses for the RISC-V validation classes — each
+    //! generated invalid form is rejected by llvm-mc (ISA encoding limits)
+    //! and must be rejected by ccc too. Properties fail and SHRINK.
+    use crate::driver::Driver;
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/17_riscv_asm_deep/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    fn check_rejected_by_ccc(form: &str) {
+        let dir = run_dir();
+        let src = dir.join("pw.s");
+        std::fs::write(&src, format!(".text\n{}\n", form)).unwrap();
+        let mc = Command::new("llvm-mc")
+            .args(["-triple=riscv64", "-filetype=obj", "-o", dir.join("pw_m.o").to_str().unwrap(), src.to_str().unwrap()])
+            .output().unwrap();
+        if !mc.status.success() {
+            let argv: Vec<String> = vec![
+                "ccc-riscv".into(), "-c".into(),
+                "-o".into(), dir.join("pw_c.o").to_str().unwrap().into(), src.to_str().unwrap().into(),
+            ];
+            let mut d = Driver::new();
+            let parsed = d.parse_cli_args(&argv).unwrap();
+            assert!(!parsed);
+            let cc_ok = d.run().is_ok() && dir.join("pw_c.o").exists();
+            if cc_ok {
+                panic!("ccc silently accepted an llvm-mc-rejected (ISA-limit) form: {}", form);
+            }
+        }
+        let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(dir.join("pw_m.o")); let _ = std::fs::remove_file(dir.join("pw_c.o"));
+    }
+
+    /// #796 witness: imm12 range violations across I-type ops and ld/sd.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_imm12_range_witness(op in 0u8..5, r1 in any::<u8>(), r2 in any::<u8>(), over in any::<bool>()) {
+            let ops = ["addi", "andi", "ori", "xori", "addiw"];
+            let r = |v: u8| v % 32;
+            let form = if over {
+                format!("{} x{}, x{}, 2048", ops[(op % 5) as usize], r(r1), r(r2))
+            } else {
+                format!("{} x{}, x{}, -2049", ops[(op % 5) as usize], r(r1), r(r2))
+            };
+            check_rejected_by_ccc(&form);
+        }
+    }
+
+    /// #797 witness: shamt range violations.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_shamt_range_witness(op in 0u8..3, r1 in any::<u8>(), r2 in any::<u8>(), w_form in any::<bool>()) {
+            let r = |v: u8| v % 32;
+            let (mnem, amt) = if w_form {
+                (["slliw", "srliw", "sraiw"][(op % 3) as usize], 32)
+            } else {
+                (["slli", "srli", "srai"][(op % 3) as usize], 64)
+            };
+            check_rejected_by_ccc(&format!("{} x{}, x{}, {}", mnem, r(r1), r(r2), amt));
+        }
+    }
+
+    /// #798 witness: malformed operand forms.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_malformed_witness(kind in 0u8..3, r1 in any::<u8>(), r2 in any::<u8>()) {
+            let r = |v: u8| v % 32;
+            let form = match kind % 3 {
+                0 => format!("add x{}, x{}, 2048", r(r1), r(r2)), // imm in reg slot
+                1 => format!("beq x{}, x{}, 4096", r(r1), r(r2)), // raw offset
+                _ => "fence.i x0, x1".to_string(), // operands on operand-less form
+            };
+            check_rejected_by_ccc(&form);
+        }
+    }
+}

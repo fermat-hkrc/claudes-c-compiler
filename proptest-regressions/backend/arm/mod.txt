@@ -5,3 +5,7 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc ab8e0c6e56ddf80eb219e8cd200afca437537621c306f501e9e242dfba78b75f # shrinks to insts = [(0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 0, 0, 0, 0, 0), (0, 118, 255, 93, 36741, 35), (158, 74, 83, 160, 11291, 202), (173, 134, 65, 181, 16544, 200), (114, 218, 74, 205, 5033, 162)]
+cc 564612b69000edd710f41b1548ab0bbd6c36d7ae83f9948734468abdcab54f19 # shrinks to fam = 0, a = 0, b = 0, c = 0, imm = 0, sh = 0
+cc 358cee31b074d64f69f69935a0060b697d0b07bdcca0564662e679fa6781aea2 # shrinks to fam = 0, a = 0, b = 0, c = 0, imm = 0, sh = 0
+cc df1ad72c2638f87c0e25bc8070d78897fe2e51bdf60b377d7737643d49b6e1ca # shrinks to fam = 0, a = 0, b = 0, c = 0, imm = 0, sh = 0
+cc 4ce3f5c0022eff9d115b21f049d21f50fe33ca854b2ca3127c8b02ac19459aa8 # shrinks to fam = 0, a = 0, b = 0, c = 0, imm = 0, sh = 0

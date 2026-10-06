@@ -178,3 +178,12 @@ Environment quirks (round 05):
 - Coverage evidence level: file-level (symbol presence); coverage_gaps'
   passes NOT LINKED list = cfg(test) false negative (round-07 properties
   call those fns directly).
+- Rounds 16-17: ARM/RISC-V assemblers share the "no operand validation"
+  architecture with x86 (13 more issues #791-#798 all validation gaps).
+  ARM oracle pair: llvm-mc + aarch64-linux-gnu-as (both native). RISC-V:
+  llvm-mc only (no cross-as) — acceptable ONLY for ISA encoding-limit
+  violations where the encoded value provably changes.
+- PBT-witness pattern: a helper returning TestCaseError can be silently
+  swallowed without `?` — use panic!-based asserts in shared helpers so
+  proptest catches and shrinks them.
+- Follow-up: elf resolve_numeric_labels GNU 1f/1b semantics property.
