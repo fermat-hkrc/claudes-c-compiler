@@ -4815,3 +4815,35 @@
 - Bare dest (empty arrangement) hits unsupported arrangement Err via neon_arr_to_q_size.
 - proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
 - `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit plus invalid-T/nonreg/alt-spellings.
+
+# Confirmed invariants (encode_ldp_stp)
+
+- Valid GPR LDP/STP signed-offset Rt1, Rt2, [Xn|SP, #imm7*scale] with scale 4 (W) or 8 (X), imm7 in [-64,63], LDP requiring Rt1!=Rt2, matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins ldp x0,x1,[x2]=0xA9400440, ldp x0,x1,[x2,#8]=0xA9408440, stp w2,w3,[x4,#4]=0x29008C82.
+- Pre/post-index with writeback Rn not in {Rt1,Rt2} (unless SP) match llvm-mc (1000 cases). KAT pins ldp x0,x1,[x2],#16=0xA8C10440, stp x0,x1,[x2,#16]!=0xA9810440.
+- ARM pair layout: opc [31:30] 00/10, bits[29:27]=101, V=0, mode 001/010/011, L, imm7, Rt2, Rn, Rt (1000 cases).
+- Metamorphic: Rt1+1 adds 1, Rt2+1 adds 1<<10, Rn+1 adds 1<<5, load XOR store = 1<<22, pre XOR post = 0b10<<23 (1000 cases).
+- Arity 0/1/2 and non-memory third operands return Err (1000 cases).
+- SIMD S/D/Q signed-offset pairs match llvm-mc (1000 cases, sweep). KAT pins ldp d0,d1,[x2,#16]=0x6D410440, ldp s0,s1,[x0]=0x2D400400, ldp q0,q1,[sp,#-32]=0xAD7F07E0.
+- Alt spellings Xn/WZR/SP/lr/w31 match llvm-mc (1000 cases, sweep).
+- Extra operand, SP dest, XZR/W base, mixed width, writeback overlap, LDP Rt1==Rt2, and out-of-range offset currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_ldp_stp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs, cargo test --lib encode_ldp_stp, proptest cases=1000.
+- Dispatch: encoder/mod.rs:492-493 `"ldp"`/`"stp"` => encode_ldp_stp.
+- Sibling encode_ldnp_stnp is not a same-job independent differential (non-temporal, bits[25:23]=000).
+- coverage_gaps had no LLVM profraw; sweep was a manual arm audit plus SIMD/alt-spellings. Closed: tier round spent.
+
+## Quirks (encode_ldp_stp)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_ldp_stp does not distinguish them for Rt vs Rn (see bugs).
+- parse_reg_num accepts W-prefixed bases (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- Rt2 width is discarded; opc/shift come from Rt1 (see bugs).
+- Out-of-range/unaligned offsets are shifted and masked into imm7 (see bugs).
+- llvm-mc accepts STP with Rt1==Rt2 (including XZR,XZR) but rejects LDP with Rt1==Rt2.
+- Writeback with Rn=SP is valid even when Rt numbers match 31.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`.
+

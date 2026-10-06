@@ -1,475 +1,300 @@
-# Properties: encode_ldr_str
+# Properties: encode_ldp_stp
 
-## encode_ldr_str_diff_unsigned_llvm_mc
-- Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent GNU-style AArch64 assembler). README.md:12 claims gas-compatible textual assembly; encoder/mod.rs:473-478 dispatch ldr/str/ldrb/strb/ldrh/strh onto this symbol. State machine rejected (pure function). Round-trip rejected (no in-tree LDR/STR decoder). Sibling encode_ldur_stur/encode_ldrsw/encode_ldrs rejected (same-job gate). Valid domain is unsigned-offset Rt, [Xn|SP, #pimm] with pimm = imm12*(1<<size).
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_diff_unsigned_llvm_mc
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt ∈ 0..31, rn ∈ 0..31, imm12 ∈ 0..4095. let scale=1<<size; pimm=imm12*scale; dest=W(rt) if size<3 else X(rt); base=SP if rn=31 else X(rn); mnemonic=ldrb/strb/ldrh/strh/ldr/str. encode_ldr_str([Reg(dest), Mem{base,pimm}], is_load, size, false, false) = llvm_mc(mnemonic dest, [base{, #pimm}]) as Word
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
+## encode_ldp_stp_diff_signed_offset_llvm_mc
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc, which the assembler README claims gas-compatibility with. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree LDP/STP decoder). Sibling encode_ldnp_stnp rejected (same-job gate: non-temporal, bits[25:23]=000, shared get_reg).
+- Doc contract: load_store.rs:503 "LDP/STP rt1, rt2, [base, #offset] (signed offset)" — asserted fingerprint ff9a7af8
+- Seed: encode_ldr_str_pbt.rs encode_ldr_str_diff_unsigned_llvm_mc
+- Formal: ∀ is_load ∈ Bool, is_64 ∈ Bool, rt1,rt2,rn ∈ 0..31, imm7 ∈ [-64,63]. (is_load ⇒ rt1 ≠ rt2) ⇒ encode_ldp_stp([Reg(Rt1), Reg(Rt2), Mem{Xn|SP, imm7·scale}], is_load) = llvm-mc("ldp/stp Rt1, Rt2, [Xn|SP, #imm7·scale]") where scale=8 if is_64 else 4, Rt is Xt/Wt (31=XZR/WZR), Rn is Xn|SP (31=SP)
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_ldr_str
+function: encoder.load_store.encode_ldp_stp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_load, size, rt, rn, imm12]
-  domain: { is_load: bool, size: 0..3, rt: 0..31, rn: 0..31, imm12: 0..4095 }
-  relation:
-    op: eq
-    lhs: encode_ldr_str(unsigned_ops)
-    rhs: llvm_mc(unsigned_asm)
+  vars: [is_load, is_64, rt1, rt2, rn, imm7]
+  domain: { is_load: bool, is_64: bool, rt1: u32_0_31, rt2: u32_0_31, rn: u32_0_31, imm7: i32_-64_63 }
+  body: (is_load => rt1 != rt2) => encode_ldp_stp([Reg(gp(is_64,rt1)), Reg(gp(is_64,rt2)), Mem{rn_name(rn), imm7*scale(is_64)}], is_load) == llvm_mc(asm)
 generators:
   is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  rt1: { gen: int, min: 0, max: 31, type: u32 }
+  rt2: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  imm12: { gen: int, min: 0, max: 4095, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
+  imm7: { gen: int, min: -64, max: 63, type: i32 }
+evidence: README.md:12 gas-compatible textual assembly; README.md:221 ldp/stp listed; encoder/mod.rs:492-493 dispatch; ARM ARM C6 LDP/STP signed offset
 ```
 
-## encode_ldr_str_diff_unscaled_pre_post_llvm_mc
-- Tier: 2
-- Rationale: Same llvm-mc differential on unscaled/pre/post forms. llvm-mc canonicalizes unaligned/negative LDR/STR to LDUR/STUR. Writeback Rt==Rn (Rn!=SP) is excluded from this valid-domain generator (negative_error covers it).
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_diff_unscaled_pre_post_llvm_mc
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt ∈ 0..31, rn ∈ 0..31, simm ∈ [-256,255], form ∈ {mem, pre, post}. (form ∈ {pre,post} ∧ rt=rn ∧ rn≠31) excluded. encode_ldr_str([Reg(gp_rt), form(base,simm)], is_load, size, false, false) = llvm_mc(corresponding asm) as Word
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
+## encode_ldp_stp_diff_pre_post_llvm_mc
+- Tier: 5
+- Rationale: Same differential vs llvm-mc for pre-index and post-index forms. Writeback with Rn in {Rt1,Rt2} and Rn!=SP is ARM-unpredictable and llvm-mc-rejected, so the valid-domain generator excludes it (negative_error covers it).
+- Doc contract: load_store.rs:487 "STP rt1, rt2, [base, #offset]! (pre-index)" — asserted fingerprint eed85232
+- Seed: encode_ldr_str_pbt.rs encode_ldr_str_diff_unscaled_pre_post_llvm_mc
+- Formal: ∀ is_load ∈ Bool, is_64 ∈ Bool, rt1,rt2,rn ∈ 0..31, imm7 ∈ [-64,63], pre ∈ Bool. (is_load ⇒ rt1 ≠ rt2) ∧ (rn=31 ∨ (rn≠rt1 ∧ rn≠rt2)) ⇒ encode_ldp_stp([Reg(Rt1), Reg(Rt2), Pre/Post{Xn|SP, imm7·scale}], is_load) = llvm-mc(corresponding asm)
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_ldr_str
+function: encoder.load_store.encode_ldp_stp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_load, size, rt, rn, simm, form]
-  domain: { is_load: bool, size: 0..3, rt: 0..31, rn: 0..31, simm: -256..255, form: 0..2 }
-  relation:
-    op: eq
-    lhs: encode_ldr_str(form_ops)
-    rhs: llvm_mc(form_asm)
+  vars: [is_load, is_64, rt1, rt2, rn, imm7, pre]
+  domain: { is_load: bool, is_64: bool, rt1: u32_0_31, rt2: u32_0_31, rn: u32_0_31, imm7: i32_-64_63, pre: bool }
+  body: valid_wb => encode_ldp_stp(pre_or_post) == llvm_mc(asm)
 generators:
   is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  rt1: { gen: int, min: 0, max: 31, type: u32 }
+  rt2: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-  form: { gen: int, min: 0, max: 2, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
+  imm7: { gen: int, min: -64, max: 63, type: i32 }
+  pre: { gen: bool }
+evidence: README.md:12; load_store.rs:487-501 pre/post forms; ARM ARM writeback LDP/STP
 ```
 
-## encode_ldr_str_diff_regoff_llvm_mc
-- Tier: 2
-- Rationale: Same llvm-mc differential on register-offset form. ARM option in {UXTW,LSL,SXTW,SXTX}; S amount 0 or size.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_diff_regoff_llvm_mc
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn,rm ∈ 0..31, option ∈ valid(size), s ∈ {0,1}. encode_ldr_str([Reg(gp_rt), MemRegOffset{Xn|SP, Rm, option, shift}], is_load, size, false, false) = llvm_mc(mnemonic Rt, [Xn|SP, Rm{, option #shift}]) as Word
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: failing
-- Counterexample: is_load=false, size=0, rt=0, rn=0, rm=0, w_index=false, ext_sel=0, s_bit=1 — strb w0, [x0, x0, lsl #0]; SUT=0x38206800 llvm-mc=0x38207800
-- Bug report: bug_reports/encode_ldr_str_byte_lsl0.md
-
-```property
-function: encoder.encode_ldr_str
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [is_load, size, rt, rn, rm, w_index, ext_sel, s_bit]
-  domain: { is_load: bool, size: 0..3, rt: 0..31, rn: 0..31, rm: 0..31, w_index: bool, ext_sel: 0..1, s_bit: 0..1 }
-  relation:
-    op: eq
-    lhs: encode_ldr_str(regoff_ops)
-    rhs: llvm_mc(regoff_asm)
-generators:
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  w_index: { gen: bool }
-  ext_sel: { gen: int, min: 0, max: 1, type: u32 }
-  s_bit: { gen: int, min: 0, max: 1, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_ldr_str_arm_fields
+## encode_ldp_stp_inv_arm_layout
 - Tier: 4
-- Rationale: ARM ARM bitfield layout of the unsigned-offset GPR form is an exact structural invariant.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_arm_fields
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt ∈ 0..31, rn ∈ 0..31, imm12 ∈ 0..4095. let w = encode_ldr_str([Reg(gp_rt), Mem{Xn|SP, imm12*(1<<size)}], is_load, size, false, false). w[31:30]=size ∧ w[29:27]=111 ∧ w[26]=0 ∧ w[25:24]=01 ∧ w[23:22]=(01 if is_load else 00) ∧ w[21:10]=imm12 ∧ w[9:5]=rn ∧ w[4:0]=rt
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
+- Rationale: Algebraic invariant from ARM ARM field layout. Stronger differential already used on the same domain; this pins opc/101/V/mode/L/imm7/Rt2/Rn/Rt independently of llvm-mc.
+- Doc contract: load_store.rs:478 "Shift depends on register size" — other fingerprint 4a0ee4d8
+- Seed: encode_ldr_str_pbt.rs ARM unsigned layout unpack
+- Formal: ∀ is_load, is_64, rt1, rt2, rn ∈ 0..31, imm7 ∈ [-64,63], mode ∈ {signed=010, post=001, pre=011}. unpack(encode_ldp_stp(...)) = (opc=10 if is_64 else 00, bits[29:27]=101, V=0, bits[25:23]=mode, L=is_load, imm7[6:0], Rt2=rt2, Rn=rn, Rt=rt1)
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_ldr_str
+function: encoder.load_store.encode_ldp_stp
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [is_load, size, rt, rn, imm12]
-  domain: { is_load: bool, size: 0..3, rt: 0..31, rn: 0..31, imm12: 0..4095 }
-  relation:
-    op: eq
-    lhs: encode_ldr_str(unsigned_ops)
-    rhs: arm_unsigned_pack(size, is_load, imm12, rn, rt)
+  vars: [is_load, is_64, rt1, rt2, rn, imm7, mode]
+  domain: { is_load: bool, is_64: bool, rt1: u32_0_31, rt2: u32_0_31, rn: u32_0_31, imm7: i32_-64_63, mode: {0,1,2} }
+  body: unpack(word).opc == (is_64?2:0) && bits29_27==0b101 && V==0 && mode_bits match && L==is_load && imm7_field==(imm7 as u7) && Rt2==rt2 && Rn==rn && Rt==rt1
 generators:
   is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  rt1: { gen: int, min: 0, max: 31, type: u32 }
+  rt2: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  imm12: { gen: int, min: 0, max: 4095, type: u32 }
-evidence: ARM ARM LDR/STR (immediate unsigned) size 111 V 01 opc imm12 Rn Rt
+  imm7: { gen: int, min: -64, max: 63, type: i32 }
+  mode: { gen: int, min: 0, max: 2, type: u32 }
+evidence: ARM ARM C6 LDP/STP encoding; load_store.rs:490-506 word assembly
 ```
 
-## encode_ldr_str_meta_rt_rn_imm
+## encode_ldp_stp_meta_fields
 - Tier: 4
-- Rationale: Field isolation is a metamorphic consequence of the ARM layout: Rt+1 / Rn+1 / imm12+1 / load-vs-store opc / pre XOR post.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_metamorphic_rt_rn_imm
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..30, imm12 ∈ 0..4094, simm ∈ [-256,255]. enc(rt+1)-enc(rt)=1 ∧ enc(rn+1)-enc(rn)=32 ∧ enc(imm12+1)-enc(imm12)=1<<10 ∧ load XOR store = 1<<22 ∧ pre XOR post = 0b10<<10
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
+- Rationale: Metamorphic isolation: incrementing Rt1/Rt2/Rn/imm7 flips only that field; load XOR store is bit 22; pre XOR post is bits[24:23] 0b10. Stronger round-trip rejected (no decoder).
+- Doc contract: load_store.rs:478 "Shift depends on register size" — other fingerprint 4a0ee4d8
+- Seed: encode_ldr_str_pbt.rs Rt/Rn/imm12 metamorphic
+- Formal: ∀ rt1∈0..30, rt2∈0..30, rn∈0..30, imm7∈[-64,62], is_64, is_load. encode(rt1+1) − encode(rt1) = 1; encode(rt2+1) − encode(rt2) = 1<<10; encode(rn+1) − encode(rn) = 1<<5; encode(imm7+1) − encode(imm7) = 1<<15; encode(load) XOR encode(store) = 1<<22; encode(pre) XOR encode(post) = 0b10<<23
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_ldr_str
+function: encoder.load_store.encode_ldp_stp
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [is_load, size, rt, rn, imm12, simm]
-  domain: { is_load: bool, size: 0..3, rt: 0..30, rn: 0..30, imm12: 0..4094, simm: -256..255 }
-  relation:
-    op: eq
-    lhs: enc(rt + 1, rn, imm12) - enc(rt, rn, imm12)
-    rhs: 1
+  vars: [is_load, is_64, rt1, rt2, rn, imm7]
+  domain: { is_load: bool, is_64: bool, rt1: u32_0_30, rt2: u32_0_30, rn: u32_0_30, imm7: i32_-64_62 }
+  body: word(rt1+1)-word(rt1)==1 && word(rt2+1)-word(rt2)==(1<<10) && word(rn+1)-word(rn)==(1<<5) && word(imm7+1)-word(imm7)==(1<<15) && word(load) XOR word(store)==(1<<22) && word(pre) XOR word(post)==(0b10<<23)
 generators:
   is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
+  is_64: { gen: bool }
+  rt1: { gen: int, min: 0, max: 30, type: u32 }
+  rt2: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  imm7: { gen: int, min: -64, max: 62, type: i32 }
+evidence: ARM ARM field positions Rt[4:0] Rt2[14:10] Rn[9:5] imm7[21:15] L[22] mode[25:23]
+```
+
+## encode_ldp_stp_neg_arity
+- Tier: 3
+- Rationale: Negative/error contract: load_store.rs:454 returns Err when len<3; load_store.rs:511 returns Err when the third operand is not Mem/Pre/Post. llvm-mc likewise rejects those forms. This is the specified rejection, not a limitation.
+- Doc contract: load_store.rs:454 "ldp/stp requires 3 operands" — asserted fingerprint 617d3353
+- Seed: encode_ldr_str_pbt.rs arity / non-memory address
+- Formal: ∀ is_load ∈ Bool, ops with len ∈ {0,1,2} or third operand not in {Mem, MemPreIndex, MemPostIndex}. encode_ldp_stp(ops, is_load) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.load_store.encode_ldp_stp
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [is_load, kind]
+  domain: { is_load: bool, kind: non_mem_operand }
+  relation:
+    op: holds
+    expr: encode_ldp_stp(too_few_or_bad_addr, is_load).is_err()
+generators:
+  is_load: { gen: bool }
+  kind: { gen: oneof, options: [Imm, Reg, Shift, Label, Cond, Extend] }
+expected_error: String
+evidence: load_store.rs:453-455 arity; load_store.rs:511 unsupported operands; llvm-mc rejects non-memory addressing
+```
+
+## encode_ldp_stp_neg_extra_operand
+- Tier: 3
+- Rationale: llvm-mc / gas reject a fourth operand on LDP/STP. The function has no upper bound (only len<3). Contract inferred from README gas-compatibility and llvm-mc.
+- Doc contract: load_store.rs:454 "ldp/stp requires 3 operands" — asserted fingerprint 617d3353
+- Seed: encode_ldr_str_pbt.rs extra operand
+- Formal: ∀ is_load, is_64, rt1, rt2, rn ∈ 0..31, extra ∈ Operand. encode_ldp_stp([Reg, Reg, Mem{offset:0}, extra], is_load) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
+- Status: failing
+- Counterexample: is_load=false, is_64=false, rt1=0, rt2=0, rn=0, extra=Reg("x0") → Ok(Word(0x29000000))
+- Bug report: bug_reports/encode_ldp_stp_extra_operand.md
+
+```property
+function: encoder.load_store.encode_ldp_stp
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [is_load, is_64, rt1, rt2, rn, extra]
+  domain: { is_load: bool, is_64: bool, rt1: u32_0_31, rt2: u32_0_31, rn: u32_0_31, extra: Operand }
+  relation:
+    op: holds
+    expr: encode_ldp_stp([Reg, Reg, Mem, extra], is_load).is_err()
+generators:
+  is_load: { gen: bool }
+  is_64: { gen: bool }
+  rt1: { gen: int, min: 0, max: 31, type: u32 }
+  rt2: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: oneof, options: [Reg, Imm, Shift, Label, Symbol, Cond] }
+expected_error: String
+evidence: README.md:12 gas-compatible; llvm-mc "invalid operand" on fourth operand
+```
+
+## encode_ldp_stp_neg_invalid_regs
+- Tier: 3
+- Rationale: llvm-mc rejects SP as Rt, XZR/x31/W as base, mixed W/X pair, LDP with Rt1==Rt2, and writeback with Rn in {Rt1,Rt2} (Rn!=SP). No function comment declares these invalid, so they stay in the generator. Contract inferred from README gas-compatibility + ARM UNPREDICTABLE.
+- Doc contract: load_store.rs:478 "Shift depends on register size" — other fingerprint 4a0ee4d8
+- Seed: encode_ldr_str_pbt.rs encode_ldr_str_neg_invalid_regs
+- Formal: ∀ is_load, is_64, rt, rn∈0..30. encode(SP dest) is Err ∧ encode(XZR/x31/W base) is Err ∧ encode(mixed W/X) is Err ∧ (is_load ⇒ encode(Rt1==Rt2) is Err) ∧ encode(pre/post with Rn∈{Rt1,Rt2}, Rn≠31) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
+- Status: failing
+- Counterexample: is_load=false, is_64=false, rt=0, rt2=0, rn=0 → accepted SP dest, XZR/x31/W base, mixed X/W, writeback Rn==Rt1
+- Bug report: bug_reports/encode_ldp_stp_invalid_regs.md
+
+```property
+function: encoder.load_store.encode_ldp_stp
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [is_load, is_64, rt, rn]
+  domain: { is_load: bool, is_64: bool, rt: u32_0_30, rn: u32_0_30 }
+  body: encode(SP dest).is_err && encode(XZR base).is_err && encode(W base).is_err && encode(mixed width).is_err && (is_load => encode(rt1==rt2).is_err) && encode(writeback overlap).is_err
+generators:
+  is_load: { gen: bool }
+  is_64: { gen: bool }
   rt: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
-  imm12: { gen: int, min: 0, max: 4094, type: u32 }
-  simm: { gen: int, min: -256, max: 255, type: i64 }
-evidence: ARM ARM LDR/STR field layout Rt[4:0] Rn[9:5] imm12[21:10] opc[23:22]
-```
-
-## encode_ldr_str_neg_arity_kinds
-- Tier: 5
-- Rationale: llvm-mc rejects LDR/STR with fewer than two operands or a non-memory second operand. README.md:12 gas-compat is the error contract. Extra operands are a separate property (encode_ldr_str_neg_offset_extra).
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_neg_arity_kinds
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, ops with len<2 or ops[1] not in {Mem, MemPreIndex, MemPostIndex, MemRegOffset, Symbol-if-load}. encode_ldr_str(ops, is_load, size, false, false) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_ldr_str
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_load, size, rt, kind]
-  domain: { is_load: bool, size: 0..3, rt: 0..31, kind: non_mem_operand }
-  relation:
-    op: holds
-    expr: encode_ldr_str(short_or_bad).is_err()
-generators:
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
+evidence: llvm-mc errors (invalid operand / unpredictable LDP/STP); ARM ARM writeback and LDP Rt==Rt2 UNPREDICTABLE; README.md:12
 ```
 
-## encode_ldr_str_neg_invalid_regs
-- Tier: 5
-- Rationale: llvm-mc rejects SP as Rt, XZR/x31 as base, W-prefixed base, W-index without uxtw/sxtw, and pre/post writeback with Rt==Rn. parse_reg_num maps SP and XZR both to 31 and accepts W bases; those inputs stay in the generator.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_neg_invalid_regs
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31. encode_ldr_str with Rt=SP or base in {XZR,x31,Wn,WSP} or W-index with extend=None or (pre/post ∧ rt=rn ∧ rn≠31) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
+## encode_ldp_stp_neg_offset_range
+- Tier: 3
+- Rationale: llvm-mc requires the index be a multiple of scale in [−256,252] (W) or [−512,504] (X). The SUT shifts and masks imm7 with no range or alignment check. Bound sampled at min−1, max+1, unaligned, i64::MIN/MAX.
+- Doc contract: load_store.rs:478 "Shift depends on register size" — other fingerprint 4a0ee4d8
+- Seed: encode_ldr_str_pbt.rs encode_ldr_str_neg_offset_extra
+- Formal: ∀ is_load, is_64, rt1, rt2, rn ∈ 0..31, off ∈ {min−1, max+1, 1 (unaligned if scale>1), i64::MIN, i64::MAX} where min/max are the ARM signed-offset bounds. encode_ldp_stp([Reg, Reg, Mem/Pre/Post{off}], is_load) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
 - Status: failing
-- Counterexample: is_load=false, size=0, rt=0, rn=0 — STRB SP, [X0] returns Ok(Word(0x3D00001F)) instead of Err
-- Bug report: bug_reports/encode_ldr_str_sp_dest.md
+- Counterexample: is_load=false, is_64=false, rt1=0, rt2=0, rn=0, which_off=0, form=0, offset=-257 → Ok(Word(689930240))
+- Bug report: bug_reports/encode_ldp_stp_imm7_range.md
 
 ```property
-function: encoder.encode_ldr_str
+function: encoder.load_store.encode_ldp_stp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_load, size, rt, rn]
-  domain: { is_load: bool, size: 0..3, rt: 0..31, rn: 0..30 }
+  vars: [is_load, is_64, rt1, rt2, rn, which_off, form]
+  domain: { is_load: bool, is_64: bool, rt1: u32_0_31, rt2: u32_0_31, rn: u32_0_31, which_off: 0..4, form: 0..2 }
   relation:
     op: holds
-    expr: encode_ldr_str(invalid_reg_ops).is_err()
+    expr: encode_ldp_stp([Reg, Reg, mem_form(off_out_of_range)], is_load).is_err()
 generators:
   is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_ldr_str_neg_offset_extra
-- Tier: 5
-- Rationale: llvm-mc rejects a 3rd operand and rejects offsets outside unsigned pimm and simm9 [-256,255]. The body only checks len<2 and masks imm9 with 0x1FF.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_neg_offset_range_extra
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31, off ∉ valid_pimm ∪ [-256,255], extra ∈ Operand. encode_ldr_str([Rt, Mem{base,off}], ...) is Err ∧ encode_ldr_str([Rt, Mem{base,0}, extra], ...) is Err ∧ encode_ldr_str([Rt, Pre/Post{base,off}], ...) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: failing
-- Counterexample: is_load=false, size=0, rt=0, rn=0, off=-257 — STRB W0, [X0, #-257] returns Ok(Word(0x380FF000)) instead of Err
-- Bug report: bug_reports/encode_ldr_str_offset_range.md
-
-```property
-function: encoder.encode_ldr_str
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_load, size, rt, rn, off, extra]
-  domain: { is_load: bool, size: 0..3, rt: 0..31, rn: 0..31, off: out_of_range_i64, extra: Operand }
-  relation:
-    op: holds
-    expr: encode_ldr_str(out_of_range_or_extra).is_err()
-generators:
-  is_load: { gen: bool }
-  size: { gen: int, min: 0, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+  rt1: { gen: int, min: 0, max: 31, type: u32 }
+  rt2: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  off: { gen: int, min: -9223372036854775808, max: 9223372036854775807, type: i64 }
+  which_off: { gen: int, min: 0, max: 4, type: u32 }
+  form: { gen: int, min: 0, max: 2, type: u32 }
 expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
+evidence: llvm-mc "index must be a multiple of {4,8} in range [min, max]"; ARM ARM imm7 signed scaled
 ```
 
-## encode_ldr_str_diff_simd_llvm_mc
-- Tier: 2
-- Rationale: Coverage-gaps sweep — unsigned SIMD S/D/Q path (V=1, is_128bit for Q) vs llvm-mc. Same differential oracle as the GPR unsigned property.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: encode_ldr_str_diff_unsigned_llvm_mc
-- Formal: ∀ is_load ∈ {0,1}, fp ∈ {S,D,Q}, rt,rn ∈ 0..31, imm12 ∈ 0..4095. encode_ldr_str([Reg(fp_rt), Mem{Xn|SP, imm12*scale}], is_load, size(fp), false, is_128(fp)) = llvm_mc(ldr/str fp_rt, [base, #pimm])
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
+## encode_ldp_stp_diff_simd_llvm_mc
+- Tier: 5
+- Rationale: Sweep — documented SIMD S/D/Q pair encoding (V=1, opc 00/01/10, scale 4/8/16) vs llvm-mc. Same differential as GPR signed-offset.
+- Doc contract: load_store.rs:478 "Shift depends on register size" — other fingerprint 4a0ee4d8
+- Seed: encode_ldp_stp_kat_llvm_mc_simd
+- Formal: ∀ is_load ∈ Bool, kind ∈ {S,D,Q}, rt1,rt2,rn ∈ 0..31, imm7 ∈ [-64,63]. (is_load ⇒ rt1 ≠ rt2) ⇒ encode_ldp_stp([Reg(kind rt1), Reg(kind rt2), Mem{Xn|SP, imm7·scale(kind)}], is_load) = llvm-mc(asm)
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_ldr_str
+function: encoder.load_store.encode_ldp_stp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_load, fp_kind, rt, rn, imm12]
-  domain: { is_load: bool, fp_kind: 0..2, rt: 0..31, rn: 0..31, imm12: 0..4095 }
+  vars: [is_load, kind, rt1, rt2, rn, imm7]
+  domain: { is_load: bool, kind: {0,1,2}, rt1: u32_0_31, rt2: u32_0_31, rn: u32_0_31, imm7: i32_-64_63 }
   relation:
     op: eq
-    lhs: encode_ldr_str(simd_ops)
-    rhs: llvm_mc(simd_asm)
+    lhs: encode_ldp_stp(simd_ops, is_load)
+    rhs: llvm_mc(asm)
 generators:
   is_load: { gen: bool }
-  fp_kind: { gen: int, min: 0, max: 2, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
+  kind: { gen: int, min: 0, max: 2, type: u32 }
+  rt1: { gen: int, min: 0, max: 31, type: u32 }
+  rt2: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
-  imm12: { gen: int, min: 0, max: 4095, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
+  imm7: { gen: int, min: -64, max: 63, type: i32 }
+evidence: ARM ARM LDP/STP SIMD V=1; load_store.rs:459-474 fp opc/shift; README.md:12
 ```
 
-## encode_ldr_str_diff_alt_spellings
-- Tier: 2
-- Rationale: Coverage-gaps sweep — x31 / uppercase Xn,XZR,SP / lr alias vs llvm-mc.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_diff_alt_spellings
-- Formal: ∀ is_load ∈ {0,1}, rt,rn ∈ 0..31, spelling ∈ {x31, UPPER, lr}. encode_ldr_str([Reg(spell(rt)), Mem{spell(rn), 0}], is_load, 0b11, false, false) = llvm_mc(ldr/str spell(rt), [spell(rn)])
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
+## encode_ldp_stp_diff_alt_spellings
+- Tier: 5
+- Rationale: Sweep — uppercase Xn, WZR/W30/SP, lr, w31 aliases must match llvm-mc, as parse_reg_num lowercases and maps lr=30, w31=31=WZR.
+- Doc contract: load_store.rs:478 "Shift depends on register size" — other fingerprint 4a0ee4d8
+- Seed: encode_ldr_str_pbt alt-spellings
+- Formal: ∀ is_load ∈ Bool, which ∈ {X0/X1/X2, wzr/W30/SP, x0/x1/lr, w31/w0/sp}. encode_ldp_stp(aliased ops, is_load) = llvm-mc(canonical asm)
+- Test file: src/backend/arm/assembler/encoder/encode_ldp_stp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_ldr_str
+function: encoder.load_store.encode_ldp_stp
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_load, rt, rn, spelling]
-  domain: { is_load: bool, rt: 0..31, rn: 0..31, spelling: 0..2 }
+  vars: [is_load, which]
+  domain: { is_load: bool, which: 0..3 }
   relation:
     op: eq
-    lhs: encode_ldr_str(alt_ops)
-    rhs: llvm_mc(alt_asm)
+    lhs: encode_ldp_stp(alias_ops, is_load)
+    rhs: llvm_mc(canonical_asm)
 generators:
   is_load: { gen: bool }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  spelling: { gen: int, min: 0, max: 2, type: u32 }
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_ldr_str_literal_reloc
-- Tier: 4
-- Rationale: Coverage-gaps sweep — LDR (literal) Symbol operand is a documented form (load-only). ARM opc 011 00 imm19 Rt plus RelocType::Ldr19. STR + Symbol must Err (llvm-mc rejects STR literal).
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: src/backend/arm/assembler/encoder/load_store.rs:encode_ldrsw_literal_reloc
-- Formal: ∀ size ∈ {10,11}, rt ∈ 0..31. encode_ldr_str([Reg(gp_rt), Symbol("foo")], true, size, false, false) = WordWithReloc { word: (opc<<30)|(0b011<<27)|rt, Ldr19, "foo", 0 } ∧ encode_ldr_str(..., false, ...) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_ldr_str
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [size, rt]
-  domain: { size: {2, 3}, rt: 0..31 }
-  relation:
-    op: eq
-    lhs: encode_ldr_str([Reg(gp_rt), Symbol(foo)], true, size, false, false)
-    rhs: WordWithReloc(Ldr19)
-generators:
-  size: { gen: int, min: 2, max: 3, type: u32 }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM LDR (literal); load_store.rs:213-238
-```
-
-## encode_ldr_str_neg_xzr_base
-- Tier: 5
-- Rationale: Split from encode_ldr_str_neg_invalid_regs. llvm-mc rejects XZR/x31 as base.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: test_encode_ldr_str_regression_xzr_base
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt ∈ 0..31. encode_ldr_str([Reg(gp_rt), Mem{base:XZR, offset:0}], is_load, size, false, false) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: failing
-- Counterexample: LDR X0, [XZR] returns Ok(Word(0xF94003E0)) instead of Err
-- Bug report: bug_reports/encode_ldr_str_xzr_base.md
-
-```property
-function: encoder.encode_ldr_str
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt]
-  domain: { rt: 0..31 }
-  relation:
-    op: holds
-    expr: encode_ldr_str([Reg(x0), Mem{base:xzr, offset:0}], true, 0b11, false, false).is_err()
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_ldr_str_neg_w_base
-- Tier: 5
-- Rationale: Split from encode_ldr_str_neg_invalid_regs. llvm-mc rejects W-prefixed base.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: test_encode_ldr_str_regression_w_base
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, n ∈ 0..30. encode_ldr_str([Reg(gp_rt), Mem{base:W(n), offset:0}], is_load, size, false, false) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: failing
-- Counterexample: LDR X0, [W0] returns Ok(Word(0xF9400000)) instead of Err
-- Bug report: bug_reports/encode_ldr_str_w_base.md
-
-```property
-function: encoder.encode_ldr_str
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n]
-  domain: { n: 0..30 }
-  relation:
-    op: holds
-    expr: encode_ldr_str([Reg(x0), Mem{base:w0, offset:0}], true, 0b11, false, false).is_err()
-generators:
-  n: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_ldr_str_neg_w_index
-- Tier: 5
-- Rationale: Split from encode_ldr_str_neg_invalid_regs. llvm-mc rejects W index without uxtw/sxtw.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: test_encode_ldr_str_regression_w_index
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn,rm ∈ 0..31. encode_ldr_str([Reg(gp_rt), MemRegOffset{Xn, Wm, extend:None}], is_load, size, false, false) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: failing
-- Counterexample: LDR X0, [X1, W2] returns Ok(Word(0xF8624820)) instead of Err
-- Bug report: bug_reports/encode_ldr_str_w_index.md
-
-```property
-function: encoder.encode_ldr_str
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt]
-  domain: { rt: 0..31 }
-  relation:
-    op: holds
-    expr: encode_ldr_str(w_index_no_extend).is_err()
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_ldr_str_neg_writeback_overlap
-- Tier: 5
-- Rationale: Split from encode_ldr_str_neg_invalid_regs. llvm-mc rejects writeback Rt==Rn.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: test_encode_ldr_str_regression_writeback_overlap
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt ∈ 0..30. encode_ldr_str([Reg(gp_rt), MemPreIndex{base:X(rt), offset:scale}], is_load, size, false, false) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: failing
-- Counterexample: LDR X0, [X0, #8]! returns Ok(Word(0xF8408C00)) instead of Err
-- Bug report: bug_reports/encode_ldr_str_writeback_overlap.md
-
-```property
-function: encoder.encode_ldr_str
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt]
-  domain: { rt: 0..30 }
-  relation:
-    op: holds
-    expr: encode_ldr_str(preindex_rt_eq_rn).is_err()
-generators:
-  rt: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
-```
-
-## encode_ldr_str_neg_extra_operand
-- Tier: 5
-- Rationale: Split from encode_ldr_str_neg_offset_extra. llvm-mc rejects a third operand.
-- Doc contract: (none) — encode_ldr_str has no rustdoc
-- Seed: test_encode_ldr_str_regression_extra_operand
-- Formal: ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31, extra ∈ Operand. encode_ldr_str([Rt, Mem{base,0}, extra], is_load, size, false, false) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs
-- Status: failing
-- Counterexample: STRB W0, [X0], X0 returns Ok(Word(0x39000000)) instead of Err
-- Bug report: bug_reports/encode_ldr_str_extra_operand.md
-
-```property
-function: encoder.encode_ldr_str
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [extra]
-  domain: { extra: Operand }
-  relation:
-    op: holds
-    expr: encode_ldr_str([Reg(w0), Mem{x0,0}, extra], false, 0, false, false).is_err()
-generators:
-  extra: { gen: const, value: "x0" }
-expected_error: String
-evidence: src/backend/arm/assembler/README.md:12
+  which: { gen: int, min: 0, max: 3, type: u32 }
+evidence: parse_reg_num lowercase / lr=30 / wzr=31; README.md:12
 ```
