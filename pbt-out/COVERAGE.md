@@ -156,4 +156,5 @@
 | encode_msr | system.rs | encode_msr_pbt.rs | cargo test --lib encode_msr | 5 passing / 6 failing properties (plus 7 passing KAT + 6 failing regression witnesses; 6 bugs; generic/numbered/imm-pstate/layout/casefold passing, named/named-readonly/extra/oob-generic/wrong-src/oob-imm failing) |
 | encode_svc | system.rs | encode_svc_pbt.rs | cargo test --lib encode_svc | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; diff-imm/layout/imm-isolation/empty/wrong-kind passing, extra/oob-imm failing) |
 | encode_hvc | system.rs | encode_hvc_pbt.rs | cargo test --lib encode_hvc | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |
-| encode_smc | system.rs | encode_smc_pbt.rs | cargo test --lib encode_smc | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |
+| encode_smc | system.rs | encode_smc_pbt.rs | cargo test --lib encode_smc | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing)
+| encode_brk | system.rs | encode_brk_pbt.rs | cargo test --lib encode_brk | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |

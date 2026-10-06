@@ -1,3 +1,32 @@
+# Confirmed invariants (encode_brk)
+
+- Valid imm16 0..=65535 matches llvm-mc `-triple=aarch64 -show-encoding` and the ARM BRK formula 0xD4200000 | (imm << 5) (1000 cases). Bounds 0 and 65535 pinned by the generator.
+- ARM BRK layout holds: bits[31:21]=0b11010100001, bits[20:5]=imm16, bits[4:0]=00000 (1000 cases).
+- Two valid encodings differ only in bits[20:5]; encode(imm) XOR encode(0) = imm << 5 (1000 cases).
+- Empty operand slice and non-Imm first operand return Err, matching llvm-mc/gas (1000 cases).
+- Known-answer: `brk #0` = 0xd4200000; `brk #1` = 0xd4200020; `brk #65535` = 0xd43fffe0.
+- Extra operands and Imm outside 0..=65535 currently disagree with llvm-mc/gas (see bugs): extras ignored; oob Imm truncated via `as u32 & 0xFFFF` (`#-1` → `#65535`, `#65536` → `#0`).
+
+## Environment (encode_brk)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM BRK: 1101 0100 001 imm16 00000 = 0xD4200000 | (imm16 << 5); imm16 ∈ 0..=65535.
+- Dispatch: encoder/mod.rs:988 `"brk" => encode_brk(operands)`. Operands passed through unchanged.
+- Sibling encode_svc/encode_hvc/encode_smc are not same-job differentials (different opcodes).
+- encode_brk uses get_imm on operand 0; extra operands ignored; out-of-range Imm truncated via `imm as u32 & 0xFFFF`.
+- ARM codegen caller emit.rs:1750 `trap_instruction` emits `"brk #0"`.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of valid-imm/layout/isolation/empty/wrong-kind/extra/oob. Closed: tier round spent.
+- Two failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_brk_*.md.
+
+## Quirks (encode_brk)
+
+- Extra operands beyond index 0 are ignored (see bugs).
+- Imm outside 0..=65535 is masked into imm16 (see bugs).
+- get_imm rejects missing and non-Imm operand 0 (passing negative properties).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 3-line body.
+
 # Confirmed invariants (encode_smc)
 
 - Valid imm16 0..=65535 matches llvm-mc `-triple=aarch64 -show-encoding` and the ARM SMC formula 0xD4000003 | (imm << 5) (1000 cases). Bounds 0 and 65535 pinned by the generator.

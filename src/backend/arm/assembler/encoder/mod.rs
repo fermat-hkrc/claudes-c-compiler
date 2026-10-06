@@ -124,6 +124,8 @@ mod encode_svc_pbt;
 mod encode_hvc_pbt;
 #[cfg(test)]
 mod encode_smc_pbt;
+#[cfg(test)]
+mod encode_brk_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

@@ -1,52 +1,52 @@
-# PBT Campaign Report: encode_smc
+# PBT Campaign Report: encode_brk
 
 ## Summary
 
-**Verdict:** 2 medium: encode_smc ignores extra operands (`smc #0, x0` encodes as `smc #0`) and masks out-of-range immediates (`smc #-1` encodes as `smc #65535`, `smc #65536` as `smc #0`), so a mistyped SMC number or trailing operand is assembled instead of rejected.
+**Verdict:** 2 medium: encode_brk ignores extra operands (`brk #0, x0` encodes as `brk #0`) and masks out-of-range immediates (`brk #-1` encodes as `brk #65535`, `brk #65536` as `brk #0`), so a mistyped BRK number or trailing operand is assembled instead of rejected.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_smc
+**Modules tested:** encode_brk
 **Tests:** 7 properties (plus 3 KAT + 3 regression witnesses)
 **Result:** 2 failing properties (2 bugs), 5 passing
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_smc. Sweep was a manual arm audit of valid-imm/layout/isolation/empty/wrong-kind/extra/oob. Closed: tier round spent.
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_brk. Sweep was a manual arm audit of valid-imm/layout/isolation/empty/wrong-kind/extra/oob. Closed: tier round spent.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_smc | 7 properties | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_brk | 7 properties | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_smc ignores extra operands
+### B1: encode_brk ignores extra operands
 
-**Formal:** ∀ imm ∈ 0..=65535. ∀ extra ∈ Operand. llvm-mc("smc #imm, extra") is Err ⇒ encode_smc([Imm(imm), extra]) is Err
-**Contract evidence:** inferred (ARM ARM SMC is one immediate; llvm-mc rejects extra; gas "unexpected characters following instruction"; README.md:12 gas-compatible assembly; encoder/mod.rs:985 passes operands through)
+**Formal:** ∀ imm ∈ 0..=65535. ∀ extra ∈ Operand. llvm-mc("brk #imm, extra") is Err ⇒ encode_brk([Imm(imm), extra]) is Err
+**Contract evidence:** inferred (ARM ARM BRK is one immediate; llvm-mc rejects extra; gas "unexpected characters following instruction"; README.md:12 gas-compatible assembly; encoder/mod.rs:988 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_smc([Imm(0), Reg("x0")])  (`smc #0, x0`)
-**Expected / Actual:** Err / Ok(Word(0xd4000003))
-**Impact:** Typos such as `smc #0, x0` assemble as a silent `smc #0`. An extra operand that should have been an encode error is dropped.
-**Root cause:** system.rs:421 reads only operand 0 via get_imm; `operands.len()` is never checked, so trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:421`
+**Counterexample:** encode_brk([Imm(0), Reg("x0")])  (`brk #0, x0`)
+**Expected / Actual:** Err / Ok(Word(0xd4200000))
+**Impact:** Typos such as `brk #0, x0` assemble as a silent `brk #0`. An extra operand that should have been an encode error is dropped.
+**Root cause:** system.rs:472 reads only operand 0 via get_imm; `operands.len()` is never checked, so trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:472`
 ```rust
     let imm = get_imm(operands, 0)?;
 ```
 **Suggested fix:** Reject a slice longer than one operand before encoding.
 ```rust
     if operands.len() != 1 {
-        return Err("smc: expected a single immediate".to_string());
+        return Err("brk: expected a single immediate".to_string());
     }
     let imm = get_imm(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_smc_extra_operand.md
-**Repro seed:** cc 16f9dd12b139188f542811015e41b550bffb4281e24d0e180fcc2533787d4c4d
+**Bug report:** bug_reports/encode_brk_extra_operand.md
+**Repro seed:** cc 93b76dd439211132a30a4760f9c11f967c79e41cf7b3e1020c178d149beb6460
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_smc_pbt::encode_smc_neg_extra' (2542879) panicked at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:217:1:
-Test failed: extra operand must Err (llvm-mc rejects smc #0, x0) at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:269.
+thread 'backend::arm::assembler::encoder::encode_brk_pbt::encode_brk_neg_extra' (2547057) panicked at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:218:1:
+Test failed: extra operand must Err (llvm-mc rejects brk #0, x0) at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:270.
 minimal failing input: imm = 0, extra = Reg(
     "x0",
 )
@@ -55,34 +55,34 @@ minimal failing input: imm = 0, extra = Reg(
 	global rejects: 0
 ```
 
-### B2: encode_smc masks immediates outside 0..=65535 instead of rejecting
+### B2: encode_brk masks immediates outside 0..=65535 instead of rejecting
 
-**Formal:** ∀ imm ∈ i64 excluding 0..=65535. llvm-mc("smc #imm") is Err ⇒ encode_smc([Imm(imm)]) is Err
-**Contract evidence:** inferred (ARM ARM SMC imm16 ∈ 0..=65535; llvm-mc "immediate must be an integer in range [0, 65535]"; gas "immediate value out of range 0 to 65535"; README.md:12 gas-compatible assembly)
+**Formal:** ∀ imm ∈ i64 excluding 0..=65535. llvm-mc("brk #imm") is Err ⇒ encode_brk([Imm(imm)]) is Err
+**Contract evidence:** inferred (ARM ARM BRK imm16 ∈ 0..=65535; llvm-mc "immediate must be an integer in range [0, 65535]"; gas "immediate value out of range 0 to 65535"; README.md:12 gas-compatible assembly)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_smc([Imm(-1)])  (`smc #-1`)
-**Expected / Actual:** Err / Ok(Word(0xd41fffe3))
-**Impact:** `smc #-1` encodes as `smc #65535`; `smc #65536` encodes as `smc #0`. An out-of-range Secure Monitor Call immediate silently wraps, so the assembled instruction invokes the wrong SMC number.
-**Root cause:** system.rs:422 `let word = 0xd4000003 | ((imm as u32 & 0xFFFF) << 5);` truncates instead of range-checking.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:422`
+**Counterexample:** encode_brk([Imm(-1)])  (`brk #-1`)
+**Expected / Actual:** Err / Ok(Word(0xd43fffe0))
+**Impact:** `brk #-1` encodes as `brk #65535`; `brk #65536` encodes as `brk #0`. An out-of-range breakpoint immediate silently wraps, so the assembled instruction carries the wrong imm16.
+**Root cause:** system.rs:473 `let word = 0xd4200000 | ((imm as u32 & 0xFFFF) << 5);` truncates instead of range-checking.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:473`
 ```rust
-    let word = 0xd4000003 | ((imm as u32 & 0xFFFF) << 5);
+    let word = 0xd4200000 | ((imm as u32 & 0xFFFF) << 5);
 ```
 **Suggested fix:** Reject immediates outside 0..=65535.
 ```rust
     let imm = get_imm(operands, 0)?;
     if !(0..=65535).contains(&imm) {
-        return Err("smc: immediate must be in 0..=65535".to_string());
+        return Err("brk: immediate must be in 0..=65535".to_string());
     }
-    let word = 0xd4000003 | ((imm as u32) << 5);
+    let word = 0xd4200000 | ((imm as u32) << 5);
 ```
-**Bug report:** bug_reports/encode_smc_oob_imm.md
-**Repro seed:** (deterministic; no proptest seed for oob after extra's regression file)
+**Bug report:** bug_reports/encode_brk_oob_imm.md
+**Repro seed:** (none — deterministic `Imm(-1)`)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_smc_pbt::encode_smc_neg_oob_imm' (2542909) panicked at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:217:1:
-Test failed: imm -1 outside 0..=65535 must Err (llvm-mc rejects smc #-1) at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:285.
+thread 'backend::arm::assembler::encoder::encode_brk_pbt::encode_brk_neg_oob_imm' (2547093) panicked at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:218:1:
+Test failed: imm -1 outside 0..=65535 must Err (llvm-mc rejects brk #-1) at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:286.
 minimal failing input: imm = -1
 	successes: 0
 	local rejects: 0
@@ -97,49 +97,52 @@ minimal failing input: imm = -1
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_smc_pbt.rs | 7 properties + 3 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_brk_pbt.rs | 7 properties + 3 KAT + 3 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_smc -- --test-threads=1
+cargo test --lib encode_brk -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_smc_regression_extra_x0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_brk_regression_extra_x0 -- --test-threads=1 --nocapture
 ```
 
-B2 oob imm:
+B2 oob immediate:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_smc_regression_imm_neg1 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_brk_regression_imm_neg1 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md — this report
-- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — coverage ledger
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/report.json — machine-readable report
-- pbt-out/INVARIANTS.md — confirmed invariants
-- pbt-out/bug_reports/encode_smc_extra_operand.md
-- pbt-out/bug_reports/encode_smc_extra_operand.html
-- pbt-out/bug_reports/encode_smc_oob_imm.md
-- pbt-out/bug_reports/encode_smc_oob_imm.html
-- pbt-out/run/encode_smc.log, encode_smc_kat.log, encode_smc_regression.log
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_brk_extra_operand.md
+- pbt-out/bug_reports/encode_brk_extra_operand.html
+- pbt-out/bug_reports/encode_brk_oob_imm.md
+- pbt-out/bug_reports/encode_brk_oob_imm.html
+- pbt-out/run/kat.log
+- pbt-out/run/encode_brk_pbt.log
+- pbt-out/run/encode_brk_regression.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 01:17 (campaign: coverage)
+> Last updated: 2026-10-06 01:30 (campaign: coverage)
 > Files: 11/11 scanned (100%) | Functions: 155/307 total | PBT candidates: 155 | Tested: 155 (100%) | 0 pass, 155 fail
 
 ## Summary
@@ -343,4 +346,4 @@ cargo test --lib test_encode_smc_regression_imm_neg1 -- --test-threads=1 --nocap
 | encode_msr | system.rs |
 | encode_svc | system.rs |
 | encode_hvc | system.rs |
-| encode_smc | system.rs |
+| encode_brk | system.rs |
