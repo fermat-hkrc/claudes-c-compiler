@@ -56,3 +56,4 @@
 | 26 | src/backend/arm/assembler | XZR/WSP/x31 as memory base silently accepted (encodes as SP) | **new issue filed** | [#828](https://github.com/fermat-hkrc/claudes-c-compiler/issues/828) |
 | 26 | src/backend/arm/assembler | cset/cneg silently accept AL condition (encodes nv slot = wrong value) | **new issue filed** (85-form cond-code sweep) | [#829](https://github.com/fermat-hkrc/claudes-c-compiler/issues/829) |
 | 26 | src/backend/arm/assembler | shift ranges unvalidated on all standalone forms + lslv/lsrv/asrv/rorv missing | **new issue filed** (20-form battery) | [#830](https://github.com/fermat-hkrc/claudes-c-compiler/issues/830) |
+| 26 | src/backend/arm/assembler | bfm/extr imm ranges unvalidated (immr/imms: W 0..31, X 0..63) | **new issue filed** (20-form battery) | [#831](https://github.com/fermat-hkrc/claudes-c-compiler/issues/831) |
