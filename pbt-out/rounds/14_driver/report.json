@@ -1,0 +1,42 @@
+{
+ "schemaVersion": 3,
+ "generator": {
+  "tool": "pi-pbt",
+  "version": "0.1.25 (pi 0.87.1)"
+ },
+ "run": {
+  "date": "2026-10-06",
+  "revision": "ef0a2cef",
+  "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "target": "src/driver",
+  "tier": "standard"
+ },
+ "build": {
+  "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+  "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "result": "success"
+ },
+ "properties": [
+  {
+   "id": "p1",
+   "name": "driver_mode_plumbing",
+   "formal": "\u2200 (target, mode, source): Driver produces the mode's well-formed artifact",
+   "oracle": "reference",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/driver/mod.rs",
+   "sourceLine": 1,
+   "functionName": "driver::Driver::run",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/driver/mod.rs",
+   "testTarget": "cargo test --lib driver::pbt_tests",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  }
+ ],
+ "bugs": [],
+ "totals": {
+  "properties": 1,
+  "passing": 1,
+  "failing": 0,
+  "bugs": 0
+ }
+}

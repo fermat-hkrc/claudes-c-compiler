@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-05 20:05 (campaign: pbt-test-v2, round 07 src/passes)
-> This round: 17 pass files scanned | 14 properties + 2 red regressions | 12 pass, 2 fail (bugs b1/b2, red witnesses committed)
+> Last updated: 2026-10-06 (campaign: pbt-test-v2 COMPLETE — rounds 01–14, whole repo)
+> Final suite: 608 passed / 44 failed (all = documented red witnesses of rounds 01–08 bugs, issues #516–#770) / 11 ignored
 
 ## Summary
 

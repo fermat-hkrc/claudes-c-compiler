@@ -1,0 +1,84 @@
+{
+ "schemaVersion": 3,
+ "generator": {
+  "tool": "pi-pbt",
+  "version": "0.1.25 (pi 0.87.1)"
+ },
+ "run": {
+  "date": "2026-10-06",
+  "revision": "ef0a2cef",
+  "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "target": "elf+linker_common+stack_layout",
+  "tier": "standard"
+ },
+ "build": {
+  "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+  "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "result": "success"
+ },
+ "properties": [
+  {
+   "id": "p1",
+   "name": "string_table_interning",
+   "formal": "\u2200 add sequences: idempotent per string; distinct offsets for distinct strings; bytes at offset == s+'\\0'; empty \u2192 0",
+   "oracle": "algebraic.invariant",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/elf/string_table.rs",
+   "sourceLine": 25,
+   "functionName": "StringTable::add",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/elf/mod.rs",
+   "testTarget": "cargo test --lib backend::elf::pbt_tests",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p2",
+   "name": "parse_string_literal_matches_renderer",
+   "formal": "\u2200 documented escape forms B: parse_string_literal(render(B)) == Ok(B)",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/elf/parse_string.rs",
+   "sourceLine": 22,
+   "functionName": "parse_string_literal",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/elf/mod.rs",
+   "testTarget": "cargo test --lib backend::elf::pbt_tests",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p3",
+   "name": "numeric_label_laws",
+   "formal": "\u2200 digit strings n: parse_numeric_ref(n+f)==Some((n,true)); n+b backward; suffix x/bare \u2192 None",
+   "oracle": "reference",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/elf/numeric_labels.rs",
+   "sourceLine": 27,
+   "functionName": "parse_numeric_ref",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/elf/mod.rs",
+   "testTarget": "cargo test --lib backend::elf::pbt_tests",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p4",
+   "name": "multi_target_elf_structure",
+   "formal": "\u2200 target \u2208 {x86_64,aarch64,riscv64,i686}: -c yields ET_REL with the target's e_machine",
+   "oracle": "reference",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/elf/object_writer.rs",
+   "sourceLine": 1,
+   "functionName": "object writers (4 targets)",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/mod.rs",
+   "testTarget": "cargo test --lib backend::pbt_struct",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  }
+ ],
+ "bugs": [],
+ "totals": {
+  "properties": 4,
+  "passing": 4,
+  "failing": 0,
+  "bugs": 0
+ }
+}

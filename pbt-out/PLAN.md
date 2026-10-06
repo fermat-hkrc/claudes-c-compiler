@@ -1,19 +1,18 @@
-# PBT Campaign: src/backend/x86 (round 09)
+# PBT Campaign: src/driver + glue (round 14 — final round of the whole-repo loop)
 
-> Whole-repo module loop, round 09. Rounds 01–08 done (23 issues filed through #765).
+> Rounds 01–13 done. This round covers the driver layer (CLI parsing, mode
+> dispatch, external-tool fallback wiring) and closes the loop over src/.
 
 ## Scan findings
 
-- **Spec:** `src/backend/x86/README.md` + submodule READMEs (codegen, peephole, assembler, linker): full pipeline IR → AT&T asm → builtin assembler → builtin linker (dynamically-linked executables with PLT/GOT); SysV AMD64 ABI (6 GP + 8 FP arg regs); accumulator model + linear-scan regalloc; peephole 15 passes in 7 phases; assembler REX/VEX/EVEX, SSE..AVX2/AVX-512, x87; native x86-64 execution available on this host.
-- **Test layout:** inline `#[cfg(test)]` modules, `cargo test --lib backend::x86`; x86 suite is part of the 201-test backend baseline (all green).
-- **Buildability probe:** round-08 final serial backend:: run: 201 passed / 1 failed (#765 red witness, asm_expr) / 6 ignored — x86's own tests all green. ccc -O2 end-to-end verified working in round 07's bug triage (narrow_e2e.c compiled and ran correctly).
-- **Harness placement:** rung 1 — inline `#[cfg(test)] mod pbt_e2e` in `src/backend/x86/mod.rs` driving the REAL compiler in-process via the public `driver::Driver` (parse_cli_args + run), executing produced binaries natively; gcc as the reference compiler. Scratch dir: pbt-out/rounds/09_x86/run/ (absolute paths; the Driver writes outputs where -o points).
-- **Candidate modules:** END-TO-END pipeline (codegen + peephole + assembler + linker together — the only honest unit for "the compiled program computes the C11 semantics"): expression functions over unsigned long long (defined wrap semantics), bitwise/compare/cast mixes, 1..10-argument calls (register + stack args), a loop kernel (LICM/loop codegen/regalloc), -O0 vs gcc and -O2 vs -O0.
-- **Skipped modules:** per-file unit properties for `codegen/*` emitters (accumulator-model state machines — integration-bound; the E2E differential covers their composition at both opt levels), `assembler/parser.rs` text parser + `encoder/*` (exercised on every compiled program; the ARM NEON encoder lessons apply at the ARM round), `linker/*` (exercised on every linked executable; dedicated ELF round 13), `peephole/passes/*` in isolation (covered at -O2 E2E; a unit-level asm-text property would need the peephole internal API which is not pub).
+- **Spec:** src/driver/ (cli.rs flag table, pipeline.rs mode dispatch, external_tools.rs fallbacks); main.rs/lib.rs/compiler_main are 3–45 lines of glue.
+- **Test layout:** inline #[cfg(test)]; the driver is exercised by every E2E round (09/12) and every -c assembly (10/11/13).
+- **Candidate modules:** mode plumbing (-E/-S/-c/Full) × target selection (argv0 + -m32/-mlittle-endian): observable artifacts must exist and be well-formed per mode (preprocessed text / .s containing the function name / ET_REL object / runnable executable).
+- **Skipped modules:** external_tools.rs GCC-fallback paths (require an intentionally-broken builtin to trigger — environment-fabrication out of scope; the builtin paths are covered by every other round); bin/*.rs and main.rs (3-line mains calling compiler_main); lib.rs (thread-spawn wrapper).
 
-## Module: backend_x86
+## Module: driver
 
-- [x] Scan: identify targets (spec read; baseline green; E2E path verified)
+- [x] Scan: identify targets
 - [x] Plan: formalize properties
 - [x] Test: write and run
 - [x] Review: triage results

@@ -388,3 +388,47 @@ impl Target {
         common::link_with_args(&self.linker_config(), object_files, output_path, user_args)
     }
 }
+
+#[cfg(test)]
+mod pbt_struct {
+    use crate::driver::Driver;
+    use proptest::prelude::*;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+
+    /// P4: multi-target ELF structural law — compiling a fixed C file with
+    /// -c yields ET_REL objects whose e_machine matches the target.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+        #[test]
+        fn p4_multi_target_elf_structure(target in 0u8..4) {
+            let id = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/13_elf_linker/run");
+            let _ = std::fs::create_dir_all(&dir);
+            let src = dir.join(format!("e{:04}.c", id));
+            let out = dir.join(format!("e{:04}.o", id));
+            std::fs::write(&src, "int g = 7;\nint main(void) { return g - 7; }\n").unwrap();
+            let (argv0, extra, machine): (&str, &[&str], &str) = match target % 4 {
+                0 => ("ccc", &[], "X86-64"),
+                1 => ("ccc-arm", &["-mlittle-endian"], "AArch64"),
+                2 => ("ccc-riscv", &[], "RISC-V"),
+                _ => ("ccc-i686", &["-I", "/usr/lib/gcc/x86_64-linux-gnu/10/include"], "Intel 80386"),
+            };
+            let mut argv: Vec<String> = vec![argv0.to_string(), "-c".to_string()];
+            if target % 4 == 3 { argv.push("-m32".to_string()); }
+            for e in extra { argv.push(e.to_string()); }
+            argv.push("-o".to_string()); argv.push(out.to_str().unwrap().to_string());
+            argv.push(src.to_str().unwrap().to_string());
+            let mut d = Driver::new();
+            let parsed = d.parse_cli_args(&argv).map_err(|e| proptest::test_runner::TestCaseError::fail(format!("cli: {}", e)))?;
+            prop_assert!(!parsed);
+            d.run().map_err(|e| proptest::test_runner::TestCaseError::fail(format!("compile failed: {}", e)))?;
+            let h = Command::new("readelf").args(["-h", out.to_str().unwrap()]).output().unwrap();
+            let text = String::from_utf8_lossy(&h.stdout);
+            prop_assert!(text.contains(machine), "e_machine mismatch: expected {} in\n{}", machine, text);
+            prop_assert!(text.contains("REL (Relocatable file)"), "e_type should be REL for -c in:\n{}", text);
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&out);
+        }
+    }
+}
