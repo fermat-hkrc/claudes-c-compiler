@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_fp_cmp)
+
+- Valid 3-operand FEQ/FLT/FLE .S/.D with GPR rd and FP rs1, rs2 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins feq.s a0, fa1, fa2 = 0xa0c5a553, flt.s t0, fs0, fs1 = 0xa09412d3, fle.s zero, ft0, ft1 = 0xa0100053, feq.d a0, fa1, fa2 = 0xa2c5a553, flt.d t6, ft11, ft10 = 0xa3ef9fd3, fle.d x0, f0, f1 = 0xa2100053, feq.s x31, f0, f31 = 0xa1f02fd3, feq.s fp, ft0, fa0 = 0xa0a02453, feq.s s0, f8, f10 = 0xa0a42453.
+- R-type OP-FP layout holds: opcode=0b1010011, funct3 is the comparison (000 FLE, 001 FLT, 010 FEQ), rd/rs1/rs2/funct7 as given (1000 cases).
+- GPR ABI names (a0/t0/fp/...) encode the same rd as xN; FP ABI names encode the same rs1/rs2 as fN (1000 cases).
+- Same-register form `mn rd, rs, rs` matches llvm-mc (1000 cases).
+- Empty, 1-operand, 2-operand, FP rd, GPR in an FP slot, non-Reg rd (excluding Imm 0..=31), and Imm as rs1/rs2 return Err (1000 cases).
+- A 4th operand and a 4th RoundingMode currently disagree with llvm-mc (see bugs): extra ignored; rm does not overwrite funct3.
+
+## Environment (encode_fp_cmp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+f,+d -show-encoding (LLVM 15.0.6). Default riscv64 without +f,+d rejects F/D; RV64GC includes both (README.md:13).
+- Harness: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs, cargo test --lib encode_fp_cmp, proptest cases=1000.
+- Dispatch: encoder/mod.rs:737-739 feq.s/flt.s/fle.s; encoder/mod.rs:765-767 D counterparts. Operands passed through with ISA funct7/funct3.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / R-type / ABI / rs1=rs2 / arity-class / Imm-FP-slot / extra / rm-fourth. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_fp_cmp)
+
+- llvm-mc prints `feq.s x10, f11, f12` as a0, fa1, fa2 (same encoding).
+- These instructions have no rounding-mode field (unlike FADD). llvm-mc rejects a 4th rne token.
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number for rd (encoder/mod.rs:398-399). llvm-mc rejects numeric rd. get_freg does not accept Imm for rs1/rs2.
+- encode_fp_cmp does not range-check funct7 or funct3; callers supply the ISA values.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_fp_sgnj)
 
 - Valid 3-operand FSGNJ.S/N/X, FMIN.S, FMAX.S and D counterparts with FP rd, rs1, rs2 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins fsgnj.s fa0, fa1, fa2 = 0x20c58553, fsgnjn.s ft0, ft1, ft2 = 0x20209053, fsgnjx.s fs0, fs1, fs2 = 0x2124a453, fmin.s fa0, fa1, fa2 = 0x28c58553, fmax.s fa0, fa1, fa2 = 0x28c59553, fsgnj.d fa0, fa1, fa2 = 0x22c58553, fsgnj.s f0, f1, f2 = 0x20208053, fmin.d ft0, ft1, ft2 = 0x2a208053, fsgnj.s ft11, ft0, ft1 = 0x20100fd3.

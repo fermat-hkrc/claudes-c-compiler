@@ -1,216 +1,193 @@
-# Properties: encode_fp_sgnj
+# Properties: encode_fp_cmp
 
-## encode_fp_sgnj_diff_3op_llvm_mc
-- Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent RISC-V assembler). State machine rejected — pure function, no lifecycle. Algebraic round-trip rejected — no OP-FP decoder in tree. Same-job sibling encode_fp_arith / encode_r rejected — encode_fp_arith uses rm in funct3 for FADD-family (different job); encode_r is a private packer. llvm-mc is an independent assembler the SUT's README claims to replace for RV64GC textual assembly.
-- Doc contract: (none) — encode_fp_sgnj has no function-level rustdoc. Module contract encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint 077a9290. README.md:310 "fsgnj/fsgnjn/fsgnjx." — asserted fingerprint 2e953dbe.
-- Seed: encode_fp_arith_pbt.rs:358 encode_fp_arith_diff_3op_llvm_mc
-- Formal: ∀ mn ∈ {fsgnj.s, fsgnjn.s, fsgnjx.s, fmin.s, fmax.s, fsgnj.d, fsgnjn.d, fsgnjx.d, fmin.d, fmax.d}, ∀ rd, rs1, rs2 ∈ FPRegs. encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2)], funct7(mn), funct3(mn)) = llvm-mc("mn rd, rs1, rs2") as little-endian u32
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs
+## encode_fp_cmp_diff_3op_llvm_mc
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent RISC-V assembler). State machine rejected — pure function, no lifecycle. Algebraic round-trip rejected — no OP-FP decoder in tree. Same-job sibling encode_fp_sgnj / encode_fp_arith / encode_r rejected — encode_fp_sgnj uses FP rd (different register-class job); encode_fp_arith uses rm in funct3 for FADD-family (different job); encode_r is a private packer. llvm-mc is an independent assembler the SUT's README claims to replace for RV64GC textual assembly.
+- Doc contract: float.rs:103 "Result goes to integer register" — asserted fingerprint 6a44d6b3
+- Seed: encode_fp_sgnj_pbt.rs encode_fp_sgnj_diff_3op_llvm_mc
+- Formal: ∀ mn ∈ {feq.s, flt.s, fle.s, feq.d, flt.d, fle.d}, rd ∈ GPRNames, rs1,rs2 ∈ FPRNames. encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2)], funct7(mn), funct3(mn)) = Word(llvm-mc(mn rd, rs1, rs2))
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_sgnj
+function: encoder.encode_fp_cmp
 oracle: differential
 predicate:
   quantifier: forall
   vars: [mn, rd, rs1, rs2]
-  domain: { mn: FP_SGNJ_MNEMONICS, rd: FPRegs, rs1: FPRegs, rs2: FPRegs }
+  domain: { mn: {feq.s,flt.s,fle.s,feq.d,flt.d,fle.d}, rd: GPRNames, rs1: FPRNames, rs2: FPRNames }
   relation:
     op: eq
-    lhs: encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2)], funct7(mn), funct3(mn))
-    rhs: llvm_mc_word("mn rd, rs1, rs2")
+    lhs: encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2)], funct7(mn), funct3(mn))
+    rhs: Word(llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rs2))
 generators:
-  mn: { gen: oneof, choices: ["fsgnj.s", "fsgnjn.s", "fsgnjx.s", "fmin.s", "fmax.s", "fsgnj.d", "fsgnjn.d", "fsgnjx.d", "fmin.d", "fmax.d"] }
+  mn: { gen: oneof, options: ["feq.s", "flt.s", "fle.s", "feq.d", "flt.d", "fle.d"] }
   rd: { gen: string }
   rs1: { gen: string }
   rs2: { gen: string }
-evidence: encoder/mod.rs:730-734 and :758-762 dispatch; README.md:310; llvm-mc RISC-V OP-FP
+evidence: README.md:309 feq/flt/fle; encoder/mod.rs:737-739 and :765-767 dispatch; RISC-V Unprivileged ISA OP-FP compare
 ```
 
-## encode_fp_sgnj_r_type_fields
+## encode_fp_cmp_r_type_fields
 - Tier: 4
-- Rationale: Algebraic invariant from the documented R-type layout. Stronger differential is P1; this pins field placement independently of llvm-mc (opcode, funct3 as the op not rm, rd/rs1/rs2, funct7).
-- Doc contract: encoder/mod.rs:313 "R-type: funct7[31:25] | rs2[24:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 34009d12.
-- Seed: encode_fp_arith_pbt.rs:391 encode_fp_arith_r_type_fields
-- Formal: ∀ mn ∈ FP_SGNJ_MNEMONICS, ∀ rd, rs1, rs2 ∈ 0..31. let w = encode_fp_sgnj([Reg(f{rd}), Reg(f{rs1}), Reg(f{rs2})], funct7(mn), funct3(mn)) in unpack_r(w) = (0b1010011, funct3(mn), rd, rs1, rs2, funct7(mn))
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs
+- Rationale: Algebraic invariant from the documented R-type layout. Stronger differential is p1; this pins opcode/rd/rs1/rs2/funct3/funct7 independently of llvm-mc so a mapping bug cannot hide a packer bug.
+- Doc contract: encoder/mod.rs:313 "R-type: funct7[31:25] | rs2[24:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 34009d12
+- Seed: encode_fp_sgnj_pbt.rs encode_fp_sgnj_r_type_fields
+- Formal: ∀ rd ∈ 0..31, rs1 ∈ 0..31, rs2 ∈ 0..31, (f7,f3) ∈ ISA_CMP. let w = encode_fp_cmp([Reg(x{rd}), Reg(f{rs1}), Reg(f{rs2})], f7, f3). unpack_r(w) = (OP_OP_FP, f3, rd, rs1, rs2, f7)
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_sgnj
+function: encoder.encode_fp_cmp
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mn, rd, rs1, rs2]
-  domain: { mn: FP_SGNJ_MNEMONICS, rd: 0..31, rs1: 0..31, rs2: 0..31 }
-  relation:
-    op: eq
-    lhs: unpack_r(encode_fp_sgnj([Reg(f{rd}), Reg(f{rs1}), Reg(f{rs2})], funct7(mn), funct3(mn)))
-    rhs: (OP_OP_FP, funct3(mn), rd, rs1, rs2, funct7(mn))
+  vars: [rd, rs1, rs2, f7, f3]
+  domain: { rd: 0..31, rs1: 0..31, rs2: 0..31, f7: {0b1010000,0b1010001}, f3: {0,1,2} }
+  body: unpack_r(encode_fp_cmp([Reg(x{rd}),Reg(f{rs1}),Reg(f{rs2})], f7, f3)) == (0b1010011, f3, rd, rs1, rs2, f7)
 generators:
-  mn: { gen: oneof, choices: ["fsgnj.s", "fsgnjn.s", "fsgnjx.s", "fmin.s", "fmax.s", "fsgnj.d", "fsgnjn.d", "fsgnjx.d", "fmin.d", "fmax.d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
   rs2: { gen: int, min: 0, max: 31, type: u32 }
+  f7: { gen: oneof, options: [80, 81] }
+  f3: { gen: int, min: 0, max: 2, type: u32 }
 evidence: encoder/mod.rs:313 R-type layout; encoder/mod.rs:377 OP_OP_FP
 ```
 
-## encode_fp_sgnj_abi_fn_alias
+## encode_fp_cmp_abi_xn_fn_alias
 - Tier: 4
-- Rationale: Algebraic metamorphic — fN and ABI names (ft0/fa0/fs0/...) are the same 5-bit encodings per freg_num. Stronger differential is P1; this isolates alias equality.
-- Doc contract: parser.rs:22-23 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7, f0-f31, ft0-ft11, fs0-fs11, fa0-fa7" — asserted fingerprint 2b0db8f8. encoder/mod.rs:240-286 freg_num maps both families onto 0..31.
-- Seed: encode_fp_arith_pbt.rs:414 encode_fp_arith_abi_fn_alias
-- Formal: ∀ mn ∈ FP_SGNJ_MNEMONICS, ∀ n, m, p ∈ 0..31. encode_fp_sgnj([Reg(f{n}), Reg(f{m}), Reg(f{p})], funct7(mn), funct3(mn)) = encode_fp_sgnj([Reg(ABI(n)), Reg(ABI(m)), Reg(ABI(p))], funct7(mn), funct3(mn))
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs
+- Rationale: Algebraic metamorphic — ABI names and numeric names are documented aliases of the same 5-bit encoding (reg_num / freg_num). Independent of llvm-mc.
+- Doc contract: parser.rs:22-23 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7, f0-f31, ft0-ft11, fs0-fs11, fa0-fa7" — asserted (alias table). encoder/mod.rs:194-248 GPR ABI; encoder/mod.rs:245-293 FPR ABI.
+- Seed: encode_fp_sgnj_pbt.rs encode_fp_sgnj_abi_fn_alias
+- Formal: ∀ n,m,p ∈ 0..31, (f7,f3) ∈ ISA_CMP. encode_fp_cmp([Reg(x{n}), Reg(f{m}), Reg(f{p})], f7, f3) = encode_fp_cmp([Reg(gabi(n)), Reg(fabi(m)), Reg(fabi(p))], f7, f3)
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_sgnj
+function: encoder.encode_fp_cmp
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [mn, n, m, p]
-  domain: { mn: FP_SGNJ_MNEMONICS, n: 0..31, m: 0..31, p: 0..31 }
+  vars: [n, m, p, f7, f3]
+  domain: { n: 0..31, m: 0..31, p: 0..31 }
   relation:
     op: eq
-    lhs: encode_fp_sgnj([Reg(f{n}), Reg(f{m}), Reg(f{p})], funct7(mn), funct3(mn))
-    rhs: encode_fp_sgnj([Reg(ABI(n)), Reg(ABI(m)), Reg(ABI(p))], funct7(mn), funct3(mn))
+    lhs: encode_fp_cmp([Reg(x{n}), Reg(f{m}), Reg(f{p})], f7, f3)
+    rhs: encode_fp_cmp([Reg(gabi(n)), Reg(fabi(m)), Reg(fabi(p))], f7, f3)
 generators:
-  mn: { gen: oneof, choices: ["fsgnj.s", "fsgnjn.s", "fsgnjx.s", "fmin.s", "fmax.s", "fsgnj.d", "fsgnjn.d", "fsgnjx.d", "fmin.d", "fmax.d"] }
   n: { gen: int, min: 0, max: 31, type: u32 }
   m: { gen: int, min: 0, max: 31, type: u32 }
   p: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:240-286 freg_num ABI and fN maps; parser.rs:22-23
+evidence: encoder/mod.rs:194-293 ABI alias tables; parser.rs:22-23
 ```
 
-## encode_fp_sgnj_diff_rs1_eq_rs2_llvm_mc
-- Tier: 2
-- Rationale: Documented pseudo expansions fmv/fabs/fneg are fsgnj/fsgnjx/fsgnjn with rs1=rs2 (README.md:339-341). Generator is pinned to that documented case rather than leaving it to chance under P1. Differential vs llvm-mc on the six sign-injection mnemonics.
-- Doc contract: README.md:339 "   | `fmv.s/d`      | `fsgnj.s/d rd, rs, rs`                               |" — asserted fingerprint 9f36f337.
-- Seed: README.md:339-341 pseudo table; encode_fp_arith_pbt.rs 3-op differential
-- Formal: ∀ mn ∈ {fsgnj.s, fsgnjn.s, fsgnjx.s, fsgnj.d, fsgnjn.d, fsgnjx.d}, ∀ rd, rs ∈ FPRegs. encode_fp_sgnj([Reg(rd), Reg(rs), Reg(rs)], funct7(mn), funct3(mn)) = llvm-mc("mn rd, rs, rs")
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs
+## encode_fp_cmp_diff_rs1_eq_rs2_llvm_mc
+- Tier: 5
+- Rationale: Differential vs llvm-mc on the same-rs1=rs2 form (legal FEQ/FLT/FLE). Strengthens p1 toward the rs1=rs2 edge the previous FSGNJ campaign used for fmv/fabs/fneg; here it is just a valid compare of a register with itself.
+- Doc contract: float.rs:103 "Result goes to integer register" — asserted fingerprint 6a44d6b3
+- Seed: encode_fp_sgnj_pbt.rs encode_fp_sgnj_diff_rs1_eq_rs2_llvm_mc
+- Formal: ∀ mn ∈ CMP, rd ∈ GPRNames, rs ∈ FPRNames. encode_fp_cmp([Reg(rd), Reg(rs), Reg(rs)], funct7(mn), funct3(mn)) = Word(llvm-mc(mn rd, rs, rs))
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_sgnj
+function: encoder.encode_fp_cmp
 oracle: differential
 predicate:
   quantifier: forall
   vars: [mn, rd, rs]
-  domain: { mn: FSGNJ_ONLY_MNEMONICS, rd: FPRegs, rs: FPRegs }
+  domain: { mn: CMP, rd: GPRNames, rs: FPRNames }
   relation:
     op: eq
-    lhs: encode_fp_sgnj([Reg(rd), Reg(rs), Reg(rs)], funct7(mn), funct3(mn))
-    rhs: llvm_mc_word("mn rd, rs, rs")
+    lhs: encode_fp_cmp([Reg(rd), Reg(rs), Reg(rs)], funct7(mn), funct3(mn))
+    rhs: Word(llvm_mc(mn + " " + rd + ", " + rs + ", " + rs))
 generators:
-  mn: { gen: oneof, choices: ["fsgnj.s", "fsgnjn.s", "fsgnjx.s", "fsgnj.d", "fsgnjn.d", "fsgnjx.d"] }
+  mn: { gen: oneof, options: ["feq.s", "flt.s", "fle.s", "feq.d", "flt.d", "fle.d"] }
   rd: { gen: string }
   rs: { gen: string }
-evidence: README.md:339-341 fmv/fabs/fneg expand to fsgnj/fsgnjx/fsgnjn rd, rs, rs
+evidence: README.md:309; llvm-mc accepts feq.s a0, fa1, fa1
 ```
 
-## encode_fp_sgnj_neg_arity_gpr
-- Tier: 5
-- Rationale: Negative/error contract. get_freg returns Err for missing operands, GPR names, and non-Reg variants. llvm-mc rejects the same (too few operands / invalid operand). Stronger oracles do not apply to the invalid domain.
-- Doc contract: (none) on encode_fp_sgnj itself. get_freg at encoder/mod.rs:404-409 "expected float register at operand {}" / "invalid float register". parser.rs:22-23 register classes. llvm-mc: "too few operands" / "invalid operand".
-- Seed: encode_fp_arith_pbt.rs:447 encode_fp_arith_neg_arity_gpr
-- Formal: ∀ mn ∈ FP_SGNJ_MNEMONICS, ∀ fp, fp2 ∈ FPRegs, ∀ gpr ∈ GPRs, ∀ bad ∉ FP-Reg. encode_fp_sgnj([], f7, f3) is Err ∧ encode_fp_sgnj([Reg(fp)], f7, f3) is Err ∧ encode_fp_sgnj([Reg(fp), Reg(fp2)], f7, f3) is Err ∧ encode_fp_sgnj with GPR or non-Reg in any of the three slots is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs
+## encode_fp_cmp_neg_arity_class
+- Tier: 3
+- Rationale: Negative/error contract. llvm-mc errors on too few operands, FP rd, GPR in an FP slot, and non-register tokens. get_reg/get_freg return Err for missing/wrong-class operands. encode_fp_cmp's own comment asserts integer rd.
+- Doc contract: float.rs:103 "Result goes to integer register" — asserted fingerprint 6a44d6b3
+- Seed: encode_fp_sgnj_pbt.rs encode_fp_sgnj_neg_arity_gpr
+- Formal: ∀ (f7,f3) ∈ ISA_CMP, fp ∈ FPRNames, gpr ∈ GPRNames, bad ∉ {Reg, Imm(0..=31)}. encode_fp_cmp([], f7, f3) is Err ∧ encode_fp_cmp([Reg(gpr)], f7, f3) is Err ∧ encode_fp_cmp([Reg(gpr), Reg(fp)], f7, f3) is Err ∧ encode_fp_cmp([Reg(fp), Reg(fp), Reg(fp)], f7, f3) is Err ∧ encode_fp_cmp([Reg(gpr), Reg(gpr), Reg(fp)], f7, f3) is Err ∧ encode_fp_cmp([Reg(gpr), Reg(fp), Reg(gpr)], f7, f3) is Err ∧ encode_fp_cmp([bad, Reg(fp), Reg(fp)], f7, f3) is Err ∧ encode_fp_cmp([Reg(gpr), Imm(0), Reg(fp)], f7, f3) is Err ∧ encode_fp_cmp([Reg(gpr), Reg(fp), Imm(0)], f7, f3) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_sgnj
+function: encoder.encode_fp_cmp
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mn, fp, fp2, gpr, bad]
-  domain: { mn: FP_SGNJ_MNEMONICS, fp: FPRegs, fp2: FPRegs, gpr: GPRs, bad: non_fp_reg_operand }
-  relation:
-    op: holds
-    lhs: encode_fp_sgnj_rejects_arity_gpr_nonreg(mn, fp, fp2, gpr, bad)
-    rhs: true
+  vars: [f7, f3, fp, gpr, bad]
+  domain: { f7: ISA_CMP.f7, f3: ISA_CMP.f3, fp: FPRNames, gpr: GPRNames, bad: NonRegOperand }
+  body: encode_fp_cmp(wrong_arity_or_class(fp,gpr,bad), f7, f3) is Err
 generators:
-  mn: { gen: oneof, choices: ["fsgnj.s", "fsgnjn.s", "fsgnjx.s", "fmin.s", "fmax.s", "fsgnj.d", "fsgnjn.d", "fsgnjx.d", "fmin.d", "fmax.d"] }
   fp: { gen: string }
-  fp2: { gen: string }
   gpr: { gen: string }
-  bad: { gen: string }
 expected_error: String
-evidence: encoder/mod.rs:404-409 get_freg; llvm-mc rejects too few / GPR in FP slot
+evidence: float.rs:103 integer rd; get_reg/get_freg class checks; llvm-mc invalid operand / too few operands
 ```
 
-## encode_fp_sgnj_neg_extra
-- Tier: 5
-- Rationale: Negative/error contract. ISA R-type FSGNJ/FMIN take exactly three FP registers; llvm-mc rejects a 4th operand. The public dispatch passes operands through unchanged, so extra operands are caller-reachable. Stronger oracles do not apply to the invalid domain.
-- Doc contract: (none) on encode_fp_sgnj itself. encoder/mod.rs:313 "R-type: funct7[31:25] | rs2[24:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 34009d12. llvm-mc: "invalid operand for instruction" on a 4th token.
-- Seed: encode_fp_arith_pbt.rs:500 encode_fp_arith_neg_extra
-- Formal: ∀ mn ∈ FP_SGNJ_MNEMONICS, ∀ rd, rs1, rs2 ∈ FPRegs, ∀ extra ∈ Operand. encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7(mn), funct3(mn)) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs
+## encode_fp_cmp_neg_extra
+- Tier: 3
+- Rationale: Negative/error contract. llvm-mc rejects a 4th operand on FEQ/FLT/FLE ("invalid operand for instruction"). Public dispatch passes the operand list through unchanged, so extra tokens from the parser reach this helper. encode_fp_cmp currently ignores operands past index 2.
+- Doc contract: (none) on extra arity for encode_fp_cmp itself. README.md:352 documents a 6-field R-type with no extra operand; llvm-mc rejects extras. Contract evidence: inferred (public wrapper encoder/mod.rs:737-739 / :765-767 passes the operand slice through; llvm-mc and the assembler README claim to encode the same textual RV64GC).
+- Seed: encode_fp_sgnj_pbt.rs encode_fp_sgnj_neg_extra
+- Formal: ∀ mn ∈ CMP, rd ∈ GPRNames, rs1,rs2 ∈ FPRNames, extra ∈ Operand. encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7(mn), funct3(mn)) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs
 - Status: failing
-- Counterexample: encode_fp_sgnj([Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 0b0010000, 0b000) -> Ok(Word(0x20000053))
-- Bug report: bug_reports/encode_fp_sgnj_extra_operand.md
+- Counterexample: encode_fp_cmp([Reg("x0"), Reg("f0"), Reg("f0"), Imm(0)], 0b1010000, 0b010)
+- Bug report: pbt-out/bug_reports/encode_fp_cmp_extra_operand.md
 
 ```property
-function: encoder.encode_fp_sgnj
+function: encoder.encode_fp_cmp
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [mn, rd, rs1, rs2, extra]
-  domain: { mn: FP_SGNJ_MNEMONICS, rd: FPRegs, rs1: FPRegs, rs2: FPRegs, extra: Operand }
-  relation:
-    op: holds
-    lhs: encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7(mn), funct3(mn)).is_err()
-    rhs: true
+  domain: { mn: CMP, rd: GPRNames, rs1: FPRNames, rs2: FPRNames, extra: Operand }
+  body: encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7(mn), funct3(mn)) is Err
 generators:
-  mn: { gen: oneof, choices: ["fsgnj.s", "fsgnjn.s", "fsgnjx.s", "fmin.s", "fmax.s", "fsgnj.d", "fsgnjn.d", "fsgnjx.d", "fmin.d", "fmax.d"] }
-  rd: { gen: string }
-  rs1: { gen: string }
-  rs2: { gen: string }
-  extra: { gen: string }
+  extra: { gen: oneof, options: ["Imm", "Reg", "RoundingMode", "Symbol", "Mem"] }
 expected_error: String
-evidence: README.md:352 R-type 3-register; llvm-mc rejects 4th operand; encoder/mod.rs:730-762 pass-through
+evidence: llvm-mc "invalid operand for instruction" on 4th token; encoder/mod.rs:737-739 pass-through
 ```
 
-## encode_fp_sgnj_neg_rm_fourth
-- Tier: 5
-- Rationale: Negative/error contract distinct from extra-Imm: FSGNJ/FMIN have no rounding-mode field (ISA uses funct3 as the op). llvm-mc rejects `fsgnj.s fa0, fa1, fa2, rne`. encode_fp_arith (different job) does accept a 4th RoundingMode; this symbol must not.
-- Doc contract: (none) on encode_fp_sgnj itself. Contrast encoder/mod.rs:65 "Check for optional rounding mode" on encode_fp_arith — that comment is not this function's contract. RISC-V Unprivileged ISA FSGNJ/FMIN: funct3 is the operation, not rm. llvm-mc: "invalid operand for instruction" on rne.
-- Seed: encode_fp_arith_pbt.rs:518 encode_fp_arith_neg_non_rm_fourth (inverted: here ANY 4th including RM is invalid)
-- Formal: ∀ mn ∈ FP_SGNJ_MNEMONICS, ∀ rd, rs1, rs2 ∈ FPRegs, ∀ rm ∈ {rne, rtz, rdn, rup, rmm, dyn}. encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn), funct3(mn)) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs
+## encode_fp_cmp_neg_rm_fourth
+- Tier: 3
+- Rationale: Negative/error contract distinct from extra-Imm: FEQ/FLT/FLE have no rounding-mode field (ISA uses funct3 as the comparison). llvm-mc rejects `feq.s a0, fa1, fa2, rne`. encode_fp_arith (different job) does accept a 4th RoundingMode; this symbol must not.
+- Doc contract: (none) on encode_fp_cmp itself. Contrast float.rs:65 "Check for optional rounding mode" on encode_fp_arith — that comment is not this function's contract. RISC-V Unprivileged ISA FEQ/FLT/FLE: funct3 is the comparison, not rm. llvm-mc: "invalid operand for instruction" on rne.
+- Seed: encode_fp_sgnj_pbt.rs encode_fp_sgnj_neg_rm_fourth
+- Formal: ∀ mn ∈ CMP, rd ∈ GPRNames, rs1,rs2 ∈ FPRNames, rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn), funct3(mn)) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs
 - Status: failing
-- Counterexample: encode_fp_sgnj([Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne")], 0b0010000, 0b000) -> Ok(Word(0x20000053))
-- Bug report: bug_reports/encode_fp_sgnj_rm_fourth.md
+- Counterexample: encode_fp_cmp([Reg("x0"), Reg("f0"), Reg("f0"), RoundingMode("rne")], 0b1010000, 0b010)
+- Bug report: pbt-out/bug_reports/encode_fp_cmp_rm_fourth.md
 
 ```property
-function: encoder.encode_fp_sgnj
+function: encoder.encode_fp_cmp
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [mn, rd, rs1, rs2, rm]
-  domain: { mn: FP_SGNJ_MNEMONICS, rd: FPRegs, rs1: FPRegs, rs2: FPRegs, rm: {rne,rtz,rdn,rup,rmm,dyn} }
-  relation:
-    op: holds
-    lhs: encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn), funct3(mn)).is_err()
-    rhs: true
+  domain: { mn: CMP, rd: GPRNames, rs1: FPRNames, rs2: FPRNames, rm: {rne,rtz,rdn,rup,rmm,dyn} }
+  body: encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn), funct3(mn)) is Err
 generators:
-  mn: { gen: oneof, choices: ["fsgnj.s", "fsgnjn.s", "fsgnjx.s", "fmin.s", "fmax.s", "fsgnj.d", "fsgnjn.d", "fsgnjx.d", "fmin.d", "fmax.d"] }
-  rd: { gen: string }
-  rs1: { gen: string }
-  rs2: { gen: string }
-  rm: { gen: oneof, choices: ["rne", "rtz", "rdn", "rup", "rmm", "dyn"] }
+  rm: { gen: oneof, options: ["rne", "rtz", "rdn", "rup", "rmm", "dyn"] }
 expected_error: String
-evidence: RISC-V ISA FSGNJ/FMIN have no rm; llvm-mc rejects 4th rne; encoder/mod.rs:730-762
+evidence: RISC-V Unprivileged ISA FEQ/FLT/FLE no rm; llvm-mc rejects 4th rne
 ```

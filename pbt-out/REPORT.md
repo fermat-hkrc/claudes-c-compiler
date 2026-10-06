@@ -1,97 +1,103 @@
-# PBT Campaign Report: encode_fp_sgnj
+# PBT Campaign Report: encode_fp_cmp
 
 ## Summary
 
-**Verdict:** 2 medium: encode_fp_sgnj ignores a 4th operand (including RoundingMode), so malformed `fsgnj.s f0, f0, f0, 0` and `fsgnj.s f0, f0, f0, rne` still assemble as `fsgnj.s f0, f0, f0`.
+**Verdict:** 2 medium: encode_fp_cmp silently ignores a 4th operand (including RoundingMode), so `feq.s x0, f0, f0, 0` and `feq.s x0, f0, f0, rne` assemble as `feq.s x0, f0, f0` instead of being rejected like llvm-mc.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fp_sgnj
-**Tests:** 7 properties (plus 2 KAT groups and 2 failing regression witnesses)
+**Modules tested:** encode_fp_cmp
+**Tests:** 7
 **Result:** 5 passing, 2 bugs
-**Change surface:** 1 changed function (encode_fp_sgnj), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and marked encode_fp_sgnj NOT LINKED). The cargo lib test run did execute the symbol (KAT + 5 passing / 2 failing properties).
+**Change surface:** 1 changed function (encode_fp_cmp), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw and marked encode_fp_cmp NOT LINKED against unrelated C++ binaries; Rust `cargo test --lib encode_fp_cmp` executed the symbol (KAT + 7 properties).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fp_sgnj | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fp_cmp | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_fp_sgnj ignores a 4th operand
+### B1: encode_fp_cmp ignores a 4th operand
 
-**Formal:** ∀ mn ∈ FP_SGNJ_MNEMONICS, ∀ rd, rs1, rs2 ∈ FPRegs, ∀ extra ∈ Operand. encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7(mn), funct3(mn)) is Err
-**Contract evidence:** inferred (ISA R-type three FP registers; llvm-mc rejects a 4th token; encoder/mod.rs:730-762 passes the operand slice through unchanged)
+**Formal:** ∀ mn ∈ CMP, rd ∈ GPRNames, rs1,rs2 ∈ FPRNames, extra ∈ Operand. encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7(mn), funct3(mn)) is Err
+**Contract evidence:** inferred (public wrapper encoder/mod.rs:737-739 and :765-767 passes the operand slice through unchanged; llvm-mc rejects extra operands; README.md:352 documents a 6-field R-type with no extra operand)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fp_sgnj([Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 0b0010000, 0b000)
-**Expected / Actual:** Err / Ok(Word(0x20000053))
-**Impact:** Malformed `fsgnj.s f0, f0, f0, 0` still assembles as `fsgnj.s f0, f0, f0`. A typo or extra token is silently dropped.
-**Root cause:** float.rs:96-99 reads only operands 0, 1, 2 via get_freg and returns Ok without checking operands.len() > 3.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:99`
+**Counterexample:** encode_fp_cmp([Reg("x0"), Reg("f0"), Reg("f0"), Imm(0)], 0b1010000, 0b010)
+**Expected / Actual:** Err / Ok(Word(0xa0002053)) (encoding of feq.s x0, f0, f0)
+**Impact:** A typo or extra token in FEQ/FLT/FLE is silently dropped, so the assembler emits a valid OP-FP compare word instead of diagnosing the extra operand.
+**Root cause:** float.rs:104-107 reads only operands 0, 1, 2 via get_reg/get_freg and returns Ok without checking operands.len() > 3, so a 4th operand is ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:107`
 ```rust
     Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
 ```
 **Suggested fix:** Reject more than three operands before packing the R-type word.
 ```rust
     if operands.len() > 3 {
-        return Err("fp sgnj: unexpected extra operand".to_string());
+        return Err("fp cmp: unexpected extra operand".to_string());
     }
-    let rd = get_freg(operands, 0)?;
+    let rd = get_reg(operands, 0)?;
     let rs1 = get_freg(operands, 1)?;
     let rs2 = get_freg(operands, 2)?;
     Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
 ```
-**Bug report:** bug_reports/encode_fp_sgnj_extra_operand.md
-**Repro seed:** cc 7045ce858db134dab24202f65d3df172cb27bb7f8da185fda82467007a0c956f
+**Bug report:** bug_reports/encode_fp_cmp_extra_operand.md
+**Repro seed:** (deterministic; shrunk to feq.s x0, f0, f0, Imm(0))
 **Raw output:**
 ```text
-Test failed: 4th operand must Err for fsgnj.s f0, f0, f0 (llvm-mc rejects extra operands); got Ok(Word(536870995)) at src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs:468.
+Test failed: 4th operand must Err for feq.s x0, f0, f0 (llvm-mc rejects extra operands); got Ok(Word(2684362835)) at src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs:469.
 minimal failing input: (mn, f7, f3) = (
-    "fsgnj.s",
-    16,
-    0,
-), rd = "f0", rs1 = "f0", rs2 = "f0", extra = Imm(
+    "feq.s",
+    80,
+    2,
+), rd = "x0", rs1 = "f0", rs2 = "f0", extra = Imm(
     0,
 )
+	successes: 0
+	local rejects: 0
+	global rejects: 0
 ```
 
-### B2: encode_fp_sgnj ignores a 4th RoundingMode
+### B2: encode_fp_cmp ignores a 4th RoundingMode
 
-**Formal:** ∀ mn ∈ FP_SGNJ_MNEMONICS, ∀ rd, rs1, rs2 ∈ FPRegs, ∀ rm ∈ {rne, rtz, rdn, rup, rmm, dyn}. encode_fp_sgnj([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn), funct3(mn)) is Err
-**Contract evidence:** inferred (RISC-V Unprivileged ISA FSGNJ/FMIN use funct3 as the operation, not rm; llvm-mc rejects `fsgnj.s fa0, fa1, fa2, rne`; public dispatch passes operands through)
+**Formal:** ∀ mn ∈ CMP, rd ∈ GPRNames, rs1,rs2 ∈ FPRNames, rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn), funct3(mn)) is Err
+**Contract evidence:** inferred (RISC-V Unprivileged ISA FEQ/FLT/FLE use funct3 as the comparison, not rm; llvm-mc rejects `feq.s a0, fa1, fa2, rne`; public wrapper passes the operand slice through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fp_sgnj([Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne")], 0b0010000, 0b000)
-**Expected / Actual:** Err / Ok(Word(0x20000053)) with funct3 still 000
-**Impact:** Malformed `fsgnj.s f0, f0, f0, rne` still assembles as `fsgnj.s f0, f0, f0`. Unlike FADD, this family must not accept rm.
-**Root cause:** float.rs:96-99 reads only operands 0, 1, 2 via get_freg and returns Ok without checking operands.len() > 3, so a 4th RoundingMode is ignored and does not overwrite funct3.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:99`
+**Counterexample:** encode_fp_cmp([Reg("x0"), Reg("f0"), Reg("f0"), RoundingMode("rne")], 0b1010000, 0b010)
+**Expected / Actual:** Err / Ok(Word(0xa0002053)) (encoding of feq.s x0, f0, f0; funct3 remains 010 FEQ, not rne)
+**Impact:** An FADD-style 4-operand form with rne is silently dropped, hiding a real assembly error on instructions that have no rounding-mode field.
+**Root cause:** float.rs:104-107 reads only operands 0, 1, 2 and returns Ok without checking operands.len() > 3, so a 4th RoundingMode is ignored and does not overwrite funct3.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:107`
 ```rust
     Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
 ```
 **Suggested fix:** Reject more than three operands before packing the R-type word.
 ```rust
     if operands.len() > 3 {
-        return Err("fp sgnj: unexpected extra operand".to_string());
+        return Err("fp cmp: unexpected extra operand".to_string());
     }
-    let rd = get_freg(operands, 0)?;
+    let rd = get_reg(operands, 0)?;
     let rs1 = get_freg(operands, 1)?;
     let rs2 = get_freg(operands, 2)?;
     Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
 ```
-**Bug report:** bug_reports/encode_fp_sgnj_rm_fourth.md
-**Repro seed:** (none — deterministic regression)
+**Bug report:** bug_reports/encode_fp_cmp_rm_fourth.md
+**Repro seed:** (deterministic; shrunk to feq.s x0, f0, f0, rne)
 **Raw output:**
 ```text
-Test failed: 4th RoundingMode must Err for fsgnj.s f0, f0, f0, rne (FSGNJ/FMIN have no rm); got Ok(Word(536870995)) at src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs:487.
+Test failed: 4th RoundingMode must Err for feq.s x0, f0, f0, rne (FEQ/FLT/FLE have no rm); got Ok(Word(2684362835)) at src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs:488.
 minimal failing input: (mn, f7, f3) = (
-    "fsgnj.s",
-    16,
-    0,
-), rd = "f0", rs1 = "f0", rs2 = "f0", rm = "rne"
+    "feq.s",
+    80,
+    2,
+), rd = "x0", rs1 = "f0", rs2 = "f0", rm = "rne"
+	successes: 0
+	local rejects: 0
+	global rejects: 0
 ```
 
 ## Design Caveats
@@ -102,30 +108,26 @@ minimal failing input: (mn, f7, f3) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_fp_sgnj_pbt.rs | 7 properties + 2 KAT + 2 regression witnesses |
-| src/backend/riscv/assembler/encoder/mod.rs | one additive `#[cfg(test)] mod encode_fp_sgnj_pbt;` |
+| src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs | 7 properties + 2 KAT + 2 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fp_sgnj -- --test-threads=1
+cargo test --lib encode_fp_cmp -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fp_sgnj_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_fp_cmp_regression_extra_operand -- --test-threads=1
 ```
 
-B2 RoundingMode fourth:
+B2 rounding mode as 4th:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fp_sgnj_regression_rm_fourth -- --test-threads=1
+cargo test --lib test_encode_fp_cmp_regression_rm_fourth -- --test-threads=1
 ```
-
-Serial reconfirmation: the suite was run with `--test-threads=1` (PBT_TEST_JOBS=1 equivalent). Both failures reproduced serially.
 
 ## Output Directories
 
@@ -138,19 +140,20 @@ Serial reconfirmation: the suite was run with `--test-threads=1` (PBT_TEST_JOBS=
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_fp_sgnj_extra_operand.md
-- pbt-out/bug_reports/encode_fp_sgnj_extra_operand.html
-- pbt-out/bug_reports/encode_fp_sgnj_rm_fourth.md
-- pbt-out/bug_reports/encode_fp_sgnj_rm_fourth.html
-- pbt-out/run/encode_fp_sgnj_pbt.log
-- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_fp_cmp_extra_operand.md
+- pbt-out/bug_reports/encode_fp_cmp_extra_operand.html
+- pbt-out/bug_reports/encode_fp_cmp_rm_fourth.md
+- pbt-out/bug_reports/encode_fp_cmp_rm_fourth.html
+- pbt-out/run/encode_fp_cmp_round1.log
+- pbt-out/run/encode_fp_cmp_round2.log
+- pbt-out/run/encode_fp_cmp_round3.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 18:55 (campaign: coverage)
-> Files: 14/14 scanned (100%) | Functions: 205/351 total | PBT candidates: 205 | Tested: 205 (100%) | 1 pass, 205 fail
+> Last updated: 2026-10-06 19:13 (campaign: coverage)
+> Files: 14/14 scanned (100%) | Functions: 206/351 total | PBT candidates: 206 | Tested: 206 (100%) | 1 pass, 206 fail
 
 ## Summary
 
@@ -159,10 +162,10 @@ Serial reconfirmation: the suite was run with `--test-threads=1` (PBT_TEST_JOBS=
 | Total source files | 14 |
 | Files scanned | 14 / 14 (100%) |
 | Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 205 |
-| **Tested (of PBT candidates)** | **205 / 205 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 205 / -1 |
-| **Overall (tested / all functions)** | **205 / 351 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 206 |
+| **Tested (of PBT candidates)** | **206 / 206 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 206 / -1 |
+| **Overall (tested / all functions)** | **206 / 351 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -170,13 +173,13 @@ Serial reconfirmation: the suite was run with `--test-threads=1` (PBT_TEST_JOBS=
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 205 | 205 | 0 | 100% |
+|  | 206 | 206 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 205 | 205 | 0 | 100% |
+| unknown | 206 | 206 | 0 | 100% |
 
 ## File Coverage
 
@@ -404,3 +407,4 @@ Serial reconfirmation: the suite was run with `--test-threads=1` (PBT_TEST_JOBS=
 | encode_fp_arith_d | float.rs |
 | encode_fp_unary | float.rs |
 | encode_fp_sgnj | float.rs |
+| encode_fp_cmp | float.rs |
