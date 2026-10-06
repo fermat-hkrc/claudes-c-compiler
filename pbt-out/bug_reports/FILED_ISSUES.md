@@ -58,3 +58,4 @@
 | 26 | src/backend/arm/assembler | shift ranges unvalidated on all standalone forms + lslv/lsrv/asrv/rorv missing | **new issue filed** (20-form battery) | [#830](https://github.com/fermat-hkrc/claudes-c-compiler/issues/830) |
 | 26 | src/backend/arm/assembler | bfm/extr imm ranges unvalidated (immr/imms: W 0..31, X 0..63) | **new issue filed** (20-form battery) | [#831](https://github.com/fermat-hkrc/claudes-c-compiler/issues/831) |
 | 26 | src/backend/arm/assembler | LSE atomics (ldadd/swp/cas) encoded without +lse arch feature gate | **new issue filed** (encodings correct; gate missing) | [#832](https://github.com/fermat-hkrc/claudes-c-compiler/issues/832) |
+| 26 | src/backend/riscv/assembler | atomics encoded without +a extension gate (17 forms; encodings correct) | **new issue filed** (#832 class) | [#833](https://github.com/fermat-hkrc/claudes-c-compiler/issues/833) |
