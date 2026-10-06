@@ -1,19 +1,29 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_mov, English, tier standard)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; C++ reporter listed unrelated binaries and claimed encode_mov NOT LINKED. Rust `cargo test --lib encode_mov_` executed the production symbol.
+> Last updated: 2026-10-06 (campaign: encode_cond_branch, English, standard)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw / .gcda; C++ reporter listed unrelated binaries and claimed NOT LINKED. Manual audit of encode_cond_branch (14-line body) plus sweep properties.
 
-## This campaign (encode_mov)
+## This campaign
 
 | Metric | Value |
 |--------|-------|
-| Function | encode_mov |
-| Properties | 15 |
-| Passing | 5 |
-| Failing | 10 |
-| Bugs | 10 (9 unique defects) |
-| Sweep | 1/1 — alt-spellings passing; remaining gaps are filed bugs |
+| Target | encode_cond_branch |
+| Source | compare_branch.rs:197 |
+| Properties | 11 (8 passing, 3 failing) |
+| Bugs | 3 |
+| Sweep | 1/1 (neg_bad_operand passing, symbol_misclassified passing, neg_modifier failing/filed) |
 
-## Historical index
+## Summary
 
-See FUNCTION_INDEX.md and COVERAGE.md for the union of prior campaigns. encode_mov is now a PBT candidate with a COVERAGE.md row.
+| Metric | Value |
+|--------|-------|
+| Total source files (index) | 11 |
+| PBT candidates (FUNCTION_INDEX) | 181 |
+| Tested this campaign | encode_cond_branch |
+| Coverage evidence | file-level (symbol presence) |
+
+## File Coverage
+
+| Source File | Notes |
+|-------------|-------|
+| compare_branch.rs | encode_cond_branch exercised via cargo test --lib encode_cond_branch (sibling encode_cond_branch_pbt.rs) |

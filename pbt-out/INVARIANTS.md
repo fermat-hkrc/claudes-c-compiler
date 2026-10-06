@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_cond_branch)
+
+- Reloc-form B.cond word (imm19=0) matches llvm-mc `b.{cond} #0` for all 18 condition names including cs/hs, cc/lo, al, nv, and ASCII case (1000 cases). KAT pins b.eq foo word=0x54000000 CondBr19 ELF 280; llvm-mc b.eq #0=0x54000000, b.ne #0=0x54000001, b.nv #0=0x5400000f, b.al #0=0x5400000e, b.hs/cs #0=0x54000002, b.lo/cc #0=0x54000003.
+- ARM B.cond layout holds: bits[31:24]=01010100, bit 4=0, imm19=0 in reloc form, cond in bits[3:0] (1000 cases).
+- Symbol/Label addend 0; SymbolOffset preserves addend; reloc type CondBr19 (1000 cases).
+- cs==hs, cc==lo; invertible cond pairs XOR 1; cond change only touches bits[3:0] (1000 cases).
+- Empty operand list and unknown condition names return Err (1000 cases).
+- Mem/Shift/Extend/RegArrangement/Expr return Err (sweep, 1000 cases).
+- Parser-misclassified Reg/Cond/Barrier names are treated as symbols with CondBr19 (sweep, 1000 cases; gas accepts `b.eq x0` as a label).
+- Immediate PC-offset form, extra operands, and :lo12: modifiers currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_cond_branch)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). GNU as 2.38 agrees on `b.{cond} #imm` (aligned ±1 MiB), `b.{cond} label`, all 16 conditions, and rejects extra/empty/unknown/unaligned/modifier.
+- ARM ARM Conditional branch (immediate): 01010100 imm19 0 cond. Offset/4 signed 19-bit.
+- Dispatch: encoder/mod.rs:351-353 `b.{cond}` => encode_cond_branch; encoder/mod.rs:356-370 GNU aliases beq/bne/.../bal.
+- Sibling encode_branch / encode_cbz / encode_tbz are not same-job differentials.
+- Harness: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs, cargo test --lib encode_cond_branch, proptest cases=1000.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_cond_branch_neg_bad_operand / encode_cond_branch_symbol_misclassified / encode_cond_branch_neg_modifier. Closed: every documented behavior has a property; remaining gaps are the three filed bugs.
+- Three failing properties are SUT bugs. See pbt-out/bug_reports/encode_cond_branch_*.md.
+
+## Quirks (encode_cond_branch)
+
+- ASCII case of condition names is accepted (encode_cond to_lowercase).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- Operand 0 is get_symbol only; Imm PC offsets are rejected (see bugs).
+- get_symbol accepts Modifier/ModifierOffset as the inner symbol (see bugs).
+- get_symbol accepts parser-misclassified Reg/Cond/Barrier as symbols (gas-compatible for `b.eq x0`).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 14-line body.
+
 # Confirmed invariants (encode_mov)
 
 - Valid integer register MOV (x/w 0..30, xzr/wzr, sp — not wsp) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases; WSP is a bug). KAT pins mov x0,x1=0xaa0103e0, mov sp,x1=0x9100003f.

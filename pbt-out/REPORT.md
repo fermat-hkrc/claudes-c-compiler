@@ -1,350 +1,145 @@
-# PBT Campaign Report: encode_mov
+# PBT Campaign Report: encode_cond_branch
 
 ## Summary
 
-**Verdict:** 9 bugs (3 high, 6 medium/high): the worst is encode_mov treating WSP as WZR so `mov w0, wsp` becomes `mov w0, wzr`, plus silent extra-operand drop, mixed-width/FP-as-GPR, `mov sp, #imm` as MOVZ XZR, NEON lane wrap, arrangement mismatch, 4s Q=0, and 64-bit imm truncation on W.
+**Verdict:** 1 high, 2 medium: encode_cond_branch rejects every immediate PC offset (`b.eq #0` is Err), ignores extra operands, and treats `:lo12:` modifiers as plain symbols, so gas-compatible `b.eq`/`b.ne`/… assembly is wrong or silently accepted.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mov
-**Tests:** 15
-**Result:** 5 passing, 10 failing properties / 10 bug reports (9 unique defects; B1 and B10 are the WSP miss seen by differential and invariant)
+**Modules tested:** encode_cond_branch
+**Tests:** 11
+**Result:** 8 passing, 3 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_mov NOT LINKED). Rust cargo tests executed the production symbol. Sweep: manual arm audit + encode_mov_diff_alt_spellings.
-**Tier:** standard
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual audit of the 14-line body plus three targeted properties.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mov | 15 | 9 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_cond_branch | 11 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_mov treats WSP as WZR
+### B1: encode_cond_branch rejects a valid immediate PC offset
 
-**Formal:** ∀ rd,rm ∈ 0..31, is_64 ∈ {0,1}, rd_sp,rm_sp ∈ {0,1}. encode_mov([Reg(gpr(is_64,rd,rd_sp)), Reg(gpr(is_64,rm,rm_sp))]) = Word(llvm-mc("mov Rd, Rm"))
-**Contract evidence:** documented data_processing.rs:129 "Check for MOV to/from SP: uses ADD Xd, Xn, #0"; README.md:293 "`mov` to/from `sp` encodes as `add Xd, Xn, #0`"
-**Documentation conflict:** data_processing.rs:129 names `sp` only — it does not declare `wsp` invalid; gas/llvm-mc accept `mov w0, wsp` as ADD. The comment is incomplete, not an exclusion.
+**Formal:** ∀ cond ∈ {eq,ne,cs,hs,cc,lo,mi,pl,vs,vc,hi,ls,ge,lt,gt,le,al,nv}, ∀ imm ∈ {k·4 | k ∈ ℤ, −1048576 ≤ k·4 ≤ 1048572}. encode_cond_branch(cond, [Imm(imm)]) = Word(w) ∧ w = llvm-mc(`b.{cond} #imm`)
+**Contract evidence:** documented compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" plus README.md:12 gas contract — ARM/gas/llvm-mc all accept a 19-bit immediate displacement
+**Documentation conflict:** (none) — the encoding comment states imm19 is part of the instruction; the code never handles Imm
 **Severity:** high
-**Counterexample:** encode_mov([Reg("w0"), Reg("wsp")]) then compare to llvm-mc `mov w0, wsp`
-**Expected / Actual:** Word(0x110003e0) ADD W0, WSP, #0 / Word(0x2a1f03e0) ORR W0, WZR, WZR
-**Impact:** 32-bit stack-pointer moves assemble as WZR operations, so generated `mov w0, wsp` / `mov wsp, w0` do not touch WSP
-**Root cause:** data_processing.rs:129 compares only the exact name `sp`, so `wsp` falls through to ORR where register 31 is WZR
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:129`
+**Counterexample:** encode_cond_branch("eq", [Imm(-1048576)]) — `b.eq #-1048576`
+**Expected / Actual:** Word matching llvm-mc 0x54800000 / Err("expected symbol at operand 0, got Some(Imm(-1048576))")
+**Impact:** Immediate-form conditional branches that GNU as and llvm-mc assemble (`b.eq #0`, `b.ne #4`, …) cannot be produced by this encoder.
+**Root cause:** compare_branch.rs:199 always calls get_symbol, which has no Operand::Imm arm, so every immediate form is rejected instead of encoding 01010100 imm19 0 cond.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:199`
 ```rust
-        if rd_name.to_lowercase() == "sp" || rm_name.to_lowercase() == "sp" {
-            let sf = sf_bit(is_64);
-            // ADD Xd, Xn, #0: sf 0 0 10001 00 imm12=0 Rn Rd
-            let word = ((sf << 31) | (0b10001 << 24)) | (rm << 5) | rd;
-            return Ok(EncodeResult::Word(word));
+    let (sym, addend) = get_symbol(operands, 0)?;
+```
+**Suggested fix:** Handle Operand::Imm: require a 4-byte-aligned offset in [-1048576, 1048572] and emit Word with imm19 = imm/4.
+```rust
+    if let Some(Operand::Imm(imm)) = operands.get(0) {
+        if operands.len() != 1 {
+            return Err(format!("b.{}: extra operand", cond));
         }
-```
-**Suggested fix:** Treat `wsp` like `sp`.
-```rust
-        let rd_l = rd_name.to_lowercase();
-        let rm_l = rm_name.to_lowercase();
-        if rd_l == "sp" || rd_l == "wsp" || rm_l == "sp" || rm_l == "wsp" {
-```
-**Bug report:** bug_reports/encode_mov_wsp_as_wzr.md
-**Repro seed:** rd = 31, rm = 0, is_64 = false, rd_sp = true, rm_sp = false
-**Raw output:**
-```text
-mismatch for mov wsp, w0
-left: 704644095 right: 285212703
-```
-
-### B2: encode_mov ignores extra operands
-
-**Formal:** ∀ rd,rm ∈ 0..30, extra. encode_mov([Reg("x"+rd), Reg("x"+rm), extra]) = Err(_)
-**Contract evidence:** inferred (GNU as rejects extra operands; README.md:12 gas contract)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_mov([Reg("x0"), Reg("x0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0xaa0003e0))
-**Impact:** Trailing junk after a valid MOV is silently dropped
-**Root cause:** data_processing.rs:7 only rejects len < 2
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:7`
-```rust
-    if operands.len() < 2 {
-        return Err("mov requires 2 operands".to_string());
+        if imm % 4 != 0 || *imm < -1_048_576 || *imm > 1_048_572 {
+            return Err(format!("b.{} offset {} unaligned or out of range", cond, imm));
+        }
+        let imm19 = ((*imm as i32) >> 2) as u32 & 0x7ffff;
+        return Ok(EncodeResult::Word((0b01010100 << 24) | (imm19 << 5) | cond_val));
     }
+    let (sym, addend) = get_symbol(operands, 0)?;
 ```
-**Suggested fix:**
+**Bug report:** bug_reports/encode_cond_branch_imm_offset.md
+**Repro seed:** cc c4c8a4a11772a960febcea7927a7b6864b93d2b36271b77ac170ddb03c77b231
+**Raw output:** Test failed: SUT rejected valid B.cond b.eq #-1048576: Err("expected symbol at operand 0, got Some(Imm(-1048576))"). minimal failing input: cond = "eq", imm = -1048576
+
+### B2: encode_cond_branch ignores extra operands
+
+**Formal:** ∀ cond ∈ 18 names, ∀ s, ∀ extra ∈ {Reg,Imm,Symbol,Mem}. encode_cond_branch(cond, [Symbol(s), extra]) is Err
+**Contract evidence:** inferred (README.md:12 gas contract; llvm-mc/gas reject a second operand on b.eq)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_cond_branch("eq", [Symbol("labl0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(WordWithReloc CondBr19 labl0)
+**Impact:** `b.eq foo, x0` is assembled as `b.eq foo`; invalid assembly is silently accepted.
+**Root cause:** compare_branch.rs:199-209 calls get_symbol(operands, 0) and returns success without checking operands.len().
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:199`
 ```rust
-    if operands.len() != 2 {
-        return Err("mov requires 2 operands".to_string());
+    let (sym, addend) = get_symbol(operands, 0)?;
+```
+**Suggested fix:** Reject any operand list whose length is not exactly 1.
+```rust
+    if operands.len() != 1 {
+        return Err(format!("b.{}: expected 1 operand, got {}", cond, operands.len()));
     }
+    let (sym, addend) = get_symbol(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_mov_extra_operand.md
-**Repro seed:** rd = 0, rm = 0, extra = Reg("x0")
-**Raw output:**
-```text
-extra operand must Err, got Ok(Word(2852127712))
-```
+**Bug report:** bug_reports/encode_cond_branch_extra_operand.md
+**Repro seed:** (deterministic; fails on first case cond="eq", suffix=0, which=0)
+**Raw output:** Test failed: b.eq label, extra (which=0) must Err (llvm-mc: invalid operand). minimal failing input: cond = "eq", suffix = 0, which = 0
 
-### B3: encode_mov accepts mixed X/W
+### B3: encode_cond_branch accepts :lo12: modifiers as branch targets
 
-**Formal:** ∀ rd,rm ∈ 0..30. encode_mov([Reg("x"+rd), Reg("w"+rm)]) = Err(_)
-**Contract evidence:** inferred (GNU as operand mismatch; README.md:12 gas contract)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_mov([Reg("x0"), Reg("w0")])
-**Expected / Actual:** Err / Ok(Word(0xaa0003e0))
-**Impact:** `mov x0, w0` becomes 64-bit `mov x0, x0`
-**Root cause:** data_processing.rs:127 takes sf only from Rd
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:127`
-```rust
-        let is_64 = is_64bit_reg(rd_name);
-```
-**Suggested fix:**
-```rust
-        if is_64bit_reg(rd_name) != is_64bit_reg(rm_name) {
-            return Err("mov requires matching register widths".to_string());
-        }
-```
-**Bug report:** bug_reports/encode_mov_mixed_width.md
-**Repro seed:** rd = 0, rm = 0
-**Raw output:**
-```text
-mixed width must Err, got Ok(Word(2852127712))
-```
-
-### B4: encode_mov encodes FP scalar as integer ORR
-
-**Formal:** ∀ n ∈ 0..31. encode_mov([Reg("d"+n), Reg("d"+(n+1)%32)]) = Err(_)
-**Contract evidence:** inferred (GNU as requires SIMD vector element; README.md:12 gas contract)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_mov([Reg("d0"), Reg("d1")])
-**Expected / Actual:** Err / Ok(Word(0x2a0103e0))
-**Impact:** `mov d0, d1` assembles as `mov w0, w1`
-**Root cause:** parse_reg_num accepts `d` prefixes; integer MOV path does not reject FP names
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:123`
-```rust
-    if let (Some(Operand::Reg(rd_name)), Some(Operand::Reg(rm_name))) = (operands.first(), operands.get(1)) {
-        let rd = parse_reg_num(rd_name).ok_or("invalid rd")?;
-        let rm = parse_reg_num(rm_name).ok_or("invalid rm")?;
-        let is_64 = is_64bit_reg(rd_name);
-```
-**Suggested fix:**
-```rust
-        if is_fp_reg(rd_name) || is_fp_reg(rm_name) {
-            return Err("integer mov does not accept FP/SIMD registers".to_string());
-        }
-```
-**Bug report:** bug_reports/encode_mov_fp_as_gpr.md
-**Repro seed:** fp_n = 0
-**Raw output:**
-```text
-FP scalar mov must Err, got Ok(Word(704709600))
-```
-
-### B5: encode_mov encodes mov sp, #imm as MOVZ XZR
-
-**Formal:** ∀ imm. encode_mov([Reg("sp"), Imm(imm)]) = Err(_)
-**Contract evidence:** inferred (llvm-mc/gas reject `mov sp, #0`; MOV wide-immediate Rd cannot be SP)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_mov([Reg("sp"), Imm(0)])
-**Expected / Actual:** Err / Ok(Word(0xd28003ff))
-**Impact:** `mov sp, #0` becomes `mov xzr, #0`
-**Root cause:** immediate path maps `sp` to register 31 via get_reg and encodes MOVZ
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:87`
-```rust
-        let (rd, is_64) = get_reg(operands, 0)?;
-        let imm = *imm;
-```
-**Suggested fix:** Reject SP/WSP as the destination of a wide-immediate MOV.
-```rust
-        if matches!(operands.first(), Some(Operand::Reg(n)) if {
-            let n = n.to_lowercase(); n == "sp" || n == "wsp"
-        }) {
-            return Err("mov immediate destination cannot be SP".to_string());
-        }
-```
-**Bug report:** bug_reports/encode_mov_sp_imm.md
-**Repro seed:** imm = 0
-**Raw output:**
-```text
-mov sp, #imm must Err, got Ok(Word(3531603999))
-```
-
-### B6: encode_mov wraps out-of-range NEON lane indices
-
-**Formal:** ∀ vd ∈ 0..31, rm ∈ 0..30, idx ∈ 16..31. encode_mov([RegLane(v_vd, b, idx), Reg("w"+rm)]) = Err(_)
-**Contract evidence:** inferred (llvm-mc: vector lane must be in [0, 15] for .b)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_mov([RegLane { v0, b, 16 }, Reg("w0")])
-**Expected / Actual:** Err / Ok(Word(0x4e010c00)) INS V0.B[0], W0
-**Impact:** Out-of-range lanes silently insert into lane 0
-**Root cause:** data_processing.rs:36 uses `*index & 0xF` instead of a range check
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:36`
-```rust
-            "b" => ((*index & 0xF) << 1) | 0b00001,
-            "h" => ((*index & 0x7) << 2) | 0b00010,
-            "s" => ((*index & 0x3) << 3) | 0b00100,
-            "d" => ((*index & 0x1) << 4) | 0b01000,
-```
-**Suggested fix:** Error when index exceeds the per-size maximum.
-```rust
-            "b" if *index <= 15 => (*index << 1) | 0b00001,
-```
-**Bug report:** bug_reports/encode_mov_lane_oob.md
-**Repro seed:** vd = 0, rm = 0, idx = 16
-**Raw output:**
-```text
-lane OOB must Err, got Ok(Word(1308695552))
-```
-
-### B7: encode_mov accepts mismatched NEON arrangements
-
-**Formal:** ∀ vd,vn ∈ 0..31. encode_mov([RegArrangement(vd,16b), RegArrangement(vn,8b)]) = Err(_)
-**Contract evidence:** documented data_processing.rs:11 "mov v1.16b, v0.16b -> ORR v1.16b, v0.16b, v0.16b" (matching T)
+**Formal:** ∀ cond ∈ 18 names. encode_cond_branch(cond, [Modifier{lo12, foo}|ModifierOffset{lo12, foo, 8}]) is Err
+**Contract evidence:** inferred (README.md:12 gas contract; llvm-mc/gas reject b.eq :lo12:foo)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_mov([RegArrangement(v0,16b), RegArrangement(v0,8b)])
-**Expected / Actual:** Err / Ok(Word(0x4ea01c00))
-**Impact:** 16b dest with 8b source is encoded as 16-byte ORR
-**Root cause:** source arrangement is bound as `_arr_m` and never compared
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:13`
+**Counterexample:** encode_cond_branch("eq", [Modifier { kind: "lo12", symbol: "foo" }])
+**Expected / Actual:** Err / Ok(WordWithReloc CondBr19 symbol foo addend 0)
+**Impact:** `:lo12:` is dropped and the inner symbol is used as a CondBr19 target, which is not a valid B.cond addressing mode.
+**Root cause:** compare_branch.rs:199 calls get_symbol, whose Modifier/ModifierOffset arms return the inner symbol and drop the modifier kind.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:199`
 ```rust
-            Some(Operand::RegArrangement { reg: rm_name, arrangement: _arr_m })) =
-        (operands.first(), operands.get(1))
+    let (sym, addend) = get_symbol(operands, 0)?;
 ```
-**Suggested fix:** Require `arr_d == arr_m` and T ∈ {8b,16b}.
+**Suggested fix:** Reject Operand::Modifier and Operand::ModifierOffset before calling get_symbol.
 ```rust
-        if arr_d != arr_m || (arr_d != "8b" && arr_d != "16b") {
-            return Err("mov vector arrangements must match 8b or 16b".to_string());
+    match operands.get(0) {
+        Some(Operand::Modifier { .. }) | Some(Operand::ModifierOffset { .. }) => {
+            return Err(format!("b.{} does not take a relocation modifier", cond));
         }
+        _ => {}
+    }
+    let (sym, addend) = get_symbol(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_mov_arr_mismatch.md
-**Repro seed:** vd = 0, vn = 0
-**Raw output:**
-```text
-16b vs 8b must Err, got Ok(Word(1319115776))
-```
-
-### B8: encode_mov encodes 4s vector MOV with Q=0
-
-**Formal:** ∀ vd,vn ∈ 0..31. encode_mov([RegArrangement(vd,4s), RegArrangement(vn,4s)]) = Err(_)
-**Contract evidence:** documented README.md:12 gas (gas rejects 4s); data_processing.rs:11 uses 16b for Q=1
-**Documentation conflict:** (none) — gas rejects 4s; llvm-mc would use Q=1. SUT Q=0 is wrong under both
-**Severity:** high
-**Counterexample:** encode_mov([RegArrangement(v0,4s), RegArrangement(v0,4s)])
-**Expected / Actual:** Err (gas) / Ok(Word(0x0ea01c00)) Q=0
-**Impact:** A 128-bit 4s move only updates the low 64 bits
-**Root cause:** Q is 1 only when arr_d == "16b"
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:18`
-```rust
-        let q: u32 = if arr_d == "16b" { 1 } else { 0 };
-```
-**Suggested fix:**
-```rust
-        let q: u32 = match arr_d.as_str() {
-            "16b" => 1,
-            "8b" => 0,
-            _ => return Err(format!("mov vector arrangement must be 8b or 16b, got {arr_d}")),
-        };
-```
-**Bug report:** bug_reports/encode_mov_vec_4s.md
-**Repro seed:** vd = 0, vn = 0
-**Raw output:**
-```text
-gas-invalid 4s vector mov must Err, got Ok(Word(245373952))
-```
-
-### B9: encode_mov truncates a 64-bit immediate on a W destination
-
-**Formal:** ∀ rd ∈ 0..30, imm with high 32 bits nonzero. encode_mov([Reg("w"+rd), Imm(imm)]) = Err(_)
-**Contract evidence:** inferred (GNU as "immediate cannot be moved by a single instruction"; README.md:12 gas contract)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_mov([Reg("w0"), Imm(0x0101010101010101)])
-**Expected / Actual:** Err / Ok(Word(0x3200c3e0)) ORR W0, WZR, #0x01010101
-**Impact:** A 64-bit repeating pattern on W is silently truncated to 32 bits
-**Root cause:** encode_bitmask_imm(imm as u64, is_64=false) masks to 32 bits and succeeds
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:110`
-```rust
-        if let Some((n, immr, imms)) = encode_bitmask_imm(imm as u64, is_64) {
-            let sf = sf_bit(is_64);
-            // ORR Rd, XZR, #imm: sf 01 100100 N immr imms 11111 Rd
-            let word = (sf << 31) | (0b01 << 29) | (0b100100 << 23) | (n << 22) | (immr << 16) | (imms << 10) | (0b11111 << 5) | rd;
-```
-**Suggested fix:** Reject W dest immediates that are not a 32-bit zero- or sign-extended value.
-```rust
-        if !is_64 && (imm as u64) > 0xFFFF_FFFF && (imm as i64) != (imm as i32) as i64 {
-            return Err("32-bit mov immediate out of range".to_string());
-        }
-```
-**Bug report:** bug_reports/encode_mov_w_large_imm.md
-**Repro seed:** rd = 0, imm = 72340172838076673
-**Raw output:**
-```text
-W dest with 64-bit imm must Err, got Ok(Word(838910944))
-```
-
-### B10: encode_mov WSP form is not ADD layout (same defect as B1, invariant oracle)
-
-**Formal:** ∀ rd,rm ∈ 0..31, is_64. WSP/SP ⇒ ADD layout (op=0,S=0,opc=10001,imm12=0). else ⇒ ORR layout (opc=01, 01010, N=0, Rn=31)
-**Contract evidence:** documented data_processing.rs:129 "Check for MOV to/from SP: uses ADD Xd, Xn, #0"
-**Documentation conflict:** data_processing.rs:129 names `sp` only — it does not declare `wsp` invalid
-**Severity:** high
-**Counterexample:** encode_mov([Reg("wsp"), Reg("w0")]) does not have ADD S=0 (encodes ORR)
-**Expected / Actual:** ADD S=0 / S bit reads as 1 (ORR encoding)
-**Impact:** Same as B1 — 32-bit SP moves are not ADD
-**Root cause:** data_processing.rs:129 compares only the exact name `sp`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:129`
-```rust
-        if rd_name.to_lowercase() == "sp" || rm_name.to_lowercase() == "sp" {
-```
-**Suggested fix:** Treat `wsp` like `sp` (same as B1).
-```rust
-        let rd_l = rd_name.to_lowercase();
-        let rm_l = rm_name.to_lowercase();
-        if rd_l == "sp" || rd_l == "wsp" || rm_l == "sp" || rm_l == "wsp" {
-```
-**Bug report:** bug_reports/encode_mov_wsp_add_layout.md
-**Repro seed:** rd = 0, imm = 72340172838076673
-**Raw output:**
-```text
-W dest with 64-bit imm must Err, got Ok(Word(838910944))
-```
+**Bug report:** bug_reports/encode_cond_branch_modifier.md
+**Repro seed:** (deterministic; fails on first case cond="eq", which=0)
+**Raw output:** Test failed: b.eq :lo12:foo must Err (which=0); llvm-mc/gas reject modifiers. minimal failing input: cond = "eq", which = 0
 
 ## Design Caveats
 
-- MOVZ vs MOVN vs ORR-bitmask alias encodings of the same immediate follow README.md:287 search order (unshifted MOVZ, unshifted MOVN, then bitmask) rather than llvm-mc preferred shifted MOVZ. User-visible register value agrees. Doc evidence: README.md:287 "first tries single-instruction encodings (MOVZ for 0..0xFFFF, MOVN for bitwise-NOT in 16-bit range, ORR with bitmask immediate...)".
-- README.md:287 asserts movz+movk expansion for immediates gas/llvm-mc reject as a single `mov`. That extension is tested by reconstructing the ARM move-wide fields, not by requiring llvm-mc to accept the original `mov`. Doc evidence: README.md:287-291.
+(none)
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_mov_pbt.rs | 15 properties + 7 KAT + 9 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs | 11 properties + 4 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_cond_branch_pbt` registration |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_mov_ -- --test-threads=1
+cargo test --lib encode_cond_branch -- --test-threads=1
 ```
 
-Per-bug:
+B1 immediate offset:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mov_regression_wsp -- --test-threads=1
-cargo test --lib test_encode_mov_regression_extra_operand -- --test-threads=1
-cargo test --lib test_encode_mov_regression_mixed_width -- --test-threads=1
-cargo test --lib test_encode_mov_regression_fp_scalar -- --test-threads=1
-cargo test --lib test_encode_mov_regression_sp_imm -- --test-threads=1
-cargo test --lib test_encode_mov_regression_lane_oob -- --test-threads=1
-cargo test --lib test_encode_mov_regression_arr_mismatch -- --test-threads=1
-cargo test --lib test_encode_mov_regression_vec_4s -- --test-threads=1
-cargo test --lib test_encode_mov_regression_w_large_imm -- --test-threads=1
+cargo test --lib encode_cond_branch_diff_imm_llvm_mc -- --test-threads=1
 ```
 
-Build command as run: `cargo test --lib encode_mov_ -- --test-threads=1` in `/home/toan/github/claudes-c-compiler`.
+B2 extra operand:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_cond_branch_neg_extra_operand -- --test-threads=1
+```
+
+B3 modifier:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_cond_branch_neg_modifier -- --test-threads=1
+```
 
 ## Output Directories
 
@@ -354,24 +149,26 @@ Build command as run: `cargo test --lib encode_mov_ -- --test-threads=1` in `/ho
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_mov_wsp_as_wzr.md (+ .html)
-- pbt-out/bug_reports/encode_mov_extra_operand.md (+ .html)
-- pbt-out/bug_reports/encode_mov_mixed_width.md (+ .html)
-- pbt-out/bug_reports/encode_mov_fp_as_gpr.md (+ .html)
-- pbt-out/bug_reports/encode_mov_sp_imm.md (+ .html)
-- pbt-out/bug_reports/encode_mov_lane_oob.md (+ .html)
-- pbt-out/bug_reports/encode_mov_arr_mismatch.md (+ .html)
-- pbt-out/bug_reports/encode_mov_vec_4s.md (+ .html)
-- pbt-out/bug_reports/encode_mov_w_large_imm.md (+ .html)
+- pbt-out/INVARIANTS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_cond_branch_imm_offset.md
+- pbt-out/bug_reports/encode_cond_branch_imm_offset.html
+- pbt-out/bug_reports/encode_cond_branch_extra_operand.md
+- pbt-out/bug_reports/encode_cond_branch_extra_operand.html
+- pbt-out/bug_reports/encode_cond_branch_modifier.md
+- pbt-out/bug_reports/encode_cond_branch_modifier.html
+- pbt-out/build.log
+- pbt-out/run/ (scratch; cargo used the repo target/ dir)
+
+Tier: standard. Sweep round 1/1 spent (coverage_gaps file-level NOT LINKED; manual body audit + neg_bad_operand / symbol_misclassified / neg_modifier). Closed: every documented behavior of encode_cond_branch has a property; remaining gaps are the three filed bugs.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 11:13 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 179/307 total | PBT candidates: 179 | Tested: 179 (100%) | 1 pass, 179 fail
+> Last updated: 2026-10-06 11:31 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 180/307 total | PBT candidates: 180 | Tested: 180 (100%) | 1 pass, 180 fail
 
 ## Summary
 
@@ -380,10 +177,10 @@ Build command as run: `cargo test --lib encode_mov_ -- --test-threads=1` in `/ho
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 179 |
-| **Tested (of PBT candidates)** | **179 / 179 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 179 / -1 |
-| **Overall (tested / all functions)** | **179 / 307 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 180 |
+| **Tested (of PBT candidates)** | **180 / 180 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 180 / -1 |
+| **Overall (tested / all functions)** | **180 / 307 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -391,20 +188,20 @@ Build command as run: `cargo test --lib encode_mov_ -- --test-threads=1` in `/ho
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 179 | 179 | 0 | 100% |
+|  | 180 | 180 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 179 | 179 | 0 | 100% |
+| unknown | 180 | 180 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 20 | 20 | 100% | covered |
+| compare_branch.rs | 21 | 21 | 21 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
@@ -599,3 +396,4 @@ Build command as run: `cargo test --lib encode_mov_ -- --test-threads=1` in `/ho
 | encode_ldnp_stnp | load_store.rs |
 | encode_adrp | load_store.rs |
 | encode_mov | data_processing.rs |
+| encode_cond_branch | compare_branch.rs |

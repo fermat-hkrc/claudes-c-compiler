@@ -1,433 +1,312 @@
-# Properties: encode_mov
+# Properties: encode_cond_branch
 
-## encode_mov_diff_gpr_reg
-- Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc/gas on integer register MOV (ORR XZR / ADD SP). State machine rejected (pure function). Round-trip rejected (no MOV decoder). encode_movz/orr siblings rejected (same-job gate).
-- Doc contract: data_processing.rs:123 "mov Xd, Xm -> ORR Xd, XZR, Xm" — asserted fingerprint 901d3010; data_processing.rs:129 "Check for MOV to/from SP: uses ADD Xd, Xn, #0" — asserted fingerprint f4ba2f4a; README.md:12 "It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint f00ab438
-- Seed: data_processing.rs encode_movk_pbt llvm-mc GPR mapping
-- Formal: ∀ rd,rm ∈ 0..31, is_64 ∈ {0,1}, rd_sp,rm_sp ∈ {0,1}. encode_mov([Reg(gpr(is_64,rd,rd_sp)), Reg(gpr(is_64,rm,rm_sp))]) = Word(llvm-mc("mov Rd, Rm"))
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
+## encode_cond_branch_diff_imm_llvm_mc
+- Tier: 3
+- Rationale: Strongest applicable is Differential vs llvm-mc (independent AArch64 assembler). State machine rejected (pure function). Round-trip rejected (no in-tree B.cond decoder). encode_branch/cbz/tbz rejected (different jobs). ARM ARM B.cond accepts a PC-relative immediate offset, multiple of 4, in ±1 MiB; gas and llvm-mc assemble `b.{cond} #imm`.
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs encode_branch_diff_imm_llvm_mc
+- Formal: ∀ cond ∈ {eq,ne,cs,hs,cc,lo,mi,pl,vs,vc,hi,ls,ge,lt,gt,le,al,nv}, ∀ imm ∈ {k·4 | k ∈ ℤ, −1048576 ≤ k·4 ≤ 1048572}. encode_cond_branch(cond, [Imm(imm)]) = Word(w) ∧ w = llvm-mc(`b.{cond} #imm`)
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
 - Status: failing
-- Counterexample: encode_mov([Reg("wsp"), Reg("w0")]) → Word(0x2a0003ff) vs llvm-mc Word(0x1100031f)
-- Bug report: pbt-out/bug_reports/encode_mov_wsp_as_wzr.md
+- Counterexample: cond = "eq", imm = -1048576 (b.eq #-1048576)
+- Bug report: pbt-out/bug_reports/encode_cond_branch_imm_offset.md
 
 ```property
-function: encode_mov
+function: encoder.compare_branch.encode_cond_branch
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rm, is_64, rd_sp, rm_sp]
-  domain: { rd: 0..31, rm: 0..31, is_64: bool, rd_sp: bool, rm_sp: bool }
+  vars: [cond, imm]
+  domain: { cond: cond16, imm: aligned_imm19 }
   relation:
     op: eq
-    lhs: encode_mov([Reg(gpr(is_64,rd,rd_sp)), Reg(gpr(is_64,rm,rm_sp))])
-    rhs: Word(llvm_mc("mov " + gpr(is_64,rd,rd_sp) + ", " + gpr(is_64,rm,rm_sp)))
+    lhs: encode_cond_branch(cond, [Imm(imm)])
+    rhs: llvm_mc_word("b.{cond} #{imm}")
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  rd_sp: { gen: bool }
-  rm_sp: { gen: bool }
-evidence: README.md:12 gas contract; data_processing.rs:123,129
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  imm: { gen: int, min: -1048576, max: 1048572, type: i64 }
+evidence: compare_branch.rs:200 README.md:12 README.md:220
 ```
 
-## encode_mov_diff_imm
-- Tier: 5
-- Rationale: Differential vs llvm-mc on width-appropriate MOV immediates. Alias encodings (MOVZ vs MOVN vs ORR-bitmask) of the same materialized value are allowed by README.md:287 search order. Words vs llvm-mc-reject uses ARM move-wide reconstruct (README expansion).
-- Doc contract: data_processing.rs:85 "mov Xd, #imm -> movz or movn" — asserted fingerprint db7801db; README.md:287 "Wide immediates: `mov Xd, #large` first tries single-instruction encodings" — asserted fingerprint 36936730
-- Seed: encode_movz_pbt / encode_movk_pbt immediate mapping
-- Formal: ∀ rd ∈ 0..30, (is_64, imm) ∈ width-appropriate domain. llvm-mc("mov Rd, #imm")=w ∧ encode_mov=Word(s) ⇒ s=w ∨ materialized(s)=imm. llvm-mc rejects ∧ encode_mov=Words(ws) ⇒ reconstruct(ws)=imm
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
+## encode_cond_branch_diff_reloc_eq_imm0
+- Tier: 3
+- Rationale: Reloc-form word (imm19=0) must equal llvm-mc `b.{cond} #0`. Differential vs llvm-mc.
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs encode_branch_kat_symbol_foo
+- Formal: ∀ cond ∈ 18 names, ∀ s. encode_cond_branch(cond, [Symbol(s)]) = WordWithReloc{word: w, …} ∧ w = llvm-mc(`b.{cond} #0`)
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov
+function: encoder.compare_branch.encode_cond_branch
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, is_64, imm]
-  domain: { rd: 0..30, (is_64, imm): width-appropriate mov immediates }
+  vars: [cond, s]
+  domain: { cond: cond16, s: symbol }
   relation:
     op: eq
-    lhs: materialized(encode_mov([Reg(gpr(is_64,rd,false)), Imm(imm)]))
-    rhs: imm
+    lhs: word_of(encode_cond_branch(cond, [Symbol(s)]))
+    rhs: llvm_mc_word("b.{cond} #0")
 generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  imm: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-evidence: README.md:12; README.md:287; data_processing.rs:85
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  s: { gen: string, type: String }
+evidence: compare_branch.rs:200 README.md:267
 ```
 
-## encode_mov_diff_neon
-- Tier: 5
-- Rationale: Differential vs llvm-mc on NEON MOV aliases documented at data_processing.rs:11/24/46/64 (vector ORR 8b/16b, INS from GPR, UMOV to GPR .s/.d, INS element).
-- Doc contract: data_processing.rs:11 "NEON register-to-register move: mov v1.16b, v0.16b -> ORR v1.16b, v0.16b, v0.16b" — asserted fingerprint 17a6a52e
-- Seed: encode_neon_ins_pbt / encode_neon_umov_pbt
-- Formal: ∀ valid NEON MOV form F ∈ {8b/16b vector, INS-GPR, UMOV S/D, INS-elem}. encode_mov(ops(F)) = Word(llvm-mc(asm(F)))
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_mov
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [form]
-  domain: { form: neon_mov_forms }
-  relation:
-    op: eq
-    lhs: encode_mov(ops(form))
-    rhs: Word(llvm_mc(asm(form)))
-generators:
-  form: { gen: oneof }
-evidence: data_processing.rs:11,24,46,64; README.md:293
-```
-
-## encode_mov_metamorphic_sf
+## encode_cond_branch_symbol_reloc
 - Tier: 4
-- Rationale: Algebraic metamorphic: same rd/rm numbers, X vs W (neither SP), register MOV words differ only in sf bit 31.
-- Doc contract: README.md size-inference paragraph — asserted (sf from register prefix)
-- Seed: encode_movk_pbt encode_movk_metamorphic_sf
-- Formal: ∀ rd,rm ∈ 0..30. encode_mov(Xrd,Xrm) XOR encode_mov(Wrd,Wrm) = 1<<31
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
+- Rationale: README.md:267/458 and compare_branch.rs:204-207 assert CondBr19 (ELF 280) with the symbol and addend preserved.
+- Doc contract: README.md:458 "All branch-type relocations (B, BL, B.cond, CBZ/CBNZ, TBZ/TBNZ) are deferred" — asserted fingerprint f35fd13e
+- Seed: compare_branch.rs encode_cbz_symbol_reloc
+- Formal: ∀ cond ∈ 18 names, ∀ s, ∀ a ∈ ℤ. encode_cond_branch(cond, [Symbol(s)|Label(s)]) = WordWithReloc{reloc: CondBr19, symbol: s, addend: 0, elf_type: 280} ∧ encode_cond_branch(cond, [SymbolOffset(s,a)]) has addend = a
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rm]
-  domain: { rd: 0..30, rm: 0..30 }
-  relation:
-    op: eq
-    lhs: encode_mov([Reg("x"+rd), Reg("x"+rm)]) XOR encode_mov([Reg("w"+rd), Reg("w"+rm)])
-    rhs: 1 << 31
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-evidence: README.md size-inference sf bit; ARM ARM ORR sf
-```
-
-## encode_mov_invariant_arm_fields
-- Tier: 4
-- Rationale: Algebraic invariant from ARM ARM / inline comments: non-SP register MOV is ORR Rd,XZR,Rm; SP/WSP form is ADD Rd,Rn,#0.
-- Doc contract: data_processing.rs:123 "mov Xd, Xm -> ORR Xd, XZR, Xm" — asserted fingerprint 901d3010; data_processing.rs:129 "Check for MOV to/from SP: uses ADD Xd, Xn, #0" — asserted fingerprint f4ba2f4a
-- Seed: encode_movk_pbt encode_movk_invariant_arm_fields
-- Formal: ∀ rd,rm ∈ 0..31, is_64. WSP/SP ⇒ ADD layout (op=0,S=0,opc=10001,imm12=0). else ⇒ ORR layout (opc=01, 01010, N=0, Rn=31)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([Reg("wsp"), Reg("w0")]) does not have ADD S=0 (encodes ORR)
-- Bug report: pbt-out/bug_reports/encode_mov_wsp_add_layout.md
-
-```property
-function: encode_mov
+function: encoder.compare_branch.encode_cond_branch
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rm, is_64, rd_sp, rm_sp]
-  domain: { rd: 0..31, rm: 0..31 }
+  vars: [cond, s, a]
+  domain: { cond: cond16, s: symbol, a: addend }
   relation:
     op: holds
-    expr: arm_orr_or_add_layout(encode_mov(ops))
+    expr: reloc_is_condbr19(encode_cond_branch(cond, [Symbol(s)])) && reloc_is_condbr19(encode_cond_branch(cond, [Label(s)])) && reloc_addend(encode_cond_branch(cond, [SymbolOffset(s, a)])) == a
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  rd_sp: { gen: bool }
-  rm_sp: { gen: bool }
-evidence: data_processing.rs:123,129; ARM ARM C6 MOV (register) / ADD (immediate)
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  s: { gen: string, type: String }
+  a: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: README.md:267 README.md:458 compare_branch.rs:204
 ```
 
-## encode_mov_neg_arity
-- Tier: 3
-- Rationale: Negative/error: body returns Err when operands.len() < 2.
-- Doc contract: data_processing.rs:7-8 arity lower bound — asserted
-- Seed: encode_movk_pbt encode_movk_neg_too_few
-- Formal: ∀ ops. |ops| ∈ {0,1} ⇒ encode_mov(ops) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
+## encode_cond_branch_word_layout
+- Tier: 4
+- Rationale: ARM ARM / compare_branch.rs:200: bits[31:24]=01010100, imm19 at [23:5] is 0 in reloc form, bit 4 is 0, cond at [3:0].
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs encode_branch_word_layout
+- Formal: ∀ cond ∈ 18 names, ∀ s. let w = word(encode_cond_branch(cond, [Symbol(s)])). (w>>24)=0x54 ∧ ((w>>4)&1)=0 ∧ ((w>>5)&0x7FFFF)=0 ∧ (w&0xF)∈0..15
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov
-oracle: negative_error
+function: encoder.compare_branch.encode_cond_branch
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [ops]
-  domain: { ops: lists of length 0 or 1 }
+  vars: [cond, s]
+  domain: { cond: cond16, s: symbol }
   relation:
-    op: throws
-    expr: encode_mov(ops)
-    error: String
+    op: holds
+    expr: arm_bcond_layout(word_of(encode_cond_branch(cond, [Symbol(s)])))
 generators:
-  ops: { gen: list, maxLen: 1 }
-expected_error: String
-evidence: data_processing.rs:7-8; GNU as rejects 0/1-operand mov
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  s: { gen: string, type: String }
+evidence: compare_branch.rs:200
 ```
 
-## encode_mov_neg_extra
-- Tier: 3
-- Rationale: Negative/error under README.md:12 gas contract. GNU as rejects extra operands.
-- Doc contract: README.md:12 "It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint f00ab438
-- Seed: encode_movk_pbt encode_movk_neg_extra_operand
-- Formal: ∀ rd,rm ∈ 0..30, extra. encode_mov([Reg(Xrd), Reg(Xrm), extra]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([Reg("x0"), Reg("x0"), Reg("x0")]) → Ok(Word(0xaa0003e0))
-- Bug report: pbt-out/bug_reports/encode_mov_extra_operand.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rm, extra]
-  domain: { rd: 0..30, rm: 0..30 }
-  relation:
-    op: throws
-    expr: encode_mov([Reg("x"+rd), Reg("x"+rm), extra])
-    error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: README.md:12; GNU as extra-operand rejection
-```
-
-## encode_mov_neg_mixed
-- Tier: 3
-- Rationale: Negative/error: gas rejects mixed X/W MOV.
-- Doc contract: README.md:12 gas contract — asserted fingerprint f00ab438
-- Seed: encode_movk_pbt mixed-width negatives
-- Formal: ∀ rd,rm ∈ 0..30. encode_mov([Reg("x"+rd), Reg("w"+rm)]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([Reg("x0"), Reg("w0")]) → Ok(Word(0xaa0003e0))
-- Bug report: pbt-out/bug_reports/encode_mov_mixed_width.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rm]
-  domain: { rd: 0..30, rm: 0..30 }
-  relation:
-    op: throws
-    expr: encode_mov([Reg("x"+rd), Reg("w"+rm)])
-    error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: String
-evidence: README.md:12; GNU as operand mismatch
-```
-
-## encode_mov_neg_fp
-- Tier: 3
-- Rationale: Negative/error: gas rejects `mov d0, d1` (use fmov).
-- Doc contract: README.md:12 gas contract — asserted fingerprint f00ab438
-- Seed: encode_movk_pbt encode_movk_neg_fp
-- Formal: ∀ n ∈ 0..31. encode_mov([Reg("d"+n), Reg("d"+(n+1)%32)]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([Reg("d0"), Reg("d1")]) → Ok(Word(0x2a0103e0))
-- Bug report: pbt-out/bug_reports/encode_mov_fp_as_gpr.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [fp_n]
-  domain: { fp_n: 0..31 }
-  relation:
-    op: throws
-    expr: encode_mov([Reg("d"+fp_n), Reg("d"+(fp_n+1)%32)])
-    error: String
-generators:
-  fp_n: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: README.md:12; GNU as FP-scalar rejection
-```
-
-## encode_mov_neg_sp_imm
-- Tier: 3
-- Rationale: Negative/error: gas/llvm-mc reject `mov sp, #imm` (MOVZ Rd cannot be SP).
-- Doc contract: README.md:12 gas contract — asserted fingerprint f00ab438
-- Seed: encode_movk_pbt encode_movk_neg_sp
-- Formal: ∀ imm. encode_mov([Reg("sp"), Imm(imm)]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([Reg("sp"), Imm(0)]) → Ok(Word(0xd28003ff))
-- Bug report: pbt-out/bug_reports/encode_mov_sp_imm.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [imm]
-  domain: { imm: i64 }
-  relation:
-    op: throws
-    expr: encode_mov([Reg("sp"), Imm(imm)])
-    error: String
-generators:
-  imm: { gen: int, min: -65536, max: 65535, type: i64 }
-expected_error: String
-evidence: README.md:12; llvm-mc/gas reject mov sp, #imm
-```
-
-## encode_mov_neg_lane_oob
-- Tier: 3
-- Rationale: Negative/error: llvm-mc requires lane in [0,15] for .b.
-- Doc contract: README.md:12 gas contract — asserted fingerprint f00ab438
-- Seed: encode_neon_ins_pbt index range
-- Formal: ∀ vd ∈ 0..31, rm ∈ 0..30, idx ∈ 16..31. encode_mov([RegLane(v_vd, b, idx), Reg("w"+rm)]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([RegLane(v0, b, 16), Reg("w0")]) → Ok(Word(0x4e010c00))
-- Bug report: pbt-out/bug_reports/encode_mov_lane_oob.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [vd, rm, idx]
-  domain: { vd: 0..31, rm: 0..30, idx: 16..31 }
-  relation:
-    op: throws
-    expr: encode_mov([RegLane(vd,"b",idx), Reg("w"+rm)])
-    error: String
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  idx: { gen: int, min: 16, max: 31, type: u32 }
-expected_error: String
-evidence: README.md:12; llvm-mc lane range
-```
-
-## encode_mov_neg_arr_mismatch
-- Tier: 3
-- Rationale: Negative/error: llvm-mc rejects `mov v0.16b, v1.8b`.
-- Doc contract: data_processing.rs:11 8b/16b ORR alias — asserted fingerprint 17a6a52e
-- Seed: encode_neon_ins_pbt arrangement match
-- Formal: ∀ vd,vn ∈ 0..31. encode_mov([RegArrangement(vd,16b), RegArrangement(vn,8b)]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([RegArrangement(v0,16b), RegArrangement(v0,8b)]) → Ok(Word(0x4ea01c00))
-- Bug report: pbt-out/bug_reports/encode_mov_arr_mismatch.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [vd, vn]
-  domain: { vd: 0..31, vn: 0..31 }
-  relation:
-    op: throws
-    expr: encode_mov([RegArrangement(vd,"16b"), RegArrangement(vn,"8b")])
-    error: String
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  vn: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: README.md:12; llvm-mc arrangement mismatch
-```
-
-## encode_mov_neg_vec_4s
-- Tier: 3
-- Rationale: Negative/error: GNU as rejects vector MOV except 8b/16b. SUT encodes 4s with Q=0, which is also wrong vs llvm-mc Q=1.
-- Doc contract: README.md:12 gas contract — asserted fingerprint f00ab438; data_processing.rs:11 16b example — asserted fingerprint 17a6a52e
-- Seed: encode_neon vector arrangement
-- Formal: ∀ vd,vn ∈ 0..31. encode_mov([RegArrangement(vd,4s), RegArrangement(vn,4s)]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([RegArrangement(v0,4s), RegArrangement(v0,4s)]) → Ok(Word(0x0ea01c00))
-- Bug report: pbt-out/bug_reports/encode_mov_vec_4s.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [vd, vn]
-  domain: { vd: 0..31, vn: 0..31 }
-  relation:
-    op: throws
-    expr: encode_mov([RegArrangement(vd,"4s"), RegArrangement(vn,"4s")])
-    error: String
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  vn: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: String
-evidence: README.md:12; GNU as 8b/16b-only vector MOV
-```
-
-## encode_mov_neg_w_large_imm
-- Tier: 3
-- Rationale: Negative/error: gas/llvm-mc reject a 64-bit literal on a W dest. SUT truncates via 32-bit bitmask.
-- Doc contract: README.md:12 gas contract — asserted fingerprint f00ab438
-- Seed: encode_mov diff_imm W domain
-- Formal: ∀ rd ∈ 0..30, imm with high 32 bits nonzero and not a 32-bit sign-extend. encode_mov([Reg("w"+rd), Imm(imm)]) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
-- Status: failing
-- Counterexample: encode_mov([Reg("w0"), Imm(0x0101010101010101)]) → Ok(Word(0x3200c3e0))
-- Bug report: pbt-out/bug_reports/encode_mov_w_large_imm.md
-
-```property
-function: encode_mov
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, imm]
-  domain: { rd: 0..30, imm: 64-bit-only literals }
-  relation:
-    op: throws
-    expr: encode_mov([Reg("w"+rd), Imm(imm)])
-    error: String
-generators:
-  rd: { gen: int, min: 0, max: 30, type: u32 }
-  imm: { gen: int, type: i64 }
-expected_error: String
-evidence: README.md:12; GNU as "immediate cannot be moved by a single instruction"
-```
-
-## encode_mov_diff_alt_spellings
-- Tier: 5
-- Rationale: Sweep: lr / uppercase Xn aliases must match llvm-mc (parse_reg_num).
-- Doc contract: README.md:275 register parsing includes lr — asserted
-- Seed: encode_adrp_pbt encode_adrp_diff_alt_spellings
-- Formal: ∀ n,m ∈ 0..30. encode_mov([Reg(alias(n)), Reg(alias(m))]) = Word(llvm-mc("mov alias(n), alias(m)"))
-- Test file: src/backend/arm/assembler/encoder/encode_mov_pbt.rs
+## encode_cond_branch_meta_cond
+- Tier: 4
+- Rationale: ARM ARM condition aliases cs≡hs, cc≡lo; invert of a 4-bit cond is bit 0. Changing cond only mutates bits[3:0].
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs encode_cbz_meta_cbz_vs_cbnz
+- Formal: ∀ s, ∀ a. encode_cond_branch("cs",[SymbolOffset(s,a)]) = encode_cond_branch("hs",[…]) ∧ encode_cond_branch("cc",[…]) = encode_cond_branch("lo",[…]) ∧ ∀ invertible cond. word(cond) XOR word(invert(cond)) = 1 ∧ ∀ cond1,cond2. (word(cond1) XOR word(cond2)) & ~0xF = 0
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov
-oracle: differential
+function: encoder.compare_branch.encode_cond_branch
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, m, use_lr, upper]
-  domain: { n: 0..30, m: 0..30 }
+  vars: [s, a]
+  domain: { s: symbol, a: addend }
   relation:
     op: eq
-    lhs: encode_mov([Reg(alias(n)), Reg(alias(m))])
-    rhs: Word(llvm_mc("mov " + alias(n) + ", " + alias(m)))
+    lhs: encode_cond_branch("cs", [SymbolOffset(s, a)])
+    rhs: encode_cond_branch("hs", [SymbolOffset(s, a)])
 generators:
-  n: { gen: int, min: 0, max: 30, type: u32 }
-  m: { gen: int, min: 0, max: 30, type: u32 }
-evidence: README.md register parsing; parse_reg_num lr / case-fold
+  s: { gen: string, type: String }
+  a: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: README.md:220 ARM ARM condition encodings
+```
+
+## encode_cond_branch_neg_arity
+- Tier: 4
+- Rationale: llvm-mc/gas reject `b.eq` with no operand. Negative/error contract.
+- Doc contract: compare_branch.rs:199 "    let (sym, addend) = get_symbol(operands, 0)?;" — asserted fingerprint 0a538088
+- Seed: compare_branch.rs encode_branch_neg_arity
+- Formal: ∀ cond ∈ 18 names. encode_cond_branch(cond, []) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_cond_branch
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [cond]
+  domain: { cond: cond16 }
+  relation:
+    op: throws
+    expr: encode_cond_branch(cond, [])
+    error: String
+generators:
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+expected_error: String
+evidence: README.md:12 llvm-mc too few operands
+```
+
+## encode_cond_branch_neg_extra_operand
+- Tier: 4
+- Rationale: llvm-mc/gas reject `b.eq label, extra`. No operands.len() guard in the SUT; extra operands must still Err under the gas contract.
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs encode_branch_neg_extra_operand
+- Formal: ∀ cond ∈ 18 names, ∀ s, ∀ extra ∈ {Reg,Imm,Symbol,Mem}. encode_cond_branch(cond, [Symbol(s), extra]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
+- Status: failing
+- Counterexample: cond = "eq", suffix = 0, which = 0 (b.eq labl0, x0)
+- Bug report: pbt-out/bug_reports/encode_cond_branch_extra_operand.md
+
+```property
+function: encoder.compare_branch.encode_cond_branch
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [cond, s, extra]
+  domain: { cond: cond16, s: symbol, extra: extra_operand }
+  relation:
+    op: throws
+    expr: encode_cond_branch(cond, [Symbol(s), extra])
+    error: String
+generators:
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  s: { gen: string, type: String }
+  extra: { gen: int, min: 0, max: 3, type: u32 }
+expected_error: String
+evidence: README.md:12 llvm-mc invalid operand
+```
+
+## encode_cond_branch_neg_unknown_cond
+- Tier: 4
+- Rationale: compare_branch.rs:198 returns Err("unknown condition: {cond}") when encode_cond yields None.
+- Doc contract: compare_branch.rs:198 "    let cond_val = encode_cond(cond).ok_or_else(|| format!("unknown condition: {}", cond))?;" — asserted fingerprint dd207d24
+- Seed: compare_branch.rs encode_cset_neg_unknown_cond
+- Formal: ∀ c ∉ 18 names (non-empty, not a case-variant of those names). encode_cond_branch(c, [Symbol("L")]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_cond_branch
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [c]
+  domain: { c: unknown_cond }
+  relation:
+    op: throws
+    expr: encode_cond_branch(c, [Symbol("L")])
+    error: String
+generators:
+  c: { gen: string, minLen: 1, maxLen: 8, type: String }
+expected_error: String
+evidence: compare_branch.rs:198
+```
+
+## encode_cond_branch_neg_bad_operand
+- Tier: 4
+- Rationale: Sweep: Mem/Shift/Extend/RegArrangement/Expr are not B.cond operands; gas/llvm-mc reject them.
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs encode_branch_neg_bad_operand
+- Formal: ∀ cond ∈ 18 names, ∀ bad ∈ {Mem, Shift, Extend, RegArrangement, Expr}. encode_cond_branch(cond, [bad]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_cond_branch
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [cond, which]
+  domain: { cond: cond16, which: 0..4 }
+  relation:
+    op: throws
+    expr: encode_cond_branch(cond, [bad_operand(which)])
+    error: String
+generators:
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  which: { gen: int, min: 0, max: 4, type: u32 }
+expected_error: String
+evidence: README.md:12 llvm-mc expected label or encodable integer pc offset
+```
+
+## encode_cond_branch_neg_modifier
+- Tier: 4
+- Rationale: Sweep: `:lo12:` modifiers are not valid B.cond operands; gas/llvm-mc reject them. get_symbol currently accepts Modifier.
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs test_encode_branch_regression_modifier
+- Formal: ∀ cond ∈ 18 names. encode_cond_branch(cond, [Modifier{lo12, foo}|ModifierOffset{lo12, foo, 8}]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
+- Status: failing
+- Counterexample: cond = "eq", which = 0 (b.eq :lo12:foo)
+- Bug report: pbt-out/bug_reports/encode_cond_branch_modifier.md
+
+```property
+function: encoder.compare_branch.encode_cond_branch
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [cond, which]
+  domain: { cond: cond16, which: 0..1 }
+  relation:
+    op: throws
+    expr: encode_cond_branch(cond, [modifier(which)])
+    error: String
+generators:
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  which: { gen: int, min: 0, max: 1, type: u32 }
+expected_error: String
+evidence: README.md:12 gas rejects relocation modifiers on B.cond
+```
+
+## encode_cond_branch_symbol_misclassified
+- Tier: 4
+- Rationale: Sweep: get_symbol documents that the parser misclassifies symbol names colliding with Reg/Cond/Barrier; those remain valid B.cond targets (gas accepts `b.eq x0` as a label named x0).
+- Doc contract: compare_branch.rs:200 "B.cond: 01010100 imm19 0 cond" — asserted fingerprint b04d2a9b
+- Seed: compare_branch.rs encode_branch_symbol_misclassified
+- Formal: ∀ cond ∈ 18 names, ∀ name ∈ {eq,ne,lt,gt,sy,ish,st,ld}, ∀ kind ∈ {Reg,Cond,Barrier}. encode_cond_branch(cond, [kind(name)]) = WordWithReloc{CondBr19, symbol: name, addend: 0}
+- Test file: src/backend/arm/assembler/encoder/encode_cond_branch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_cond_branch
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [cond, which, name]
+  domain: { cond: cond16, which: 0..2, name: colliding_names }
+  relation:
+    op: holds
+    expr: reloc_symbol(encode_cond_branch(cond, [misclassified(which, name)])) == name
+generators:
+  cond: { gen: element, of: ["eq","ne","cs","hs","cc","lo","mi","pl","vs","vc","hi","ls","ge","lt","gt","le","al","nv"], type: String }
+  which: { gen: int, min: 0, max: 2, type: u32 }
+  name: { gen: element, of: ["eq","ne","lt","gt","sy","ish","st","ld"], type: String }
+evidence: encoder/mod.rs:1139 parser-misclassified symbols
 ```

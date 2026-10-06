@@ -153,6 +153,8 @@ mod encode_tst_pbt;
 #[cfg(test)]
 mod encode_tbz_pbt;
 #[cfg(test)]
+mod encode_cond_branch_pbt;
+#[cfg(test)]
 mod encode_crc32_pbt;
 #[cfg(test)]
 mod encode_smaddl_pbt;
