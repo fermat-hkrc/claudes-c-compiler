@@ -1,3 +1,38 @@
+# Confirmed invariants (encode_smaddl)
+
+- Valid SMADDL Xd, Wn, Wm, Xa with Rd/Ra in {x0..x30, xzr, x31, lr} and Rn/Rm in {w0..w30, wzr, w31} match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins smaddl x0,w1,w2,x3=0x9b220c20, smaddl xzr,wzr,wzr,xzr=0x9b3f7fff, smaddl x0,w1,w2,xzr=0x9b227c20 (alias smull), smaddl lr,w1,w2,x30=0x9b22783e.
+- ARM SMADDL layout holds: sf=1; bits[30:21]=0011011001; o0=0; Rm/Ra/Rn/Rd match the generated fields (1000 cases).
+- SMADDL with Ra=XZR equals SMULL of the same Xd,Wn,Wm and llvm-mc (1000 cases).
+- SMADDL XOR UMADDL of the same registers = 1<<23 (U bit) (1000 cases).
+- Rd/Rn/Rm/Ra n vs n+1 differ only in that 5-bit field (1000 cases).
+- Arity 0, 1, 2, and 3 return Err (1000 cases).
+- Unparsable names (x32, foo, empty, r0) return Err (sweep, 1000 cases).
+- Non-register operand kinds (Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement) return Err (sweep, 1000 cases).
+- ASCII case-fold / x31 / LR aliases match llvm-mc (sweep, 1000 cases).
+- Extra operands, SP/WSP, wrong W/X widths, and FP/SIMD registers currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_smaddl)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Data-processing (3 source) SMADDL: sf=1 U=0 11011 001 Rm o0=0 Ra Rn Rd. SMULL is the alias with Ra=XZR. Rd/Ra are XZR not SP; Rn/Rm are WZR not WSP.
+- Dispatch: encoder/mod.rs:405 `"smaddl" => encode_smaddl(operands)`.
+- Sibling encode_umaddl is not a same-job differential (U=1 unsigned); used only as metamorphic U-bit XOR. encode_smull is the Ra=XZR alias (shared get_reg / same TU).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 12-line body plus encode_smaddl_neg_fp / encode_smaddl_neg_invalid_name / encode_smaddl_neg_nonreg / encode_smaddl_diff_alt_spellings / encode_smaddl_meta_rd_rn_rm_ra. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_smaddl_*.md.
+
+## Quirks (encode_smaddl)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_smaddl does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- get_reg width is discarded (see bugs).
+- llvm-mc aliases `smaddl x0, w1, w2, xzr` to `smull x0, w1, w2`; encodings still compare.
+- llvm-mc accepts `x31` as XZR/WZR.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 12-line body.
+
 # Confirmed invariants (encode_crc32)
 
 - Valid CRC32/CRC32C (B/H/W with Wd,Wn,Wm and X with Wd,Wn,Xm; ZR aliases; w31/x31/uppercase/lr-as-Xm) match llvm-mc `-triple=aarch64 -mattr=+crc -show-encoding` (1000 cases). KAT pins crc32b w0,w1,w2=0x1ac24020, crc32h=0x1ac24420, crc32w=0x1ac24820, crc32x w0,w1,x2=0x9ac24c20, crc32cb=0x1ac25020, crc32cx=0x9ac25c20, crc32b wzr,wzr,wzr=0x1adf43ff, crc32x wzr,w0,xzr=0x9adf4c1f.

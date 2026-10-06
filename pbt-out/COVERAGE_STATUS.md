@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 06:56 (campaign: encode_crc32, English, standard)
-> Files: 11/11 scanned (100%) | Functions: 170/307 total | PBT candidates: 170 | Tested: 169 | encode_crc32: 8 pass / 4 fail. Coverage evidence: file-level (symbol presence); coverage_gaps reported no .gcda/.profraw.
+> Last updated: 2026-10-06 07:22 (campaign: encode_smaddl)
+> Files: 11/11 scanned (100%) | Functions: 171/307 total | PBT candidates: 171 | Tested: 171 (100%) | encode_smaddl 9 pass / 4 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 168 |
-| **Tested (of PBT candidates)** | **168 / 168 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 168 / -1 |
-| **Overall (tested / all functions)** | **168 / 307 (55%)** |
+| PBT candidates (from FUNCTION_INDEX) | 169 |
+| **Tested (of PBT candidates)** | **169 / 169 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 169 / -1 |
+| **Overall (tested / all functions)** | **169 / 307 (55%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 168 | 168 | 0 | 100% |
+|  | 169 | 169 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 168 | 168 | 0 | 100% |
+| unknown | 169 | 169 | 0 | 100% |
 
 ## File Coverage
 
@@ -218,3 +218,4 @@
 | encode_stop | load_store.rs |
 | encode_tst | compare_branch.rs |
 | encode_tbz | compare_branch.rs |
+| encode_crc32 | bitfield.rs |

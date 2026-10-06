@@ -1,146 +1,151 @@
-# PBT Campaign Report: encode_crc32
+# PBT Campaign Report: encode_smaddl
 
 ## Summary
 
-**Verdict:** 4 medium: encode_crc32 accepts extra operands, SP/WSP, wrong W/X widths, and FP/SIMD registers that llvm-mc/gas reject, so invalid GNU-style CRC32 assembly silently becomes a machine-code word.
+**Verdict:** 4 medium: encode_smaddl silently accepts extra operands, W/X mixes, SP/WSP, and FP/SIMD registers that llvm-mc/gas reject, so illegal GNU-style SMADDL is assembled instead of failed.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_crc32
-**Tests:** 12 properties (8 passing, 4 failing) plus 8 passing KAT and 5 failing regression witnesses
-**Result:** 8 passing, 4 bugs
-**Change surface:** 1 changed function (encode_crc32), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter, NOT LINKED). Sweep was a manual arm audit of the 20-line body. Tier: standard.
+**Modules tested:** encode_smaddl
+**Tests:** 13 properties (plus 4 KAT + 4 regression witnesses)
+**Result:** 9 passing, 4 bugs
+**Change surface:** 1 changed function (encode_smaddl), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 12-line body.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_crc32 | 12 properties (8 pass / 4 fail) | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_smaddl | 13 properties (9 pass / 4 fail) + 4 KAT + 4 regression | 4 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_crc32 ignores extra operands
+### B1: encode_smaddl silently ignores a 5th operand
 
-**Formal:** ∀ mnemonic ∈ CRC32_8, valid 3-operand CRC32 ops, extra ∈ Operand. encode_crc32(mnemonic, ops++[extra]) = Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc "invalid operand for instruction" on a 4th operand; ARM CRC32 is a 3-register instruction)
-**Documentation conflict:** (none)
+**Formal:** ∀ rd,rn,rm,ra ∈ 0..31, extra ∈ Operand. encode_smaddl([Xd(rd), Wn(rn), Wm(rm), Xa(ra), extra]) is Err
+**Contract evidence:** inferred (rustdoc data_processing.rs:652 names four operands; llvm-mc rejects a 5th)
+**Documentation conflict:** (none) — the rustdoc lists Xd, Wn, Wm, Xa and does not declare extra operands invalid; the body has no arity upper bound
 **Severity:** medium
-**Counterexample:** encode_crc32("crc32b", [Reg("w0"), Reg("w0"), Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x1ac04000))
-**Impact:** Invalid GNU-style CRC32 with a trailing operand is assembled instead of rejected.
-**Root cause:** bitfield.rs:227-229 reads only operands 0..2 via get_reg and has no operands.len() upper bound.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
+**Counterexample:** encode_smaddl([Reg("x0"), Reg("w0"), Reg("w0"), Reg("x0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x9b200000))
+**Impact:** A typo or extra operand is silently dropped instead of failing the assemble.
+**Root cause:** data_processing.rs:654-657 reads only operands 0..3 via get_reg and has no operands.len() upper bound.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:654`
 ```rust
     let (rd, _) = get_reg(operands, 0)?;
     let (rn, _) = get_reg(operands, 1)?;
     let (rm, _) = get_reg(operands, 2)?;
+    let (ra, _) = get_reg(operands, 3)?;
 ```
 **Suggested fix:** Reject extra operands before encoding.
 ```rust
-    if operands.len() != 3 {
-        return Err(format!("crc32: expected 3 operands, got {}", operands.len()));
+    if operands.len() != 4 {
+        return Err(format!("smaddl: expected 4 operands, got {}", operands.len()));
     }
 ```
-**Bug report:** bug_reports/encode_crc32_extra_operand.md
-**Repro seed:** cc 58218e6499d74ab0c5a1ae329b88808b4bb7de692e08d6baab02d50a0fd4985c
+**Bug report:** bug_reports/encode_smaddl_extra_operand.md
+**Repro seed:** cc 5dd5f4875fcede75f7f06bb16d8be72f4a27dc0234ba29aa31f22f3c981cd53d
 **Raw output:**
 ```text
-Test failed: CRC32 has no 4th operand; extra operand must Err (llvm-mc rejects it)
-minimal failing input: m = "crc32b", rd = 0, rn = 0, rm = 0, extra = Reg("x0")
+Test failed: SMADDL has no 5th operand; extra operand must Err (llvm-mc rejects it) at src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs:403.
+minimal failing input: rd = 0, rn = 0, rm = 0, ra = 0, extra = Reg("x0")
 ```
 
-### B2: encode_crc32 accepts SP/WSP as register 31
+### B2: encode_smaddl accepts W/X mixes that llvm-mc rejects
 
-**Formal:** ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, sp ∈ {sp,wsp}. encode_crc32(mnemonic, ops with slot=sp) = Err
-**Contract evidence:** inferred (ARM CRC32 Rd/Rn/Rm are ZR not SP; llvm-mc "invalid operand for instruction" on sp/wsp; README.md:12)
-**Documentation conflict:** (none)
+**Formal:** ∀ rd,rn,rm,ra ∈ 0..30, rd64,rn64,rm64,ra64 ∈ bool. ¬(rd64 ∧ ¬rn64 ∧ ¬rm64 ∧ ra64) ⇒ encode_smaddl(mixed_width_ops) is Err
+**Contract evidence:** documented data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)"
+**Documentation conflict:** data_processing.rs:652 states the operands ARE Xd, Wn, Wm, Xa; the code discards get_reg's width flag. Mark (not independently verified) only in that the comment is the contract the body violates.
 **Severity:** medium
-**Counterexample:** encode_crc32("crc32b", [Reg("wsp"), Reg("w0"), Reg("w0")])
-**Expected / Actual:** Err / Ok(Word(0x1ac0401f)) encoding Rd=31 as WZR
-**Impact:** Stack-pointer operands are silently rewritten as WZR/XZR.
-**Root cause:** bitfield.rs:227-229 calls get_reg; parse_reg_num maps sp/wsp to 31 the same as xzr/wzr.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
+**Counterexample:** encode_smaddl([Reg("w0"), Reg("w0"), Reg("w0"), Reg("w0")])
+**Expected / Actual:** Err / Ok(Word(0x9b200000))
+**Impact:** 32-bit sources/dest are encoded as a 64-bit SMADDL word.
+**Root cause:** data_processing.rs:654-657 binds `let (rd, _) = get_reg(...)`, discarding is_64.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:654`
 ```rust
     let (rd, _) = get_reg(operands, 0)?;
     let (rn, _) = get_reg(operands, 1)?;
     let (rm, _) = get_reg(operands, 2)?;
+    let (ra, _) = get_reg(operands, 3)?;
 ```
-**Suggested fix:** Reject SP/WSP after parsing each register name.
-```rust
-    if name.eq_ignore_ascii_case("sp") || name.eq_ignore_ascii_case("wsp") {
-        return Err(format!("crc32: SP/WSP is not a valid operand ({name})"));
-    }
-```
-**Bug report:** bug_reports/encode_crc32_sp_as_zr.md
-**Repro seed:** (deterministic; shrunk to slot=0 sp=wsp other=0)
-**Raw output:**
-```text
-Test failed: SP/WSP is not a valid CRC32 operand (slot=0 sp=wsp)
-minimal failing input: m = "crc32b", slot = 0, sp64 = false, other = 0
-```
-
-### B3: encode_crc32 ignores W vs X register width
-
-**Formal:** ∀ mnemonic ∈ CRC32_8, rd,rn,rm ∈ 0..31, widths that violate (Rd=W ∧ Rn=W ∧ Rm=W_if_BHW else X). encode_crc32(mnemonic, ops) = Err
-**Contract evidence:** inferred (ARM CRC32 always Wd/Wn, Rm is Wm for B/H/W and Xm for X; llvm-mc "invalid operand for instruction"; README.md:12)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_crc32("crc32b", [Reg("w0"), Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x1ac04000))
-**Impact:** Mixed-width CRC32 text is encoded as if the widths were legal.
-**Root cause:** bitfield.rs:227-229 discards get_reg's is_64 flag; sf/sz come only from the mnemonic.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
-```rust
-    let (rd, _) = get_reg(operands, 0)?;
-    let (rn, _) = get_reg(operands, 1)?;
-    let (rm, _) = get_reg(operands, 2)?;
-```
-**Suggested fix:** Keep is_64 and require Wd/Wn plus Wm or Xm by mnemonic.
+**Suggested fix:** Require Xd/Xa and Wn/Wm before packing.
 ```rust
     let (rd, rd64) = get_reg(operands, 0)?;
     let (rn, rn64) = get_reg(operands, 1)?;
     let (rm, rm64) = get_reg(operands, 2)?;
-    if rd64 || rn64 || rm64 != mnemonic.ends_with('x') {
-        return Err("crc32: Rd/Rn must be W; Rm must be W (B/H/W) or X (X)".into());
+    let (ra, ra64) = get_reg(operands, 3)?;
+    if !rd64 || rn64 || rm64 || !ra64 {
+        return Err("smaddl requires Xd, Wn, Wm, Xa".into());
     }
 ```
-**Bug report:** bug_reports/encode_crc32_wrong_width.md
-**Repro seed:** (deterministic; shrunk to crc32b w0,w0,x0)
+**Bug report:** bug_reports/encode_smaddl_wrong_width.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-Test failed: CRC32 crc32b wrong-width rd64=false rn64=false rm64=true must Err (llvm-mc rejects it)
-minimal failing input: m = "crc32b", rd = 0, rn = 0, rm = 0, rd64 = false, rn64 = false, rm64 = true
+Test failed: SMADDL requires Xd, Wn, Wm, Xa; rd64=false rn64=false rm64=false ra64=false must Err (llvm-mc rejects it) at src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs:427.
+minimal failing input: rd = 0, rn = 0, rm = 0, ra = 0, rd64 = false, rn64 = false, rm64 = false, ra64 = false
 ```
 
-### B4: encode_crc32 accepts FP/SIMD registers as GPRs
+### B3: encode_smaddl encodes SP/WSP as XZR/WZR
 
-**Formal:** ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_crc32(mnemonic, ops with slot=prefix∥n) = Err
-**Contract evidence:** inferred (ARM CRC32 operands are GPRs; llvm-mc "invalid operand for instruction" on d/s/q/v/h/b; README.md:12)
-**Documentation conflict:** (none)
+**Formal:** ∀ which ∈ 0..3, is_64 ∈ bool, a,b ∈ 0..30. encode_smaddl(valid_ops with slot which replaced by SP if is_64 else WSP) is Err
+**Contract evidence:** inferred (ARM ARM register 31 in SMADDL is ZR not SP; rustdoc names Xd/Xa)
+**Documentation conflict:** (none) — parse_reg_num maps SP and XZR both to 31; encode_smaddl does not distinguish them
 **Severity:** medium
-**Counterexample:** encode_crc32("crc32b", [Reg("d0"), Reg("w1"), Reg("w2")])
-**Expected / Actual:** Err / Ok(Word(0x1ac24020))
-**Impact:** A SIMD register is treated as GPR number N and encoded.
-**Root cause:** bitfield.rs:227-229 calls get_reg; parse_reg_num accepts prefixes d/s/q/v/h/b; encode_crc32 never checks is_fp_reg.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
+**Counterexample:** encode_smaddl([Reg("wsp"), Reg("w0"), Reg("w0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x9b20001f))
+**Impact:** Using the stack pointer as a multiply-add operand is silently rewritten to the zero register.
+**Root cause:** encoder/mod.rs:270 parse_reg_num maps "sp"/"wsp" to 31; encode_smaddl:654-657 does not reject SP.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:654`
 ```rust
     let (rd, _) = get_reg(operands, 0)?;
     let (rn, _) = get_reg(operands, 1)?;
     let (rm, _) = get_reg(operands, 2)?;
+    let (ra, _) = get_reg(operands, 3)?;
 ```
-**Suggested fix:** Reject FP/SIMD names after parsing each operand.
+**Suggested fix:** Reject SP/WSP in every SMADDL slot.
 ```rust
-    let c = name.chars().next().unwrap_or(' ').to_ascii_lowercase();
-    if matches!(c, 'd' | 's' | 'q' | 'v' | 'h' | 'b') {
-        return Err(format!("crc32: FP/SIMD register {name} is not a valid operand"));
+    if name.eq_ignore_ascii_case("sp") || name.eq_ignore_ascii_case("wsp") {
+        return Err("smaddl: SP/WSP is not a valid operand".into());
     }
 ```
-**Bug report:** bug_reports/encode_crc32_fp_as_gpr.md
-**Repro seed:** (deterministic; shrunk to crc32b d0, w1, w2)
+**Bug report:** bug_reports/encode_smaddl_sp_as_zr.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-Test failed: FP/SIMD register d0 is not a valid CRC32 operand (slot=0)
-minimal failing input: m = "crc32b", slot = 0, prefix = "d", n = 0
+Test failed: SP/WSP is not a valid SMADDL operand (which=0 names=["wsp", "w0", "w0", "x0"]) at src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs:453.
+minimal failing input: which = 0, is_64 = false, a = 0, b = 0
+```
+
+### B4: encode_smaddl accepts FP/SIMD registers as GPRs
+
+**Formal:** ∀ which ∈ 0..3, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_smaddl(valid_ops with slot which = prefix∥n) is Err
+**Contract evidence:** documented data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)"
+**Documentation conflict:** data_processing.rs:652 states GPR operand names; parse_reg_num accepts d/s/q/v/h/b. The comment is the contract the body violates.
+**Severity:** medium
+**Counterexample:** encode_smaddl([Reg("d0"), Reg("w1"), Reg("w2"), Reg("x3")])
+**Expected / Actual:** Err / Ok(Word(0x9b220c20))
+**Impact:** A mistyped SIMD register is silently treated as the same-numbered GPR.
+**Root cause:** encoder/mod.rs:276 parse_reg_num accepts FP prefixes; encode_smaddl:654-657 does not reject them.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:654`
+```rust
+    let (rd, _) = get_reg(operands, 0)?;
+    let (rn, _) = get_reg(operands, 1)?;
+    let (rm, _) = get_reg(operands, 2)?;
+    let (ra, _) = get_reg(operands, 3)?;
+```
+**Suggested fix:** Reject FP/SIMD register names in every SMADDL slot.
+```rust
+    if is_fp_reg(name) {
+        return Err(format!("smaddl: FP/SIMD register {} is not a GPR", name));
+    }
+```
+**Bug report:** bug_reports/encode_smaddl_fp_as_gpr.md
+**Repro seed:** (none — deterministic regression)
+**Raw output:**
+```text
+Test failed: FP/SIMD register d0 is not a valid SMADDL operand (which=0) at src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs:521.
+minimal failing input: which = 0, prefix = "d", n = 0
 ```
 
 ## Design Caveats
@@ -151,51 +156,45 @@ minimal failing input: m = "crc32b", slot = 0, prefix = "d", n = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_crc32_pbt.rs | 12 properties + 8 KAT + 5 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_crc32_pbt` |
+| src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs | 13 properties + 4 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_smaddl_pbt;` |
 
 ## Reproduction
 
-Whole suite (serial, as run):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_crc32_pbt -- --test-threads=1
+cargo test --lib encode_smaddl -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_crc32_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_smaddl_regression_extra_operand -- --test-threads=1
 ```
 
-B2 SP as ZR:
+B2 wrong width:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_crc32_regression_sp -- --test-threads=1
+cargo test --lib test_encode_smaddl_regression_wrong_width -- --test-threads=1
 ```
 
-B3 wrong width:
+B3 SP as ZR:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_crc32_regression_wrong_width -- --test-threads=1
+cargo test --lib test_encode_smaddl_regression_sp -- --test-threads=1
 ```
 
 B4 FP as GPR:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_crc32_regression_fp -- --test-threads=1
-```
-
-Build command (user contract, target swapped):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_crc32_pbt -- --test-threads=1
+cargo test --lib test_encode_smaddl_regression_fp -- --test-threads=1
 ```
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html
+- pbt-out/REPORT.html (rendered from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
@@ -203,25 +202,24 @@ cargo test --lib encode_crc32_pbt -- --test-threads=1
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_crc32_extra_operand.md
-- pbt-out/bug_reports/encode_crc32_extra_operand.html
-- pbt-out/bug_reports/encode_crc32_sp_as_zr.md
-- pbt-out/bug_reports/encode_crc32_sp_as_zr.html
-- pbt-out/bug_reports/encode_crc32_wrong_width.md
-- pbt-out/bug_reports/encode_crc32_wrong_width.html
-- pbt-out/bug_reports/encode_crc32_fp_as_gpr.md
-- pbt-out/bug_reports/encode_crc32_fp_as_gpr.html
-- pbt-out/build.log
-- pbt-out/CHANGE_SURFACE.md
-- src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
-- proptest-regressions/backend/arm/assembler/encoder/encode_crc32_pbt.txt
+- pbt-out/bug_reports/encode_smaddl_extra_operand.md
+- pbt-out/bug_reports/encode_smaddl_extra_operand.html
+- pbt-out/bug_reports/encode_smaddl_wrong_width.md
+- pbt-out/bug_reports/encode_smaddl_wrong_width.html
+- pbt-out/bug_reports/encode_smaddl_sp_as_zr.md
+- pbt-out/bug_reports/encode_smaddl_sp_as_zr.html
+- pbt-out/bug_reports/encode_smaddl_fp_as_gpr.md
+- pbt-out/bug_reports/encode_smaddl_fp_as_gpr.html
+- pbt-out/run/encode_smaddl_round1.log
+- pbt-out/run/encode_smaddl_round2.log
+- pbt-out/run/encode_smaddl_round3.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 07:06 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 169/307 total | PBT candidates: 169 | Tested: 169 (100%) | 1 pass, 169 fail
+> Last updated: 2026-10-06 07:32 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 170/307 total | PBT candidates: 170 | Tested: 170 (100%) | 1 pass, 170 fail
 
 ## Summary
 
@@ -230,10 +228,10 @@ cargo test --lib encode_crc32_pbt -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 169 |
-| **Tested (of PBT candidates)** | **169 / 169 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 169 / -1 |
-| **Overall (tested / all functions)** | **169 / 307 (55%)** |
+| PBT candidates (from FUNCTION_INDEX) | 170 |
+| **Tested (of PBT candidates)** | **170 / 170 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 170 / -1 |
+| **Overall (tested / all functions)** | **170 / 307 (55%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -241,13 +239,13 @@ cargo test --lib encode_crc32_pbt -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 169 | 169 | 0 | 100% |
+|  | 170 | 170 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 169 | 169 | 0 | 100% |
+| unknown | 170 | 170 | 0 | 100% |
 
 ## File Coverage
 
@@ -256,7 +254,7 @@ cargo test --lib encode_crc32_pbt -- --test-threads=1
 | cast.rs | 6 | 1 | 1 | 100% | covered |
 | compare_branch.rs | 21 | 20 | 20 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
-| data_processing.rs | 36 | 25 | 25 | 100% | covered |
+| data_processing.rs | 36 | 26 | 26 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 14 | 14 | 100% | covered |
@@ -439,3 +437,4 @@ cargo test --lib encode_crc32_pbt -- --test-threads=1
 | encode_tst | compare_branch.rs |
 | encode_tbz | compare_branch.rs |
 | encode_crc32 | bitfield.rs |
+| encode_smaddl | data_processing.rs |
