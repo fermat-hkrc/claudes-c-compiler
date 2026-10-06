@@ -1,0 +1,4 @@
+double a = 0x1p3;
+float b = 0x1.8p1f;
+double c = 0x1p-2;
+double d = 0xA.8p0;

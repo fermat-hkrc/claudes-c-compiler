@@ -41,3 +41,5 @@
 | 21 | x86 peephole | tail-call opt missed when result joins shared epilogue (1M-deep recursion segfaults at -O2 vs gcc loop) | **new issue filed** (asm-confirmed; README documents TCO) | [805](https://github.com/fermat-hkrc/claudes-c-compiler/issues/805) |
 | 22 | src/backend/x86/assembler | irconst_to_bits does a NUMERIC cast, not a bitcast — signbit(-0.0) folds to | **new issue filed** (round-22 battery; dedup clean) | [806](https://github.com/fermat-hkrc/claudes-c-compiler/issues/806) |
 | 22 | src/backend/x86/assembler | builtin x86 assembler encodes `movb $imm, %r8` in the 3-byte C6 form — neve | **new issue filed** (round-22 battery; dedup clean) | [807](https://github.com/fermat-hkrc/claudes-c-compiler/issues/807) |
+| 23 | riscv codegen | -S output lacks .attribute arch — external assemblers reject | **new issue filed** (roundtrip oracle) | [808](https://github.com/fermat-hkrc/claudes-c-compiler/issues/808) |
+| 24 | src/frontend/sema | same-scope enum redefinition accepted (C11 6.7.2.3) | **new issue filed** (gcc-differential; distinct from #560) | [812](https://github.com/fermat-hkrc/claudes-c-compiler/issues/812) |

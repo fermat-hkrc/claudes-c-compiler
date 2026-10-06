@@ -1,0 +1,2 @@
+int x = 100;
+const char *f = "fake.c";

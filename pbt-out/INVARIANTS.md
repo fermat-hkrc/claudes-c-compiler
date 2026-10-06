@@ -220,3 +220,9 @@ Environment quirks (round 05):
   correct); x86 assembler never uses the B0+r mov-imm8 short form (#807,
   1B/instr bloat). -S→GNU-as roundtrip is a sharp new oracle (it exposed
   #807 precisely because ccc's own -c bytes differ from as on ccc's -S).
+
+- Round-24 (second loop st.1): preprocessor token-equivalent to gcc on the
+  hard battery; copy_prop chain/multi-def contracts hold (incl. >64 depth);
+  sema accepts same-scope enum REdefinition (filed; distinct from #560);
+  riscv -S lacks .attribute arch (#808). fpclass const path: only
+  signbit(-0.0) diverges (#806 covers the class; no siblings repo-wide).

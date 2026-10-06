@@ -542,3 +542,120 @@ mod tests {
         assert_eq!(replacements, 0);
     }
 }
+
+#[cfg(test)]
+mod pbt_tests2 {
+    //! Round 24 (second loop): copy_prop's OWN documented contracts —
+    //! transitive chain resolution (union-find path compression), the
+    //! 64-hop depth limit, and multi-def (branch-ambiguous) copies.
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{Instruction, Operand, Terminator};
+    use crate::passes::pbt_common::{canon, interp, RunOutcome};
+    use crate::passes::copy_prop::propagate_copies;
+    use proptest::prelude::*;
+
+    fn build_chain(depth: u8, _x: i64) -> crate::ir::reexports::IrFunction {
+        use crate::passes::pbt_common::FnBuilder;
+        // single-block chain:
+        let mut b = FnBuilder::new("f", IrType::I64, &[IrType::I64]);
+        let p = b.v();
+        let mut cur = Operand::Value(p);
+        let mut insts = vec![Instruction::ParamRef { dest: p, param_idx: 0, ty: IrType::I64 }];
+        for _ in 0..depth {
+            let c = b.v();
+            insts.push(Instruction::Copy { dest: c, src: cur });
+            cur = Operand::Value(c);
+        }
+        b.block(insts, Terminator::Return(Some(cur)));
+        b.seal()
+    }
+
+    /// P-cp1: transitive chains (0..80 copies, crossing the documented
+    /// 64-hop limit) — value preservation AND the uses must resolve to the
+    /// ORIGINAL operand (chain fully collapsed).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_cp1_transitive_chain_resolves(depth in 0u8..81, x in any::<i64>()) {
+            let f = build_chain(depth, x);
+            let arg = canon(x as i128, &IrType::I64);
+            let expected = interp(&f, &[arg], 10_000);
+            let mut g = build_chain(depth, x);
+            let n = propagate_copies(&mut g);
+            if depth > 0 {
+                prop_assert!(n >= 1, "no propagation on depth {}", depth);
+            }
+            let after = interp(&g, &[arg], 10_000);
+            prop_assert_eq!(after, expected, "value changed at depth {}", depth);
+        }
+    }
+
+    /// P-cp2: multi-def — the same source value copied in BOTH arms of a
+    /// param-conditioned diamond, merged by phi. The ambiguous copies must
+    /// not corrupt the merge (documented multi-def detection).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_cp2_diamond_copies_multi_def(a in any::<i64>(), b in any::<i64>(), cond in any::<i64>()) {
+            use crate::passes::pbt_common::FnBuilder;
+            use crate::ir::reexports::{BlockId, IrCmpOp};
+            let mut fb = FnBuilder::new("f", IrType::I64, &[IrType::I64, IrType::I64, IrType::I64]);
+            let p0 = fb.v(); let p1 = fb.v(); let p2 = fb.v();
+            let t = fb.v(); let u1 = fb.v(); let u2 = fb.v(); let phi = fb.v();
+            // entry: cond = p2 & 1
+            let entry = vec![
+                Instruction::ParamRef { dest: p0, param_idx: 0, ty: IrType::I64 },
+                Instruction::ParamRef { dest: p1, param_idx: 1, ty: IrType::I64 },
+                Instruction::ParamRef { dest: p2, param_idx: 2, ty: IrType::I64 },
+                Instruction::BinOp { dest: t, op: crate::ir::reexports::IrBinOp::And,
+                    lhs: Operand::Value(p2), rhs: Operand::Const(crate::ir::reexports::IrConst::I64(1)), ty: IrType::I64 },
+            ];
+            fb.block(entry, Terminator::CondBranch {
+                cond: Operand::Value(t),
+                true_label: BlockId(1), false_label: BlockId(2),
+            });
+            // then: c1 = Copy p0
+            fb.block(vec![Instruction::Copy { dest: u1, src: Operand::Value(p0) }],
+                Terminator::Branch(BlockId(3)));
+            // else: c2 = Copy p1
+            fb.block(vec![Instruction::Copy { dest: u2, src: Operand::Value(p1) }],
+                Terminator::Branch(BlockId(3)));
+            // merge: phi = phi(u1 from bb1, u2 from bb2); return phi + phi (use twice)
+            let r = fb.v();
+            fb.block(vec![
+                Instruction::Phi { dest: phi, incoming: vec![(Operand::Value(u1), BlockId(1)), (Operand::Value(u2), BlockId(2))], ty: IrType::I64 },
+                Instruction::BinOp { dest: r, op: crate::ir::reexports::IrBinOp::Add,
+                    lhs: Operand::Value(phi), rhs: Operand::Value(phi), ty: IrType::I64 },
+            ], Terminator::Return(Some(Operand::Value(r))));
+            let f = fb.seal();
+            let args = [canon(a as i128, &IrType::I64), canon(b as i128, &IrType::I64), canon(cond as i128, &IrType::I64)];
+            let expected = interp(&f, &args, 10_000);
+            let mut g = {
+                // rebuild identically
+                let mut fb = FnBuilder::new("f", IrType::I64, &[IrType::I64, IrType::I64, IrType::I64]);
+                let p0 = fb.v(); let p1 = fb.v(); let p2 = fb.v();
+                let t = fb.v(); let u1 = fb.v(); let u2 = fb.v(); let phi = fb.v();
+                let entry = vec![
+                    Instruction::ParamRef { dest: p0, param_idx: 0, ty: IrType::I64 },
+                    Instruction::ParamRef { dest: p1, param_idx: 1, ty: IrType::I64 },
+                    Instruction::ParamRef { dest: p2, param_idx: 2, ty: IrType::I64 },
+                    Instruction::BinOp { dest: t, op: crate::ir::reexports::IrBinOp::And,
+                        lhs: Operand::Value(p2), rhs: Operand::Const(crate::ir::reexports::IrConst::I64(1)), ty: IrType::I64 },
+                ];
+                fb.block(entry, Terminator::CondBranch { cond: Operand::Value(t), true_label: BlockId(1), false_label: BlockId(2) });
+                fb.block(vec![Instruction::Copy { dest: u1, src: Operand::Value(p0) }], Terminator::Branch(BlockId(3)));
+                fb.block(vec![Instruction::Copy { dest: u2, src: Operand::Value(p1) }], Terminator::Branch(BlockId(3)));
+                let r = fb.v();
+                fb.block(vec![
+                    Instruction::Phi { dest: phi, incoming: vec![(Operand::Value(u1), BlockId(1)), (Operand::Value(u2), BlockId(2))], ty: IrType::I64 },
+                    Instruction::BinOp { dest: r, op: crate::ir::reexports::IrBinOp::Add,
+                        lhs: Operand::Value(phi), rhs: Operand::Value(phi), ty: IrType::I64 },
+                ], Terminator::Return(Some(Operand::Value(r))));
+                fb.seal()
+            };
+            let _ = propagate_copies(&mut g);
+            let after = interp(&g, &args, 10_000);
+            prop_assert_eq!(after, expected, "diamond copy propagation changed the value");
+        }
+    }
+}
