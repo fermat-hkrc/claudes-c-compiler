@@ -170,6 +170,8 @@ mod encode_ldr_str_pbt;
 mod encode_ldp_stp_pbt;
 #[cfg(test)]
 mod encode_ldnp_stnp_pbt;
+#[cfg(test)]
+mod encode_adrp_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

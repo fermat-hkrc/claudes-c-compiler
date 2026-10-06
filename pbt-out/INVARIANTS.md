@@ -1,3 +1,36 @@
+# Confirmed invariants (encode_adrp)
+
+- Reloc-form ADRP word (immhi=immlo=0) matches llvm-mc `adrp Xd, #0` for Rd in 0..31 including xzr (1000 cases). KAT pins adrp x0, foo word=0x90000000 AdrpPage21; adrp xzr, foo word=0x9000001f; adrp x0, :got:foo word=0x90000000 AdrGotPage21.
+- ARM ADRP layout holds: op=1, bits[28:24]=10000, Rd, reloc-form imm21=0 for Symbol/Label/SymbolOffset/Modifier-got (1000 cases).
+- Changing Rd only changes bits[4:0]; changing symbol or GOT vs page reloc does not change the word (1000 cases).
+- Symbol/Label produce AdrpPage21 addend 0; SymbolOffset preserves addend (1000 cases). Modifier{got} produces AdrGotPage21 addend 0 (1000 cases; ModifierOffset is a bug).
+- Parser-misclassified Reg/Cond/Barrier names (s1, v0, d1, cc, lt, le, st, ld) are treated as symbols with AdrpPage21 (1000 cases).
+- lr / uppercase Xn / x31 aliases encode Rd correctly (sweep, 1000 cases).
+- Empty, missing operand 1, :lo12:, :got_lo12:, Imm, and Mem second operands return Err (1000 cases; extra operand does not — see bugs).
+- W dest, SP, FP/SIMD dest, extra operands, and :got:sym+addend currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_adrp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). GNU as 2.38 agrees on symbol/GOT reloc forms and rejects W/SP/FP/extra/:lo12:/#imm.
+- ARM ARM ADRP: 1 immlo[1:0] 10000 immhi[18:0] Rd. Rd is Xd (X31=XZR, not SP). GNU syntax is `adrp Xd, label` / `adrp Xd, :got:label`. llvm-mc additionally accepts page-aligned `#imm`; gas rejects `#imm` (README.md:12 gas contract — Imm is out of domain).
+- Dispatch: encoder/mod.rs:524 `"adrp" => encode_adrp(operands)`.
+- Sibling encode_adr is not a same-job differential (op=0 / AdrPrelLo21). Linker reloc::encode_adrp patches displacement (different job).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_adrp_diff_alt_spellings. Closed: every documented behavior has a property; remaining gaps are the three filed bugs.
+- Three failing properties are SUT bugs. See pbt-out/bug_reports/encode_adrp_*.md.
+
+## Quirks (encode_adrp)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_adrp does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- Modifier { kind: "got" } is handled; ModifierOffset { kind: "got" } is not (see bugs).
+- GNU as rejects `adrp x0, #imm`; llvm-mc accepts page-aligned immediates. README.md:12 claims gas, so Imm Err is in-contract.
+- llvm-mc accepts `x31` as XZR; GNU as rejects `x31`. Sweep used llvm-mc aliasing.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the ~40-line body.
+
 # Confirmed invariants (encode_ldr_str)
 
 - Valid unsigned LDR/STR/LDRB/STRB/LDRH/STRH Rt, [Xn|SP, #pimm] with pimm = imm12*(1<<size) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins ldr x0,[x1]=0xF9400020, ldr x0,[x1,#8]=0xF9400420, str w2,[x3,#4]=0xB9000462, ldrb w0,[x1,#1]=0x39400420, ldrh w0,[x1,#2]=0x79400420.
