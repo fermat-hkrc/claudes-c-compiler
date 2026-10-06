@@ -1,3 +1,37 @@
+# Confirmed invariants (encode_sxtb)
+
+- Valid SXTB Rd, Wn with Rd in {x0..x30, xzr, x31, lr} or {w0..w30, wzr, w31} and Wn in {w0..w30, wzr, w31} match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins sxtb w0,w1=0x13001c20, sxtb x0,w1=0x93401c20, sxtb wzr,wzr=0x13001fff, sbfm w0,w1,#0,#7 aliases to the same word.
+- ARM SXTB/SBFM-#0,#7 layout holds: opc=00; bits[28:23]=100110; N=sf; immr=0; imms=7; Rn/Rd match (1000 cases).
+- SXTB equals SBFM with #0,#7 of the same registers and llvm-mc (1000 cases).
+- Rd/Rn n vs n+1 differ only in that 5-bit field (1000 cases).
+- Arity 0 and 1 return Err (1000 cases).
+- Unparsable names (x32, foo, empty, r0) return Err (sweep, 1000 cases).
+- Non-register operand kinds (Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement) return Err (sweep, 1000 cases).
+- ASCII case-fold / x31 / LR / X-source-with-64-bit-dest aliases match llvm-mc (sweep, 1000 cases).
+- Extra operands, SP/WSP, Wd+Xn, and FP/SIMD registers currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_sxtb)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM C6 SXTB is the alias of SBFM Rd, Rn, #0, #7: sf 00 100110 N=sf immr=0 imms=7 Rn Rd. Forms SXTB Wd, Wn and SXTB Xd, Wn. Register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:435 `"sxtb" => encode_sxtb(operands)`.
+- Sibling encode_sxth / encode_sxtw / encode_uxtb are not same-job independent differentials (imms=15 / 32-bit-only / UBFM; shared get_reg / same crate). encode_sbfm is the SBFM alias (shared get_reg / same crate); used only as algebraic.metamorphic #0,#7.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 8-line body plus encode_sxtb_neg_fp / encode_sxtb_neg_invalid_name / encode_sxtb_neg_nonreg / encode_sxtb_diff_alt_spellings / encode_sxtb_meta_rd_rn. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_sxtb_*.md.
+
+## Quirks (encode_sxtb)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_sxtb does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- get_reg width of Rn is discarded; sf comes only from Rd (see bugs).
+- llvm-mc aliases `sbfm w0, w1, #0, #7` to `sxtb w0, w1`; encodings still compare.
+- llvm-mc accepts `x31` as XZR/WZR and canonicalizes `sxtb Xd, Xn` to `sxtb Xd, Wn`.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 8-line body.
+
 # Confirmed invariants (encode_mneg)
 
 - Valid MNEG Rd, Rn, Rm with same-width GPRs in {x0..x30, xzr, x31, lr} or {w0..w30, wzr, w31} match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins mneg x0,x1,x2=0x9b02fc20, mneg w0,w1,w2=0x1b02fc20, mneg xzr,xzr,xzr=0x9b1fffff, mneg lr,x1,x2=0x9b02fc3e, msub x0,x1,x2,xzr aliases to the same word.
