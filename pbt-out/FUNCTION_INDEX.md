@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 167 | Excluded: 140
+> Total files: 11 | Total functions: 307 | PBT candidates: 168 | Excluded: 139
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -168,7 +168,7 @@
 | encode_neon_scalar_qshrn | neon.rs | 1835 | function | yes | - |
 | encode_cmp | compare_branch.rs | 6 | function | yes | - |
 | encode_cmn | compare_branch.rs | 22 | function | yes | - |
-| encode_tst | compare_branch.rs | 37 | function | no | out of campaign scope |
+| encode_tst | compare_branch.rs | 37 | function | yes | - |
 | encode_ccmp_ccmn | compare_branch.rs | 52 | function | yes | - |
 | encode_csel | compare_branch.rs | 85 | function | yes | - |
 | encode_csinc | compare_branch.rs | 99 | function | yes | - |

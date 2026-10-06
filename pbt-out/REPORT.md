@@ -1,104 +1,172 @@
-# PBT Campaign Report: encode_fnmadd_fnmsub
+# PBT Campaign Report: encode_tst
 
 ## Summary
 
-**Verdict:** 1 high, 2 medium: encode_fnmadd_fnmsub encodes H-register FNMADD/FNMSUB as single-precision (ftype=00 instead of 11) and silently accepts a fifth operand plus mixed S/D, GPR, Q/V/B, and SP, so invalid GNU-style assembly becomes a wrong machine-code word.
+**Verdict:** 5 medium: encode_tst silently accepts extra operands, SP/WSP, mixed W/X, FP/SIMD registers, and out-of-range shifts that llvm-mc/gas reject, encoding them as a different well-formed TST/ANDS word.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fnmadd_fnmsub
-**Tests:** 9
-**Result:** 6 passing, 3 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). The cargo test binary executed the symbol (7 KATs + 9 properties). Do not treat NOT LINKED as untested.
-**Effort tier:** standard
+**Modules tested:** encode_tst
+**Tests:** 13
+**Result:** 8 passing, 5 bugs
+**Change surface:** 1 changed function (encode_tst), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_tst (6 KATs matched llvm-mc). Manual arm audit of the 12-line body completed the tier's 1 sweep round.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fnmadd_fnmsub | 9 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_tst | 13 | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_fnmadd_fnmsub ignores extra operands
+### B1: encode_tst ignores extra operands
 
-**Formal:** ∀ rd,rn,rm,ra ∈ {0..31}, is_d ∈ {S,D}, is_sub ∈ {false,true}, extra ∈ ExtraOperand. encode_fnmadd_fnmsub([Rd,Rn,Rm,Ra,extra], is_sub) is Err
-**Contract evidence:** inferred (signature names four registers Rd, Rn, Rm, Ra; llvm-mc/gas reject a fifth operand)
+**Formal:** ∀ rn,rm same-width GPR, extra ∉ {valid Shift}. encode_tst([Rn,Rm,extra]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `tst w0, w0, x0`; compare_branch.rs:38 names a two-operand alias, not a varargs form)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fnmadd_fnmsub([Reg("s0"), Reg("s0"), Reg("s0"), Reg("s0"), Reg("s0")], false)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** Invalid GNU-style `fnmadd s0, s0, s0, s0, s0` is assembled instead of rejected, so a typo extra operand becomes a silent 32-bit encoding.
-**Root cause:** fp_scalar.rs:147-150 four get_reg calls with no operands.len() == 4 check, so a fifth operand is never inspected.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/fp_scalar.rs:147`
+**Counterexample:** encode_tst([Reg("w0"), Reg("w0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x6a00001f))
+**Impact:** Invalid GNU-style assembly with a trailing register is silently encoded as the two-operand form.
+**Root cause:** compare_branch.rs:40 clones every operand into the ANDS alias list with no upper-bound arity check; encode_logical only requires len>=3 after the ZR prepend.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:40`
 ```rust
-    let (rd, _) = get_reg(operands, 0)?;
-    let (rn, _) = get_reg(operands, 1)?;
-    let (rm, _) = get_reg(operands, 2)?;
-    let (ra, _) = get_reg(operands, 3)?;
+    new_ops.extend(operands.iter().cloned());
 ```
 **Suggested fix:** Reject extra operands before encoding.
 ```rust
-    if operands.len() != 4 {
-        return Err("fnmadd/fnmsub requires 4 operands".to_string());
+    if operands.len() > 3
+        || (operands.len() == 3 && !matches!(operands.get(2), Some(Operand::Shift { .. })))
+    {
+        return Err("tst: unexpected extra operand".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_fnmadd_fnmsub_extra_operand.md
-**Repro seed:** (none — deterministic)
-**Raw output:** Test failed: FNMADD/FNMSUB has no 5th operand; extra must Err. minimal failing input: rd = 0, rn = 0, rm = 0, ra = 0, is_d = false, is_sub = false, extra = Reg("s0")
+**Bug report:** bug_reports/encode_tst_extra_operand.md
+**Repro seed:** cc daac17e3532e5b052a7c558b67fc9ad1d605caf9c4632c872697dee66db66029
+**Raw output:**
+```text
+Test failed: tst Rn, Rm, extra must Err (llvm-mc: invalid operand)
+minimal failing input: rn = 0, rm = 0, is_64 = false, extra = Reg("x0")
+```
 
-### B2: encode_fnmadd_fnmsub accepts mixed S/D, GPR, Q/V/B, and SP operands
+### B2: encode_tst encodes SP/WSP as XZR/WZR
 
-**Formal:** ∀ (dest,n,m,a) ∈ WrongTypeQuad, is_sub ∈ {false,true}. encode_fnmadd_fnmsub([dest,n,m,a], is_sub) is Err
-**Contract evidence:** inferred (ARM 3-source FNMADD requires matching Sd/Dd/Hd; llvm-mc rejects mixed S/D, GPR, Q/V/B, SP)
+**Formal:** ∀ which ∈ {SP-Rn, SP-Rm, WSP-Rn, WSP-Rm}, n ∈ 0..30. encode_tst(sp_ops(which,n)) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `tst sp, x0`; ARM TST Rn is a GPR not SP)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fnmadd_fnmsub([Reg("d0"), Reg("s0"), Reg("s0"), Reg("s0")], false)
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** Mixed-class or GPR/SP operands assemble as scalar fused multiply-add, so `fnmadd d0, s0, s0, s0` and `fnmadd x0, s1, s2, s3` become wrong-class encodings.
-**Root cause:** fp_scalar.rs:151-153 get_reg/parse_reg_num accept any prefix; ftype is taken only from dest `starts_with('d')`, with no matching-class check on Rn/Rm/Ra.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/fp_scalar.rs:151`
+**Counterexample:** encode_tst([Reg("sp"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0xea0003ff)) (same as tst xzr, x0)
+**Impact:** A stack-pointer operand is turned into ZR, so invalid assembly becomes a different well-formed instruction.
+**Root cause:** parse_reg_num maps "sp"|"wsp" and "xzr"|"wzr" both to 31; encode_tst does not reject SP.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/mod.rs:266`
 ```rust
-    let rd_name = match &operands[0] { Operand::Reg(r) => r.to_lowercase(), _ => String::new() };
-    let is_double = rd_name.starts_with('d');
-    let ftype = if is_double { 0b01u32 } else { 0b00 };
+        "sp" | "wsp" => Some(31),
+        "xzr" | "wzr" => Some(31),
 ```
-**Suggested fix:** Require all four operands to be the same FP class (S, D, or H) and reject GPR/SP/Q/V/B.
+**Suggested fix:** Reject SP/WSP in encode_tst before the ANDS alias.
 ```rust
-    // reject unless all four names share prefix s, d, or h
+    if operands.iter().any(|o| matches!(o, Operand::Reg(r) if is_sp(r))) {
+        return Err("tst: SP/WSP is not a valid GPR".to_string());
+    }
 ```
-**Bug report:** bug_reports/encode_fnmadd_fnmsub_wrong_types.md
-**Repro seed:** (none — deterministic)
-**Raw output:** Test failed: FNMADD/FNMSUB requires matching Sd/Dd/Hd quadruples; dest=d0 n=s0 m=s0 a=s0 must Err. minimal failing input: (dest, src_n, src_m, src_a) = ("d0", "s0", "s0", "s0"), is_sub = false
+**Bug report:** bug_reports/encode_tst_sp_as_zr.md
+**Repro seed:** which = 0, n = 0
+**Raw output:**
+```text
+Test failed: tst SP/WSP kind=0 must Err (llvm-mc: invalid operand)
+minimal failing input: which = 0, n = 0
+```
 
-### B3: encode_fnmadd_fnmsub encodes H registers as ftype=00 (single) instead of ftype=11 (half)
+### B3: encode_tst accepts mixed W/X register pairs
 
-**Formal:** ∀ rd,rn,rm,ra ∈ {0..31}, is_sub ∈ {false,true}. encode_fnmadd_fnmsub([h_rd,h_rn,h_rm,h_ra], is_sub) = llvm-mc -mattr=+fullfp16 ("fnmadd|fnmsub Hd, Hn, Hm, Ha")
-**Contract evidence:** inferred (ARM ARM ftype=11 half; format comment names ftype; llvm-mc +fullfp16)
-**Documentation conflict:** (none) — fp_scalar.rs:144 names ftype but does not declare H invalid or claim it is handled
-**Severity:** high
-**Counterexample:** encode_fnmadd_fnmsub([Reg("h0"), Reg("h0"), Reg("h0"), Reg("h0")], false)
-**Expected / Actual:** 0x1fe00000 / 0x1f200000
-**Impact:** Half-precision `fnmadd h0, h0, h0, h0` is emitted as the single-precision encoding, so the object file executes the wrong FP operation.
-**Root cause:** fp_scalar.rs:152-153 sets ftype from `rd_name.starts_with('d')` only, so H (and every non-D prefix) collapses to ftype=00.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/fp_scalar.rs:152`
+**Formal:** ∀ n ∈ 0..30. encode_tst([Reg("xN"), Reg("wN")]) is Err ∧ encode_tst([Reg("wN"), Reg("xN")]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc “expected compatible register”)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_tst([Reg("w0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x6a00001f)) (encoded as tst w0, w0)
+**Impact:** Mixed-width assembly is silently reinterpreted as same-width using Rm's number only.
+**Root cause:** encode_tst derives sf only from the first operand; encode_logical takes Rm as a 5-bit number with no width check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:480`
 ```rust
-    let is_double = rd_name.starts_with('d');
-    let ftype = if is_double { 0b01u32 } else { 0b00 };
+        let rm = parse_reg_num(rm_name).ok_or("invalid rm")?;
 ```
-**Suggested fix:** Map H to ftype=11.
+**Suggested fix:** Reject mixed widths in encode_tst.
 ```rust
-    let ftype = if rd_name.starts_with('d') {
-        0b01u32
-    } else if rd_name.starts_with('h') {
-        0b11u32
-    } else {
-        0b00
-    };
+    if let (Some(Operand::Reg(rn)), Some(Operand::Reg(rm))) = (operands.get(0), operands.get(1)) {
+        if is_32bit_reg(rn) != is_32bit_reg(rm) {
+            return Err("tst: mixed register widths".to_string());
+        }
+    }
 ```
-**Bug report:** bug_reports/encode_fnmadd_fnmsub_half_ftype.md
-**Repro seed:** (none — deterministic)
-**Raw output:** Test failed: assertion failed: `(left == right)` left: `522190848`, right: `534773760`: FNMADD/FNMSUB half-precision mismatch for fnmadd h0, h0, h0, h0. minimal failing input: rd = 0, rn = 0, rm = 0, ra = 0, is_sub = false
+**Bug report:** bug_reports/encode_tst_mixed_width.md
+**Repro seed:** n = 0, x_first = false
+**Raw output:**
+```text
+Test failed: tst mixed W/X must Err (llvm-mc: expected compatible register)
+minimal failing input: n = 0, x_first = false
+```
+
+### B4: encode_tst accepts FP/SIMD registers as GPRs
+
+**Formal:** ∀ n,m ∈ 0..31, p ∈ {d,s,q,v,h,b}. encode_tst([Reg(pN), Reg(pM)]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `tst d0, d0`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_tst([Reg("d0"), Reg("d0")])
+**Expected / Actual:** Err / Ok(Word(0xea00001f)) (encoded as tst x0, x0)
+**Impact:** FP/SIMD names are parsed as GPR numbers, producing a well-formed integer TST.
+**Root cause:** encode_tst never calls is_fp_reg; parse_reg_num accepts prefixes d/s/q/v/h/b.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/mod.rs:272`
+```rust
+                'x' | 'w' | 'd' | 's' | 'q' | 'v' | 'h' | 'b' => {
+                    let num: u32 = name[1..].parse().ok()?;
+                    if num <= 31 { Some(num) } else { None }
+```
+**Suggested fix:** Reject FP/SIMD names in encode_tst.
+```rust
+    if operands.iter().any(|o| matches!(o, Operand::Reg(r) if is_fp_reg(r))) {
+        return Err("tst: FP/SIMD register is not a GPR".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_tst_fp_as_gpr.md
+**Repro seed:** n = 0, m = 0, pref = 0, as_rm = false
+**Raw output:**
+```text
+Test failed: tst FP/SIMD register must Err (llvm-mc: invalid operand)
+minimal failing input: n = 0, m = 0, pref = 0, as_rm = false
+```
+
+### B5: encode_tst wraps out-of-range shift amounts
+
+**Formal:** ∀ rn,rm ∈ 0..31, is_64, amt > max(is_64). encode_tst([Rn,Rm,Shift(lsl,amt)]) is Err
+**Contract evidence:** inferred (ARM ARM 32-bit imm6 < 32; llvm-mc rejects `tst w0, w0, lsl #32`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_tst([Reg("w0"), Reg("w0"), Shift { kind: "lsl", amount: 32 }])
+**Expected / Actual:** Err / Ok(Word(0x6a00801f))
+**Impact:** An illegal W-form lsl #32 is packed into imm6, producing an UNALLOCATED encoding instead of an assembler error.
+**Root cause:** encode_logical packs `shift_amount & 0x3F` with no 32-bit max-31 / 64-bit max-63 check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:496`
+```rust
+            | (rm << 16) | ((shift_amount & 0x3F) << 10) | (rn << 5) | rd;
+```
+**Suggested fix:** Reject out-of-range shift amounts.
+```rust
+    let max = if is_64 { 63u32 } else { 31u32 };
+    if shift_amount > max {
+        return Err(format!("shift amount {shift_amount} out of range 0..{max}"));
+    }
+```
+**Bug report:** bug_reports/encode_tst_shift_oor.md
+**Repro seed:** rn = 0, rm = 0, is_64 = false, sk = 0, amt = 32
+**Raw output:**
+```text
+Test failed: tst shift lsl #32 on W must Err (llvm-mc range 0..31)
+minimal failing input: rn = 0, rm = 0, is_64 = false, sk = 0, amt = 32
+```
 
 ## Design Caveats
 
@@ -108,31 +176,24 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_fnmadd_fnmsub_pbt.rs | 9 properties + 7 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_tst_pbt.rs | 13 properties + 6 KAT + 6 regression witnesses |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fnmadd_fnmsub -- --test-threads=1
+cargo test --lib encode_tst -- --test-threads=1
 ```
 
-B1 extra operand:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fnmadd_fnmsub_regression_extra_operand -- --test-threads=1
-```
+Per-bug:
 
-B2 wrong types:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fnmadd_fnmsub_regression_mixed_sd -- --test-threads=1
-```
-
-B3 half ftype:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fnmadd_fnmsub_regression_half_ftype -- --test-threads=1
+cargo test --lib test_encode_tst_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_tst_regression_sp_rn -- --test-threads=1
+cargo test --lib test_encode_tst_regression_mixed_width -- --test-threads=1
+cargo test --lib test_encode_tst_regression_fp_reg -- --test-threads=1
+cargo test --lib test_encode_tst_regression_shift_oor -- --test-threads=1
 ```
 
 ## Output Directories
@@ -143,24 +204,29 @@ cargo test --lib test_encode_fnmadd_fnmsub_regression_half_ftype -- --test-threa
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_fnmadd_fnmsub_extra_operand.md
-- pbt-out/bug_reports/encode_fnmadd_fnmsub_extra_operand.html
-- pbt-out/bug_reports/encode_fnmadd_fnmsub_wrong_types.md
-- pbt-out/bug_reports/encode_fnmadd_fnmsub_wrong_types.html
-- pbt-out/bug_reports/encode_fnmadd_fnmsub_half_ftype.md
-- pbt-out/bug_reports/encode_fnmadd_fnmsub_half_ftype.html
-- pbt-out/run/encode_fnmadd_fnmsub.log
-- pbt-out/run/encode_fnmadd_fnmsub_invalid_name.log
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/run/encode_tst.log
+- pbt-out/run/encode_tst_round2.log
+- pbt-out/bug_reports/encode_tst_extra_operand.md
+- pbt-out/bug_reports/encode_tst_extra_operand.html
+- pbt-out/bug_reports/encode_tst_sp_as_zr.md
+- pbt-out/bug_reports/encode_tst_sp_as_zr.html
+- pbt-out/bug_reports/encode_tst_mixed_width.md
+- pbt-out/bug_reports/encode_tst_mixed_width.html
+- pbt-out/bug_reports/encode_tst_fp_as_gpr.md
+- pbt-out/bug_reports/encode_tst_fp_as_gpr.html
+- pbt-out/bug_reports/encode_tst_shift_oor.md
+- pbt-out/bug_reports/encode_tst_shift_oor.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 05:43 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 166/307 total | PBT candidates: 166 | Tested: 166 (100%) | 1 pass, 166 fail
+> Last updated: 2026-10-06 06:04 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 167/307 total | PBT candidates: 167 | Tested: 167 (100%) | 1 pass, 167 fail
 
 ## Summary
 
@@ -169,10 +235,10 @@ cargo test --lib test_encode_fnmadd_fnmsub_regression_half_ftype -- --test-threa
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 166 |
-| **Tested (of PBT candidates)** | **166 / 166 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 166 / -1 |
-| **Overall (tested / all functions)** | **166 / 307 (54%)** |
+| PBT candidates (from FUNCTION_INDEX) | 167 |
+| **Tested (of PBT candidates)** | **167 / 167 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 167 / -1 |
+| **Overall (tested / all functions)** | **167 / 307 (54%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -180,20 +246,20 @@ cargo test --lib test_encode_fnmadd_fnmsub_regression_half_ftype -- --test-threa
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 166 | 166 | 0 | 100% |
+|  | 167 | 167 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 166 | 166 | 0 | 100% |
+| unknown | 167 | 167 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 18 | 18 | 100% | covered |
+| compare_branch.rs | 21 | 19 | 19 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
@@ -375,3 +441,4 @@ cargo test --lib test_encode_fnmadd_fnmsub_regression_half_ftype -- --test-threa
 | encode_swp | load_store.rs |
 | encode_ldop | load_store.rs |
 | encode_stop | load_store.rs |
+| encode_tst | compare_branch.rs |

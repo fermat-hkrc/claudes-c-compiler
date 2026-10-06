@@ -1,27 +1,32 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_fnmadd_fnmsub, English)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps had no LLVM profraw; C++ reporter listed unrelated binaries and claimed NOT LINKED. The cargo test binary executed encode_fnmadd_fnmsub (7 KATs + 9 properties).
-> Files: 11/11 scanned | Functions: 307 total | PBT candidates: 167 | This campaign tested: encode_fnmadd_fnmsub
-> Effort tier: standard | Sweep round 1/1 spent (manual arm audit + encode_fnmadd_fnmsub_neg_invalid_name)
-
-## Summary
-
-| Metric | Value |
-|--------|-------|
-| Target | encode_fnmadd_fnmsub |
-| Properties | 9 (6 passing / 3 failing) |
-| KAT | 7 passing |
-| Regression witnesses | 5 failing |
-| Bugs | 3 |
-| Sweep | encode_fnmadd_fnmsub_neg_invalid_name passing |
+> Last updated: 2026-10-06 (campaign: encode_tst, English, standard)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated host binaries and claimed encode_tst NOT LINKED). Cargo `cargo test --lib encode_tst` executed the production symbol (6 KATs matched llvm-mc). Sweep round 1/1: manual arm audit of the 12-line body.
 
 ## This campaign
 
-| Function | Source File | Tested | Result |
-|----------|-------------|--------|--------|
-| encode_fnmadd_fnmsub | fp_scalar.rs | yes | 6 pass / 3 fail |
+| Metric | Value |
+|--------|-------|
+| Target | encode_tst |
+| Source | compare_branch.rs:37 |
+| Properties | 13 (8 passing, 5 failing) + 1 retired |
+| Bugs | 5 medium |
+| Sweep | 1/1 spent — invalid-name and invalid-imm passing; extra/sp/mixed/fp/shift-oor failing |
 
-## Sweep
+## encode_tst documented behaviors vs properties
 
-coverage_gaps: no .gcda/.profraw; file-level evidence claimed NOT LINKED against unrelated C++ binaries. Manual audit of the 16-line body: arity, extra operand, wrong types, H ftype, S/D ftype, o0/o1, nonreg, invalid name all have properties. Closed: every documented behavior has a property; tier round spent.
+| Behavior | Property | Status |
+|----------|----------|--------|
+| Valid TST Rn, Rm{, shift} vs llvm-mc | encode_tst_diff_valid_reg | passing |
+| Valid TST Rn, #bitmask vs llvm-mc | encode_tst_diff_valid_imm | passing |
+| ANDS Rd=31 opc=11 field layout | encode_tst_arm_fields | passing |
+| Alias encode_logical([ZR]++ops, 0b11) | encode_tst_meta_vs_ands | passing |
+| Rn/Rm/imm6/sf isolation | encode_tst_metamorphic_fields | passing |
+| Arity 0..1 Err | encode_tst_neg_arity | passing |
+| Extra operand Err | encode_tst_neg_extra_operand | failing (bug) |
+| SP/WSP Err | encode_tst_neg_sp | failing (bug) |
+| Mixed W/X Err | encode_tst_neg_mixed_width | failing (bug) |
+| FP/SIMD Err | encode_tst_neg_fp_reg | failing (bug) |
+| Invalid name Err | encode_tst_neg_invalid_name | passing (sweep) |
+| Non-bitmask imm Err | encode_tst_neg_invalid_imm | passing (sweep) |
+| Shift amount OOR Err | encode_tst_neg_shift_oor | failing (bug, sweep) |

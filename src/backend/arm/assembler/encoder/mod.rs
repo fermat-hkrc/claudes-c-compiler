@@ -148,6 +148,8 @@ mod encode_ldop_pbt;
 mod encode_stop_pbt;
 #[cfg(test)]
 mod encode_fnmadd_fnmsub_pbt;
+#[cfg(test)]
+mod encode_tst_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

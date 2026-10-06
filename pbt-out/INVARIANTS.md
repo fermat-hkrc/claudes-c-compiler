@@ -1,3 +1,37 @@
+# Confirmed invariants (encode_tst)
+
+- Valid TST shifted-register with matching W/X GPRs 0..31 (ZR, LR, x31, uppercase) and optional lsl/lsr/asr/ror in range match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins tst x0,x1=0xea01001f, tst w0,w1=0x6a01001f, tst x0,x1,ror #7=0xeac11c1f, ands xzr,x0,x1 aliases tst x0,x1.
+- Valid TST bitmask-immediate form matches llvm-mc (1000 cases). KAT pins tst x0,#1=0xf240001f, tst w0,#1=0x7200001f.
+- ARM ANDS shifted-register layout with Rd=31, opc=11 holds: bits[4:0]=31; bits[30:29]=11; bits[28:24]=01010; bit21=0; sf/Rn/Rm/shift/imm6 match (1000 cases).
+- encode_tst(ops) equals encode_logical([ZR]++ops, 0b11) with ZR = wzr iff Rn is 32-bit (1000 cases).
+- Field isolation: Rn+1 flips bits[9:5]; Rm+1 flips bits[20:16]; amt+1 flips bits[15:10]; W vs X flips only bit 31 (1000 cases).
+- Arity 0 and 1 return Err (1000 cases).
+- Unparsable names (x32, foo, empty, r0) return Err (sweep, 1000 cases).
+- Non-bitmask immediates llvm-mc rejects (#0, #-1, …) return Err (sweep, 1000 cases).
+- Extra operands, SP/WSP, mixed W/X, FP/SIMD, and out-of-range shift amounts currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_tst)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Logical (shifted register) ANDS Rd=XZR/WZR: sf 11 01010 shift 0 Rm imm6 Rn Rd. Logical (immediate) ANDS Rd=XZR/WZR: sf 11 100100 N immr imms Rn Rd.
+- Dispatch: encoder/mod.rs:433 `"tst" => encode_tst(operands)`.
+- Sibling encode_logical is not a same-job differential (3-operand ANDS); used only as metamorphic alias. encode_cmp/encode_cmn are SUBS/ADDS aliases.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 12-line body plus encode_tst_neg_invalid_name / encode_tst_neg_invalid_imm / encode_tst_neg_shift_oor. Closed: every documented behavior has a property; tier round spent.
+- Five failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_tst_*.md.
+
+## Quirks (encode_tst)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_tst does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra non-Shift operands are ignored (see bugs).
+- Shift amount is masked `& 0x3F` with no W/X range check (see bugs).
+- llvm-mc aliases `ands xzr, x0, x1` to `tst x0, x1`; encodings still compare.
+- llvm-mc accepts `x31` as XZR.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 12-line body.
+
 # Confirmed invariants (encode_fnmadd_fnmsub)
 
 - Valid FNMADD/FNMSUB with matching S or D registers 0..31 (lowercase or uppercase) match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins fnmadd s0,s1,s2,s3=0x1f220c20, fnmadd d0,d1,d2,d3=0x1f620c20, fnmsub s0,s1,s2,s3=0x1f228c20, fnmsub d0,d1,d2,d3=0x1f628c20, fnmadd s31,s31,s31,s31=0x1f3f7fff, uppercase S0..S3=0x1f220c20.
