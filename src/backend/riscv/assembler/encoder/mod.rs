@@ -48,6 +48,8 @@ mod encode_amo_pbt;
 mod encode_lr_pbt;
 #[cfg(test)]
 mod encode_sc_pbt;
+#[cfg(test)]
+mod encode_sfence_vma_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

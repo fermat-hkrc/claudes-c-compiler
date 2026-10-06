@@ -200,3 +200,4 @@
 | encode_amo | atomics.rs | encode_amo_pbt.rs | cargo test --lib encode_amo | 5 passing / 2 failing properties (plus 3 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/FP/non-Mem passing, extra/nonzero-offset failing) |
 | encode_lr | atomics.rs | encode_lr_pbt.rs | cargo test --lib encode_lr | 5 passing / 2 failing properties (plus 3 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/FP/non-Mem passing, extra/nonzero-offset failing) |
 | encode_sc | atomics.rs | encode_sc_pbt.rs | cargo test --lib encode_sc | 5 passing / 2 failing properties (plus 3 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/FP/non-Mem passing, extra/nonzero-offset failing) |
+| encode_sfence_vma | system.rs | encode_sfence_vma_pbt.rs | cargo test --lib encode_sfence_vma | 6 passing / 1 failing properties (plus 4 passing KAT + 1 failing regression witness; 1 bug; sweep 0/1/2-operand / ABI / FP / non-Reg passing, extra failing) |

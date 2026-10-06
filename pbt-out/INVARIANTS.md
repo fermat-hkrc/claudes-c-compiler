@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_sfence_vma)
+
+- 0/1/2-operand `sfence.vma` with GPR names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins bare sfence.vma = 0x12000073, sfence.vma a0 = 0x12050073, sfence.vma a0, a1 = 0x12b50073, sfence.vma x31, x31 = 0x13ff8073.
+- R-type SFENCE.VMA layout holds: opcode=0b1110011, rd=0, funct3=0, rs1/rs2 as given, funct7=0001001 (system.rs:26) (1000 cases).
+- Empty operands equal [zero, zero] and [x0, x0]; one operand [rs1] equals [rs1, zero] and [rs1, x0] (system.rs:27-28) (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rs1/rs2 (1000 cases).
+- FP registers and non-Reg/invalid names return Err (1000 cases).
+- Extra operands currently disagree with llvm-mc (see bug).
+
+## Environment (encode_sfence_vma)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_sfence_vma_pbt.rs, cargo test --lib encode_sfence_vma, proptest cases=1000.
+- Dispatch: encoder/mod.rs:699 sfence.vma => encode_sfence_vma with operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries). Sweep was a manual audit of 0/1/2-operand / extra / FP / non-Reg / ABI / defaults. Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_sfence_vma)
+
+- get_reg accepts Imm 0..=31 as a register number (encoder/mod.rs:376 GCC inline-asm comment); not encode_sfence_vma's own contract. llvm-mc rejects `sfence.vma 0, 0`.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_sc)
 
 - Unsuffixed sc.{w,d} with GPR rd, rs2 and Mem offset 0 matches llvm-mc `-triple=riscv64 -mattr=+a -show-encoding` (1000 cases). KAT pins sc.w a0, a1, (a2) = 0x18b6252f, sc.d x1, x2, (x3) = 0x1821b0af, sc.d x31, x0, (sp) = 0x18013faf. llvm-mc `0(rs1)` equals `(rs1)`.
