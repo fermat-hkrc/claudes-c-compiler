@@ -594,3 +594,55 @@ fn parse_u32_from_digits(bytes: &[u8]) -> Option<u32> {
     }
     Some(result)
 }
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P1: Span round-trip — add_file then resolve_span returns valid
+    /// location (line ≥ 1, col ≥ 1) for any span within the file.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_span_resolve_valid(
+            lines in prop::collection::vec(
+                prop::collection::vec(any::<char>(), 0..80), 0..10
+            ),
+            // Pick a random position within the file
+            target_line in 0usize..100,
+            target_col in 0usize..80,
+        ) {
+            let content: String = lines.iter()
+                .map(|l| l.iter().collect::<String>())
+                .collect::<Vec<_>>()
+                .join("\n");
+            let mut sm = SourceManager::new();
+            let fid = sm.add_file("test.c".to_string(), content.clone());
+            sm.build_line_map();
+            if content.is_empty() { return Ok(()); }
+            let total = content.len();
+            let offset = (target_line * 7 + target_col) % total.max(1);
+            let span = Span::new(offset as u32, offset as u32, fid);
+            let loc = sm.resolve_span(span);
+            prop_assert!(loc.line >= 1, "line must be ≥ 1, got {}", loc.line);
+            prop_assert!(loc.column >= 1, "column must be ≥ 1, got {}", loc.column);
+        }
+    }
+
+    /// P2: get_source_line returns the exact line content for single-line spans
+    #[test]
+    fn p_source_line_roundtrip() {
+        let content = "line1\nline2\nline3\n";
+        let mut sm = SourceManager::new();
+        let fid = sm.add_file("t.c".to_string(), content.to_string());
+        sm.build_line_map();
+        // Each line's span should return the exact line text
+        for (i, expected) in ["line1", "line2", "line3"].iter().enumerate() {
+            let start = content.find(expected).unwrap() as u32;
+            let span = Span::new(start, start + expected.len() as u32, fid);
+            let got = sm.get_source_line(span);
+            assert_eq!(got.as_deref(), Some(*expected), "line {} wrong", i);
+        }
+    }
+}

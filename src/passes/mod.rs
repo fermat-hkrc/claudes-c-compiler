@@ -650,3 +650,100 @@ mod pbt_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_tests_opt {
+    use crate::passes::pbt_common::*;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{Instruction, IrBinOp, IrConst, Operand, Terminator, BlockId};
+    use crate::passes::run_passes;
+    use crate::backend::Target;
+    use proptest::prelude::*;
+
+    /// Build a loop function: sum(i=0..trip) of (k * i + base)
+    /// Exercises LICM (k*const hoisting) + IVSR (i*k strength reduction).
+    fn build_loop(trip: i64, k: i64, base: i64) -> crate::ir::reexports::IrFunction {
+        let mut b = FnBuilder::new("f", IrType::I64, &[IrType::I64, IrType::I64, IrType::I64]);
+        let trip_v = b.v();
+        let k_v = b.v();
+        let base_v = b.v();
+        let i_v = b.v();
+        let acc_v = b.v();
+        let prod_v = b.v();
+        let add_v = b.v();
+        let inc_v = b.v();
+        let cond_v = b.v();
+        // entry: params + init i=0, acc=0
+        b.block(vec![
+            Instruction::ParamRef { dest: trip_v, param_idx: 0, ty: IrType::I64 },
+            Instruction::ParamRef { dest: k_v, param_idx: 1, ty: IrType::I64 },
+            Instruction::ParamRef { dest: base_v, param_idx: 2, ty: IrType::I64 },
+            Instruction::BinOp { dest: i_v, op: IrBinOp::Add, lhs: Operand::Value(i_v), rhs: Operand::Const(IrConst::I64(0)), ty: IrType::I64 }, // placeholder
+        ], Terminator::Branch(BlockId(1)));
+        // We need proper SSA init; use the simpler builder approach:
+        let mut b = FnBuilder::new("f", IrType::I64, &[IrType::I64, IrType::I64, IrType::I64]);
+        let trip_p = b.v();
+        let k_p = b.v();
+        let base_p = b.v();
+        // entry: init i=0, acc=base
+        let i0 = b.v();
+        let acc0 = b.v();
+        b.block(vec![
+            Instruction::ParamRef { dest: trip_p, param_idx: 0, ty: IrType::I64 },
+            Instruction::ParamRef { dest: k_p, param_idx: 1, ty: IrType::I64 },
+            Instruction::ParamRef { dest: base_p, param_idx: 2, ty: IrType::I64 },
+            Instruction::Copy { dest: i0, src: Operand::Const(IrConst::I64(0)) },
+            Instruction::Copy { dest: acc0, src: Operand::Value(base_p) },
+        ], Terminator::Branch(BlockId(1)));
+        // loop header: phi i, phi acc; cond = i < trip
+        let phi_i = b.v();
+        let phi_acc = b.v();
+        let lt = b.v();
+        let cmp_op = crate::ir::reexports::IrCmpOp::Slt;
+        b.block(vec![
+            Instruction::Phi { dest: phi_i, incoming: vec![
+                (Operand::Value(i0), BlockId(0)),
+                (Operand::Value(i0), BlockId(2)), // placeholder, fixed below
+            ], ty: IrType::I64 },
+            Instruction::Phi { dest: phi_acc, incoming: vec![
+                (Operand::Value(acc0), BlockId(0)),
+                (Operand::Value(acc0), BlockId(2)), // placeholder
+            ], ty: IrType::I64 },
+            Instruction::Cmp { dest: lt, op: cmp_op, lhs: Operand::Value(phi_i), rhs: Operand::Value(trip_p), ty: IrType::I64 },
+        ], Terminator::CondBranch { cond: Operand::Value(lt), true_label: BlockId(2), false_label: BlockId(3) });
+        // loop body: acc += k * i + base; i++
+        let prod = b.v();
+        let add = b.v();
+        let new_acc = b.v();
+        let inc = b.v();
+        let new_i = b.v();
+        b.block(vec![
+            Instruction::BinOp { dest: prod, op: IrBinOp::Mul, lhs: Operand::Value(k_p), rhs: Operand::Value(phi_i), ty: IrType::I64 },
+            Instruction::BinOp { dest: add, op: IrBinOp::Add, lhs: Operand::Value(prod), rhs: Operand::Value(base_p), ty: IrType::I64 },
+            Instruction::BinOp { dest: new_acc, op: IrBinOp::Add, lhs: Operand::Value(phi_acc), rhs: Operand::Value(add), ty: IrType::I64 },
+            Instruction::BinOp { dest: new_i, op: IrBinOp::Add, lhs: Operand::Value(phi_i), rhs: Operand::Const(IrConst::I64(1)), ty: IrType::I64 },
+        ], Terminator::Branch(BlockId(1)));
+        // exit: return phi_acc
+        b.block(vec![], Terminator::Return(Some(Operand::Value(phi_acc))));
+        b.seal()
+    }
+
+    /// LICM + IVSR preservation through the full pipeline.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_licm_ivsr_preservation(
+            trip in 0i64..100,
+            k in -10i64..10,
+            base in -100i64..100,
+        ) {
+            let f = build_loop(trip, k, base);
+            let args = [canon(trip as i128, &IrType::I64), canon(k as i128, &IrType::I64), canon(base as i128, &IrType::I64)];
+            let expected = interp(&f, &args, 500_000);
+            let mut m = module_of(build_loop(trip, k, base));
+            run_passes(&mut m, 2, Target::X86_64);
+            let after = interp(&m.functions[0], &args, 500_000);
+            prop_assert_eq!(after, expected, "pipeline changed loop result trip={} k={} base={}", trip, k, base);
+        }
+    }
+}

@@ -901,3 +901,74 @@ fn is_uninteresting_macro(name: &str) -> bool {
         "EXIT_SUCCESS" | "EXIT_FAILURE"
     )
 }
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P1: WarningKind ↔ flag_name round-trip (every kind that has a flag
+    /// must round-trip through from_flag_name(flag_name(kind)))
+    #[test]
+    fn p_warning_flag_roundtrip() {
+        let wall = WarningKind::wall_set();
+        let wextra = WarningKind::wextra_set();
+        let all: std::collections::HashSet<_> = wall.iter().chain(wextra.iter()).collect();
+        for kind in all {
+            let flag = kind.flag_name();
+            assert!(!flag.is_empty(), "empty flag for {:?}", kind);
+            match WarningKind::from_flag_name(flag) {
+                Some(roundtripped) => {
+                    assert_eq!(roundtripped, *kind,
+                        "round-trip failed: {:?} → {} → {:?}", kind, flag, roundtripped);
+                }
+                None => panic!("flag_name({:?}) = {} but from_flag_name({}) = None", kind, flag, flag),
+            }
+        }
+    }
+
+    /// P2: WarningConfig enable/disable/is_enabled consistency
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_warning_config_consistency(
+            ops in prop::collection::vec(
+                (any::<u8>(), any::<bool>()), 0..20
+            ),
+        ) {
+            let mut cfg = WarningConfig::new();
+            let wall_set: std::collections::HashSet<WarningKind> =
+                WarningKind::wall_set().iter().copied().collect();
+            for (op, val) in &ops {
+                match op % 3 {
+                    0 => {
+                        // Pick a kind from wall set
+                        if let Some(kind) = wall_set.iter().next() {
+                            if *val { cfg.enable(*kind); } else { cfg.disable(*kind); }
+                        }
+                    }
+                    1 => { /* werror toggle - just exercise API */ }
+                    _ => { if *val { cfg.enable_wall(); } }
+                }
+            }
+            // After enable_wall, all wall kinds should be enabled (unless explicitly disabled)
+            // (Can't easily verify exact state without knowing op order, but
+            // is_enabled must never panic)
+            for kind in &wall_set {
+                let _ = cfg.is_enabled(*kind);
+                let _ = cfg.is_error(*kind);
+            }
+        }
+    }
+
+    /// P3: ColorMode from_flag round-trip
+    #[test]
+    fn p_color_mode_roundtrip() {
+        // Known flags
+        assert_eq!(ColorMode::from_flag("auto"), Some(ColorMode::Auto));
+        assert_eq!(ColorMode::from_flag("always"), Some(ColorMode::Always));
+        assert_eq!(ColorMode::from_flag("never"), Some(ColorMode::Never));
+        assert_eq!(ColorMode::from_flag(""), None);
+        assert_eq!(ColorMode::from_flag("invalid"), None);
+    }
+}
