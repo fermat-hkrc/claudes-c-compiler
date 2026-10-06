@@ -1,192 +1,166 @@
-# Properties: encode_hint
+# Properties: encode_bti
 
-## encode_hint_diff_imm
+## encode_bti_diff_targets
 - Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the valid HINT immediate domain. README.md:12 claims GNU-gas-compatible assembly; encoder/mod.rs:3 claims 32-bit AArch64 words; encode() at encoder/mod.rs:967 routes `"hint"` with operands passed through. ARM ARM HINT encoding 1101 0101 0000 0011 0010 CRm op2 11111 is independently specified; imm ∈ 0..=127. Stronger rejected: State machine (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree HINT decoder). Sibling NOP/YIELD/WFE/WFI/SEV/SEVL/BTI rejected by same-job gate (different mnemonics, no free imm). Weaker available: algebraic.metamorphic, algebraic.invariant, negative_error.
-- Doc contract: src/backend/arm/assembler/README.md:12 "not enabled).  It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint b5a34d5b
-- Seed: src/backend/arm/assembler/encoder/encode_brk_pbt.rs:223 (llvm-mc differential over imm)
-- Formal: ∀ imm ∈ 0..=127. encode_hint([Imm(imm)]) = Word(llvm-mc("hint #imm")) ∧ llvm-mc("hint #imm") = 0xD503201F | (((imm >> 3) & 0xF) << 8) | ((imm & 7) << 5)
-- Test file: src/backend/arm/assembler/encoder/encode_hint_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the valid BTI target domain. README.md:12 claims GNU-gas-compatible assembly; encoder/mod.rs:3 claims 32-bit AArch64 words; encode_instruction at encoder/mod.rs:972 routes `"bti"` with raw_operands passed through. ARM ARM BTI is HINT with CRm=0b0100, op2=0bxx0: omitted/c/j/jc → HINT #32/#34/#36/#38. llvm-mc and gas accept those four (ASCII case-insensitive). Stronger rejected: State machine (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree BTI decoder). Sibling encode_hint / NOP/YIELD/WFE/WFI/SEV/SEVL rejected by same-job gate (different mnemonics, different operand grammar). Weaker available: algebraic.metamorphic, algebraic.invariant, negative_error.
+- Doc contract: src/backend/arm/assembler/encoder/system.rs:541 "Encode HINT #imm (system hint instruction)" — other fingerprint 87550030
+- Seed: src/backend/arm/assembler/encoder/encode_hint_pbt.rs:229 (llvm-mc differential over the valid domain)
+- Formal: ∀ t ∈ {ε, c, j, jc}. ∀ case ∈ ASCII-case-fold(t). ∀ pad ∈ {ε, space, tab}*. encode_bti(pad · case · pad) = Word(llvm-mc("bti" · opt(case))) ∧ llvm-mc("bti" · opt(t)) = 0xD503241F | (j(t) << 7) | (c(t) << 6)
+- Test file: src/backend/arm/assembler/encoder/encode_bti_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_hint
+function: encoder.system.encode_bti
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [imm]
-  domain: { imm: 0..=127 }
+  vars: [target]
+  domain: { target: { "", "c", "j", "jc" } with ASCII case and surrounding whitespace }
   relation:
     op: eq
-    lhs: encode_hint([Imm(imm)])
-    rhs: Word(llvm_mc("hint #imm"))
+    lhs: encode_bti(target)
+    rhs: Word(llvm_mc("bti" + opt(target)))
 generators:
-  imm: { gen: int, min: 0, max: 127, type: i64 }
-evidence: src/backend/arm/assembler/README.md:12; encoder/mod.rs:3; encoder/mod.rs:967; ARM ARM HINT 0xD503201F|(CRm<<8)|(op2<<5); llvm-mc -triple=aarch64 -show-encoding
+  target: { gen: oneof, of: ["", "c", "j", "jc"], type: String }
+evidence: src/backend/arm/assembler/README.md:12; encoder/mod.rs:3; encoder/mod.rs:972; ARM ARM BTI HINT #32/#34/#36/#38; llvm-mc -triple=aarch64 -show-encoding
 ```
 
-## encode_hint_inv_arm_layout
+## encode_bti_inv_arm_layout
 - Tier: 4
-- Rationale: Algebraic invariant from ARM ARM HINT field layout (not the SUT mask). bits[31:12]=0b11010101000000110010, bits[11:5]=imm[6:0], bits[4:0]=11111, word = 0xD503201F | (imm << 5). Stronger rejected: State machine (no lifecycle); Differential is the primary oracle (this is a field-level check that does not need llvm-mc); Round-trip (no decoder).
-- Doc contract: src/backend/arm/assembler/encoder/system.rs:556 "HINT: 11010101 00000011 0010 CRm op2 11111" — other fingerprint d662ba6b
-- Seed: src/backend/arm/assembler/encoder/encode_brk_pbt.rs:232 (ARM layout invariant)
-- Formal: ∀ imm ∈ 0..=127. let w = encode_hint([Imm(imm)]). Word(w) ⇒ (w >> 12 = 0xD5032) ∧ ((w >> 5) & 0x7F = imm) ∧ (w & 0x1F = 0b11111) ∧ (w = 0xD503201F | (imm << 5))
-- Test file: src/backend/arm/assembler/encoder/encode_hint_pbt.rs
+- Rationale: Algebraic invariant from ARM ARM BTI field layout (not the SUT match table). bits[31:12]=0xD5032, bits[11:8]=0b0100 (CRm), bit5=0 (op2[0]), bits[4:0]=11111, word = 0xD503241F | (j<<7) | (c<<6). Stronger rejected: State machine (no lifecycle); Differential is the primary oracle (this is a field-level check that does not need llvm-mc); Round-trip (no decoder).
+- Doc contract: src/backend/arm/assembler/encoder/system.rs:545 "bti (no target)" — asserted fingerprint 37377fe2
+- Seed: src/backend/arm/assembler/encoder/encode_hint_pbt.rs:239 (ARM layout invariant)
+- Formal: ∀ t ∈ {ε, c, j, jc}. let w = encode_bti(t). Word(w) ⇒ (w >> 12 = 0xD5032) ∧ ((w >> 8) & 0xF = 0b0100) ∧ ((w >> 5) & 1 = 0) ∧ (w & 0x1F = 0b11111) ∧ (w = 0xD503241F | (j(t) << 7) | (c(t) << 6))
+- Test file: src/backend/arm/assembler/encoder/encode_bti_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_hint
+function: encoder.system.encode_bti
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [imm]
-  domain: { imm: 0..=127 }
+  vars: [target]
+  domain: { target: { "", "c", "j", "jc" } }
   relation:
     op: eq
-    lhs: encode_hint([Imm(imm)])
-    rhs: Word(0xD503201F | ((imm as u32) << 5))
+    lhs: encode_bti(target)
+    rhs: Word(0xD503241F | (j_flag << 7) | (c_flag << 6))
 generators:
-  imm: { gen: int, min: 0, max: 127, type: i64 }
-evidence: ARM ARM HINT encoding 1101 0101 0000 0011 0010 CRm op2 11111; system.rs:556
+  target: { gen: oneof, of: ["", "c", "j", "jc"], type: String }
+evidence: ARM ARM BTI encoding HINT CRm=0100 op2=xx0; system.rs:545-548
 ```
 
-## encode_hint_meta_imm_isolation
+## encode_bti_meta_jc_bits
 - Tier: 4
-- Rationale: Metamorphic: two valid imms may differ only in bits[11:5]; encode(imm) XOR encode(0) = imm << 5. Independent of llvm-mc. Stronger rejected: State machine; Round-trip (no decoder); Differential already covers value agreement.
-- Doc contract: src/backend/arm/assembler/encoder/system.rs:557 "CRm = imm >> 3, op2 = imm & 7" — other fingerprint 7812959d
-- Seed: src/backend/arm/assembler/encoder/encode_brk_pbt.rs:242 (imm isolation)
-- Formal: ∀ imm1, imm2 ∈ 0..=127. let w1,w2,w0 = encode_hint of each. ((w1 ⊕ w2) & ¬0xFE0 = 0) ∧ (imm1 ≠ imm2 ⇒ w1 ≠ w2) ∧ (w1 ⊕ w0 = imm1 << 5)
-- Test file: src/backend/arm/assembler/encoder/encode_hint_pbt.rs
+- Rationale: Metamorphic from ARM ARM: j and c independently set op2 bits (bit7 and bit6). encode("jc") = encode("j") XOR encode("c") XOR encode(""); encode("j") XOR encode("") = 1<<7; encode("c") XOR encode("") = 1<<6; the four targets produce four distinct words. Independent of llvm-mc. Stronger rejected: State machine; Round-trip (no decoder); Differential already covers value agreement.
+- Doc contract: src/backend/arm/assembler/encoder/system.rs:548 "bti jc" — asserted fingerprint a0145091
+- Seed: src/backend/arm/assembler/encoder/encode_hint_pbt.rs:249 (imm isolation / field independence)
+- Formal: let w0,wc,wj,wjc = encode_bti of ε,c,j,jc. (wj ⊕ w0 = 1<<7) ∧ (wc ⊕ w0 = 1<<6) ∧ (wjc = wj ⊕ wc ⊕ w0) ∧ |{w0,wc,wj,wjc}| = 4
+- Test file: src/backend/arm/assembler/encoder/encode_bti_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_hint
+function: encoder.system.encode_bti
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [imm1, imm2]
-  domain: { imm1: 0..=127, imm2: 0..=127 }
+  vars: []
+  domain: { the four ARM BTI targets }
   relation:
     op: eq
-    lhs: (encode_hint([Imm(imm1)]) XOR encode_hint([Imm(0)]))
-    rhs: (imm1 as u32) << 5
-generators:
-  imm1: { gen: int, min: 0, max: 127, type: i64 }
-  imm2: { gen: int, min: 0, max: 127, type: i64 }
-evidence: ARM ARM HINT imm occupies bits[11:5] only; system.rs:557
+    lhs: encode_bti("jc")
+    rhs: encode_bti("j") XOR encode_bti("c") XOR encode_bti("")
+generators: {}
+evidence: ARM ARM BTI op2 bit2=j bit1=c bit0=0; system.rs:545-548
 ```
 
-## encode_hint_neg_extra
-- Tier: 3
-- Rationale: Negative/error contract: gas and llvm-mc reject extra operands ("unexpected characters following instruction" / "invalid operand"). README.md:12 claims gas-compatible assembly. encode_hint's own comments do not declare extra operands invalid, so they stay in the generator. Stronger rejected: State machine; Round-trip; Differential on extra operands has no encoding (reference rejects).
-- Doc contract: src/backend/arm/assembler/README.md:12 "not enabled).  It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint b5a34d5b
-- Seed: src/backend/arm/assembler/encoder/encode_brk_pbt.rs:260 (extra operand)
-- Formal: ∀ imm ∈ 0..=127. ∀ extra ∈ Operand. llvm-mc("hint #imm, extra") is Err ⇒ encode_hint([Imm(imm), extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_hint_pbt.rs
-- Status: failing
-- Counterexample: imm = 0, extra = Reg("x0"); SUT Ok(Word(0xd503201f)) vs llvm-mc Err
-- Bug report: pbt-out/bug_reports/encode_hint_extra_operand.md
-
-```property
-function: encoder.system.encode_hint
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [imm, extra]
-  domain: { imm: 0..=127, extra: Operand }
-  relation:
-    op: holds
-    expr: encode_hint([Imm(imm), extra]).is_err()
-expected_error: String
-generators:
-  imm: { gen: int, min: 0, max: 127, type: i64 }
-  extra: { gen: oneof, variants: [Reg, Imm, Barrier, Cond, Label, Symbol] }
-evidence: src/backend/arm/assembler/README.md:12; llvm-mc "invalid operand for instruction"; gas "unexpected characters following instruction"
-```
-
-## encode_hint_neg_oob_imm
-- Tier: 3
-- Rationale: Negative/error contract: llvm-mc and gas reject HINT immediates outside 0..=127. ARM ARM HINT packs a 7-bit imm into CRm:op2. encode_hint's comments describe the split but do not declare out-of-range Imm invalid, so oob stays in the generator. Stronger rejected: State machine; Round-trip; Differential has no encoding (reference rejects).
-- Doc contract: src/backend/arm/assembler/README.md:12 "not enabled).  It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint b5a34d5b
-- Seed: src/backend/arm/assembler/encoder/encode_brk_pbt.rs:276 (oob imm)
-- Formal: ∀ imm ∉ 0..=127. llvm-mc("hint #imm") is Err ⇒ encode_hint([Imm(imm)]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_hint_pbt.rs
-- Status: failing
-- Counterexample: imm = -1; SUT Ok(Word(0xd5032fff)) vs llvm-mc Err
-- Bug report: pbt-out/bug_reports/encode_hint_oob_imm.md
-
-```property
-function: encoder.system.encode_hint
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [imm]
-  domain: { imm: i64 \ 0..=127 }
-  relation:
-    op: holds
-    expr: encode_hint([Imm(imm)]).is_err()
-expected_error: String
-generators:
-  imm: { gen: int, min: -4096, max: 70000, type: i64 }
-evidence: llvm-mc "immediate must be an integer in range [0, 127]"; gas "immediate value out of range 0 to 127"; ARM ARM HINT 7-bit imm
-```
-
-## encode_hint_neg_empty
-- Tier: 3
-- Rationale: Negative/error contract: llvm-mc ("too few operands") and gas ("missing immediate expression") reject omitted HINT immediate. get_imm returns Err on missing operand 0, matching the reference. Stronger rejected: State machine; Round-trip; Differential has no encoding.
-- Doc contract: src/backend/arm/assembler/README.md:12 "not enabled).  It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint b5a34d5b
-- Seed: src/backend/arm/assembler/encoder/encode_brk_pbt.rs:292 (empty operands)
-- Formal: ∀ _ . llvm-mc("hint") is Err ∧ encode_hint([]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_hint_pbt.rs
+## encode_bti_meta_case_ws
+- Tier: 4
+- Rationale: Metamorphic: ASCII case-fold and surrounding whitespace are behavior-preserving on the valid domain (gas/llvm-mc accept BTI C / extra spaces; parser stores raw_operands without lowercasing so encode_bti's trim+lowercase is the contract). Stronger rejected: State machine; Round-trip; Differential already covers llvm-mc agreement including case.
+- Doc contract: src/backend/arm/assembler/encoder/system.rs:541 "Encode HINT #imm (system hint instruction)" — other fingerprint 87550030
+- Seed: src/backend/arm/assembler/encoder/encode_hint_pbt.rs:229 (valid-domain wrapping)
+- Formal: ∀ t ∈ {ε, c, j, jc}. ∀ case ∈ ASCII-case-fold(t). ∀ pad ∈ {space, tab}*. encode_bti(pad · case · pad) = encode_bti(t)
+- Test file: src/backend/arm/assembler/encoder/encode_bti_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_hint
-oracle: negative_error
+function: encoder.system.encode_bti
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n]
-  domain: { n: 0..8 }
+  vars: [target, case, pad]
+  domain: { target: { "", "c", "j", "jc" }, case: ASCII-case-fold(target), pad: {space,tab}* }
   relation:
-    op: holds
-    expr: encode_hint([]).is_err()
-expected_error: String
+    op: eq
+    lhs: encode_bti(pad + case + pad)
+    rhs: encode_bti(target)
 generators:
-  n: { gen: int, min: 0, max: 7, type: u32 }
-evidence: llvm-mc "too few operands for instruction"; gas "missing immediate expression"
+  target: { gen: oneof, of: ["", "c", "j", "jc"], type: String }
+  pad: { gen: string, alphabet: " \t", maxLen: 4, type: String }
+evidence: README.md:12 gas-compat; parser.rs:1746 raw_operands not lowercased; system.rs:543 trim+to_lowercase
 ```
 
-## encode_hint_neg_wrong_kind
+## encode_bti_neg_unknown
 - Tier: 3
-- Rationale: Negative/error contract: gas requires an immediate operand ("immediate operand required"); llvm-mc rejects non-imm first operands. get_imm returns Err when operand 0 is not Imm. Stronger rejected: State machine; Round-trip; Differential has no encoding.
-- Doc contract: src/backend/arm/assembler/README.md:12 "not enabled).  It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint b5a34d5b
-- Seed: src/backend/arm/assembler/encoder/encode_brk_pbt.rs:303 (wrong kind)
-- Formal: ∀ op ∈ Operand \ Imm. encode_hint([op]) is Err ∧ (asm form of op is assemblable ⇒ llvm-mc("hint " + asm(op)) is Err)
-- Test file: src/backend/arm/assembler/encoder/encode_hint_pbt.rs
+- Rationale: Negative/error contract: gas and llvm-mc reject unknown BTI options ("unknown option to BTI" / "invalid operand"). README.md:12 claims gas-compatible assembly. encode_bti's own comments do not declare unknown names out of domain, so they stay in the generator. Stronger rejected: State machine; Round-trip; Differential on unknown names has no encoding (reference rejects).
+- Doc contract: src/backend/arm/assembler/encoder/system.rs:541 "Encode HINT #imm (system hint instruction)" — other fingerprint 87550030
+- Seed: src/backend/arm/assembler/encoder/encode_hint_pbt.rs:319 (wrong-kind / unknown)
+- Formal: ∀ s. trim(lower(s)) ∉ {ε, c, j, jc} ∧ llvm-mc("bti " · s) is Err ⇒ encode_bti(s) is Err ∧ error contains "unsupported bti target"
+- Test file: src/backend/arm/assembler/encoder/encode_bti_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_hint
+function: encoder.system.encode_bti
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [op]
-  domain: { op: Operand \ Imm }
+  vars: [s]
+  domain: { s: operand strings whose trim+lowercase is not in {"", "c", "j", "jc"} }
   relation:
-    op: holds
-    expr: encode_hint([op]).is_err()
-expected_error: String
+    op: throws
+    lhs: encode_bti(s)
+    rhs: unsupported bti target
 generators:
-  op: { gen: oneof, variants: [Reg, Symbol, Barrier, Cond, Label, Mem, Shift, Extend] }
-evidence: gas "immediate operand required"; encoder/mod.rs:1076 get_imm
+  s: { gen: string, type: String }
+expected_error: String
+evidence: README.md:12; gas "unknown option to BTI at operand 1"; llvm-mc "invalid operand for instruction"; system.rs:549
+```
+
+## encode_bti_neg_extra
+- Tier: 3
+- Rationale: Negative/error contract: gas and llvm-mc reject extra operands after a BTI target ("unexpected characters following instruction" / "invalid operand"). README.md:12 claims gas-compatible assembly. encode_bti's own comments do not declare extra operands invalid, so they stay in the generator. Stronger rejected: State machine; Round-trip; Differential on extra operands has no encoding (reference rejects).
+- Doc contract: src/backend/arm/assembler/encoder/system.rs:541 "Encode HINT #imm (system hint instruction)" — other fingerprint 87550030
+- Seed: src/backend/arm/assembler/encoder/encode_hint_pbt.rs:267 (extra operand)
+- Formal: ∀ t ∈ {ε, c, j, jc}. ∀ extra ∈ extra-operand-tokens. ∀ comma ∈ {true, false}. let raw = comma-or-space join of t and extra. ¬valid(raw) ∧ llvm-mc("bti" · raw) is Err ⇒ encode_bti(raw) is Err ∧ error contains "unsupported bti target"
+- Test file: src/backend/arm/assembler/encoder/encode_bti_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.system.encode_bti
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [target, extra]
+  domain: { target: { "", "c", "j", "jc" }, extra: operand tokens }
+  relation:
+    op: throws
+    lhs: encode_bti(target + ", " + extra)
+    rhs: unsupported bti target
+generators:
+  target: { gen: oneof, of: ["", "c", "j", "jc"], type: String }
+  extra: { gen: string, type: String }
+expected_error: String
+evidence: README.md:12; gas "unexpected characters following instruction"; llvm-mc "invalid operand for instruction"
 ```

@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_bti)
+
+- Valid targets {omitted, c, j, jc} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` and the ARM BTI formula 0xD503241F | (j<<7) | (c<<6) (1000 cases). KAT pins omitted/c/j/jc = 0xd503241f/0xd503245f/0xd503249f/0xd50324df.
+- ARM BTI layout holds: bits[31:12]=0xD5032, CRm bits[11:8]=0b0100, op2[0]/bit5=0, Rt bits[4:0]=11111 (1000 cases).
+- j and c flags are independent: encode("j") XOR encode("") = 1<<7; encode("c") XOR encode("") = 1<<6; encode("jc") = encode("j") XOR encode("c") XOR encode(""); four targets encode distinctly (1000 cases).
+- ASCII case-fold and surrounding space/tab are behavior-preserving on the valid domain (1000 cases).
+- Unknown targets and extra operands (comma or space) return Err containing "unsupported bti target", matching llvm-mc/gas (1000 cases, strengthened round included space-separated extras and near-miss names).
+- Known-answer: `bti` = 0xd503241f; `bti c` = 0xd503245f; `bti j` = 0xd503249f; `bti jc` = 0xd50324df.
+
+## Environment (encode_bti)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM BTI: HINT with CRm=0b0100, op2=0bxx0 (j=op2[2], c=op2[1], op2[0]=0) = 0xD503241F | (j<<7) | (c<<6).
+- Dispatch: encoder/mod.rs:972 `"bti" => encode_bti(raw_operands)`. Raw operand string passed through unchanged; parser does not lowercase it.
+- Sibling encode_hint / NOP/YIELD/WFE/WFI/SEV/SEVL are not same-job differentials (HINT aliases with a different operand grammar).
+- encode_bti trims and lowercases the raw string, then matches four literals; anything else is Err.
+- No ARM codegen caller currently emits `bti`; encode_instruction still routes the mnemonic.
+- rustdoc at system.rs:541 is a stale HINT copy-paste ("Encode HINT #imm"), not a BTI domain restriction.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Strengthening round 1/1 plus contract-surface sweep 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of omitted/c/j/jc/layout/j-c-bits/case-ws/unknown/extra. Closed: every documented behavior has a property; tier round spent.
+
+## Quirks (encode_bti)
+
+- Surrounding whitespace and ASCII case are accepted (trim + to_lowercase).
+- Internal whitespace ("j c", "c x0") is rejected as an unknown target.
+- Extra operands after a valid target are rejected (unlike encode_hint, which ignores extras).
+- llvm-mc prints BTI as `hint #32/#34/#36/#38`; encoding bytes still match.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 12-line body.
+
 # Confirmed invariants (encode_hint)
 
 - Valid imm 0..=127 matches llvm-mc `-triple=aarch64 -show-encoding` and the ARM HINT formula 0xD503201F | (imm << 5) (1000 cases). Bounds 0 and 127 pinned by the generator and KAT (hint #0/#1/#7/#127).

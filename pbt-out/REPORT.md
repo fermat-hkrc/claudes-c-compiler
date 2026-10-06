@@ -1,125 +1,52 @@
-# PBT Campaign Report: encode_hint
+# PBT Campaign Report: encode_bti
 
 ## Summary
 
-**Verdict:** 2 medium: encode_hint ignores extra operands (`hint #0, x0` encodes as NOP) and wraps immediates outside 0..=127 (`hint #-1` encodes as `hint #127`, `hint #128` as NOP), so gas-incompatible assembly is accepted with the wrong hint.
+**Verdict:** No bugs; 6 properties passing. `encode_bti` agrees with llvm-mc and the ARM BTI/HINT encoding on the four valid targets (including ASCII case and surrounding whitespace) and rejects unknown names and extra operands the way gas/llvm-mc do.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_hint
-**Tests:** 7 properties (plus 4 KAT + 3 regression witnesses)
-**Result:** 5 passing, 2 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed NOT LINKED against unrelated C++ binaries; `cargo test --lib encode_hint` executed the production symbol. Sweep: 1/1, closed because every documented behavior has a property.
-**Tier:** standard
+**Modules tested:** encode_bti
+**Tests:** 6 properties + 4 KAT
+**Result:** 6 passing, 0 bugs
+**Change surface:** 1 changed function (encode_bti), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_bti NOT LINKED). Manual arm audit of the 12-line body confirmed every match arm is driven.
+**Tier:** standard (1 strengthening round + 1 contract-surface sweep spent)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_hint | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_bti | 6 properties + 4 KAT | 0 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_hint ignores extra operands
-
-**Formal:** ∀ imm ∈ 0..=127. ∀ extra ∈ Operand. llvm-mc("hint #imm, extra") is Err ⇒ encode_hint([Imm(imm), extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; encoder/mod.rs:967 passes operands through; llvm-mc/gas reject arity > 1)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_hint(&[Imm(0), Reg("x0")])  (assembly: `hint #0, x0`)
-**Expected / Actual:** Err / Ok(Word(0xd503201f))
-**Impact:** Typos such as `hint #0, x0` assemble as a silent `hint #0` (NOP) instead of being rejected.
-**Root cause:** system.rs:555 reads only operand 0 via get_imm; operands.len() is never checked, so trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:555`
-```rust
-    let imm = get_imm(operands, 0)?;
-```
-**Suggested fix:** Reject a slice longer than one operand before encoding.
-```rust
-    if operands.len() != 1 {
-        return Err("hint: expected a single immediate".to_string());
-    }
-    let imm = get_imm(operands, 0)?;
-```
-**Bug report:** bug_reports/encode_hint_extra_operand.md
-**Repro seed:** cc 443272f3e66ab3c88753c0b5a9ab09bf593d64803dd9253f3c1df79343bdee0c
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_hint_pbt::encode_hint_neg_extra' (2551428) panicked at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:227:1:
-Test failed: extra operand must Err (llvm-mc rejects hint #0, x0) at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:279.
-minimal failing input: imm = 0, extra = Reg(
-    "x0",
-)
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
-
-### B2: encode_hint masks immediates outside 0..=127 instead of rejecting
-
-**Formal:** ∀ imm ∉ 0..=127. llvm-mc("hint #imm") is Err ⇒ encode_hint([Imm(imm)]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compatible assembly; ARM ARM HINT 7-bit imm; llvm-mc "immediate must be an integer in range [0, 127]"; gas "immediate value out of range 0 to 127")
-**Documentation conflict:** (none) — system.rs:556-557 describe the CRm/op2 split, not an input-domain exclusion
-**Severity:** medium
-**Counterexample:** encode_hint(&[Imm(-1)])  (assembly: `hint #-1`)
-**Expected / Actual:** Err / Ok(Word(0xd5032fff))  // hint #127
-**Impact:** `hint #-1` encodes as `hint #127`; `hint #128` encodes as `hint #0` (NOP). An out-of-range immediate silently wraps into CRm:op2.
-**Root cause:** system.rs:558-560 pack `((imm as u32) >> 3) & 0xF` and `(imm as u32) & 0x7` with no range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:558`
-```rust
-    let crm = ((imm as u32) >> 3) & 0xF;
-```
-**Suggested fix:** Reject immediates outside 0..=127.
-```rust
-    let imm = get_imm(operands, 0)?;
-    if !(0..=127).contains(&imm) {
-        return Err("hint: immediate must be in 0..=127".to_string());
-    }
-    let crm = (imm as u32) >> 3;
-    let op2 = (imm as u32) & 0x7;
-    let word = 0xd503201f | (crm << 8) | (op2 << 5);
-```
-**Bug report:** bug_reports/encode_hint_oob_imm.md
-**Repro seed:** (deterministic regression; oob generator shrunk to -1)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_hint_pbt::encode_hint_neg_oob_imm' (2551453) panicked at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:227:1:
-Test failed: imm -1 outside 0..=127 must Err (llvm-mc rejects hint #-1) at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:295.
-minimal failing input: imm = -1
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
+(none)
 
 ## Design Caveats
 
-(none)
+- Stale rustdoc on encode_bti describes HINT, not BTI. Doc evidence: src/backend/arm/assembler/encoder/system.rs:541 `/// Encode HINT #imm (system hint instruction)`. Classification: other (copy-paste of the following function's comment). It does not restrict the BTI input domain and does not assert HINT-immediate encoding for this symbol. Body comments at system.rs:545-548 name the four ARM BTI mappings that the properties check.
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_hint_pbt.rs | 7 properties + 4 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_bti_pbt.rs | 6 properties + 4 KAT |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_hint -- --test-threads=1
+cargo test --lib encode_bti -- --test-threads=1
 ```
 
-B1 extra operand:
+Whole-suite command (this campaign's target):
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_hint_regression_extra_x0 -- --test-threads=1 --nocapture
+cargo test --lib encode_bti -- --test-threads=1
 ```
 
-B2 oob imm:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_hint_regression_imm_neg1 -- --test-threads=1 --nocapture
-```
+Result as run: `10 passed; 0 failed` (6 properties + 4 KAT). Strengthening re-run (space-separated extras, error-string check, near-miss unknowns): `10 passed; 0 failed`.
 
 ## Output Directories
 
@@ -129,22 +56,20 @@ cargo test --lib test_encode_hint_regression_imm_neg1 -- --test-threads=1 --noca
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_hint_extra_operand.md
-- pbt-out/bug_reports/encode_hint_extra_operand.html
-- pbt-out/bug_reports/encode_hint_oob_imm.md
-- pbt-out/bug_reports/encode_hint_oob_imm.html
-- pbt-out/run/encode_hint_pbt.log
-- proptest-regressions/backend/arm/assembler/encoder/encode_hint_pbt.txt
+- pbt-out/INVARIANTS.md
+- pbt-out/report.json
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/build.log
+- pbt-out/run/ (scratch)
+- pbt-out/bug_reports/ (historical reports from earlier campaigns; none for encode_bti)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 01:41 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 156/307 total | PBT candidates: 156 | Tested: 156 (100%) | 0 pass, 156 fail
+> Last updated: 2026-10-06 01:57 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 157/307 total | PBT candidates: 157 | Tested: 157 (100%) | 1 pass, 157 fail
 
 ## Summary
 
@@ -153,10 +78,10 @@ cargo test --lib test_encode_hint_regression_imm_neg1 -- --test-threads=1 --noca
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 156 |
-| **Tested (of PBT candidates)** | **156 / 156 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 156 / 0 |
-| **Overall (tested / all functions)** | **156 / 307 (51%)** |
+| PBT candidates (from FUNCTION_INDEX) | 157 |
+| **Tested (of PBT candidates)** | **157 / 157 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 157 / -1 |
+| **Overall (tested / all functions)** | **157 / 307 (51%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -164,13 +89,13 @@ cargo test --lib test_encode_hint_regression_imm_neg1 -- --test-threads=1 --noca
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 156 | 156 | 0 | 100% |
+|  | 157 | 157 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 156 | 156 | 0 | 100% |
+| unknown | 157 | 157 | 0 | 100% |
 
 ## File Coverage
 
@@ -349,3 +274,4 @@ cargo test --lib test_encode_hint_regression_imm_neg1 -- --test-threads=1 --noca
 | encode_hvc | system.rs |
 | encode_brk | system.rs |
 | encode_hint | system.rs |
+| encode_bti | system.rs |
