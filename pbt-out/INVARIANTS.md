@@ -226,3 +226,7 @@ Environment quirks (round 05):
   sema accepts same-scope enum REdefinition (filed; distinct from #560);
   riscv -S lacks .attribute arch (#808). fpclass const path: only
   signbit(-0.0) diverges (#806 covers the class; no siblings repo-wide).
+
+- Round-25 (second loop st.2): mem2reg semantics 5/5 == gcc (boundary
+  sizes, address escape, volatile, phi gen, loop-carried); common's
+  remaining untested files are I/O glue (skip-with-reason).
