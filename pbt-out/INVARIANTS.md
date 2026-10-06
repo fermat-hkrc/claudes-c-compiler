@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_fmv_f_x)
+
+- Valid 2-operand FMV.W.X / FMV.S.X / FMV.D.X with FP rd and GPR rs1 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins fmv.w.x fa0, a1 = 0xf0058553, fmv.s.x fa0, a1 = 0xf0058553 (alias), fmv.w.x ft0, t0 = 0xf0028053, fmv.w.x ft0, zero = 0xf0000053, fmv.d.x fa0, a1 = 0xf2058553, fmv.d.x ft11, t6 = 0xf20f8fd3, fmv.d.x f0, x0 = 0xf2000053, fmv.w.x f31, x0 = 0xf0000fd3, fmv.w.x ft0, fp = 0xf0040053, fmv.w.x f8, s0 = 0xf0040453.
+- R-type OP-FP layout holds: opcode=0b1010011, funct3 hardwired 000, rs2 hardwired 0, rd/rs1/funct7 as given (1000 cases).
+- FP ABI names (ft0/fa0/fs0/...) encode the same rd as fN; GPR ABI names encode the same rs1 as xN; fp aliases s0/x8 (1000 cases).
+- FMV.W.X vs FMV.D.X differ only in funct7 bit 0 (1 << 25) (1000 cases).
+- fmv.w.x and fmv.s.x share funct7=0b1111000 and match llvm-mc identically (1000 cases).
+- Empty, 1-operand, GPR rd, FP rs1, non-Reg rd (including Imm), and Imm as rd return Err (1000 cases).
+- A 3rd operand and a 3rd RoundingMode currently disagree with llvm-mc (see bugs): extra ignored; rm does not overwrite funct3=000.
+
+## Environment (encode_fmv_f_x)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+f,+d -show-encoding (LLVM 15.0.6). Default riscv64 without +f,+d rejects F/D; RV64GC includes both (README.md:13).
+- Harness: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs, cargo test --lib encode_fmv_f_x, proptest cases=1000.
+- Dispatch: encoder/mod.rs:764 fmv.w.x | fmv.s.x => encode_fmv_f_x(operands, 0b1111000, 0b00); encoder/mod.rs:794 fmv.d.x => encode_fmv_f_x(operands, 0b1111001, 0b00). Operands passed through with ISA funct7. `_fmt` is unused; fmt lives in funct7.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_fmv_f_x NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / R-type / ABI / S-vs-D / w-vs-s alias / arity-class / extra / rm-third. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_fmv_f_x)
+
+- llvm-mc prints `fmv.w.x f10, x11` as fa0, a1 and `fmv.s.x` as `fmv.w.x` (same encoding).
+- These instructions have no rounding-mode field (unlike FCVT). llvm-mc rejects a 3rd rne token.
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number for rs1 (encoder/mod.rs:412-413). llvm-mc rejects numeric rs1. get_freg does not accept Imm for rd.
+- encode_fmv_f_x does not range-check funct7; callers supply the ISA values.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_fmv_x_f)
 
 - Valid 2-operand FMV.X.W / FMV.X.S / FMV.X.D with GPR rd and FP rs1 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins fmv.x.w a0, fa1 = 0xe0058553, fmv.x.s a0, fa1 = 0xe0058553 (alias), fmv.x.w t0, fs0 = 0xe00402d3, fmv.x.w zero, ft0 = 0xe0000053, fmv.x.d a0, fa1 = 0xe2058553, fmv.x.d t6, ft11 = 0xe20f8fd3, fmv.x.d x0, f0 = 0xe2000053, fmv.x.w x31, f0 = 0xe0000fd3, fmv.x.w fp, ft0 = 0xe0000453, fmv.x.w s0, f8 = 0xe0040453.
