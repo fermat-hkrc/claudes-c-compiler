@@ -206,3 +206,10 @@ Environment quirks (round 05):
   jal targets at LINK time (assembly-time relocations): a correct design
   difference; round-11-style byte diffs are only valid for label-free forms.
   Inline asm constraints work (incl. "+r", "=&r", "0" matching).
+
+- Round-21 exotic battery: atomics/setjmp/computed-goto/alloca+VLA/long
+  double/bitfields/va_copy/__builtin_/_Complex/pthreads — 10/11 == gcc.
+  Finding: x86 TCO misses shared-epilogue tail calls (#805; peephole
+  tail_call.rs requires inline epilogue, no Jump allowed between call and
+  ret). -O0 frame bloat is known (ideas/). sqrtl(2)^2==2 fails on BOTH
+  compilers (x87 80-bit rounding) — fair oracle note.
