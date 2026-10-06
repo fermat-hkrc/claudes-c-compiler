@@ -1,4 +1,4 @@
-> Total files: 15 | Total functions: 367 | PBT candidates: 218 | Excluded: 149
+> Total files: 15 | Total functions: 367 | PBT candidates: 219 | Excluded: 148
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -357,15 +357,15 @@
 | encode_c_li | compressed.rs | 18 | function | yes | - |
 | encode_c_addi | compressed.rs | 27 | function | yes | - |
 | encode_c_mv | compressed.rs | 36 | function | yes | - |
-| encode_c_add | compressed.rs | 43 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_c_jr | compressed.rs | 50 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_c_jalr | compressed.rs | 56 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_insn_directive | compressed.rs | 64 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| parse_insn_int | compressed.rs | 99 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| parse_insn_reg | compressed.rs | 110 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_insn_r | compressed.rs | 115 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_insn_i | compressed.rs | 129 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_insn_s | compressed.rs | 142 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_insn_b | compressed.rs | 163 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_insn_u | compressed.rs | 176 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
-| encode_insn_j | compressed.rs | 187 | function | no | out of campaign scope (HARD: test only encode_c_mv) |
+| encode_c_add | compressed.rs | 43 | function | yes | - |
+| encode_c_jr | compressed.rs | 50 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_c_jalr | compressed.rs | 56 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_insn_directive | compressed.rs | 64 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| parse_insn_int | compressed.rs | 99 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| parse_insn_reg | compressed.rs | 110 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_insn_r | compressed.rs | 115 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_insn_i | compressed.rs | 129 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_insn_s | compressed.rs | 142 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_insn_b | compressed.rs | 163 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_insn_u | compressed.rs | 176 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_insn_j | compressed.rs | 187 | function | no | out of campaign scope (HARD: test only encode_c_add) |

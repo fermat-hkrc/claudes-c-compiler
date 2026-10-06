@@ -1,98 +1,98 @@
-# PBT Campaign Report: encode_c_mv
+# PBT Campaign Report: encode_c_add
 
 ## Summary
 
-**Verdict:** 1 high: encode_c_mv silently encodes `c.mv rd, x0` as C.JR (so `c.mv x1, x0` becomes `c.jr x1`); 1 medium: extra operands are ignored instead of rejected.
+**Verdict:** 1 high: encode_c_add silently encodes `c.add rd, x0` as C.JALR or C.EBREAK (so `c.add x1, x0` becomes `c.jalr x1`); 1 medium: extra operands are ignored instead of rejected.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_c_mv
+**Modules tested:** encode_c_add
 **Tests:** 7 properties (plus 6 KAT + 2 regression witnesses)
 **Result:** 5 passing, 2 bugs
-**Change surface:** 1 changed function (encode_c_mv), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries) and listed encode_c_mv as NOT LINKED in those binaries. Manual audit of the documented C.MV surface (2-op CR-type / ABI / isolation / arity-FP / extra / rs2=x0) drove every contract; remaining gaps are the two filed bugs.
+**Change surface:** 1 changed function (encode_c_add), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries) and listed encode_c_add as NOT LINKED in those binaries. Manual audit of the documented C.ADD surface (2-op CR-type / ABI / isolation / arity-FP / extra / rs2=x0) drove every contract; remaining gaps are the two filed bugs.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_c_mv | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_c_add | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_c_mv encodes rs2=x0 as C.JR
+### B1: encode_c_add encodes rs2=x0 as C.JALR / C.EBREAK
 
-**Formal:** ∀ rd ∈ GPR. llvm-mc("c.mv rd, x0") errors ∧ encode_c_mv([Reg(rd), Reg("x0")]) = Err(_) ∧ encode_c_mv([Reg(rd), Reg("zero")]) = Err(_)
-**Contract evidence:** inferred (RISC-V CR-type with rs2=x0 is C.JR, not C.MV; llvm-mc rejects `c.mv x1, x0`; two-operand mnemonic `c.mv rd, rs2`)
-**Documentation conflict:** (none) — compressed.rs:35 only states the mnemonic `c.mv rd, rs2`; it does not declare rs2=x0 invalid on this function, nor admit a limitation
+**Formal:** ∀ rd ∈ GPR-names. llvm-mc rejects `c.add rd, x0` ∧ encode_c_add([Reg(rd), Reg(x0)])=Err ∧ encode_c_add([Reg(rd), Reg(zero)])=Err
+**Contract evidence:** inferred (RISC-V CR-type with funct4=1001 and rs2=x0 is C.JALR when rd≠0 and C.EBREAK when rd=0, not C.ADD; llvm-mc rejects `c.add x1, x0`; two-operand mnemonic `c.add rd, rs2`; compress.rs:200 requires rs2 != 0)
+**Documentation conflict:** (none) — compressed.rs:42 only states the mnemonic `c.add rd, rs2`; it does not declare rs2=x0 invalid on this function, nor admit a limitation
 **Severity:** high
-**Counterexample:** encode_c_mv([Reg("x1"), Reg("x0")]) then also the shrunk PBT witness encode_c_mv([Reg("x0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Half(0x8082)) which is `c.jr x1`; shrunk Ok(Half(0x8002)) reserved C.JR x0
-**Impact:** Handwritten or generated `c.mv rd, x0` / `c.mv rd, zero` becomes a jump (C.JR) instead of a register copy, changing control flow.
-**Root cause:** compressed.rs:36-39 packs CR-type bits with no rs2≠0 check, so rs2=x0 falls into the C.JR pattern (funct4=1000, rs2=0).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:36`
+**Counterexample:** encode_c_add([Reg("x1"), Reg("x0")]) then also the shrunk PBT witness encode_c_add([Reg("x0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Half(0x9082)) which is `c.jalr x1`; shrunk Ok(Half(0x9002)) C.EBREAK
+**Impact:** Handwritten or generated `c.add rd, x0` / `c.add rd, zero` becomes a jump (C.JALR) or a breakpoint (C.EBREAK) instead of a register add, changing control flow.
+**Root cause:** compressed.rs:43-47 packs CR-type bits with no rs2≠0 check, so rs2=x0 falls into the C.JALR / C.EBREAK pattern (funct4=1001, rs2=0).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:43`
 ```rust
-pub(crate) fn encode_c_mv(operands: &[Operand]) -> Result<EncodeResult, String> {
+pub(crate) fn encode_c_add(operands: &[Operand]) -> Result<EncodeResult, String> {
     let rd = get_reg(operands, 0)?;
     let rs2 = get_reg(operands, 1)?;
-    Ok(EncodeResult::Half(0b10 | ((rs2 as u16) << 2) | ((rd as u16) << 7) | (0b100 << 13)))
+    Ok(EncodeResult::Half(0b10 | ((rs2 as u16) << 2) | ((rd as u16) << 7) | (1 << 12) | (0b100 << 13)))
 }
 ```
 **Suggested fix:** Reject rs2 == 0 before packing.
 ```rust
 if rs2 == 0 {
-    return Err("c.mv: rs2 cannot be x0 (that encoding is c.jr)".into());
+    return Err("c.add: rs2 cannot be x0 (that encoding is c.jalr / c.ebreak)".into());
 }
 ```
-**Bug report:** bug_reports/encode_c_mv_rs2_x0.md
+**Bug report:** bug_reports/encode_c_add_rs2_x0.md
 **Repro seed:** (deterministic regression; PBT shrunk to rd="x0")
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_c_mv_pbt::encode_c_mv_neg_rs2_x0' (2846585) panicked at src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs:267:1:
-Test failed: rs2=x0 must Err (llvm-mc rejects; encoding is C.JR); got Ok(Half(32770)) at src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs:334.
+thread 'backend::riscv::assembler::encoder::encode_c_add_pbt::encode_c_add_neg_rs2_x0' (2850635) panicked at src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs:268:1:
+Test failed: rs2=x0 must Err (llvm-mc rejects; encoding is C.JALR/C.EBREAK); got Ok(Half(36866)) at src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs:335.
 minimal failing input: rd = "x0"
 	successes: 0
 	local rejects: 0
 	global rejects: 0
 
-thread 'backend::riscv::assembler::encoder::encode_c_mv_pbt::test_encode_c_mv_regression_rs2_x0' (2846597) panicked at src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs:260:5:
-c.mv x1, x0 must Err (rs2=x0 is C.JR); got Ok(Half(32898))
+thread 'backend::riscv::assembler::encoder::encode_c_add_pbt::test_encode_c_add_regression_rs2_x0' (2850645) panicked at src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs:261:5:
+c.add x1, x0 must Err (rs2=x0 is C.JALR); got Ok(Half(36994))
 ```
 
-### B2: encode_c_mv ignores extra operands
+### B2: encode_c_add ignores extra operands
 
-**Formal:** ∀ rd ∈ GPR, ∀ rs2 ∈ GPR\{x0}, ∀ extra. encode_c_mv([Reg(rd), Reg(rs2), extra]) = Err(_)
-**Contract evidence:** inferred (two-operand mnemonic `c.mv rd, rs2` at compressed.rs:35; llvm-mc rejects a third operand)
+**Formal:** ∀ rd ∈ GPR-names, rs2 ∈ GPR-names\{x0}, extra ∈ Operand. encode_c_add([Reg(rd), Reg(rs2), extra]) = Err
+**Contract evidence:** inferred (two-operand mnemonic `c.add rd, rs2` at compressed.rs:42; llvm-mc rejects a third operand)
 **Documentation conflict:** (none) — the comment names the two-operand form and does not declare extra operands invalid in so many words, nor admit a limitation
 **Severity:** medium
-**Counterexample:** encode_c_mv([Reg("x0"), Reg("x1"), Imm(0)])
-**Expected / Actual:** Err / Ok(Half(0x8006)) — encoding of `c.mv x0, x1` (HINT)
-**Impact:** Accidental extra tokens are dropped, so a malformed instruction still assembles as a valid 16-bit HINT/C.MV.
-**Root cause:** compressed.rs:36-39 reads only operands[0] and operands[1] via get_reg and never checks operands.len().
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:36`
+**Counterexample:** encode_c_add([Reg("x0"), Reg("x1"), Imm(0)])
+**Expected / Actual:** Err / Ok(Half(0x9006)) — encoding of `c.add x0, x1` (HINT)
+**Impact:** Accidental extra tokens are dropped, so a malformed instruction still assembles as a valid 16-bit HINT/C.ADD.
+**Root cause:** compressed.rs:43-47 reads only operands[0] and operands[1] via get_reg and never checks operands.len().
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:43`
 ```rust
-pub(crate) fn encode_c_mv(operands: &[Operand]) -> Result<EncodeResult, String> {
+pub(crate) fn encode_c_add(operands: &[Operand]) -> Result<EncodeResult, String> {
     let rd = get_reg(operands, 0)?;
     let rs2 = get_reg(operands, 1)?;
-    Ok(EncodeResult::Half(0b10 | ((rs2 as u16) << 2) | ((rd as u16) << 7) | (0b100 << 13)))
+    Ok(EncodeResult::Half(0b10 | ((rs2 as u16) << 2) | ((rd as u16) << 7) | (1 << 12) | (0b100 << 13)))
 }
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2 before packing.
 ```rust
 if operands.len() != 2 {
-    return Err(format!("c.mv: expected 2 operands, got {}", operands.len()));
+    return Err(format!("c.add: expected 2 operands, got {}", operands.len()));
 }
 ```
-**Bug report:** bug_reports/encode_c_mv_extra_operand.md
-**Repro seed:** cc be4fc2cb2f7296db33b556ba026253c6be8167a6e769d89425b6dc20ec152591
+**Bug report:** bug_reports/encode_c_add_extra_operand.md
+**Repro seed:** cc 90bcb15308bb091474f8c16e69b1127e88b3a129476d372024005ea6230c2d9a
 **Raw output:**
 ```text
-proptest: Saving this and future failures in /home/toan/github/claudes-c-compiler/proptest-regressions/backend/riscv/assembler/encoder/encode_c_mv_pbt.txt
+proptest: Saving this and future failures in /home/toan/github/claudes-c-compiler/proptest-regressions/backend/riscv/assembler/encoder/encode_c_add_pbt.txt
 proptest: If this test was run on a CI system, you may wish to add the following line to your copy of the file. (You may need to create it.)
-cc be4fc2cb2f7296db33b556ba026253c6be8167a6e769d89425b6dc20ec152591
+cc 90bcb15308bb091474f8c16e69b1127e88b3a129476d372024005ea6230c2d9a
 
-thread 'backend::riscv::assembler::encoder::encode_c_mv_pbt::encode_c_mv_neg_extra' (2846584) panicked at src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs:267:1:
-Test failed: extra operand must Err for c.mv x0, x1 (llvm-mc rejects extra operands); got Ok(Half(32774)) at src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs:351.
+thread 'backend::riscv::assembler::encoder::encode_c_add_pbt::encode_c_add_neg_extra' (2850634) panicked at src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs:268:1:
+Test failed: extra operand must Err for c.add x0, x1 (llvm-mc rejects extra operands); got Ok(Half(36870)) at src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs:352.
 minimal failing input: rd = "x0", rs2 = "x1", extra = Imm(
     0,
 )
@@ -100,8 +100,8 @@ minimal failing input: rd = "x0", rs2 = "x1", extra = Imm(
 	local rejects: 0
 	global rejects: 0
 
-thread 'backend::riscv::assembler::encoder::encode_c_mv_pbt::test_encode_c_mv_regression_extra_operand' (2846596) panicked at src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs:249:5:
-c.mv x1, x2 with a third operand must Err; got Ok(Half(32906))
+thread 'backend::riscv::assembler::encoder::encode_c_add_pbt::test_encode_c_add_regression_extra_operand' (2850644) panicked at src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs:250:5:
+c.add x1, x2 with a third operand must Err; got Ok(Half(37002))
 ```
 
 ## Design Caveats
@@ -112,26 +112,26 @@ c.mv x1, x2 with a third operand must Err; got Ok(Half(32906))
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs | 7 properties + 6 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs | 7 properties + 6 KAT + 2 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial reconfirm of this campaign):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_c_mv -- --test-threads=1
+cargo test --lib encode_c_add_pbt -- --test-threads=1
 ```
 
-B1 rs2=x0:
+B1 (`c.add rd, x0` encodes as C.JALR / C.EBREAK):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_c_mv_regression_rs2_x0 -- --test-threads=1
+cargo test --lib test_encode_c_add_regression_rs2_x0 -- --test-threads=1
 ```
 
-B2 extra operand:
+B2 (extra operand ignored):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_c_mv_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_c_add_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
@@ -140,23 +140,25 @@ cargo test --lib test_encode_c_mv_regression_extra_operand -- --test-threads=1
 - pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
 - pbt-out/PROPERTIES.md — property ledger
 - pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — coverage ledger row for encode_c_mv
-- pbt-out/COVERAGE_STATUS.md — coverage evidence level
-- pbt-out/INVARIANTS.md — confirmed invariants / environment
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage summary
+- pbt-out/INVARIANTS.md — confirmed invariants
 - pbt-out/report.json — machine-readable report
+- pbt-out/bug_reports/encode_c_add_rs2_x0.md — B1 markdown
+- pbt-out/bug_reports/encode_c_add_rs2_x0.html — B1 HTML
+- pbt-out/bug_reports/encode_c_add_extra_operand.md — B2 markdown
+- pbt-out/bug_reports/encode_c_add_extra_operand.html — B2 HTML
+- pbt-out/run/encode_c_add_pbt.log — serial test log
+- pbt-out/run/kat.log — KAT gate log
 - pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/bug_reports/encode_c_mv_rs2_x0.md — B1
-- pbt-out/bug_reports/encode_c_mv_rs2_x0.html — B1 HTML
-- pbt-out/bug_reports/encode_c_mv_extra_operand.md — B2
-- pbt-out/bug_reports/encode_c_mv_extra_operand.html — B2 HTML
-- pbt-out/run/kat.log, pbt-out/run/encode_c_mv.log — test run logs
+- pbt-out/CHANGE_SURFACE.md — change surface
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 22:00 (campaign: coverage)
-> Files: 15/15 scanned (100%) | Functions: 217/367 total | PBT candidates: 217 | Tested: 217 (100%) | 1 pass, 217 fail
+> Last updated: 2026-10-06 22:11 (campaign: coverage)
+> Files: 15/15 scanned (100%) | Functions: 218/367 total | PBT candidates: 218 | Tested: 218 (100%) | 1 pass, 218 fail
 
 ## Summary
 
@@ -165,10 +167,10 @@ cargo test --lib test_encode_c_mv_regression_extra_operand -- --test-threads=1
 | Total source files | 15 |
 | Files scanned | 15 / 15 (100%) |
 | Total functions (all files) | 367 |
-| PBT candidates (from FUNCTION_INDEX) | 217 |
-| **Tested (of PBT candidates)** | **217 / 217 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 217 / -1 |
-| **Overall (tested / all functions)** | **217 / 367 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 218 |
+| **Tested (of PBT candidates)** | **218 / 218 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 218 / -1 |
+| **Overall (tested / all functions)** | **218 / 367 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -176,13 +178,13 @@ cargo test --lib test_encode_c_mv_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 217 | 217 | 0 | 100% |
+|  | 218 | 218 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 217 | 217 | 0 | 100% |
+| unknown | 218 | 218 | 0 | 100% |
 
 ## File Coverage
 
@@ -422,3 +424,4 @@ cargo test --lib test_encode_c_mv_regression_extra_operand -- --test-threads=1
 | encode_c_li | compressed.rs |
 | encode_c_addi | compressed.rs |
 | encode_c_mv | compressed.rs |
+| encode_c_add | compressed.rs |

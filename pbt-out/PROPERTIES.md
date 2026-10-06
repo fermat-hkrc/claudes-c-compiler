@@ -1,109 +1,105 @@
-# Properties: encode_c_mv
+# Properties: encode_c_add
 
-## encode_c_mv_diff_llvm_mc
+## encode_c_add_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest oracle is differential against llvm-mc (LLVM 15.0.6), the independent RISC-V assembler this tree already uses as the encoding reference. State machine rejected: encode_c_mv is a pure function with no lifecycle. Algebraic round-trip rejected: no C.MV decoder in-tree. try_compress_rv64 / 32-bit ADD rejected by the same-job gate (post-encode compress pass, not the `c.mv` mnemonic encoder). Domain is llvm-mc's accepted C.MV set: rd ∈ {x0..x31}, rs2 ∈ {x1..x31} (rd=x0 is HINT, accepted by llvm-mc; rs2=x0 is C.JR and is rejected).
-- Doc contract: compressed.rs:35 "c.mv rd, rs2" — asserted fingerprint 2f247e2c
-- Seed: compress.rs:764-769 C.MV t1, t0 = 0x8316; KAT vectors taken from llvm-mc
-- Formal: ∀ rd ∈ GPR, ∀ rs2 ∈ GPR\{x0}. encode_c_mv([Reg(rd), Reg(rs2)]) = Half(llvm-mc("c.mv rd, rs2", -triple=riscv64 -mattr=+c))
-- Test file: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs
+- Rationale: Strongest evidenced oracle is differential against llvm-mc assembling the same `c.add` mnemonic. State machine rejected: encode_c_add is a pure function with no lifecycle. Algebraic round-trip rejected: no in-tree C.ADD decoder. try_compress_rv64 rejected by same-job gate (post-encode compress of 32-bit ADD, not the `c.add` mnemonic). llvm-mc is an independent assembler; mapping is `[Reg(rd), Reg(rs2)]` <-> `c.add rd, rs2` with rs2 ≠ x0.
+- Doc contract: compressed.rs:42 "c.add rd, rs2" — asserted fingerprint 1ff430ca
+- Seed: (none) — no project-owned encode_c_add unit test; pattern generalized from encode_c_mv_pbt.rs llvm-mc differential
+- Formal: ∀ rd ∈ GPR-names, rs2 ∈ GPR-names\{x0,zero}. encode_c_add([Reg(rd), Reg(rs2)]) = Half(llvm-mc("c.add rd, rs2") LE u16)
+- Test file: src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_mv
+function: encoder.encode_c_add
 oracle: differential
 predicate:
   quantifier: forall
   vars: [rd, rs2]
-  domain: { rd: gpr_0_31, rs2: gpr_1_31 }
+  domain: { rd: gpr_name, rs2: gpr_nz_name }
   relation:
     op: eq
     lhs: sut_half([Reg(rd), Reg(rs2)])
-    rhs: llvm_mc_half("c.mv {rd}, {rs2}")
+    rhs: llvm_mc_half("c.add {rd}, {rs2}")
 generators:
-  rd: { gen: string, type: String }
-  rs2: { gen: string, type: String }
-evidence: encoder/mod.rs:924 "c.mv" => encode_c_mv; README.md:13 C (compressed 16-bit); llvm-mc 15.0.6
+  rd: { gen: string }
+  rs2: { gen: string }
+evidence: "encoder/mod.rs:927 c.add => encode_c_add; llvm-mc -triple=riscv64 -mattr=+c"
 ```
 
-## encode_c_mv_cr_type_fields
+## encode_c_add_cr_type_fields
 - Tier: 4
-- Rationale: RISC-V Unprivileged ISA CR-type layout for C.MV is an exact structural invariant independent of llvm-mc. Weaker than the differential but pins opcode/funct4/rd/rs2 bit placement so a packing off-by-one cannot hide behind a matching reference if the mapping were wrong. Round-trip rejected (no decoder).
-- Doc contract: compressed.rs:35 "c.mv rd, rs2" — asserted fingerprint 2f247e2c
-- Seed: compress.rs:207-210 100_0 | rd | rs2 | 10
-- Formal: ∀ rd ∈ {0..31}, ∀ rs2 ∈ {1..31}. let h = encode_c_mv([Reg(xN), Reg(xM)]).as_half(). (h & 0b11) = 0b10 ∧ ((h >> 12) & 0b1111) = 0b1000 ∧ ((h >> 7) & 0x1F) = rd ∧ ((h >> 2) & 0x1F) = rs2
-- Test file: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs
+- Rationale: RISC-V Unprivileged ISA CR-type layout for C.ADD is an independent structural invariant (not copied from the SUT body). Stronger differential already covers value agreement; this pins field placement so a swapped rd/rs2 still fails. Round-trip rejected (no decoder).
+- Doc contract: compressed.rs:42 "c.add rd, rs2" — asserted fingerprint 1ff430ca
+- Seed: (none)
+- Formal: ∀ rd ∈ {0..31}, rs2 ∈ {1..31}. let h = encode_c_add([Reg(x{rd}), Reg(x{rs2})]).h in (h&0b11)=0b10 ∧ ((h>>12)&0b1111)=0b1001 ∧ ((h>>7)&0x1f)=rd ∧ ((h>>2)&0x1f)=rs2
+- Test file: src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_mv
+function: encoder.encode_c_add
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rd, rs2]
-  domain: { rd: gpr_0_31, rs2: gpr_1_31 }
-  relation:
-    op: holds
-    expr: cr_mv_fields(sut_half([Reg(xN), Reg(xM)])) == (op=10, funct4=1000, rd, rs2)
+  domain: { rd: 0..31, rs2: 1..31 }
+  body: "unpack_c_add(sut_half([Reg(x{rd}), Reg(x{rs2})])) == (op=0b10, funct4=0b1001, rd, rs2)"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs2: { gen: int, min: 1, max: 31, type: u32 }
-evidence: compress.rs:207 C.MV CR-type; RISC-V ISA C.MV CR-type
+evidence: "RISC-V Unprivileged ISA C.ADD CR-type; compress.rs:202 C.ADD add rd, rd, rs2"
 ```
 
-## encode_c_mv_abi_xn_alias
+## encode_c_add_abi_xn_alias
 - Tier: 4
-- Rationale: ABI names (zero, ra, sp, a0, t6, fp/s0, …) and xN must encode the same halfword. Metamorphic under a behavior-preserving rename. Stronger differential already covers xN vs llvm-mc; this pins the alias table. rs2≠x0 so the encoding stays C.MV (not C.JR).
-- Doc contract: compressed.rs:35 "c.mv rd, rs2" — asserted fingerprint 2f247e2c
-- Seed: encode_c_addi_pbt.rs encode_c_addi_abi_xn_alias
-- Formal: ∀ n ∈ {0..31}, ∀ m ∈ {1..31}. encode_c_mv([Reg("x"+n), Reg("x"+m)]) = encode_c_mv([Reg(ABI[n]), Reg(ABI[m])]) ∧ (n=8 ⇒ encode_c_mv([Reg("fp"), Reg("x"+m)]) = that halfword) ∧ (m=8 ⇒ encode_c_mv([Reg("x"+n), Reg("fp")]) = that halfword)
-- Test file: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs
+- Rationale: ABI names (zero/ra/sp/a0/…) and the xN spelling are the same GPR. Metamorphic: encoding is invariant under the ABI↔xN rename. Stronger differential already uses mixed names; this isolates the alias law. Round-trip rejected (no decoder).
+- Doc contract: compressed.rs:42 "c.add rd, rs2" — asserted fingerprint 1ff430ca
+- Seed: (none)
+- Formal: ∀ n ∈ {0..31}, m ∈ {1..31}. encode_c_add([Reg(ABI[n]), Reg(ABI[m])]) = encode_c_add([Reg(x{n}), Reg(x{m})]); additionally n=8 ⇒ fp aliases x8 as rd, m=8 ⇒ fp aliases x8 as rs2
+- Test file: src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_mv
+function: encoder.encode_c_add
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [n, m]
-  domain: { n: gpr_0_31, m: gpr_1_31 }
+  domain: { n: 0..31, m: 1..31 }
   relation:
     op: eq
-    lhs: sut_half([Reg(xN), Reg(xM)])
-    rhs: sut_half([Reg(ABI[n]), Reg(ABI[m])])
+    lhs: sut_half([Reg(ABI[n]), Reg(ABI[m])])
+    rhs: sut_half([Reg(x{n}), Reg(x{m})])
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   m: { gen: int, min: 1, max: 31, type: u32 }
-evidence: encoder/mod.rs:210-256 reg_num ABI/xN/fp
+evidence: "encoder/mod.rs:419 get_reg via reg_num; RISC-V ABI GPR names"
 ```
 
-## encode_c_mv_field_isolation
+## encode_c_add_field_isolation
 - Tier: 4
-- Rationale: Changing only rs2 must leave rd bits unchanged and vice versa (field isolation). Metamorphic: encode(rd, rs2_a) and encode(rd, rs2_b) share bits[11:7]; encode(rd_a, rs2) and encode(rd_b, rs2) share rs2/op/funct4 bits. Independent of llvm-mc.
-- Doc contract: compressed.rs:35 "c.mv rd, rs2" — asserted fingerprint 2f247e2c
-- Seed: encode_c_addi_pbt.rs encode_c_addi_imm_isolation
-- Formal: ∀ rd ∈ {0..31}, ∀ rs2_a, rs2_b ∈ {1..31}. ((encode(rd,rs2_a) >> 7) & 0x1F) = ((encode(rd,rs2_b) >> 7) & 0x1F) ∧ ∀ rd_a, rd_b ∈ {0..31}, ∀ rs2 ∈ {1..31}. encode(rd_a,rs2) & ~0x0F80 = encode(rd_b,rs2) & ~0x0F80
-- Test file: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs
+- Rationale: CR-type fields are independent: changing rs2 must not alter bits[11:7] (rd); changing rd must not alter bits outside [11:7]. Metamorphic on a behavior-preserving field split. Stronger differential does not pin isolation.
+- Doc contract: compressed.rs:42 "c.add rd, rs2" — asserted fingerprint 1ff430ca
+- Seed: (none)
+- Formal: ∀ rd ∈ {0..31}, rs2_a,rs2_b ∈ {1..31}. ((encode(rd,rs2_a)>>7)&0x1f) = ((encode(rd,rs2_b)>>7)&0x1f); ∀ rd_a,rd_b ∈ {0..31}, rs2 ∈ {1..31}. encode(rd_a,rs2) & ~0x0f80 = encode(rd_b,rs2) & ~0x0f80
+- Test file: src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_mv
+function: encoder.encode_c_add
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [rd, rs2_a, rs2_b, rd_a, rd_b, rs2]
-  domain: { rd: gpr_0_31, rs2_a: gpr_1_31, rs2_b: gpr_1_31, rd_a: gpr_0_31, rd_b: gpr_0_31, rs2: gpr_1_31 }
-  relation:
-    op: holds
-    expr: rd_field(encode(rd,rs2_a)) == rd_field(encode(rd,rs2_b)) && (encode(rd_a,rs2) & ~0x0F80) == (encode(rd_b,rs2) & ~0x0F80)
+  domain: { rd: 0..31, rs2_a: 1..31, rs2_b: 1..31, rd_a: 0..31, rd_b: 0..31, rs2: 1..31 }
+  body: "((h(rd,rs2_a)>>7)&0x1f)==((h(rd,rs2_b)>>7)&0x1f) && (h(rd_a,rs2)&~0x0f80)==(h(rd_b,rs2)&~0x0f80)"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs2_a: { gen: int, min: 1, max: 31, type: u32 }
@@ -111,93 +107,84 @@ generators:
   rd_a: { gen: int, min: 0, max: 31, type: u32 }
   rd_b: { gen: int, min: 0, max: 31, type: u32 }
   rs2: { gen: int, min: 1, max: 31, type: u32 }
-evidence: RISC-V ISA C.MV CR-type field layout
+evidence: "RISC-V Unprivileged ISA C.ADD CR-type field split"
 ```
 
-## encode_c_mv_neg_rs2_x0
+## encode_c_add_neg_arity_fp
 - Tier: 3
-- Rationale: llvm-mc rejects `c.mv rd, x0` (`invalid operand for instruction`) because rs2=x0 is the C.JR encoding, not C.MV. compress.rs:205 requires rs2 != 0 for C.MV. Negative-error contract: encode_c_mv must Err on rs2=x0 rather than silently emit C.JR. Documented bound sampled at rs2=x0 / zero / Imm(0).
-- Doc contract: compressed.rs:35 "c.mv rd, rs2" — asserted fingerprint 2f247e2c
-- Seed: compress.rs:205 rs2 != 0; llvm-mc error on c.mv x1, x0
-- Formal: ∀ rd ∈ GPR. llvm-mc("c.mv rd, x0") errors ∧ encode_c_mv([Reg(rd), Reg("x0")]) = Err(_) ∧ encode_c_mv([Reg(rd), Reg("zero")]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs
-- Status: failing
-- Counterexample: encode_c_mv([Reg("x0"), Reg("x0")])
-- Bug report: bug_reports/encode_c_mv_rs2_x0.md
-
-```property
-function: encoder.encode_c_mv
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd]
-  domain: { rd: gpr_name }
-  relation:
-    op: throws
-    expr: encode_c_mv([Reg(rd), Reg("x0")])
-    error: String
-generators:
-  rd: { gen: string, type: String }
-expected_error: String
-evidence: llvm-mc "invalid operand for instruction" on c.mv x1, x0; compress.rs:205 rs2 != 0; RISC-V ISA C.MV rs2≠x0
-```
-
-## encode_c_mv_neg_extra
-- Tier: 3
-- Rationale: C.MV is two-operand. llvm-mc rejects a third operand (`c.mv x1, x2, x3` → invalid operand). Negative-error: encode_c_mv must Err rather than silently ignore extras (get_reg only reads indices 0 and 1).
-- Doc contract: compressed.rs:35 "c.mv rd, rs2" — asserted fingerprint 2f247e2c
-- Seed: encode_c_addi_pbt.rs encode_c_addi_neg_extra
-- Formal: ∀ rd ∈ GPR, ∀ rs2 ∈ GPR\{x0}, ∀ extra. encode_c_mv([Reg(rd), Reg(rs2), extra]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs
-- Status: failing
-- Counterexample: encode_c_mv([Reg("x0"), Reg("x1"), Imm(0)])
-- Bug report: bug_reports/encode_c_mv_extra_operand.md
-
-```property
-function: encoder.encode_c_mv
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, rs2, extra]
-  domain: { rd: gpr_name, rs2: gpr_1_31_name, extra: Operand }
-  relation:
-    op: throws
-    expr: encode_c_mv([Reg(rd), Reg(rs2), extra])
-    error: String
-generators:
-  rd: { gen: string, type: String }
-  rs2: { gen: string, type: String }
-  extra: { gen: string, type: Operand }
-expected_error: String
-evidence: llvm-mc rejects extra operands for c.mv; compressed.rs:35 two-operand form
-```
-
-## encode_c_mv_neg_arity_fp
-- Tier: 3
-- Rationale: llvm-mc rejects too few operands and FP dest/src (`c.mv fa0, a1` / `c.mv a0, fa1` → invalid operand; `c.mv x1` / `c.mv` → too few operands). Negative-error: empty/1-operand and FP register dest or src must Err.
-- Doc contract: compressed.rs:35 "c.mv rd, rs2" — asserted fingerprint 2f247e2c
-- Seed: encode_c_addi_pbt.rs encode_c_addi_neg_arity_fp
-- Formal: ∀ ops. |ops| < 2 ⇒ encode_c_mv(ops) = Err(_) ∧ ∀ fp ∈ FPR, ∀ gpr ∈ GPR\{x0}. encode_c_mv([Reg(fp), Reg(gpr)]) = Err(_) ∧ encode_c_mv([Reg(gpr), Reg(fp)]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs
+- Rationale: llvm-mc rejects too-few operands and FP registers as invalid operands for `c.add`. Negative/error contract: SUT must Err. Stronger oracles do not apply on the invalid domain.
+- Doc contract: compressed.rs:42 "c.add rd, rs2" — asserted fingerprint 1ff430ca
+- Seed: (none)
+- Formal: ∀ ops. |ops|<2 ⇒ encode_c_add(ops)=Err; ∀ fp ∈ FP-names, gpr ∈ GPR-names\{x0}. encode_c_add([Reg(fp), Reg(gpr)])=Err ∧ encode_c_add([Reg(gpr), Reg(fp)])=Err
+- Test file: src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_mv
+function: encoder.encode_c_add
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops, fp, gpr]
-  domain: { ops: arity_lt_2, fp: fpr_name, gpr: gpr_1_31_name }
-  relation:
-    op: throws
-    expr: encode_c_mv(ops) and encode_c_mv([Reg(fp), Reg(gpr)]) and encode_c_mv([Reg(gpr), Reg(fp)])
-    error: String
+  domain: { ops: short_ops, fp: fp_name, gpr: gpr_nz_name }
+  body: "encode_c_add(ops).is_err() && encode_c_add([Reg(fp),Reg(gpr)]).is_err() && encode_c_add([Reg(gpr),Reg(fp)]).is_err()"
 generators:
   ops: { gen: list, maxLen: 1 }
-  fp: { gen: string, type: String }
-  gpr: { gen: string, type: String }
+  fp: { gen: string }
+  gpr: { gen: string }
 expected_error: String
-evidence: llvm-mc "too few operands" / "invalid operand"; get_reg rejects FP names
+evidence: "llvm-mc too few operands / invalid operand; encoder/mod.rs:419 get_reg"
+```
+
+## encode_c_add_neg_extra
+- Tier: 3
+- Rationale: C.ADD is two-operand. llvm-mc rejects a third operand (`invalid operand for instruction`). Public dispatcher passes the operand slice through unchanged (mod.rs:927). SUT must Err on extra operands. Documented bound: exactly two operands.
+- Doc contract: compressed.rs:42 "c.add rd, rs2" — asserted fingerprint 1ff430ca
+- Seed: encode_c_mv_pbt.rs extra-operand negative (same CR-type arity contract)
+- Formal: ∀ rd ∈ GPR-names, rs2 ∈ GPR-names\{x0}, extra ∈ Operand. encode_c_add([Reg(rd), Reg(rs2), extra]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs
+- Status: failing
+- Counterexample: encode_c_add([Reg("x0"), Reg("x1"), Imm(0)]) → Ok(Half(0x9006)); regression encode_c_add([Reg("x1"), Reg("x2"), Imm(0)]) → Ok(Half(0x908a))
+- Bug report: bug_reports/encode_c_add_extra_operand.md
+
+```property
+function: encoder.encode_c_add
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rs2, extra]
+  domain: { rd: gpr_name, rs2: gpr_nz_name, extra: extra_operand }
+  body: "encode_c_add([Reg(rd), Reg(rs2), extra]).is_err()"
+generators:
+  rd: { gen: string }
+  rs2: { gen: string }
+  extra: { gen: string }
+expected_error: String
+evidence: "llvm-mc rejects c.add x1, x2, x3; compressed.rs:42 two-operand form"
+```
+
+## encode_c_add_neg_rs2_x0
+- Tier: 3
+- Rationale: ISA: rs2=x0 with funct4=1001 is C.JALR (rd≠0) or C.EBREAK (rd=0), not C.ADD. llvm-mc rejects `c.add x1, x0` and `c.add x0, x0`. compress.rs:200 requires rs2 != 0 for C.ADD. SUT must Err. Domain includes rd=x0 (C.EBREAK collision) and rd≠x0 (C.JALR collision).
+- Doc contract: compressed.rs:42 "c.add rd, rs2" — asserted fingerprint 1ff430ca
+- Seed: encode_c_mv_pbt.rs rs2=x0 negative (CR-type rs2≠x0)
+- Formal: ∀ rd ∈ GPR-names. llvm-mc rejects `c.add rd, x0` ∧ encode_c_add([Reg(rd), Reg(x0)])=Err ∧ encode_c_add([Reg(rd), Reg(zero)])=Err
+- Test file: src/backend/riscv/assembler/encoder/encode_c_add_pbt.rs
+- Status: failing
+- Counterexample: encode_c_add([Reg("x0"), Reg("x0")]) → Ok(Half(0x9002)) C.EBREAK; regression encode_c_add([Reg("x1"), Reg("x0")]) → Ok(Half(0x9082)) C.JALR x1
+- Bug report: bug_reports/encode_c_add_rs2_x0.md
+
+```property
+function: encoder.encode_c_add
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd]
+  domain: { rd: gpr_name }
+  body: "llvm_mc_rejects(c.add {rd}, x0) && encode_c_add([Reg(rd), Reg(x0)]).is_err() && encode_c_add([Reg(rd), Reg(zero)]).is_err()"
+generators:
+  rd: { gen: string }
+expected_error: String
+evidence: "llvm-mc invalid operand for c.add x1, x0; compress.rs:200 rs2 != 0; ISA C.JALR/C.EBREAK overlap"
 ```
