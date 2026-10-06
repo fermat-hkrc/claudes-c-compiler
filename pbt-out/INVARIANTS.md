@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_vsetivli)
+
+- Valid 6-operand named vsetivli with rd ∈ GPR, uimm ∈ 0..=31, SEW ∈ {e8,e16,e32,e64}, LMUL ∈ {m1,m2,m4,m8,mf2,mf4,mf8}, ta/tu, ma/mu matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vsetivli a0, 1, e32, m1, ta, ma = 0xcd00f557; vsetivli a0, 0, e8, m8, tu, mu = 0xc0307557; vsetivli a0, 31, e64, mf2, ta, ma = 0xcdfff557; vsetivli x10, 5, e16, mf4, tu, ma = 0xc8e2f557; vsetivli zero, 0, e8, m1, tu, mu = 0xc0007057.
+- Valid raw 10-bit vtypei immediate 0..=1023 matches llvm-mc (1000 cases). KAT pins vsetivli a0, 1, 0 = 0xc000f557.
+- Format layout holds: opcode=1010111, funct3=111, bits[31:30]=11, rd in [11:7], uimm in [19:15], vtypei in [29:20] packed [ma][ta][sew][lmul] (1000 cases).
+- ABI names (zero/ra/sp/a0/…/fp) encode the same word as xN (1000 cases).
+- Field isolation: rd/uimm/vtypei bits independent of the other fields (1000 cases).
+- FP and vector registers as rd return Err (1000 cases).
+- Extra operand, two-operand (missing vtypei), SEW e128/e256/e512/e1024, AVL outside 0..=31, and raw vtypei 1024..=2047 currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_vsetivli)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6). Default riscv64 without +v rejects vsetivli.
+- Harness: src/backend/riscv/assembler/encoder/encode_vsetivli_pbt.rs, cargo test --lib encode_vsetivli, proptest cases=1000.
+- Dispatch: encoder/mod.rs:945 "vsetivli" => encode_vsetivli(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vsetivli NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of named/imm/format/ABI/isolation/arity/extra/wide-SEW/FP/AVL-OOB/vtypei-OOB. Closed: tier round spent; remaining documented gaps are the five filed bugs.
+
+## Quirks (encode_vsetivli)
+
+- llvm-mc requires all four named vtype fields in order e, m, ta|tu, ma|mu. It also accepts a raw immediate 0..=1023 (10 bits, not 11 as for vsetvli) and prints the decoded named form.
+- llvm-mc rejects uppercase field names, AVL outside 0..=31, and out-of-range immediates (1024, 2047).
+- get_imm does not accept a register as AVL; llvm-mc also requires an integer AVL.
+- parse_vtypei lowercases field names; llvm-mc is case-sensitive.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vsetvli)
 
 - Valid 6-operand named vsetvli with SEW ∈ {e8,e16,e32,e64}, LMUL ∈ {m1,m2,m4,m8,mf2,mf4,mf8}, ta/tu, ma/mu matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vsetvli a0, a1, e32, m1, ta, ma = 0x0d05f557; vsetvli zero, ra, e8, m8, tu, mu = 0x0030f057; vsetvli a0, a1, e64, mf2, ta, ma = 0x0df5f557; vsetvli a0, a1, e16, mf4, tu, ma = 0x08e5f557; vsetvli x10, x11, e32, m1, ta, ma = 0x0d05f557.
