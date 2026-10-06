@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_vload)
+
+- Valid 2-operand unit-stride vector loads with vd ∈ {v0..v31}, rs1 ∈ {x0..x31} ∪ ABI ∪ {fp}, (mnem,width,lumop) ∈ {(vle8.v,000,0),(vle16.v,101,0),(vle32.v,110,0),(vle64.v,111,0),(vlm.v,000,0x0B)} match llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vle8.v v0, (a0) = 0x02050007; vle16.v v1, (a1) = 0x0205d087; vle32.v v2, (sp) = 0x02016107; vle64.v v31, (zero) = 0x02007f87; vlm.v v0, (a0) = 0x02b50007; vle8.v v0, (x10) = 0x02050007.
+- Format layout holds: opcode=0000111, nf=000, mew=0, mop=00, vm=1, lumop in [24:20], rs1 in [19:15], width in [14:12], vd in [11:7] (1000 cases over width 0..7 and lumop 0..31).
+- Operand::Mem { offset: 0 } and Operand::Reg for rs1 encode the same word (1000 cases).
+- ABI names (zero/ra/sp/a0/…/fp) encode the same rs1 field as xN (1000 cases).
+- Field isolation: vd/rs1/width/lumop bits independent of the other fields (1000 cases).
+- Too few operands, non-vector vd, and non-GPR rs1 return Err (1000 cases).
+- Non-zero Mem offset and non-Mem/non-Reg operand 1 return Err (1000 cases).
+- Extra operand currently disagrees with llvm-mc (see bugs).
+
+## Environment (encode_vload)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6). Default riscv64 without +v rejects vle*.v / vlm.v.
+- Harness: src/backend/riscv/assembler/encoder/encode_vload_pbt.rs, cargo test --lib encode_vload, proptest cases=1000.
+- Dispatch: encoder/mod.rs:954-957 vle{8,16,32,64}.v => encode_vload(operands, width, 0); encoder/mod.rs:966 vlm.v => encode_vload(operands, 0b000, 0x0B). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vload NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / format / mem-reg / ABI / isolation / arity-bad-regs / extra / nonzero-offset. Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_vload)
+
+- encode_vload accepts Operand::Reg as rs1 ("parenthesized register may be parsed differently"); llvm-mc requires parentheses and rejects `vle8.v v0, a0` and `vle8.v v0, 0(a0)`.
+- vreg_num / reg_num lowercase; llvm-mc rejects uppercase register names.
+- vm is hardcoded to 1 (unmasked). Dispatcher TODO encoder/mod.rs:944: masked variants (v0.t) are not yet supported.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vsetvl)
 
 - Valid 3-GPR vsetvl with rd, rs1, rs2 ∈ {x0..x31} ∪ ABI ∪ {fp} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vsetvl a0, a1, a2 = 0x80c5f557; vsetvl zero, ra, sp = 0x8020f057; vsetvl x0, x0, x0 = 0x80007057; vsetvl x31, x31, x31 = 0x81ffffd7; vsetvl x10, x11, x12 = 0x80c5f557; vsetvl t0, t1, t2 = 0x807372d7.

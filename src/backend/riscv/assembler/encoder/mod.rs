@@ -100,6 +100,8 @@ mod encode_vsetvli_pbt;
 mod encode_vsetivli_pbt;
 #[cfg(test)]
 mod encode_vsetvl_pbt;
+#[cfg(test)]
+mod encode_vload_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

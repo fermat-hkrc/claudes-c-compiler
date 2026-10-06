@@ -1,61 +1,71 @@
-# PBT Campaign Report: encode_vsetvl
+# PBT Campaign Report: encode_vload
 
 ## Summary
 
-**Verdict:** 1 medium: encode_vsetvl ignores a fourth operand and still emits the 3-GPR word, so a stray token assembles instead of erroring.
+**Verdict:** 1 medium: encode_vload ignores extra operands, so `vle8.v v0, (x0), 0` (and any trailing token, including a `v0.t` mask) encodes as unmasked `vle8.v v0, (x0)` instead of being rejected the way llvm-mc rejects it.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_vsetvl
-**Tests:** 7 properties (plus 6 passing KAT + 1 failing regression witness)
-**Result:** 6 passing, 1 bug
-**Change surface:** 1 changed function (encode_vsetvl), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vsetvl NOT LINKED in C++ reporter binaries (Rust cargo tests are not those binaries). Manual audit of the 5-line body: success path, arity, FP/vector, non-Reg, extra.
-**Tier:** standard
+**Modules tested:** encode_vload
+**Tests:** 8
+**Result:** 7 passing, 1 bug
+**Change surface:** 1 changed function (encode_vload), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vload NOT LINKED in C++ reporter binaries; Rust cargo tests are not those binaries. Manual audit of the documented 2-operand / format / mem-reg / ABI / isolation / arity / extra / nonzero-offset surface.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_vsetvl | 7 properties (6 pass, 1 fail) + 6 KAT + 1 regression | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_vload | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_vsetvl ignores extra operands
+### B1: encode_vload ignores extra operands
 
-**Formal:** ∀ rd, rs1, rs2 ∈ GPR names, extra ∈ Operand. encode_vsetvl([Reg(rd), Reg(rs1), Reg(rs2), extra]) = Err
-**Contract evidence:** inferred (rustdoc vector.rs:68 names exactly three operands `rd, rs1, rs2`; llvm-mc `-triple=riscv64 -mattr=+v` rejects extra tokens; encoder/mod.rs:949 `"vsetvl" => encode_vsetvl(operands)` passes operands through)
+**Formal:** ∀ vd ∈ {v0..v31}, rs1 ∈ GPR names, extra ∈ Operand. encode_vload([Reg(vd), Mem{base:rs1, offset:0}, extra], width, lumop) = Err(_)
+**Contract evidence:** inferred (rustdoc two-operand syntax `vle{8,16,32,64}.v vd, (rs1)` at vector.rs:76; llvm-mc `-triple=riscv64 -mattr=+v` rejects a third non-mask token; encoder/mod.rs:954-966 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_vsetvl([Reg("x0"), Reg("x0"), Reg("x0"), Imm(0)]) then Ok(Word(0x80007057))
-**Expected / Actual:** Err (llvm-mc invalid operand) / Ok(Word(0x80007057)) — encoding of `vsetvl x0, x0, x0`
-**Impact:** A stray fourth token is assembled as a valid vsetvl of the first three GPRs instead of an assembler error.
-**Root cause:** vector.rs:71-75 read only operands 0, 1, and 2 via get_reg and never check operands.len() == 3.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:71`
+**Counterexample:** encode_vload([Reg("v0"), Mem{base:"x0", offset:0}, Imm(0)], width=0b000, lumop=0)
+**Expected / Actual:** Err / Ok(Word(0x02000007)) — same encoding as `vle8.v v0, (x0)`
+**Impact:** Invalid assembly with a stray third operand is assembled into a valid-looking unit-stride load. A trailing `v0.t` mask token is also dropped, so a masked load is silently encoded as unmasked (vm=1).
+**Root cause:** vector.rs:82-99 reads only operands 0 and 1 and never checks operands.len() == 2, so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:82`
 ```rust
-    let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
-    let rs2 = get_reg(operands, 2)?;
-    let word = (0b1000000u32 << 25) | (rs2 << 20) | (rs1 << 15) | (0b111 << 12) | (rd << 7) | OP_V;
+    let vd = get_vreg(operands, 0)?;
+    // The second operand should be a memory operand (rs1) like (a1)
+    let rs1 = match operands.get(1) {
+        Some(Operand::Mem { base, offset: 0 }) => {
+            reg_num(base).ok_or_else(|| format!("invalid base register: {}", base))?
+        }
+        Some(Operand::Reg(name)) => {
+            // Parenthesized register may be parsed differently
+            reg_num(name).ok_or_else(|| format!("invalid register: {}", name))?
+        }
+        other => return Err(format!("expected (rs1) at operand 1, got {:?}", other)),
+    };
+    // vm=1 means unmasked (no v0.t)
+    let vm: u32 = 1;
+    // nf=000 (single segment), mew=0, mop=00 (bits 31:26 = 0)
+    let word = (vm << 25)
+        | (lumop << 20) | (rs1 << 15) | (width << 12) | (vd << 7) | OP_LOAD_FP;
     Ok(EncodeResult::Word(word))
 ```
-**Suggested fix:** Reject any operand list that is not exactly three registers.
+**Suggested fix:** Reject any operand list that is not exactly two operands.
 ```rust
-    if operands.len() != 3 {
-        return Err(format!("vsetvl expects 3 operands, got {}", operands.len()));
+    if operands.len() != 2 {
+        return Err(format!("vle*.v/vlm.v expects 2 operands, got {}", operands.len()));
     }
-    let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
-    let rs2 = get_reg(operands, 2)?;
+    let vd = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_vsetvl_extra_operand.md
-**Repro seed:** cc 19da269c3d60f1dcdd1ceb73c306aef05af5f07e78d80b3582dd80cc16d3aa5b
+**Bug report:** bug_reports/encode_vload_extra_operand.md
+**Repro seed:** cc 0be212f64da7f5a8f8765de77b84347b214f2d448af824796fcb0f999ce41c80
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_vsetvl_pbt::encode_vsetvl_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_vsetvl_pbt.rs:259:1:
-Test failed: extra operand Imm(0) must Err for vsetvl (llvm-mc rejects extra); got Ok(Word(2147512407)) at src/backend/riscv/assembler/encoder/encode_vsetvl_pbt.rs:392.
-minimal failing input: rd = "x0", rs1 = "x0", rs2 = "x0", extra = Imm(
+thread 'backend::riscv::assembler::encoder::encode_vload_pbt::encode_vload_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_vload_pbt.rs:325:1:
+Test failed: extra operand Imm(0) must Err for vload (llvm-mc rejects extra); got Ok(Word(33554439)) at src/backend/riscv/assembler/encoder/encode_vload_pbt.rs:476.
+minimal failing input: vd = 0, rs1 = "x0", extra = Imm(
     0,
-)
+), kind = 0
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -69,43 +79,43 @@ minimal failing input: rd = "x0", rs1 = "x0", rs2 = "x0", extra = Imm(
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_vsetvl_pbt.rs | 7 properties + 6 KAT + 1 regression |
+| src/backend/riscv/assembler/encoder/encode_vload_pbt.rs | 8 properties + 6 KAT + 1 regression |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_vsetvl_ -- --test-threads=1
+cargo test --lib encode_vload -- --test-threads=1
 ```
 
-Bug B1:
+B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_vsetvl_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_vload_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/report.json
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/bug_reports/encode_vsetvl_extra_operand.md
-- pbt-out/bug_reports/encode_vsetvl_extra_operand.html
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_vload_extra_operand.md
+- pbt-out/bug_reports/encode_vload_extra_operand.html
+- proptest-regressions/backend/riscv/assembler/encoder/encode_vload_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 23:26 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 223/383 total | PBT candidates: 223 | Tested: 223 (100%) | 1 pass, 223 fail
+> Last updated: 2026-10-06 23:43 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 224/383 total | PBT candidates: 224 | Tested: 224 (100%) | 1 pass, 224 fail
 
 ## Summary
 
@@ -114,10 +124,10 @@ cargo test --lib test_encode_vsetvl_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 223 |
-| **Tested (of PBT candidates)** | **223 / 223 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 223 / -1 |
-| **Overall (tested / all functions)** | **223 / 383 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 224 |
+| **Tested (of PBT candidates)** | **224 / 224 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 224 / -1 |
+| **Overall (tested / all functions)** | **224 / 383 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -125,13 +135,13 @@ cargo test --lib test_encode_vsetvl_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 223 | 223 | 0 | 100% |
+|  | 224 | 224 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 223 | 223 | 0 | 100% |
+| unknown | 224 | 224 | 0 | 100% |
 
 ## File Coverage
 
@@ -377,3 +387,4 @@ cargo test --lib test_encode_vsetvl_regression_extra_operand -- --test-threads=1
 | encode_vsetvli | vector.rs |
 | encode_vsetivli | vector.rs |
 | encode_vsetvl | vector.rs |
+| encode_vload | vector.rs |

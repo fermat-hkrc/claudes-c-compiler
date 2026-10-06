@@ -1,4 +1,4 @@
-> Total files: 16 | Total functions: 383 | PBT candidates: 222 | Excluded: 161
+> Total files: 16 | Total functions: 383 | PBT candidates: 223 | Excluded: 160
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -369,19 +369,19 @@
 | encode_insn_b | compressed.rs | 163 | function | no | out of campaign scope (HARD: test only encode_c_jalr) |
 | encode_insn_u | compressed.rs | 176 | function | no | out of campaign scope (HARD: test only encode_c_jalr) |
 | encode_insn_j | compressed.rs | 187 | function | no | out of campaign scope (HARD: test only encode_c_jalr) |
-| parse_vtypei | vector.rs | 8 | function | no | HARD: test only encode_vsetvl |
-| encode_vsetvli | vector.rs | 48 | function | no | HARD: test only encode_vsetvl |
-| encode_vsetivli | vector.rs | 59 | function | no | HARD: test only encode_vsetvl |
-| encode_vsetvl | vector.rs | 70 | function | yes | change surface |
-| encode_vload | vector.rs | 81 | function | no | HARD: test only encode_vsetvl |
-| encode_vstore | vector.rs | 104 | function | no | HARD: test only encode_vsetvl |
-| encode_v_arith_vv | vector.rs | 123 | function | no | HARD: test only encode_vsetvl |
-| encode_v_arith_vx | vector.rs | 134 | function | no | HARD: test only encode_vsetvl |
-| encode_v_arith_vi | vector.rs | 144 | function | no | HARD: test only encode_vsetvl |
-| encode_vmv_v_v | vector.rs | 154 | function | no | HARD: test only encode_vsetvl |
-| encode_vmv_v_x | vector.rs | 163 | function | no | HARD: test only encode_vsetvl |
-| encode_vmv_v_i | vector.rs | 172 | function | no | HARD: test only encode_vsetvl |
-| encode_vid_v | vector.rs | 182 | function | no | HARD: test only encode_vsetvl |
-| encode_v_crypto_vi | vector.rs | 191 | function | no | HARD: test only encode_vsetvl |
-| encode_v_crypto_vv | vector.rs | 201 | function | no | HARD: test only encode_vsetvl |
-| encode_v_crypto_vs | vector.rs | 211 | function | no | HARD: test only encode_vsetvl |
+| parse_vtypei | vector.rs | 8 | function | no | HARD: test only encode_vload |
+| encode_vsetvli | vector.rs | 48 | function | no | HARD: test only encode_vload |
+| encode_vsetivli | vector.rs | 59 | function | no | HARD: test only encode_vload |
+| encode_vsetvl | vector.rs | 70 | function | no | HARD: test only encode_vload |
+| encode_vload | vector.rs | 81 | function | yes | change surface |
+| encode_vstore | vector.rs | 104 | function | no | HARD: test only encode_vload |
+| encode_v_arith_vv | vector.rs | 123 | function | no | HARD: test only encode_vload |
+| encode_v_arith_vx | vector.rs | 134 | function | no | HARD: test only encode_vload |
+| encode_v_arith_vi | vector.rs | 144 | function | no | HARD: test only encode_vload |
+| encode_vmv_v_v | vector.rs | 154 | function | no | HARD: test only encode_vload |
+| encode_vmv_v_x | vector.rs | 163 | function | no | HARD: test only encode_vload |
+| encode_vmv_v_i | vector.rs | 172 | function | no | HARD: test only encode_vload |
+| encode_vid_v | vector.rs | 182 | function | no | HARD: test only encode_vload |
+| encode_v_crypto_vi | vector.rs | 191 | function | no | HARD: test only encode_vload |
+| encode_v_crypto_vv | vector.rs | 201 | function | no | HARD: test only encode_vload |
+| encode_v_crypto_vs | vector.rs | 211 | function | no | HARD: test only encode_vload |
