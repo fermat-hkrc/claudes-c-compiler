@@ -1,59 +1,57 @@
-# PBT Campaign Report: encode_fp_cmp
+# PBT Campaign Report: encode_fclass
 
 ## Summary
 
-**Verdict:** 2 medium: encode_fp_cmp silently ignores a 4th operand (including RoundingMode), so `feq.s x0, f0, f0, 0` and `feq.s x0, f0, f0, rne` assemble as `feq.s x0, f0, f0` instead of being rejected like llvm-mc.
+**Verdict:** 2 medium: encode_fclass silently ignores a 3rd operand (including RoundingMode), so `fclass.s x0, f0, 0` and `fclass.s x0, f0, rne` assemble as `fclass.s x0, f0` instead of being rejected like llvm-mc.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fp_cmp
+**Modules tested:** encode_fclass
 **Tests:** 7
 **Result:** 5 passing, 2 bugs
-**Change surface:** 1 changed function (encode_fp_cmp), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw and marked encode_fp_cmp NOT LINKED against unrelated C++ binaries; Rust `cargo test --lib encode_fp_cmp` executed the symbol (KAT + 7 properties).
+**Change surface:** 1 changed function (encode_fclass), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw and marked encode_fclass NOT LINKED against unrelated C++ binaries; Rust `cargo test --lib encode_fclass` executed the symbol (KAT + 7 properties).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fp_cmp | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fclass | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_fp_cmp ignores a 4th operand
+### B1: encode_fclass ignores a 3rd operand
 
-**Formal:** ∀ mn ∈ CMP, rd ∈ GPRNames, rs1,rs2 ∈ FPRNames, extra ∈ Operand. encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7(mn), funct3(mn)) is Err
-**Contract evidence:** inferred (public wrapper encoder/mod.rs:737-739 and :765-767 passes the operand slice through unchanged; llvm-mc rejects extra operands; README.md:352 documents a 6-field R-type with no extra operand)
+**Formal:** ∀ mn ∈ {fclass.s, fclass.d}, rd ∈ GPRNames, rs1 ∈ FPRNames, extra ∈ Operand. encode_fclass([Reg(rd), Reg(rs1), extra], funct7(mn)) is Err
+**Contract evidence:** inferred (public wrapper encoder/mod.rs:742 and :770 passes the operand slice through unchanged; llvm-mc rejects extra operands; README.md:352 documents a 6-field R-type with no extra operand)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fp_cmp([Reg("x0"), Reg("f0"), Reg("f0"), Imm(0)], 0b1010000, 0b010)
-**Expected / Actual:** Err / Ok(Word(0xa0002053)) (encoding of feq.s x0, f0, f0)
-**Impact:** A typo or extra token in FEQ/FLT/FLE is silently dropped, so the assembler emits a valid OP-FP compare word instead of diagnosing the extra operand.
-**Root cause:** float.rs:104-107 reads only operands 0, 1, 2 via get_reg/get_freg and returns Ok without checking operands.len() > 3, so a 4th operand is ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:107`
+**Counterexample:** encode_fclass([Reg("x0"), Reg("f0"), Imm(0)], 0b1110000)
+**Expected / Actual:** Err / Ok(Word(0xe0001053)) (encoding of fclass.s x0, f0)
+**Impact:** A typo or extra token in FCLASS.S/D is silently dropped, so the assembler emits a valid OP-FP FCLASS word instead of diagnosing the extra operand.
+**Root cause:** float.rs:111-113 reads only operands 0 and 1 via get_reg/get_freg and returns Ok without checking operands.len() > 2, so a 3rd operand is ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:113`
 ```rust
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
+    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b001, rs1, 0, funct7)))
 ```
-**Suggested fix:** Reject more than three operands before packing the R-type word.
+**Suggested fix:** Reject more than two operands before packing the R-type word.
 ```rust
-    if operands.len() > 3 {
-        return Err("fp cmp: unexpected extra operand".to_string());
+    if operands.len() > 2 {
+        return Err("fclass: unexpected extra operand".to_string());
     }
     let rd = get_reg(operands, 0)?;
     let rs1 = get_freg(operands, 1)?;
-    let rs2 = get_freg(operands, 2)?;
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
+    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b001, rs1, 0, funct7)))
 ```
-**Bug report:** bug_reports/encode_fp_cmp_extra_operand.md
-**Repro seed:** (deterministic; shrunk to feq.s x0, f0, f0, Imm(0))
+**Bug report:** bug_reports/encode_fclass_extra_operand.md
+**Repro seed:** (none — deterministic regression; proptest shrunk to x0, f0, Imm(0))
 **Raw output:**
 ```text
-Test failed: 4th operand must Err for feq.s x0, f0, f0 (llvm-mc rejects extra operands); got Ok(Word(2684362835)) at src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs:469.
-minimal failing input: (mn, f7, f3) = (
-    "feq.s",
-    80,
-    2,
-), rd = "x0", rs1 = "f0", rs2 = "f0", extra = Imm(
+Test failed: 3rd operand must Err for fclass.s x0, f0 (llvm-mc rejects extra operands); got Ok(Word(3758100563)) at src/backend/riscv/assembler/encoder/encode_fclass_pbt.rs:439.
+minimal failing input: (mn, f7) = (
+    "fclass.s",
+    112,
+), rd = "x0", rs1 = "f0", extra = Imm(
     0,
 )
 	successes: 0
@@ -61,40 +59,38 @@ minimal failing input: (mn, f7, f3) = (
 	global rejects: 0
 ```
 
-### B2: encode_fp_cmp ignores a 4th RoundingMode
+### B2: encode_fclass ignores a 3rd RoundingMode
 
-**Formal:** ∀ mn ∈ CMP, rd ∈ GPRNames, rs1,rs2 ∈ FPRNames, rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fp_cmp([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn), funct3(mn)) is Err
-**Contract evidence:** inferred (RISC-V Unprivileged ISA FEQ/FLT/FLE use funct3 as the comparison, not rm; llvm-mc rejects `feq.s a0, fa1, fa2, rne`; public wrapper passes the operand slice through)
+**Formal:** ∀ mn ∈ {fclass.s, fclass.d}, rd ∈ GPRNames, rs1 ∈ FPRNames, rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fclass([Reg(rd), Reg(rs1), RoundingMode(rm)], funct7(mn)) is Err
+**Contract evidence:** inferred (RISC-V Unprivileged ISA FCLASS hardwires funct3=001 and rs2=00000 with no rm field; llvm-mc rejects fclass.s a0, fa1, rne; encoder/mod.rs:742/770 pass the operand slice through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fp_cmp([Reg("x0"), Reg("f0"), Reg("f0"), RoundingMode("rne")], 0b1010000, 0b010)
-**Expected / Actual:** Err / Ok(Word(0xa0002053)) (encoding of feq.s x0, f0, f0; funct3 remains 010 FEQ, not rne)
-**Impact:** An FADD-style 4-operand form with rne is silently dropped, hiding a real assembly error on instructions that have no rounding-mode field.
-**Root cause:** float.rs:104-107 reads only operands 0, 1, 2 and returns Ok without checking operands.len() > 3, so a 4th RoundingMode is ignored and does not overwrite funct3.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:107`
+**Counterexample:** encode_fclass([Reg("x0"), Reg("f0"), RoundingMode("rne")], 0b1110000)
+**Expected / Actual:** Err / Ok(Word(0xe0001053)) (encoding of fclass.s x0, f0; funct3 remains 001, not rne)
+**Impact:** A caller who copied an FSQRT-style 3-operand form (`fclass.s rd, rs1, rne`) gets a silently accepted FCLASS with the rounding token dropped, hiding a real assembly error.
+**Root cause:** float.rs:111-113 reads only operands 0 and 1 and returns Ok without checking operands.len() > 2, so a 3rd RoundingMode is ignored and does not overwrite the hardwired funct3=001.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:113`
 ```rust
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
+    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b001, rs1, 0, funct7)))
 ```
-**Suggested fix:** Reject more than three operands before packing the R-type word.
+**Suggested fix:** Reject more than two operands before packing the R-type word.
 ```rust
-    if operands.len() > 3 {
-        return Err("fp cmp: unexpected extra operand".to_string());
+    if operands.len() > 2 {
+        return Err("fclass: unexpected extra operand".to_string());
     }
     let rd = get_reg(operands, 0)?;
     let rs1 = get_freg(operands, 1)?;
-    let rs2 = get_freg(operands, 2)?;
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
+    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b001, rs1, 0, funct7)))
 ```
-**Bug report:** bug_reports/encode_fp_cmp_rm_fourth.md
-**Repro seed:** (deterministic; shrunk to feq.s x0, f0, f0, rne)
+**Bug report:** bug_reports/encode_fclass_rm_third.md
+**Repro seed:** (none — deterministic regression; proptest shrunk to x0, f0, rne)
 **Raw output:**
 ```text
-Test failed: 4th RoundingMode must Err for feq.s x0, f0, f0, rne (FEQ/FLT/FLE have no rm); got Ok(Word(2684362835)) at src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs:488.
-minimal failing input: (mn, f7, f3) = (
-    "feq.s",
-    80,
-    2,
-), rd = "x0", rs1 = "f0", rs2 = "f0", rm = "rne"
+Test failed: 3rd RoundingMode must Err for fclass.s x0, f0, rne (FCLASS has no rm); got Ok(Word(3758100563)) at src/backend/riscv/assembler/encoder/encode_fclass_pbt.rs:457.
+minimal failing input: (mn, f7) = (
+    "fclass.s",
+    112,
+), rd = "x0", rs1 = "f0", rm = "rne"
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -108,52 +104,53 @@ minimal failing input: (mn, f7, f3) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_fp_cmp_pbt.rs | 7 properties + 2 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_fclass_pbt.rs | 7 properties + 2 KAT + 2 regression witnesses |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fp_cmp -- --test-threads=1
+cargo test --lib encode_fclass -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fp_cmp_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_fclass_regression_extra_operand -- --test-threads=1
 ```
 
-B2 rounding mode as 4th:
+B2 RoundingMode third:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fp_cmp_regression_rm_fourth -- --test-threads=1
+cargo test --lib test_encode_fclass_regression_rm_third -- --test-threads=1
 ```
 
 ## Output Directories
 
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_fp_cmp_extra_operand.md
-- pbt-out/bug_reports/encode_fp_cmp_extra_operand.html
-- pbt-out/bug_reports/encode_fp_cmp_rm_fourth.md
-- pbt-out/bug_reports/encode_fp_cmp_rm_fourth.html
-- pbt-out/run/encode_fp_cmp_round1.log
-- pbt-out/run/encode_fp_cmp_round2.log
-- pbt-out/run/encode_fp_cmp_round3.log
+- pbt-out/INVARIANTS.md
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_fclass_extra_operand.md
+- pbt-out/bug_reports/encode_fclass_extra_operand.html
+- pbt-out/bug_reports/encode_fclass_rm_third.md
+- pbt-out/bug_reports/encode_fclass_rm_third.html
+- src/backend/riscv/assembler/encoder/encode_fclass_pbt.rs
+- proptest-regressions/backend/riscv/assembler/encoder/encode_fclass_pbt.txt (framework failure file)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 19:13 (campaign: coverage)
-> Files: 14/14 scanned (100%) | Functions: 206/351 total | PBT candidates: 206 | Tested: 206 (100%) | 1 pass, 206 fail
+> Last updated: 2026-10-06 19:26 (campaign: coverage)
+> Files: 14/14 scanned (100%) | Functions: 207/351 total | PBT candidates: 207 | Tested: 207 (100%) | 1 pass, 207 fail
 
 ## Summary
 
@@ -162,10 +159,10 @@ cargo test --lib test_encode_fp_cmp_regression_rm_fourth -- --test-threads=1
 | Total source files | 14 |
 | Files scanned | 14 / 14 (100%) |
 | Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 206 |
-| **Tested (of PBT candidates)** | **206 / 206 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 206 / -1 |
-| **Overall (tested / all functions)** | **206 / 351 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 207 |
+| **Tested (of PBT candidates)** | **207 / 207 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 207 / -1 |
+| **Overall (tested / all functions)** | **207 / 351 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -173,13 +170,13 @@ cargo test --lib test_encode_fp_cmp_regression_rm_fourth -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 206 | 206 | 0 | 100% |
+|  | 207 | 207 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 206 | 206 | 0 | 100% |
+| unknown | 207 | 207 | 0 | 100% |
 
 ## File Coverage
 
@@ -408,3 +405,4 @@ cargo test --lib test_encode_fp_cmp_regression_rm_fourth -- --test-threads=1
 | encode_fp_unary | float.rs |
 | encode_fp_sgnj | float.rs |
 | encode_fp_cmp | float.rs |
+| encode_fclass | float.rs |

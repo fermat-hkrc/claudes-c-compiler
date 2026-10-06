@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_fclass)
+
+- Valid 2-operand FCLASS.S/D with GPR rd and FP rs1 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins fclass.s a0, fa1 = 0xe0059553, fclass.s t0, fs0 = 0xe00412d3, fclass.s zero, ft0 = 0xe0001053, fclass.d a0, fa1 = 0xe2059553, fclass.d t6, ft11 = 0xe20f9fd3, fclass.d x0, f0 = 0xe2001053, fclass.s x31, f0 = 0xe0001fd3, fclass.s fp, ft0 = 0xe0001453, fclass.s s0, f8 = 0xe0041453.
+- R-type OP-FP layout holds: opcode=0b1010011, funct3 hardwired 001, rs2 hardwired 0, rd/rs1/funct7 as given (1000 cases).
+- GPR ABI names (a0/t0/fp/...) encode the same rd as xN; FP ABI names encode the same rs1 as fN (1000 cases).
+- FCLASS.S vs FCLASS.D differ only in funct7 bit 0 (1 << 25) (1000 cases).
+- Empty, 1-operand, FP rd, GPR in the FP slot, non-Reg rd (excluding Imm 0..=31), and Imm as rs1 return Err (1000 cases).
+- A 3rd operand and a 3rd RoundingMode currently disagree with llvm-mc (see bugs): extra ignored; rm does not overwrite funct3=001.
+
+## Environment (encode_fclass)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+f,+d -show-encoding (LLVM 15.0.6). Default riscv64 without +f,+d rejects F/D; RV64GC includes both (README.md:13).
+- Harness: src/backend/riscv/assembler/encoder/encode_fclass_pbt.rs, cargo test --lib encode_fclass, proptest cases=1000.
+- Dispatch: encoder/mod.rs:742 fclass.s => encode_fclass(operands, 0b1110000); encoder/mod.rs:770 fclass.d => encode_fclass(operands, 0b1110001). Operands passed through with ISA funct7.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / R-type / ABI / S-vs-D / arity-class / extra / rm-third. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_fclass)
+
+- llvm-mc prints `fclass.s x10, f11` as a0, fa1 (same encoding).
+- These instructions have no rounding-mode field (unlike FSQRT). llvm-mc rejects a 3rd rne token.
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number for rd (encoder/mod.rs:398-399). llvm-mc rejects numeric rd. get_freg does not accept Imm for rs1.
+- encode_fclass does not range-check funct7; callers supply the ISA values.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_fp_cmp)
 
 - Valid 3-operand FEQ/FLT/FLE .S/.D with GPR rd and FP rs1, rs2 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins feq.s a0, fa1, fa2 = 0xa0c5a553, flt.s t0, fs0, fs1 = 0xa09412d3, fle.s zero, ft0, ft1 = 0xa0100053, feq.d a0, fa1, fa2 = 0xa2c5a553, flt.d t6, ft11, ft10 = 0xa3ef9fd3, fle.d x0, f0, f1 = 0xa2100053, feq.s x31, f0, f31 = 0xa1f02fd3, feq.s fp, ft0, fa0 = 0xa0a02453, feq.s s0, f8, f10 = 0xa0a42453.
