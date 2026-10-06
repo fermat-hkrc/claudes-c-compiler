@@ -637,4 +637,18 @@ mod pbt_asm_deep {
             let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&out);
         }
     }
+
+    /// RED WITNESS — round 26 (issue #819): x87 subset gaps.
+    #[test]
+    fn test_x86asm_regression_x87_gaps() {
+        for form in ["fst %st(1)", "fcomi %st(1), %st", "fcmove %st(1), %st",
+                     "fstsw %ax", "fsave (%rsp)", "ffree %st(1)"] {
+            let dir = run_dir();
+            let src = dir.join("r819.s");
+            std::fs::write(&src, format!(".text\n{}\n", form)).unwrap();
+            let out = dir.join("r819.o");
+            assert!(ccc_assemble(&src, &out).is_ok(), "#819: rejected valid x87 form: {}", form);
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&out);
+        }
+    }
 }
