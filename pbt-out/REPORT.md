@@ -1,75 +1,175 @@
-# PBT Campaign Report: encode_bti
+# PBT Campaign Report: encode_ic
 
 ## Summary
 
-**Verdict:** No bugs; 6 properties passing. `encode_bti` agrees with llvm-mc and the ARM BTI/HINT encoding on the four valid targets (including ASCII case and surrounding whitespace) and rejects unknown names and extra operands the way gas/llvm-mc do.
+**Verdict:** 3 medium: encode_ic silently encodes invalid IC syntax that llvm-mc and GNU as reject — a register on IALLUIS/IALLU, a missing Xt on IVAU (becomes IVAU XZR), and W/SP/SIMD as IVAU Xt (W0 encodes as X0).
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bti
-**Tests:** 6 properties + 4 KAT
-**Result:** 6 passing, 0 bugs
-**Change surface:** 1 changed function (encode_bti), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_bti NOT LINKED). Manual arm audit of the 12-line body confirmed every match arm is driven.
-**Tier:** standard (1 strengthening round + 1 contract-surface sweep spent)
+**Modules tested:** encode_ic
+**Tests:** 9 properties + 4 KAT + 3 regression witnesses
+**Result:** 6 passing, 3 bugs
+**Change surface:** 1 changed function (encode_ic), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of the 17-line body plus a sweep property on the invalid-register Err path.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bti | 6 properties + 4 KAT | 0 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_ic | 9 properties (6 passing / 3 failing) + 4 KAT + 3 regression | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-(none)
+### B1: encode_ic accepts a register on IALLUIS/IALLU
+
+**Formal:** ∀ op ∈ {ialluis, iallu}. ∀ t ∈ 0..31 ∪ {xzr, lr, sp}. llvm-mc("ic " · op · ", " · xt(t)) = Err ⇒ encode_ic(op · ", " · xt(t)) = Err
+**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM IALLUIS/IALLU have no Xt; llvm-mc "specified ic op does not use a register"; gas "extraneous register at operand 2")
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_ic("ialluis, x0")
+**Expected / Actual:** Err / Ok(Word(0xd5087100))
+**Impact:** A stray register on IALLUIS/IALLU is patched into Rt instead of being rejected, so a typo is not diagnosed.
+**Root cause:** system.rs:416 always writes `(base & !0x1F) | rt` after parsing an optional register; IALLUIS/IALLU never check that a second operand is forbidden.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:416`
+```rust
+    let word = (base & !0x1F) | rt;
+```
+**Suggested fix:** Reject a register operand for IALLUIS and IALLU before encoding.
+```rust
+    if matches!(op_name.as_str(), "ialluis" | "iallu") && parts.len() > 1 {
+        return Err(format!("ic: {} does not take a register", op_name));
+    }
+    let word = (base & !0x1F) | rt;
+```
+**Bug report:** bug_reports/encode_ic_iallu_with_reg.md
+**Repro seed:** op = "ialluis", xt = "x0"
+**Raw output:**
+```text
+Test failed: IALLU* with register must Err (llvm-mc rejects ic ialluis, x0); SUT raw "ialluis, x0": Word(3574100224).
+minimal failing input: op = "ialluis", xt = "x0"
+```
+
+### B2: encode_ic encodes IC IVAU without Xt as IVAU XZR
+
+**Formal:** ∀ pad ∈ {ε, space, tab}*. ∀ case ∈ ASCII-case-fold("ivau"). llvm-mc("ic " · pad · case · pad) = Err ⇒ encode_ic(pad · case · pad) = Err
+**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM IVAU requires Xt; llvm-mc "specified ic op requires a register"; gas "missing register at operand 2")
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_ic("ivau")
+**Expected / Actual:** Err / Ok(Word(0xd50b753f))
+**Impact:** A dropped Xt becomes `ic ivau, xzr`, a real cache-maintenance instruction, instead of an assembler error.
+**Root cause:** system.rs:408 default Rt to 31 (XZR) whenever raw_operands contains no comma, including for IVAU which requires Xt.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:408`
+```rust
+        31 // xzr
+```
+**Suggested fix:** Require a register operand for IVAU.
+```rust
+    } else if op_name == "ivau" {
+        return Err("ic: ivau requires a register".to_string());
+    } else {
+        31 // xzr
+    };
+```
+**Bug report:** bug_reports/encode_ic_ivau_missing_reg.md
+**Repro seed:** raw = "ivau"
+**Raw output:**
+```text
+Test failed: IVAU without register must Err (llvm-mc rejects ic ivau); SUT raw "ivau": Word(3574297919).
+minimal failing input: raw = "ivau"
+```
+
+### B3: encode_ic accepts W/SP/SIMD registers as IVAU Xt
+
+**Formal:** ∀ bad ∈ {w0..w30, wzr, wsp, sp, d0, s0, q0, v0, h0, b0}. llvm-mc("ic ivau, " · bad) = Err ⇒ encode_ic("ivau, " · bad) = Err
+**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM IVAU Xt is a 64-bit GPR; llvm-mc "invalid operand for instruction"; gas "operand mismatch")
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_ic("ivau, w0")
+**Expected / Actual:** Err / Ok(Word(0xd50b7520)) (same as `ic ivau, x0`)
+**Impact:** A 32-bit, SP, or SIMD register is silently treated as the corresponding 5-bit encoding, so a width/class typo is not diagnosed.
+**Root cause:** system.rs:406 uses parse_reg_num, which accepts W/SP/WZR/WSP and SIMD/FP prefixes as 5-bit numbers, with no 64-bit GPR check for IVAU Xt.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:406`
+```rust
+        parse_reg_num(reg_str).ok_or_else(|| format!("ic: invalid register '{}'", reg_str))?
+```
+**Suggested fix:** Restrict IVAU Xt to 64-bit integer registers (Xn / XZR / LR).
+```rust
+        let rt = parse_reg_num(reg_str).ok_or_else(|| format!("ic: invalid register '{}'", reg_str))?;
+        let low = reg_str.trim().to_lowercase();
+        let is_x = low.starts_with('x') || low == "xzr" || low == "lr";
+        if !is_x {
+            return Err(format!("ic: Xt must be a 64-bit GPR, got '{}'", reg_str));
+        }
+```
+**Bug report:** bug_reports/encode_ic_wrong_reg_class.md
+**Repro seed:** bad = "w0"
+**Raw output:**
+```text
+Test failed: IVAU with non-X register must Err (llvm-mc rejects ic ivau, w0); SUT raw "ivau, w0": Word(3574297888).
+minimal failing input: bad = "w0"
+```
 
 ## Design Caveats
 
-- Stale rustdoc on encode_bti describes HINT, not BTI. Doc evidence: src/backend/arm/assembler/encoder/system.rs:541 `/// Encode HINT #imm (system hint instruction)`. Classification: other (copy-paste of the following function's comment). It does not restrict the BTI input domain and does not assert HINT-immediate encoding for this symbol. Body comments at system.rs:545-548 name the four ARM BTI mappings that the properties check.
+(none)
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_bti_pbt.rs | 6 properties + 4 KAT |
+| src/backend/arm/assembler/encoder/encode_ic_pbt.rs | 9 properties (6 passing / 3 failing) + 4 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_ic_pbt` registration |
 
 ## Reproduction
 
+Whole suite (expected: 10 passed, 6 failed — 3 properties + 3 regression witnesses):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bti -- --test-threads=1
+cargo test --lib encode_ic -- --test-threads=1
 ```
 
-Whole-suite command (this campaign's target):
-
+B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bti -- --test-threads=1
+cargo test --lib test_encode_ic_regression_ialluis_x0 -- --test-threads=1 --nocapture
 ```
 
-Result as run: `10 passed; 0 failed` (6 properties + 4 KAT). Strengthening re-run (space-separated extras, error-string check, near-miss unknowns): `10 passed; 0 failed`.
+B2:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_ic_regression_ivau_missing -- --test-threads=1 --nocapture
+```
+
+B3:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_ic_regression_ivau_w0 -- --test-threads=1 --nocapture
+```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/report.json
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/build.log
-- pbt-out/run/ (scratch)
-- pbt-out/bug_reports/ (historical reports from earlier campaigns; none for encode_bti)
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — coverage table
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/FUNCTION_INDEX.md — function index (encode_ic marked yes)
+- pbt-out/report.json — machine-readable report
+- pbt-out/bug_reports/encode_ic_iallu_with_reg.md + .html
+- pbt-out/bug_reports/encode_ic_ivau_missing_reg.md + .html
+- pbt-out/bug_reports/encode_ic_wrong_reg_class.md + .html
+- pbt-out/build.log — pre-campaign user build log
+- proptest-regressions/backend/arm/assembler/encoder/encode_ic_pbt.txt — shrunk seeds
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 01:57 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 157/307 total | PBT candidates: 157 | Tested: 157 (100%) | 1 pass, 157 fail
+> Last updated: 2026-10-06 02:16 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 158/307 total | PBT candidates: 158 | Tested: 158 (100%) | 1 pass, 158 fail
 
 ## Summary
 
@@ -78,10 +178,10 @@ Result as run: `10 passed; 0 failed` (6 properties + 4 KAT). Strengthening re-ru
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 157 |
-| **Tested (of PBT candidates)** | **157 / 157 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 157 / -1 |
-| **Overall (tested / all functions)** | **157 / 307 (51%)** |
+| PBT candidates (from FUNCTION_INDEX) | 158 |
+| **Tested (of PBT candidates)** | **158 / 158 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 158 / -1 |
+| **Overall (tested / all functions)** | **158 / 307 (51%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -89,13 +189,13 @@ Result as run: `10 passed; 0 failed` (6 properties + 4 KAT). Strengthening re-ru
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 157 | 157 | 0 | 100% |
+|  | 158 | 158 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 157 | 157 | 0 | 100% |
+| unknown | 158 | 158 | 0 | 100% |
 
 ## File Coverage
 
@@ -275,3 +375,4 @@ Result as run: `10 passed; 0 failed` (6 properties + 4 KAT). Strengthening re-ru
 | encode_brk | system.rs |
 | encode_hint | system.rs |
 | encode_bti | system.rs |
+| encode_ic | system.rs |

@@ -160,3 +160,4 @@
 | encode_brk | system.rs | encode_brk_pbt.rs | cargo test --lib encode_brk | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |
 | encode_hint | system.rs | encode_hint_pbt.rs | cargo test --lib encode_hint | 5 passing / 2 failing properties (plus 4 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |
 | encode_bti | system.rs | encode_bti_pbt.rs | cargo test --lib encode_bti | 6 passing properties (plus 4 passing KAT; 0 bugs; strengthening round added space-separated extra and error-string check; sweep all match-arms driven) |
+| encode_ic | system.rs | encode_ic_pbt.rs | cargo test --lib encode_ic | 6 passing / 3 failing properties (plus 4 passing KAT + 3 failing regression witnesses; 3 bugs; named/layout/rt-isolation/case-ws/unknown/invalid-reg passing, iallu-with-reg/ivau-missing/wrong-class failing) |

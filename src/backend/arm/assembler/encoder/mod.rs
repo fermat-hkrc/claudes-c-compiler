@@ -130,6 +130,8 @@ mod encode_brk_pbt;
 mod encode_hint_pbt;
 #[cfg(test)]
 mod encode_bti_pbt;
+#[cfg(test)]
+mod encode_ic_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

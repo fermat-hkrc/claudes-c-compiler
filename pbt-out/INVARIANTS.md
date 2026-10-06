@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_ic)
+
+- Valid IALLUIS / IALLU (no Xt) and IVAU with Xt in {x0..x30, xzr, x31, lr} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt (1000 cases). KAT pins ialluis=0xd508711f, iallu=0xd508751f, ivau x0=0xd50b7520, ivau xzr=0xd50b753f.
+- ARM IC layout holds: bits[31:21]=0b11010101000; IALLUIS op1=0 CRn=7 CRm=1 op2=0 Rt=31; IALLU CRm=5; IVAU op1=3 CRn=7 CRm=5 op2=1 Rt=t (1000 cases).
+- IVAU encodings differ only in Rt bits[4:0]; IALLU XOR IALLUIS = 0x400 (CRm nibble) (1000 cases).
+- ASCII case-fold and surrounding space/tab are behavior-preserving on the valid domain (1000 cases).
+- Unknown operation names return Err containing "unsupported ic operation" or "invalid register", matching llvm-mc/gas (1000 cases).
+- Malformed IVAU Xt (x32, empty, extra operands, #imm) return Err containing "invalid register" (sweep, 1000 cases).
+- IALLUIS/IALLU with a register, IVAU without Xt, and IVAU with W/SP/SIMD currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_ic)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM IC: IALLUIS = SYS #0, C7, C1, #0; IALLU = SYS #0, C7, C5, #0; IVAU = SYS #3, C7, C5, #1, Xt.
+- Dispatch: encoder/mod.rs:983 `"ic" => encode_ic(raw_operands)`. Raw operand string passed through unchanged; parser does not lowercase it.
+- Sibling encode_dc / encode_tlbi / encode_at / encode_sys are not same-job differentials (different SYS encodings).
+- encode_ic splits on the first comma, lowercases the op, optionally parses Rt via parse_reg_num, then patches bits[4:0].
+- No ARM codegen caller currently emits `ic`; encode_instruction still routes the mnemonic.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_ic_neg_invalid_reg. Closed: every documented behavior has a property; tier round spent.
+- Three failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ic_*.md.
+
+## Quirks (encode_ic)
+
+- Surrounding whitespace and ASCII case are accepted (trim + to_lowercase).
+- llvm-mc accepts `x31` as XZR; GNU gas rejects `x31`. The differential used llvm-mc.
+- parse_reg_num accepts `lr` as 30 (passing); it does not accept `fp` (x29), which gas/llvm-mc do.
+- Extra operands after a parsed register (`ivau, x0, x1`) fail parse_reg_num and return Err (sweep passing).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 17-line body.
+
 # Confirmed invariants (encode_bti)
 
 - Valid targets {omitted, c, j, jc} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` and the ARM BTI formula 0xD503241F | (j<<7) | (c<<6) (1000 cases). KAT pins omitted/c/j/jc = 0xd503241f/0xd503245f/0xd503249f/0xd50324df.
