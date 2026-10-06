@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_jal)
+
+- Valid `jal rd, off` for even off in [-1048576, 1048574] and rd in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins jal x0,0=0x0000006f, jal x1,0=0x000000ef, jal x1,4=0x004000ef, jal x1,-4=0xffdff0ef, jal x1,1048574=0x7ffff0ef, jal x1,-1048576=0x800000ef.
+- 1-operand `jal off` equals `jal ra, off` and llvm-mc `jal off` (1000 cases). KAT pins jal 4=0x004000ef.
+- J-type layout holds: opcode=0b1101111, rd in bits[11:7], reconstructed even offset matches (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd (1000 cases).
+- Symbol/Label reloc-form word equals `jal rd, 0` with RelocType::Jal, symbol=s, addend=0 (1000 cases, 1-op and 2-op).
+- Empty operand list and FP dest return Err (1000 cases).
+- Odd/out-of-range immediates, extra operands, and SymbolOffset currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_jal)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs, cargo test --lib encode_jal, proptest cases=1000.
+- Dispatch: encoder/mod.rs:460 `"jal" => encode_jal(operands)`.
+- Sibling encode_j / encode_j_pseudo / encode_jalr / C.J are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_jal_one_operand_reloc / encode_jal_neg_fp / encode_jal_neg_empty. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+- Three failing properties are SUT bugs. See pbt-out/bug_reports/encode_jal_*.md.
+
+## Quirks (encode_jal)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:351 GCC inline asm).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- Immediate is `*imm as i32` then encode_j drops bit 0; values outside even [-1048576, 1048574] wrap/truncate (see bugs).
+- SymbolOffset is not matched and returns "jal: invalid operand" (see bugs).
+- 1-operand Reg is treated as a jump-target symbol (matches llvm-mc `jal ra` / `jal x1`).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 40-line body.
+
 # Confirmed invariants (encode_auipc)
 
 - Valid `auipc rd, imm` for imm in [0, 1048575] and rd in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins auipc x0,0=0x00000017, auipc x1,1=0x00001097, auipc x1,1048575=0xFFFFF097.

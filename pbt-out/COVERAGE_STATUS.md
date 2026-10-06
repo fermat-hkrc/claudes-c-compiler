@@ -1,8 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_auipc, English, standard)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps had no .gcda/.profraw; C++ reporter claimed encode_auipc NOT LINKED. cargo test --lib encode_auipc executed the production symbol.
-> Files: 12/12 scanned (100%) | Functions: 184/324 total | PBT candidates: 184 | Tested: 183 (encode_auipc added this campaign) | encode_auipc: 8 pass / 4 fail
+> Last updated: 2026-10-06 (campaign: encode_jal, English, standard)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps C++ reporter listed unrelated binaries and claimed encode_jal NOT LINKED. Rust cargo test --lib encode_jal executed the production symbol.
+> This campaign: encode_jal tested (8 passing / 3 failing properties, 3 bugs). Files: 12/12 scanned | Functions: 324 total | PBT candidates: 185 | encode_jal covered.
 
 ## Summary
 
@@ -11,10 +11,10 @@
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 182 |
-| **Tested (of PBT candidates)** | **182 / 182 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 182 / -1 |
-| **Overall (tested / all functions)** | **182 / 324 (56%)** |
+| PBT candidates (from FUNCTION_INDEX) | 183 |
+| **Tested (of PBT candidates)** | **183 / 183 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 183 / -1 |
+| **Overall (tested / all functions)** | **183 / 324 (56%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -22,13 +22,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 182 | 182 | 0 | 100% |
+|  | 183 | 183 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 182 | 182 | 0 | 100% |
+| unknown | 183 | 183 | 0 | 100% |
 
 ## File Coverage
 
@@ -233,3 +233,4 @@
 | encode_cond_branch | compare_branch.rs |
 | encode_ldr_str_auto | load_store.rs |
 | encode_lui | base.rs |
+| encode_auipc | base.rs |

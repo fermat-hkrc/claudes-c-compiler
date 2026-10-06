@@ -1,327 +1,308 @@
-# Properties: encode_auipc
+# Properties: encode_jal
 
-## encode_auipc_diff_imm_llvm_mc
-- Tier: 4
-- Rationale: Strongest applicable oracle is differential vs llvm-mc (independent RISC-V assembler). State machine rejected (pure function). Algebraic round-trip rejected (no in-tree AUIPC decoder). encode_lui / encode_c_lui / encode_u rejected (different opcode / compressed / shared packer).
-- Doc contract: encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint 077a9290
-- Seed: encode_lui_pbt.rs encode_lui_diff_imm_llvm_mc
-- Formal: ∀ rd ∈ {x0..x31 ∪ ABI names}, ∀ imm ∈ [0, 1048575]. encode_auipc([Reg(rd), Imm(imm)]) = Ok(Word(w)) ∧ w = llvm-mc("auipc rd, imm")
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
+## encode_jal_diff_imm_llvm_mc
+- Tier: 2
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc RISC-V assembler. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree JAL decoder). encode_j / encode_j_pseudo / encode_jalr / C.J rejected as same-job siblings (private packer / jal x0 pseudo / I-type / compressed).
+- Doc contract: src/backend/riscv/assembler/encoder/base.rs:52 "jal rd, offset  OR  jal offset (rd = ra)" — asserted fingerprint 8bd543de
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:402 encode_auipc_diff_imm_llvm_mc
+- Formal: ∀ rd ∈ GPR, ∀ off ∈ {k·2 | k ∈ ℤ, off ∈ [-1048576, 1048574]}. encode_jal([Reg(rd), Imm(off)]) = Word(llvm-mc("jal rd, off"))
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_auipc
+function: encoder.encode_jal
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, imm]
-  domain: { rd: gpr_name, imm: int(0..1048575) }
+  vars: [rd, off]
+  domain: { rd: gpr, off: even_jal_imm }
   relation:
     op: eq
-    lhs: encode_auipc([Reg(rd), Imm(imm)])
-    rhs: llvm_mc_word("auipc {rd}, {imm}")
+    lhs: encode_jal([Reg(rd), Imm(off)])
+    rhs: Word(llvm_mc("jal rd, off"))
 generators:
   rd: { gen: string }
-  imm: { gen: int, min: 0, max: 1048575, type: i64 }
-evidence: encoder/mod.rs:3 README.md:304 llvm-mc -triple=riscv64
+  off: { gen: int, min: -1048576, max: 1048574, type: i64 }
+evidence: src/backend/riscv/assembler/README.md:357 J-type layout; llvm-mc -triple=riscv64
 ```
 
-## encode_auipc_isa_u_type
-- Tier: 3
-- Rationale: Algebraic invariant from README.md:356 / RISC-V U-type layout, independent of encode_u. Stronger differential is the sibling property; this pins opcode/rd/imm20 even if llvm-mc is unavailable.
-- Doc contract: README.md:356 "U-type:  [          imm[31:12]           |  rd  | opcode]" — asserted fingerprint 8c9098fd
-- Seed: encode_lui_pbt.rs encode_lui_isa_u_type
-- Formal: ∀ rd ∈ 0..31, ∀ imm ∈ [0, 1048575]. let w = encode_auipc([Reg(x{rd}), Imm(imm)]). w[6:0]=0b0010111 ∧ w[11:7]=rd ∧ w[31:12]=imm
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
+## encode_jal_one_operand_is_ra
+- Tier: 4
+- Rationale: Metamorphic restatement of the documented 1-operand form (implicit rd = ra). Also checked differentially vs llvm-mc `jal off`.
+- Doc contract: src/backend/riscv/assembler/encoder/base.rs:52 "jal rd, offset  OR  jal offset (rd = ra)" — asserted fingerprint 8bd543de
+- Seed: src/backend/riscv/assembler/encoder/base.rs:52-57
+- Formal: ∀ off ∈ even_jal_imm. encode_jal([Imm(off)]) = encode_jal([Reg("ra"), Imm(off)]) = Word(llvm-mc("jal off"))
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_auipc
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [rd, imm]
-  domain: { rd: u32(0..31), imm: int(0..1048575) }
-  body: unpack_u(encode_auipc([Reg(x{rd}), Imm(imm)])) == (0b0010111, rd, imm)
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, min: 0, max: 1048575, type: i64 }
-evidence: README.md:356 encoder/mod.rs:307 encoder/mod.rs:324
-```
-
-## encode_auipc_abi_xn_alias
-- Tier: 3
-- Rationale: Algebraic metamorphic: ABI names, xN, zero/ra/sp/fp aliases encode the same rd field. Independent of llvm-mc. Stronger differential covers xN vs llvm-mc; this checks SUT alias table.
-- Doc contract: parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7" — asserted fingerprint 00db3ff1
-- Seed: encode_lui_pbt.rs encode_lui_abi_xn_alias
-- Formal: ∀ n ∈ 0..31, ∀ imm ∈ [0, 1048575]. encode_auipc([Reg(x{n}), Imm(imm)]) = encode_auipc([Reg(ABI[n]), Imm(imm)]) ∧ (n=8 ⇒ encode_auipc([Reg("fp"), Imm(imm)]) equals both)
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_auipc
+function: encoder.encode_jal
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, imm]
-  domain: { n: u32(0..31), imm: int(0..1048575) }
+  vars: [off]
+  domain: { off: even_jal_imm }
   relation:
     op: eq
-    lhs: encode_auipc([Reg(x{n}), Imm(imm)])
-    rhs: encode_auipc([Reg(ABI[n]), Imm(imm)])
+    lhs: encode_jal([Imm(off)])
+    rhs: encode_jal([Reg("ra"), Imm(off)])
+generators:
+  off: { gen: int, min: -1048576, max: 1048574, type: i64 }
+evidence: src/backend/riscv/assembler/encoder/base.rs:52
+```
+
+## encode_jal_isa_j_type
+- Tier: 4
+- Rationale: Algebraic invariant from the RISC-V J-type layout (README.md:357 / encoder/mod.rs:313). Unpack is independent of encode_j (ISA field extraction, not a copy of the packer).
+- Doc contract: src/backend/riscv/assembler/README.md:357 "J-type:  [imm[20|10:1|11|19:12]         |  rd  | opcode]" — asserted fingerprint 2ea465b7
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:412 encode_auipc_isa_u_type
+- Formal: ∀ rd ∈ [0,31], ∀ off ∈ even_jal_imm. let w = encode_jal([Reg(xN), Imm(off)]) in unpack_j(w) = (OP_JAL=0b1101111, rd, off)
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_jal
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [rd, off]
+  domain: { rd: u32 0..=31, off: even_jal_imm }
+  relation:
+    op: eq
+    lhs: unpack_j(encode_jal([Reg(x{rd}), Imm(off)]))
+    rhs: (0b1101111, rd, off)
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  off: { gen: int, min: -1048576, max: 1048574, type: i64 }
+evidence: src/backend/riscv/assembler/README.md:357
+```
+
+## encode_jal_abi_xn_alias
+- Tier: 4
+- Rationale: Metamorphic: ABI names (ra/sp/a0/…/fp) and xN encode the same rd field.
+- Doc contract: src/backend/riscv/assembler/parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7," — asserted fingerprint 8f55b73d
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:422 encode_auipc_abi_xn_alias
+- Formal: ∀ n ∈ [0,31], ∀ off ∈ even_jal_imm. encode_jal([Reg(xN), Imm(off)]) = encode_jal([Reg(ABI[n]), Imm(off)]) ∧ (n=8 ⇒ also equals encode_jal([Reg("fp"), Imm(off)]))
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_jal
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [n, off]
+  domain: { n: u32 0..=31, off: even_jal_imm }
+  relation:
+    op: eq
+    lhs: encode_jal([Reg(x{n}), Imm(off)])
+    rhs: encode_jal([Reg(ABI[n]), Imm(off)])
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, min: 0, max: 1048575, type: i64 }
-evidence: encoder/mod.rs:146-191 parser.rs:22
+  off: { gen: int, min: -1048576, max: 1048574, type: i64 }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:150 reg_num ABI aliases
 ```
 
-## encode_auipc_reloc_pcrel_hi
-- Tier: 4
-- Rationale: Differential + reloc contract. `%pcrel_hi(symbol)` is the documented AUIPC reloc (encoder/mod.rs:57, README.md:334). llvm-mc emits R_RISCV_PCREL_HI20; reloc-form word equals `auipc rd, 0`.
-- Doc contract: encoder/mod.rs:57 "R_RISCV_PCREL_HI20 - for AUIPC (high 20 bits of PC-relative)" — asserted fingerprint 9006ffa0
-- Seed: encode_lui_pbt.rs encode_lui_reloc_hi
-- Formal: ∀ rd ∈ GPR names, ∀ sym ∈ identifier. encode_auipc([Reg(rd), Symbol("%pcrel_hi("+sym+")")]) = Ok(WordWithReloc{word, PcrelHi20, symbol=sym, addend=0}) ∧ word = llvm-mc("auipc rd, 0")
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
+## encode_jal_reloc_symbol
+- Tier: 2
+- Rationale: Differential on the reloc-form word (imm=0) plus algebraic invariant on RelocType::Jal / symbol / addend=0.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:73 "R_RISCV_JAL - 20-bit PC-relative jump (J-type)" — asserted fingerprint a9a52d0e
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:430 encode_auipc_reloc_pcrel_hi
+- Formal: ∀ rd ∈ GPR, ∀ s ∈ ident. encode_jal([Reg(rd), Symbol(s)]) = WordWithReloc { word: llvm-mc("jal rd, 0"), reloc: {Jal, s, addend=0} } and the same for Label(s)
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_auipc
+function: encoder.encode_jal
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, sym]
-  domain: { rd: gpr_name, sym: identifier }
-  body: encode_auipc([Reg(rd), Symbol("%pcrel_hi("+sym+")")]) == WordWithReloc{llvm_mc("auipc rd, 0"), PcrelHi20, sym, 0}
+  vars: [rd, s]
+  domain: { rd: gpr, s: ident }
+  relation:
+    op: eq
+    lhs: encode_jal([Reg(rd), Symbol(s)])
+    rhs: WordWithReloc(llvm_mc("jal rd, 0"), RelocType::Jal, s, 0)
 generators:
   rd: { gen: string }
-  sym: { gen: string }
-evidence: encoder/mod.rs:57 README.md:334 llvm-mc -triple=riscv64
+  s: { gen: string }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:73
 ```
 
-## encode_auipc_reloc_got_tls_hi
-- Tier: 4
-- Rationale: Differential over the remaining llvm-mc-accepted AUIPC modifiers (`%got_pcrel_hi`, `%tls_ie_pcrel_hi`, `%tls_gd_pcrel_hi`) mapping to GotHi20 / TlsGotHi20 / TlsGdHi20. encode_lui sibling rejected (LUI does not own GOT/TLS-GD AUIPC relocs).
-- Doc contract: encoder/mod.rs:77 "R_RISCV_GOT_HI20 - GOT-relative AUIPC" — asserted fingerprint 2faffddb
-- Seed: encode_lui_pbt.rs encode_lui_reloc_tprel_hi
-- Formal: ∀ rd ∈ GPR names, ∀ sym ∈ identifier, ∀ (mod, kind) ∈ {(%got_pcrel_hi, GotHi20), (%tls_ie_pcrel_hi, TlsGotHi20), (%tls_gd_pcrel_hi, TlsGdHi20)}. encode_auipc([Reg(rd), Symbol(mod+"("+sym+")")]) = Ok(WordWithReloc{word, kind, symbol=sym, addend=0}) ∧ word = llvm-mc("auipc rd, 0")
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_auipc
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, sym, modifier]
-  domain: { rd: gpr_name, sym: identifier, modifier: {got_pcrel_hi, tls_ie_pcrel_hi, tls_gd_pcrel_hi} }
-  body: encode_auipc([Reg(rd), Symbol("%"+modifier+"("+sym+")")]) matches WordWithReloc{llvm_mc("auipc rd, 0"), mapped_kind(modifier), sym, 0}
-generators:
-  rd: { gen: string }
-  sym: { gen: string }
-  modifier: { gen: string }
-evidence: encoder/mod.rs:77 encoder/mod.rs:79-82 llvm-mc -triple=riscv64
-```
-
-## encode_auipc_neg_imm_oob
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc: AUIPC immediate must be in [0, 1048575]. SUT currently truncates via `(*imm as u32) << 12` with no range check. Stronger differential does not apply on the invalid domain.
-- Doc contract: base.rs:47 "auipc: invalid operands" — asserted fingerprint 3ba99706
-- Seed: encode_lui_pbt.rs encode_lui_neg_imm_oob
-- Formal: ∀ rd ∈ GPR names, ∀ imm ∉ [0, 1048575]. llvm-mc rejects "auipc rd, imm" ⇒ encode_auipc([Reg(rd), Imm(imm)]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
+## encode_jal_neg_imm_oob_odd
+- Tier: 5
+- Rationale: Negative/error contract from llvm-mc (and RISC-V J-type): immediate must be a multiple of 2 in [-1048576, 1048574]. Documented bounds sampled at bound±1 and odd values.
+- Doc contract: src/backend/riscv/assembler/README.md:384 "   - **R_RISCV_JAL** (J-type): 20-bit signed offset, bit-scattered" — asserted fingerprint fe4276fb
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:450 encode_auipc_neg_imm_oob
+- Formal: ∀ rd ∈ GPR, ∀ imm ∈ i64. (imm odd ∨ imm < -1048576 ∨ imm > 1048574) ∧ llvm-mc rejects "jal rd, imm" ⇒ encode_jal([Reg(rd), Imm(imm)]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
 - Status: failing
-- Counterexample: encode_auipc([Reg("x0"), Imm(-1)]) = Ok(Word(0xFFFFF017))
-- Bug report: bug_reports/encode_auipc_imm_oob.md
+- Counterexample: encode_jal([Reg("x0"), Imm(1)])
+- Bug report: bug_reports/encode_jal_imm_oob_odd.md
 
 ```property
-function: encoder.encode_auipc
+function: encoder.encode_jal
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, imm]
-  domain: { rd: gpr_name, imm: oob_imm }
+  domain: { rd: gpr, imm: oob_or_odd_jal_imm }
   relation:
     op: throws
-    expr: encode_auipc([Reg(rd), Imm(imm)])
+    expr: encode_jal([Reg(rd), Imm(imm)])
+expected_error: String
 generators:
   rd: { gen: string }
   imm: { gen: int, type: i64 }
-expected_error: String
-evidence: llvm-mc AUIPC range [0, 1048575]; base.rs:47
+evidence: llvm-mc "immediate must be a multiple of 2 bytes in the range [-1048576, 1048574]"; README.md:357
 ```
 
-## encode_auipc_neg_extra
-- Tier: 3
-- Rationale: Negative/error contract: AUIPC is two-operand; llvm-mc errors on a third operand. SUT matches only operands[0]/[1] and ignores extras.
-- Doc contract: base.rs:47 "auipc: invalid operands" — asserted fingerprint 3ba99706
-- Seed: encode_lui_pbt.rs encode_lui_neg_extra
-- Formal: ∀ rd ∈ GPR names, ∀ imm ∈ [0, 1048575], ∀ extra. encode_auipc([Reg(rd), Imm(imm), extra]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
+## encode_jal_neg_extra
+- Tier: 5
+- Rationale: JAL is one- or two-operand (base.rs:52). llvm-mc rejects a third operand. Extra operands must Err, not be silently ignored (else branch does not check len==2).
+- Doc contract: src/backend/riscv/assembler/encoder/base.rs:52 "jal rd, offset  OR  jal offset (rd = ra)" — asserted fingerprint 8bd543de
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:460 encode_auipc_neg_extra
+- Formal: ∀ rd ∈ GPR, ∀ off ∈ even_jal_imm, ∀ extra. encode_jal([Reg(rd), Imm(off), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
 - Status: failing
-- Counterexample: encode_auipc([Reg("x0"), Imm(0), Imm(0)]) = Ok(Word(0x00000017))
-- Bug report: bug_reports/encode_auipc_extra_operand.md
+- Counterexample: encode_jal([Reg("x0"), Imm(0), Imm(0)])
+- Bug report: bug_reports/encode_jal_extra_operand.md
 
 ```property
-function: encoder.encode_auipc
+function: encoder.encode_jal
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, imm, extra]
-  domain: { rd: gpr_name, imm: int(0..1048575), extra: Operand }
+  vars: [rd, off, extra]
+  domain: { rd: gpr, off: even_jal_imm, extra: Operand }
   relation:
     op: throws
-    expr: encode_auipc([Reg(rd), Imm(imm), extra])
+    expr: encode_jal([Reg(rd), Imm(off), extra])
+expected_error: String
 generators:
   rd: { gen: string }
-  imm: { gen: int, min: 0, max: 1048575, type: i64 }
+  off: { gen: int, min: -1048576, max: 1048574, type: i64 }
   extra: { gen: string }
-expected_error: String
-evidence: llvm-mc invalid operand for instruction; base.rs:47
+evidence: src/backend/riscv/assembler/encoder/base.rs:52; llvm-mc extra-operand error
 ```
 
-## encode_auipc_neg_bad_modifier
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc: AUIPC symbol operands must use `%pcrel_hi`/`%got_pcrel_hi`/`%tls_ie_pcrel_hi`/`%tls_gd_pcrel_hi`. Plain symbols, `%hi`, `%lo`, `%pcrel_lo`, `%tprel_*` are rejected by llvm-mc. parse_reloc_modifier is a neighbouring helper, not encode_auipc's own domain restriction.
-- Doc contract: encoder/mod.rs:57 "R_RISCV_PCREL_HI20 - for AUIPC (high 20 bits of PC-relative)" — asserted fingerprint 9006ffa0
-- Seed: encode_lui_pbt.rs encode_lui_neg_bad_modifier
-- Formal: ∀ rd ∈ GPR names, ∀ s ∈ {plain ident, %hi(ident), %lo(ident), %pcrel_lo(ident), %tprel_hi(ident), %tprel_lo(ident), %tprel_add(ident)}. llvm-mc rejects "auipc rd, s" ⇒ encode_auipc([Reg(rd), Symbol(s)]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
+## encode_jal_symbol_offset_addend
+- Tier: 2
+- Rationale: Parser emits Operand::SymbolOffset for `sym+N` (parser.rs:908). llvm-mc accepts `jal rd, foo+4` with fixup value foo+4. Relocation.addend is documented (README.md:204). encode_jal's match omits SymbolOffset.
+- Doc contract: src/backend/riscv/assembler/README.md:204 "addend:     i64,           // constant addend" — asserted fingerprint afcb725f
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:540 encode_auipc_pcrel_hi_addend
+- Formal: ∀ rd ∈ GPR, ∀ s ∈ ident, ∀ a ∈ i64\{0}. encode_jal([Reg(rd), SymbolOffset(s,a)]) = WordWithReloc { word: llvm-mc("jal rd, 0"), reloc: {Jal, s, addend=a} }
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
 - Status: failing
-- Counterexample: encode_auipc([Reg("x0"), Symbol("foo")]) = Ok(WordWithReloc{PcrelHi20, "foo", 0})
-- Bug report: bug_reports/encode_auipc_bad_modifier.md
+- Counterexample: encode_jal([Reg("x0"), SymbolOffset("foo", 1)])
+- Bug report: bug_reports/encode_jal_symbol_offset.md
 
 ```property
-function: encoder.encode_auipc
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, s]
-  domain: { rd: gpr_name, s: bad_auipc_symbol }
-  relation:
-    op: throws
-    expr: encode_auipc([Reg(rd), Symbol(s)])
-generators:
-  rd: { gen: string }
-  s: { gen: string }
-expected_error: String
-evidence: llvm-mc AUIPC modifier set; encoder/mod.rs:57
-```
-
-## encode_auipc_neg_arity
-- Tier: 3
-- Rationale: Negative/error contract: AUIPC requires two operands. llvm-mc reports too few operands. Strengthening round after the first batch.
-- Doc contract: base.rs:47 "auipc: invalid operands" — asserted fingerprint 3ba99706
-- Seed: encode_lui_pbt.rs encode_lui_neg_arity
-- Formal: ∀ ops. len(ops) < 2 ⇒ encode_auipc(ops) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_auipc
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [ops]
-  domain: { ops: short_ops }
-  relation:
-    op: throws
-    expr: encode_auipc(ops)
-generators:
-  ops: { gen: string }
-expected_error: String
-evidence: llvm-mc too few operands; base.rs:47
-```
-
-## encode_auipc_neg_fp
-- Tier: 3
-- Rationale: Negative/error contract: AUIPC dest must be a GPR. llvm-mc rejects fa0/fN. Strengthening round.
-- Doc contract: parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7" — asserted fingerprint 00db3ff1
-- Seed: encode_lui_pbt.rs encode_lui_neg_fp
-- Formal: ∀ fp ∈ FP names, ∀ imm ∈ [0, 1048575]. encode_auipc([Reg(fp), Imm(imm)]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_auipc
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [fp, imm]
-  domain: { fp: fp_name, imm: int(0..1048575) }
-  relation:
-    op: throws
-    expr: encode_auipc([Reg(fp), Imm(imm)])
-generators:
-  fp: { gen: string }
-  imm: { gen: int, min: 0, max: 1048575, type: i64 }
-expected_error: String
-evidence: llvm-mc invalid operand; parser.rs:22
-```
-
-## encode_auipc_neg_bad_operand
-- Tier: 3
-- Rationale: Negative/error contract: operand 1 must be Imm or Symbol. Labels, Mem, CSR, FenceArg, RoundingMode, SymbolOffset, MemSymbol are invalid. Strengthening round.
-- Doc contract: base.rs:47 "auipc: invalid operands" — asserted fingerprint 3ba99706
-- Seed: encode_lui_pbt.rs encode_lui_neg_bad_operand
-- Formal: ∀ rd ∈ GPR names, ∀ op ∉ {Imm, Symbol}. encode_auipc([Reg(rd), op]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_auipc
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, bad]
-  domain: { rd: gpr_name, bad: non_imm_non_symbol }
-  relation:
-    op: throws
-    expr: encode_auipc([Reg(rd), bad])
-generators:
-  rd: { gen: string }
-  bad: { gen: string }
-expected_error: String
-evidence: base.rs:47
-```
-
-## encode_auipc_pcrel_hi_addend
-- Tier: 4
-- Rationale: Differential/reloc contract: `%pcrel_hi(sym+N)` must relocate against `sym` with addend N (Relocation.addend, llvm-mc fixup value %pcrel_hi(foo+4)). Strengthening round; first batch did not cover addends.
-- Doc contract: encoder/mod.rs:57 "R_RISCV_PCREL_HI20 - for AUIPC (high 20 bits of PC-relative)" — asserted fingerprint 9006ffa0
-- Seed: encode_lui_pbt.rs encode_lui_hi_addend
-- Formal: ∀ rd ∈ GPR names, ∀ sym ∈ identifier, ∀ a ≠ 0. encode_auipc([Reg(rd), Symbol("%pcrel_hi("+sym+±a+")")]) = Ok(WordWithReloc{PcrelHi20, symbol=sym, addend=a})
-- Test file: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs
-- Status: failing
-- Counterexample: encode_auipc([Reg("x0"), Symbol("%pcrel_hi(foo+1)")]) reloc.symbol = "foo+1", addend = 0
-- Bug report: bug_reports/encode_auipc_pcrel_hi_addend.md
-
-```property
-function: encoder.encode_auipc
+function: encoder.encode_jal
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, sym, addend]
-  domain: { rd: gpr_name, sym: identifier, addend: signed_addend }
-  body: encode_auipc([Reg(rd), Symbol("%pcrel_hi("+sym+signed(addend)+")")]).reloc == {PcrelHi20, sym, addend}
+  vars: [rd, s, a]
+  domain: { rd: gpr, s: ident, a: nonzero i64 }
+  relation:
+    op: eq
+    lhs: encode_jal([Reg(rd), SymbolOffset(s, a)])
+    rhs: WordWithReloc(llvm_mc("jal rd, 0"), RelocType::Jal, s, a)
 generators:
   rd: { gen: string }
-  sym: { gen: string }
-  addend: { gen: int, type: i64 }
-evidence: encoder/mod.rs:57 encoder/mod.rs:141-144 llvm-mc %pcrel_hi(foo+4)
+  s: { gen: string }
+  a: { gen: int, type: i64 }
+evidence: src/backend/riscv/assembler/README.md:204 Relocation.addend; parser.rs:908 SymbolOffset; llvm-mc jal rd, foo+4
+```
+
+## encode_jal_neg_fp
+- Tier: 5
+- Rationale: FP dest is not a GPR; get_reg returns Err. llvm-mc also rejects `jal fa0, 4`.
+- Doc contract: src/backend/riscv/assembler/encoder/base.rs:52 "jal rd, offset  OR  jal offset (rd = ra)" — asserted fingerprint 8bd543de
+- Seed: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs encode_auipc_neg_fp
+- Formal: ∀ fp ∈ FP-regs, ∀ off ∈ even_jal_imm. encode_jal([Reg(fp), Imm(off)]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_jal
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [fp, off]
+  domain: { fp: fp_name, off: even_jal_imm }
+  relation:
+    op: throws
+    expr: encode_jal([Reg(fp), Imm(off)])
+expected_error: String
+generators:
+  fp: { gen: string }
+  off: { gen: int, min: -1048576, max: 1048574, type: i64 }
+evidence: get_reg integer-register check; llvm-mc rejects FP dest
+```
+
+## encode_jal_neg_empty
+- Tier: 5
+- Rationale: Zero operands is neither `jal offset` nor `jal rd, offset`. llvm-mc: too few operands.
+- Doc contract: src/backend/riscv/assembler/encoder/base.rs:52 "jal rd, offset  OR  jal offset (rd = ra)" — asserted fingerprint 8bd543de
+- Seed: encode_auipc_neg_arity
+- Formal: encode_jal([]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_jal
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: []
+  domain: {}
+  relation:
+    op: throws
+    expr: encode_jal([])
+expected_error: String
+generators:
+  unit: { gen: const, value: 0 }
+evidence: src/backend/riscv/assembler/encoder/base.rs:52; llvm-mc too few operands
+```
+
+## encode_jal_one_operand_reloc
+- Tier: 2
+- Rationale: Sweep — 1-operand Symbol/Label arm (base.rs:59, implicit rd=ra) was not driven by the 2-operand reloc property. Documented form `jal offset` with a symbol.
+- Doc contract: src/backend/riscv/assembler/encoder/base.rs:52 "jal rd, offset  OR  jal offset (rd = ra)" — asserted fingerprint 8bd543de
+- Seed: encode_jal_reloc_symbol
+- Formal: ∀ s ∈ ident. encode_jal([Symbol(s)]) = WordWithReloc { word: llvm-mc("jal ra, 0"), reloc: {Jal, s, addend=0} } and the same for Label(s)
+- Test file: src/backend/riscv/assembler/encoder/encode_jal_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_jal
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [s]
+  domain: { s: ident }
+  relation:
+    op: eq
+    lhs: encode_jal([Symbol(s)])
+    rhs: WordWithReloc(llvm_mc("jal ra, 0"), RelocType::Jal, s, 0)
+generators:
+  s: { gen: string }
+evidence: src/backend/riscv/assembler/encoder/base.rs:52-66
 ```

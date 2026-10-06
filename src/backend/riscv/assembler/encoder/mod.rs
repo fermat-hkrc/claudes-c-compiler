@@ -20,6 +20,8 @@ mod vector;
 mod encode_lui_pbt;
 #[cfg(test)]
 mod encode_auipc_pbt;
+#[cfg(test)]
+mod encode_jal_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

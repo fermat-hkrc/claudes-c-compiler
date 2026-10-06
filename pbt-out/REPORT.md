@@ -1,150 +1,118 @@
-# PBT Campaign Report: encode_auipc
+# PBT Campaign Report: encode_jal
 
 ## Summary
 
-**Verdict:** 4 high: encode_auipc silently truncates out-of-range immediates, ignores extra operands, accepts plain/%hi/%lo symbols as relocations, and treats `%pcrel_hi(foo+4)` as symbol `foo+4` with addend 0, so callers assembling AUIPC get wrong machine code or unresolvable relocs.
+**Verdict:** 2 high, 1 medium: encode_jal silently encodes `jal x0, 1` as `jal x0, 0` (odd/out-of-range immediates), silently ignores a third operand, and rejects `jal rd, foo+N` SymbolOffset instead of emitting R_RISCV_JAL with addend.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_auipc
-**Tests:** 12
-**Result:** 8 passing, 4 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_auipc NOT LINKED). The campaign's `cargo test --lib encode_auipc` executed the production symbol (5 KAT + 8 passing properties call encode_auipc). Manual arm audit of the 19-line body.
+**Modules tested:** encode_jal
+**Tests:** 11
+**Result:** 8 passing, 3 bugs
+**Change surface:** 1 changed function (encode_jal), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps C++ reporter listed unrelated binaries and claimed NOT LINKED. Rust `cargo test --lib encode_jal` executed the production symbol (14 passed / 6 failed on the first run; sweep 1-operand reloc passed). Manual audit of encode_jal arms: Imm 1-op and 2-op (diff/isa/abi), Symbol/Label 1-op and 2-op (reloc), error path (empty/FP passing; oob/odd, extra, SymbolOffset failing). Closed: tier round spent; remaining documented gaps are the three filed bugs.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_auipc | 12 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_jal | 11 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_auipc silently truncates immediates outside [0, 1048575]
+### B1: encode_jal silently truncates odd and out-of-range immediates
 
-**Formal:** ∀ rd ∈ GPR names, ∀ imm ∉ [0, 1048575]. llvm-mc rejects "auipc rd, imm" ⇒ encode_auipc([Reg(rd), Imm(imm)]) = Err(_)
-**Contract evidence:** inferred (llvm-mc AUIPC immediate range [0, 1048575]; README.md:356 U-type imm[31:12] is a 20-bit field)
+**Formal:** ∀ rd ∈ GPR, ∀ imm ∈ i64. (imm odd ∨ imm < -1048576 ∨ imm > 1048574) ∧ llvm-mc rejects "jal rd, imm" ⇒ encode_jal([Reg(rd), Imm(imm)]) is Err
+**Contract evidence:** inferred (RISC-V J-type 21-bit even offset; llvm-mc "immediate must be a multiple of 2 bytes in the range [-1048576, 1048574]"; README.md:357 J-type layout; README.md:384 R_RISCV_JAL 20-bit signed offset)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_auipc([Reg("x0"), Imm(-1)])
-**Expected / Actual:** Err / Ok(Word(0xFFFFF017)) — encoding of `auipc x0, 1048575`
-**Impact:** Out-of-range AUIPC immediates assemble to a different instruction instead of being rejected, so callers get silent wrong machine code.
-**Root cause:** base.rs:34 casts the i64 immediate to u32 and shifts, wrapping negatives and dropping bits above 20, then encode_u masks to imm[31:12].
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:34`
+**Counterexample:** encode_jal([Reg("x0"), Imm(1)])
+**Expected / Actual:** Err / Ok(Word(0x0000006f)) — encoding of `jal x0, 0`
+**Impact:** Odd or out-of-range JAL offsets assemble to a different jump instead of being rejected, so callers get silent wrong machine code.
+**Root cause:** base.rs:75 casts the i64 immediate to i32 with no range or alignment check; encode_j then drops bit 0 via `(imm >> 1) & 0x3FF`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:75`
 ```rust
-            Ok(EncodeResult::Word(encode_u(OP_AUIPC, rd, (*imm as u32) << 12)))
+                Ok(EncodeResult::Word(encode_j(OP_JAL, rd, *imm as i32)))
 ```
-**Suggested fix:** Reject immediates outside the 20-bit unsigned range before shifting.
+**Suggested fix:** Reject immediates that are odd or outside the 21-bit even signed range before packing.
 ```rust
             let imm = *imm;
-            if !(0..=1048575).contains(&imm) {
-                return Err(format!("auipc: immediate {imm} out of range [0, 1048575]"));
+            if imm % 2 != 0 || !(-1048576..=1048574).contains(&imm) {
+                return Err(format!(
+                    "jal: immediate {imm} must be a multiple of 2 in [-1048576, 1048574]"
+                ));
             }
-            Ok(EncodeResult::Word(encode_u(OP_AUIPC, rd, (imm as u32) << 12)))
+            Ok(EncodeResult::Word(encode_j(OP_JAL, rd, imm as i32)))
 ```
-**Bug report:** bug_reports/encode_auipc_imm_oob.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_jal_imm_oob_odd.md
+**Repro seed:** (deterministic regression: Imm(1))
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_imm_oob' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:348:5:
-auipc x0, -1 must Err (llvm-mc range [0, 1048575]); got Ok(Word(4294963223))
+thread 'backend::riscv::assembler::encoder::encode_jal_pbt::test_encode_jal_regression_imm_oob' panicked at src/backend/riscv/assembler/encoder/encode_jal_pbt.rs:330:5:
+jal x0, 1 must Err (odd offset); got Ok(Word(111))
 ```
 
-### B2: encode_auipc ignores a third operand
+### B2: encode_jal ignores a third operand
 
-**Formal:** ∀ rd ∈ GPR names, ∀ imm ∈ [0, 1048575], ∀ extra. encode_auipc([Reg(rd), Imm(imm), extra]) = Err(_)
-**Contract evidence:** inferred (llvm-mc two-operand AUIPC; extra token is "invalid operand for instruction")
+**Formal:** ∀ rd ∈ GPR, ∀ off ∈ even_jal_imm, ∀ extra. encode_jal([Reg(rd), Imm(off), extra]) is Err
+**Contract evidence:** inferred (base.rs:52 documents only `jal rd, offset` OR `jal offset`; llvm-mc rejects extra operands)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_auipc([Reg("x0"), Imm(0), Imm(0)])
-**Expected / Actual:** Err / Ok(Word(0x00000017)) — encoding of `auipc x0, 0`
-**Impact:** Extra tokens in AUIPC are silently dropped, hiding assembler typos.
-**Root cause:** base.rs:32 matches only operands.get(1) and never checks operands.len().
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:32`
+**Counterexample:** encode_jal([Reg("x0"), Imm(0), Imm(0)])
+**Expected / Actual:** Err / Ok(Word(0x0000006f)) — encoding of `jal x0, 0`
+**Impact:** Extra tokens in a JAL are silently dropped, producing wrong programs without an error.
+**Root cause:** base.rs:71 uses `else` (any arity ≠ 1) and matches only operands[1], never checking operands.len() == 2.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:71`
 ```rust
-    match &operands.get(1) {
+    } else {
 ```
-**Suggested fix:** Reject arity other than 2 after reading rd.
+**Suggested fix:** Accept only arity 2 in the two-operand arm.
 ```rust
-    if operands.len() != 2 {
-        return Err("auipc: invalid operands".to_string());
-    }
-    match &operands.get(1) {
+    } else if operands.len() == 2 {
+        let rd = get_reg(operands, 0)?;
+        match &operands[1] {
 ```
-**Bug report:** bug_reports/encode_auipc_extra_operand.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_jal_extra_operand.md
+**Repro seed:** cc 5dff5a8e2f8b3dac51ee3b7358a7fca583c2168979e03585c6642d0daa54d0d8
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:359:5:
-auipc x0, 0 with a third operand must Err; got Ok(Word(23))
+thread 'backend::riscv::assembler::encoder::encode_jal_pbt::test_encode_jal_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_jal_pbt.rs:341:5:
+jal x0, 0 with a third operand must Err; got Ok(Word(111))
 ```
 
-### B3: encode_auipc accepts plain symbols and non-AUIPC reloc modifiers
+### B3: encode_jal rejects SymbolOffset instead of emitting R_RISCV_JAL with addend
 
-**Formal:** ∀ rd ∈ GPR names, ∀ s ∈ {plain ident, %hi(ident), %lo(ident), %pcrel_lo(ident), %tprel_hi(ident), %tprel_lo(ident), %tprel_add(ident)}. llvm-mc rejects "auipc rd, s" ⇒ encode_auipc([Reg(rd), Symbol(s)]) = Err(_)
-**Contract evidence:** inferred (llvm-mc AUIPC modifier set %pcrel_hi/%got_pcrel_hi/%tls_ie_pcrel_hi/%tls_gd_pcrel_hi; encoder/mod.rs:57 PCREL_HI20 is for AUIPC)
-**Documentation conflict:** (none) — neighbouring helper pseudo.rs:605 "// Plain symbol - use as PC-relative" is parse_reloc_modifier's note, not encode_auipc's domain restriction
-**Severity:** high
-**Counterexample:** encode_auipc([Reg("x0"), Symbol("foo")])
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00000017, PcrelHi20, symbol: "foo", addend: 0 })
-**Impact:** A bare symbol becomes R_RISCV_PCREL_HI20; `%hi` becomes R_RISCV_HI20 on an AUIPC. The linker applies the wrong reloc kind or looks up an unintended symbol.
-**Root cause:** base.rs:36-37 forwards every Symbol through parse_reloc_modifier, whose else branch treats a plain name as PcrelHi20.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:36`
+**Formal:** ∀ rd ∈ GPR, ∀ s ∈ ident, ∀ a ∈ i64\{0}. encode_jal([Reg(rd), SymbolOffset(s,a)]) = WordWithReloc { word: llvm-mc("jal rd, 0"), reloc: {Jal, s, addend=a} }
+**Contract evidence:** inferred (README.md:204 Relocation.addend; parser.rs:908 emits SymbolOffset for `sym+N`; llvm-mc accepts `jal x1, foo+4`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_jal([Reg("x0"), SymbolOffset("foo", 1)])
+**Expected / Actual:** Ok(WordWithReloc { word: 0x0000006f, reloc: {Jal, "foo", addend: 1} }) / Err("jal: invalid operand")
+**Impact:** Assembly of `jal rd, foo+N` fails, so compiler output that uses a symbol plus addend cannot be assembled.
+**Root cause:** base.rs:73 matches Imm / Symbol / Label / Reg but not SymbolOffset, so the `_` arm returns Err.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:87`
 ```rust
-        Some(Operand::Symbol(s)) => {
-            let (reloc_type, symbol) = parse_reloc_modifier(s);
+            _ => Err("jal: invalid operand".to_string()),
 ```
-**Suggested fix:** Accept only the four AUIPC-valid modifiers; Err on anything else.
+**Suggested fix:** Treat SymbolOffset like Symbol, preserving the addend.
 ```rust
-        Some(Operand::Symbol(s)) => {
-            let (reloc_type, symbol) = parse_reloc_modifier(s);
-            match reloc_type {
-                RelocType::PcrelHi20 | RelocType::GotHi20
-                | RelocType::TlsGotHi20 | RelocType::TlsGdHi20
-                    if s.starts_with('%') => {}
-                _ => return Err("auipc: invalid operands".to_string()),
+            Operand::SymbolOffset(s, add) => {
+                Ok(EncodeResult::WordWithReloc {
+                    word: encode_j(OP_JAL, rd, 0),
+                    reloc: Relocation {
+                        reloc_type: RelocType::Jal,
+                        symbol: s.clone(),
+                        addend: *add,
+                    },
+                })
             }
 ```
-**Bug report:** bug_reports/encode_auipc_bad_modifier.md
-**Repro seed:** cc ffa18a32f0191bd88fac8e6d5ddabfba9ad39ccbc65cd6a7b45ec6fd7787ae5e
+**Bug report:** bug_reports/encode_jal_symbol_offset.md
+**Repro seed:** (deterministic regression: SymbolOffset("foo", 4))
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_plain_symbol' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:370:5:
-auipc x0, foo must Err (llvm-mc requires %pcrel_hi/%got_pcrel_hi/%tls_*_pcrel_hi); got Ok(WordWithReloc { word: 23, reloc: Relocation { reloc_type: PcrelHi20, symbol: "foo", addend: 0 } })
-```
-
-### B4: encode_auipc treats %pcrel_hi(foo+4) as symbol "foo+4" with addend 0
-
-**Formal:** ∀ rd ∈ GPR names, ∀ sym ∈ identifier, ∀ a ≠ 0. encode_auipc([Reg(rd), Symbol("%pcrel_hi("+sym+±a+")")]) = Ok(WordWithReloc{PcrelHi20, symbol=sym, addend=a})
-**Contract evidence:** inferred (Relocation.addend field encoder/mod.rs:144; llvm-mc fixup value %pcrel_hi(foo+4); README.md:334 call/la expansions use %pcrel_hi)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_auipc([Reg("x0"), Symbol("%pcrel_hi(foo+4)")])
-**Expected / Actual:** WordWithReloc { PcrelHi20, symbol: "foo", addend: 4 } / WordWithReloc { PcrelHi20, symbol: "foo+4", addend: 0 }
-**Impact:** The linker cannot resolve the literal name `foo+4`, so PC-relative addressing of `symbol+offset` is wrong.
-**Root cause:** base.rs:37-43 stores parse_reloc_modifier's inner text `foo+4` and hardcodes addend 0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:42`
-```rust
-                    symbol,
-                    addend: 0,
-```
-**Suggested fix:** Split a trailing `+N`/`-N` off the extracted inner text into symbol and addend.
-```rust
-            let (reloc_type, inner) = parse_reloc_modifier(s);
-            let (symbol, addend) = split_symbol_addend(&inner);
-            Ok(EncodeResult::WordWithReloc {
-                word: encode_u(OP_AUIPC, rd, 0),
-                reloc: Relocation { reloc_type, symbol, addend },
-            })
-```
-**Bug report:** bug_reports/encode_auipc_pcrel_hi_addend.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_pcrel_hi_addend' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:383:13:
-assertion `left == right` failed: %pcrel_hi(foo+4) symbol must be foo, not foo+4
-  left: "foo+4"
- right: "foo"
+thread 'backend::riscv::assembler::encoder::encode_jal_pbt::test_encode_jal_regression_symbol_offset' panicked at src/backend/riscv/assembler/encoder/encode_jal_pbt.rs:365:18:
+expected WordWithReloc for foo+4, got Err("jal: invalid operand")
 ```
 
 ## Design Caveats
@@ -155,39 +123,39 @@ assertion `left == right` failed: %pcrel_hi(foo+4) symbol must be foo, not foo+4
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs | 12 properties + 5 KAT + 4 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_jal_pbt.rs | 11 properties + 7 KAT + 3 failing regression witnesses |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (expected: 8 property groups passing, 3 properties + 3 regressions failing):
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_auipc -- --test-threads=1
+cargo test --lib encode_jal -- --test-threads=1
 ```
 
-B1:
+B1 (odd immediate):
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_auipc_regression_imm_oob -- --test-threads=1
+cargo test --lib test_encode_jal_regression_imm_oob -- --test-threads=1
 ```
 
-B2:
+B2 (extra operand):
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_auipc_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_jal_regression_extra_operand -- --test-threads=1
 ```
 
-B3:
+B3 (SymbolOffset addend):
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_auipc_regression_plain_symbol -- --test-threads=1
+cargo test --lib test_encode_jal_regression_symbol_offset -- --test-threads=1
 ```
 
-B4:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_auipc_regression_pcrel_hi_addend -- --test-threads=1
-```
+Build command as run (target swapped from encode_ldrsw_kat_llvm_mc_x0_x1): `cargo test --lib encode_jal -- --test-threads=1` in `/home/toan/github/claudes-c-compiler`. Result: success (compile), tests 14 passed / 6 failed on first run; sweep `encode_jal_one_operand_reloc` passed.
 
 ## Output Directories
 
@@ -197,24 +165,25 @@ cargo test --lib test_encode_auipc_regression_pcrel_hi_addend -- --test-threads=
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_auipc_imm_oob.md
-- pbt-out/bug_reports/encode_auipc_imm_oob.html
-- pbt-out/bug_reports/encode_auipc_extra_operand.md
-- pbt-out/bug_reports/encode_auipc_extra_operand.html
-- pbt-out/bug_reports/encode_auipc_bad_modifier.md
-- pbt-out/bug_reports/encode_auipc_bad_modifier.html
-- pbt-out/bug_reports/encode_auipc_pcrel_hi_addend.md
-- pbt-out/bug_reports/encode_auipc_pcrel_hi_addend.html
+- pbt-out/bug_reports/encode_jal_imm_oob_odd.md
+- pbt-out/bug_reports/encode_jal_imm_oob_odd.html
+- pbt-out/bug_reports/encode_jal_extra_operand.md
+- pbt-out/bug_reports/encode_jal_extra_operand.html
+- pbt-out/bug_reports/encode_jal_symbol_offset.md
+- pbt-out/bug_reports/encode_jal_symbol_offset.html
+- pbt-out/run/encode_jal_test.log
+- pbt-out/run/encode_jal_sweep.log
+- proptest-regressions/backend/riscv/assembler/encoder/encode_jal_pbt.txt (proptest shrink seed for extra-operand)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 12:42 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 183/324 total | PBT candidates: 183 | Tested: 183 (100%) | 1 pass, 183 fail
+> Last updated: 2026-10-06 13:02 (campaign: coverage)
+> Files: 12/12 scanned (100%) | Functions: 184/324 total | PBT candidates: 184 | Tested: 184 (100%) | 1 pass, 184 fail
 
 ## Summary
 
@@ -223,10 +192,10 @@ cargo test --lib test_encode_auipc_regression_pcrel_hi_addend -- --test-threads=
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 183 |
-| **Tested (of PBT candidates)** | **183 / 183 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 183 / -1 |
-| **Overall (tested / all functions)** | **183 / 324 (56%)** |
+| PBT candidates (from FUNCTION_INDEX) | 184 |
+| **Tested (of PBT candidates)** | **184 / 184 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 184 / -1 |
+| **Overall (tested / all functions)** | **184 / 324 (57%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -234,13 +203,13 @@ cargo test --lib test_encode_auipc_regression_pcrel_hi_addend -- --test-threads=
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 183 | 183 | 0 | 100% |
+|  | 184 | 184 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 183 | 183 | 0 | 100% |
+| unknown | 184 | 184 | 0 | 100% |
 
 ## File Coverage
 
@@ -446,3 +415,4 @@ cargo test --lib test_encode_auipc_regression_pcrel_hi_addend -- --test-threads=
 | encode_ldr_str_auto | load_store.rs |
 | encode_lui | base.rs |
 | encode_auipc | base.rs |
+| encode_jal | base.rs |
