@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_sys)
+
+- Valid SYS op1∈[0,7] × CRn∈C0–C15 × CRm∈C0–C15 × op2∈[0,7] × Xt∈{x0..x30, xzr, x31, lr, omitted} matches the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt (1000 cases). KAT pins #0,c0,c0,#0,x0=0xd5080000; #3,c7,c14,#1,x0=0xd50b7e20; #0,c7,c1,#0 (omitted Xt)=0xd508711f; #7,c15,c15,#7,x0=0xd50fffe0; #3,c7,c14,#1,xzr=0xd50b7e3f. The GNU alias `fp` (x29) is rejected (see bugs).
+- ARM SYS layout holds: bits[31:21]=0b11010101000; extracted op1/CRn/CRm/op2/Rt equal the generated fields (1000 cases).
+- Encodings of the same (op1,CRn,CRm,op2) differ only in Rt bits[4:0]; omitted Xt encodes as xzr; xzr encodes as x31 (1000 cases).
+- ASCII case-fold and surrounding space/tab (and optional `#`) are behavior-preserving on the valid domain (1000 cases).
+- Fewer than 4 operands return Err, matching llvm-mc/gas (1000 cases).
+- Malformed Xt that parse_reg_num rejects (x32, foo, empty) return Err containing "invalid register" (sweep, 1000 cases).
+- Non-numeric op1/CRn/CRm/op2 return Err containing "invalid op1/CRn/CRm/op2" (sweep, 1000 cases).
+- Out-of-range fields, extra operands, and W/SP/SIMD Xt currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_sys)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM SYS: SYS #<op1>, <Cn>, <Cm>, #<op2>{, <Xt>} = 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt; Xt optional → XZR.
+- Dispatch: encoder/mod.rs:997 `"sys" => encode_sys(raw_operands)`. Raw operand string passed through unchanged.
+- Sibling encode_ic / encode_dc / encode_tlbi / encode_at are not same-job differentials (named aliases of fixed SYS encodings).
+- encode_sys splits on comma, strips optional `#` on op1/op2 and optional `c` on Cn/Cm, optionally parses Rt via parse_reg_num, then packs with field masks.
+- No ARM codegen caller currently emits `sys`; encode_instruction still routes the mnemonic.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_sys_neg_invalid_reg and encode_sys_neg_non_numeric. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_sys_*.md.
+
+## Quirks (encode_sys)
+
+- Surrounding whitespace and ASCII case are accepted (trim + to_lowercase).
+- llvm-mc accepts `x31` as XZR; GNU gas rejects `x31`. The differential used llvm-mc.
+- Optional `#` on op1/op2 is accepted (trim_start_matches('#')), matching llvm-mc/gas.
+- llvm-mc aliases SYS to DC/IC when fields match; encodings still compare.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 22-line body.
+
 # Confirmed invariants (encode_dc)
 
 - Valid {civac, cvac, cvap, cvau, ivac, zva} with Xt in {x0..x30, xzr, x31, lr} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` (`-mattr=+ccpp` for CVAP) and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt (1000 cases). KAT pins civac x0=0xd50b7e20, cvac x0=0xd50b7a20, cvap x0=0xd50b7c20, cvau x0=0xd50b7b20, ivac x0=0xd5087620, zva x0=0xd50b7420, civac xzr=0xd50b7e3f.
