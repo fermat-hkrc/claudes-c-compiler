@@ -1,179 +1,248 @@
-# PBT Campaign Report: encode_uxtb
+# PBT Campaign Report: encode_ldr_str
 
 ## Summary
 
-**Verdict:** 5 medium: encode_uxtb encodes an X destination as 64-bit UBFM instead of the 32-bit UXTB alias, and silently encodes extra operands, X-register sources, SP/WSP, and FP/SIMD registers instead of rejecting them the way llvm-mc / GNU as do.
+**Verdict:** 8 bugs (worst medium): encode_ldr_str accepts SP as Rt (and classifies it as SIMD), treats XZR/W bases as Xn/SP, invents UXTW for a bare W index, encodes UNPREDICTABLE writeback when Rt==Rn, truncates out-of-range offsets, ignores extra operands, and mismatches llvm-mc on byte `lsl #0` (S bit).
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_uxtb
-**Tests:** 12 properties (plus 3 KAT + 5 regression witnesses)
-**Result:** 7 passing, 5 bugs
-**Change surface:** 1 changed function (encode_uxtb), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps found no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_uxtb NOT LINKED). Sweep was a manual arm audit of the 7-line body.
+**Modules tested:** encode_ldr_str
+**Tests:** 11 properties (8 passing, 3 failing) plus 5 passing KAT and 8 failing regression witnesses
+**Result:** 8 passing, 8 bugs
+**Change surface:** 1 changed function (encode_ldr_str), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). cargo test --lib encode_ldr_str executed the real symbol (5 KAT + 11 properties + 8 regressions).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_uxtb | 12 properties (7 passing / 5 failing) + 3 KAT + 5 regressions | 5 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_ldr_str | 11 properties + 5 KAT + 8 regressions | 8 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_uxtb emits 64-bit UBFM for an X destination
+### B1: byte LSL #0 encodes S=0 instead of S=1
 
-**Formal:** ∀ rd ∈ 0..31, rn ∈ 0..31, dest64 ∈ {0,1}. let dest = GPR(dest64, rd); src = W(rn). encode_uxtb([Reg(dest), Reg(src)]) = llvm_mc("uxtb dest, src") as Word
-**Contract evidence:** inferred (README.md:12 gas-compat; ARM C6 UXTB is 32-bit-only UBFM Wd,Wn,#0,#7; llvm-mc/gas canonicalize `uxtb x0, w0` to `uxtb w0, w0`)
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn,rm ∈ 0..31, option ∈ valid(size), s ∈ {0,1}. encode_ldr_str([Reg(gp_rt), MemRegOffset{Xn|SP, Rm, option, shift}], is_load, size, false, false) = llvm_mc(mnemonic Rt, [Xn|SP, Rm{, option #shift}]) as Word
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc encoding of `strb w0, [x0, x0, lsl #0]`)
 **Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_uxtb([Reg("x0"), Reg("w0")])
-**Expected / Actual:** Ok(Word(0x53001C00)) / Ok(Word(0xD3401C00))
-**Impact:** `uxtb x0, w0` assembles as `ubfx x0, x0, #0, #8`; object files diverge from GNU as / llvm-mc.
-**Root cause:** data_processing.rs:901-904 takes sf and N from Rd's width, so an X destination sets the 64-bit UBFM form.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:901`
+**Severity:** low
+**Counterexample:** `encode_ldr_str([Reg("w0"), MemRegOffset{base:"x0", index:"x0", extend:Some("lsl"), shift:Some(0)}], false, 0, false, false)`
+**Expected / Actual:** 0x38207800 / 0x38206800
+**Impact:** Object bytes diverge from gas/llvm-mc on byte-sized register-offset with explicit `lsl #0`.
+**Root cause:** load_store.rs:179 sets S=1 only when shift_amount > 0, so Some(0) on a byte access is S=0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:179`
 ```rust
-    let (rd, is_64) = get_reg(operands, 0)?;
-    let (rn, _) = get_reg(operands, 1)?;
-    let sf = sf_bit(is_64);
-    let n = if is_64 { 1u32 } else { 0 };
+                    let s_val = if shift_amount > 0 { 1u32 } else { 0u32 };
+                    (0b011u32, s_val)
 ```
-**Suggested fix:** Always encode the 32-bit UXTB form; do not take sf from Rd.
+**Suggested fix:** Set S=1 when a shift amount is present, including `#0` on byte accesses.
 ```rust
-    let (rd, _is_64) = get_reg(operands, 0)?;
-    let (rn, rn_is_64) = get_reg(operands, 1)?;
-    if rn_is_64 {
-        return Err("uxtb: source must be a W register".to_string());
-    }
-    let word = (0b10u32 << 29) | (0b100110 << 23) | (7 << 10) | (rn << 5) | rd;
+                    let s_val = if shift.is_some() { 1u32 } else { 0u32 };
+                    (0b011u32, s_val)
 ```
-**Bug report:** bug_reports/encode_uxtb_x_dest.md
-**Repro seed:** rd = 0, rn = 0, dest64 = true, use_lr = false
+**Bug report:** bug_reports/encode_ldr_str_byte_lsl0.md
+**Repro seed:** cc 6adb6a7e2266c663403ef87f3d1aac2759f4b5eb73f1423dfbd67afa5555034c
 **Raw output:**
 ```text
-Test failed: assertion failed: `(left == right)`
-  left: `3544194048`,
- right: `1392516096`: UXTB mismatch for uxtb x0, w0 at src/backend/arm/assembler/encoder/encode_uxtb_pbt.rs:233.
-minimal failing input: rd = 0, rn = 0, dest64 = true, use_lr = false
+left: 941647872, right: 941651968: regoff mismatch for strb w0, [x0, x0, lsl #0]
+minimal failing input: is_load = false, size = 0, rt = 0, rn = 0, rm = 0, w_index = false, ext_sel = 0, s_bit = 1
 ```
 
-### B2: encode_uxtb silently ignores a 3rd operand
+### B2: SP dest accepted and classified as SIMD
 
-**Formal:** ∀ rd ∈ 0..31, rn ∈ 0..31, extra ∈ Operand. encode_uxtb([W(rd), W(rn), extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `uxtb w0, w1, x0`; ARM C6 UXTB is two-operand)
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31. encode_ldr_str with Rt=SP is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `strb sp, [x0]`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_uxtb([Reg("w0"), Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x53001C00))
-**Impact:** Illegal syntax such as `uxtb w0, w0, x0` assembles as two-operand UXTB; a leftover operand is silently dropped.
-**Root cause:** data_processing.rs:901-902 reads only operands 0 and 1 via get_reg and has no operands.len() upper bound, then returns Ok(Word) at data_processing.rs:906.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:901`
+**Counterexample:** `encode_ldr_str([Reg("sp"), Mem{base:"x0", offset:0}], false, 0, false, false)`
+**Expected / Actual:** Err / Ok(Word(0x3D00001F))
+**Impact:** SP as Rt is assembled as a SIMD store because `is_fp_reg("sp")` is true.
+**Root cause:** load_store.rs:39 calls is_fp_reg on Rt; names starting with `s` are SIMD; parse_reg_num("sp")=31; no SP-as-Rt check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:39`
 ```rust
-    let (rd, is_64) = get_reg(operands, 0)?;
-    let (rn, _) = get_reg(operands, 1)?;
+    let fp = is_fp_reg(operands.first().map(|o| match o { Operand::Reg(r) => r.as_str(), _ => "" }).unwrap_or(""));
 ```
-**Suggested fix:** Reject extra operands before encoding.
+**Suggested fix:** Reject SP/WSP as Rt before setting V.
+```rust
+    if rt_name.eq_ignore_ascii_case("sp") || rt_name.eq_ignore_ascii_case("wsp") {
+        return Err("ldr/str: SP is not a valid Rt".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_ldr_str_sp_dest.md
+**Repro seed:** (none — deterministic)
+**Raw output:**
+```text
+SP dest must Err (llvm-mc: invalid operand); got Ok(Word(1023410207))
+minimal failing input: is_load = false, size = 0, rt = 0, rn = 0
+```
+
+### B3: XZR/x31 base encoded as SP
+
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31. encode_ldr_str with base in {XZR, x31} is Err
+**Contract evidence:** inferred (README.md:12; llvm-mc rejects `ldr x0, [xzr]`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** `encode_ldr_str([Reg("x0"), Mem{base:"xzr", offset:0}], true, 0b11, false, false)`
+**Expected / Actual:** Err / Ok(Word(0xF94003E0)) (`ldr x0, [sp]`)
+**Impact:** XZR as base becomes a stack-pointer load/store.
+**Root cause:** parse_reg_num maps xzr/x31 and sp all to 31 with no base-name check at load_store.rs:50.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:50`
+```rust
+            let rn = parse_reg_num(base).ok_or("invalid base reg")?;
+```
+**Suggested fix:** Reject XZR/WZR/x31/w31 as a memory base.
+```rust
+            if base.eq_ignore_ascii_case("xzr") || base.eq_ignore_ascii_case("x31") {
+                return Err("ldr/str: base must be Xn or SP, not XZR".to_string());
+            }
+```
+**Bug report:** bug_reports/encode_ldr_str_xzr_base.md
+**Repro seed:** (none — deterministic)
+**Raw output:**
+```text
+LDR X0, [XZR] must Err; Rn=31 is SP not XZR (llvm-mc rejects it)
+```
+
+### B4: W-register base accepted as Xn
+
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31. encode_ldr_str with W-prefixed base is Err
+**Contract evidence:** inferred (README.md:12; llvm-mc rejects `ldr x0, [w0]`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** `encode_ldr_str([Reg("x0"), Mem{base:"w0", offset:0}], true, 0b11, false, false)`
+**Expected / Actual:** Err / Ok(Word(0xF9400000)) (`ldr x0, [x0]`)
+**Impact:** A 32-bit base is encoded as 64-bit.
+**Root cause:** parse_reg_num("w0")=0 with no width check at load_store.rs:50.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:50`
+```rust
+            let rn = parse_reg_num(base).ok_or("invalid base reg")?;
+```
+**Suggested fix:** Require Xn/SP/LR as the base name.
+```rust
+            let b = base.to_ascii_lowercase();
+            if !(b.starts_with('x') || b == "sp" || b == "lr") {
+                return Err("ldr/str: base must be Xn or SP".to_string());
+            }
+```
+**Bug report:** bug_reports/encode_ldr_str_w_base.md
+**Repro seed:** (none — deterministic)
+**Raw output:**
+```text
+LDR X0, [W0] must Err; base must be Xn|SP (llvm-mc rejects it)
+```
+
+### B5: W index without extend defaults to UXTW
+
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31. encode_ldr_str with W-index and extend=None is Err
+**Contract evidence:** inferred (README.md:12; llvm-mc rejects `ldr x0, [x1, w2]`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** `encode_ldr_str([Reg("x0"), MemRegOffset{base:"x1", index:"w2", extend:None, shift:None}], true, 0b11, false, false)`
+**Expected / Actual:** Err / Ok(Word(0xF8624820)) (`ldr x0, [x1, w2, uxtw]`)
+**Impact:** Missing extend is invented rather than rejected.
+**Root cause:** load_store.rs:191-192 defaults W index + extend=None to UXTW.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:191`
+```rust
+                    if is_w_index {
+                        (0b010u32, 0u32) // UXTW, no shift
+```
+**Suggested fix:** Reject a W index when no extend is specified.
+```rust
+                    if is_w_index {
+                        return Err("ldr/str: W index requires uxtw or sxtw".to_string());
+                    }
+```
+**Bug report:** bug_reports/encode_ldr_str_w_index.md
+**Repro seed:** (none — deterministic)
+**Raw output:**
+```text
+LDR X0, [X1, W2] must Err; W index requires uxtw/sxtw (llvm-mc rejects it)
+```
+
+### B6: writeback with Rt==Rn is encoded
+
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt ∈ 0..30. encode_ldr_str pre/post with Rt==Rn is Err
+**Contract evidence:** inferred (README.md:12; ARM UNPREDICTABLE; llvm-mc rejects `ldr x0, [x0, #8]!`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** `encode_ldr_str([Reg("x0"), MemPreIndex{base:"x0", offset:8}], true, 0b11, false, false)`
+**Expected / Actual:** Err / Ok(Word(0xF8408C00))
+**Impact:** An UNPREDICTABLE instruction is assembled.
+**Root cause:** Pre/post paths at load_store.rs:96-104 encode without an Rt==Rn check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:96`
+```rust
+        Some(Operand::MemPreIndex { base, offset }) => {
+            let rn = parse_reg_num(base).ok_or("invalid base reg")?;
+            let imm9 = (*offset as i32) & 0x1FF;
+```
+**Suggested fix:** Reject writeback when Rt equals Rn and Rn is not SP.
+```rust
+            if rt == rn && rn != 31 {
+                return Err("ldr/str: writeback with Rt==Rn is unpredictable".to_string());
+            }
+```
+**Bug report:** bug_reports/encode_ldr_str_writeback_overlap.md
+**Repro seed:** (none — deterministic)
+**Raw output:**
+```text
+LDR X0, [X0, #8]! must Err; writeback Rt==Rn is unpredictable (llvm-mc rejects it)
+```
+
+### B7: out-of-range offset truncated to imm9
+
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31, off ∉ valid_pimm ∪ [-256,255]. encode_ldr_str([Rt, Mem{base,off}], ...) is Err
+**Contract evidence:** inferred (README.md:12; llvm-mc rejects `strb w0, [x0, #-257]`)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** `encode_ldr_str([Reg("w0"), Mem{base:"x0", offset:-257}], false, 0, false, false)`
+**Expected / Actual:** Err / Ok(Word(0x380FF000))
+**Impact:** Out-of-range offsets wrap into a different in-range unscaled store/load.
+**Root cause:** load_store.rs:81 masks imm9 with 0x1FF with no range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:81`
+```rust
+            let imm9 = (*offset as i32) & 0x1FF;
+```
+**Suggested fix:** Reject offsets outside [-256, 255] for unscaled/pre/post.
+```rust
+            if *offset < -256 || *offset > 255 {
+                return Err("ldr/str: offset out of range".to_string());
+            }
+```
+**Bug report:** bug_reports/encode_ldr_str_offset_range.md
+**Repro seed:** (none — deterministic)
+**Raw output:**
+```text
+out-of-range Mem offset -257 must Err (llvm-mc range); got Ok(Word(940568576))
+minimal failing input: is_load = false, size = 0, rt = 0, rn = 0, extra = Reg("x0"), prepost = 0, which_off = 0
+```
+
+### B8: extra operand ignored
+
+**Formal:** ∀ is_load ∈ {0,1}, size ∈ {0,1,2,3}, rt,rn ∈ 0..31, extra ∈ Operand. encode_ldr_str([Rt, Mem{base,0}, extra], ...) is Err
+**Contract evidence:** inferred (README.md:12; llvm-mc rejects a 3rd operand)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** `encode_ldr_str([Reg("w0"), Mem{base:"x0", offset:0}, Reg("x0")], false, 0, false, false)`
+**Expected / Actual:** Err / Ok(Word(0x39000000)) (`strb w0, [x0]`)
+**Impact:** Malformed three-operand LDR/STR is accepted.
+**Root cause:** load_store.rs:34 only checks `operands.len() < 2`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:34`
+```rust
+    if operands.len() < 2 {
+        return Err("ldr/str requires at least 2 operands".to_string());
+    }
+```
+**Suggested fix:** Require exactly two operands.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("uxtb: expected 2 operands, got {}", operands.len()));
+        return Err("ldr/str requires exactly 2 operands".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_uxtb_extra_operand.md
-**Repro seed:** rd = 0, rn = 0, extra = Reg("x0")
+**Bug report:** bug_reports/encode_ldr_str_extra_operand.md
+**Repro seed:** (none — deterministic)
 **Raw output:**
 ```text
-Test failed: UXTB has no 3rd operand; extra operand must Err (llvm-mc rejects it) at src/backend/arm/assembler/encoder/encode_uxtb_pbt.rs:310.
-minimal failing input: rd = 0, rn = 0, extra = Reg("x0")
-```
-
-### B3: encode_uxtb accepts an X-register source
-
-**Formal:** ∀ rd ∈ 0..31, rn ∈ 0..31, dest64 ∈ {0,1}. encode_uxtb([Reg(GPR(dest64, rd)), Reg(X(rn))]) is Err
-**Contract evidence:** inferred (ARM C6 source is Wn; llvm-mc/gas reject `uxtb w0, x0`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_uxtb([Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x53001C00))
-**Impact:** Mixed-width `uxtb w0, x0` is encoded as 32-bit UXTB with Rn taken from the X register number.
-**Root cause:** data_processing.rs:902 binds `(rn, _)` and discards the source width.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:902`
-```rust
-    let (rn, _) = get_reg(operands, 1)?;
-```
-**Suggested fix:** Require a W-register source.
-```rust
-    let (rn, rn_is_64) = get_reg(operands, 1)?;
-    if rn_is_64 {
-        return Err("uxtb: source must be a W register".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_uxtb_x_src.md
-**Repro seed:** rd = 0, rn = 0, dest64 = false
-**Raw output:**
-```text
-Test failed: UXTB w0, x0 must Err (llvm-mc rejects X-register source) at src/backend/arm/assembler/encoder/encode_uxtb_pbt.rs:323.
-minimal failing input: rd = 0, rn = 0, dest64 = false
-```
-
-### B4: encode_uxtb treats SP/WSP as ZR
-
-**Formal:** ∀ which ∈ {0,1}, sp ∈ {sp, wsp}, a ∈ 0..30. encode_uxtb with SP/WSP in slot which is Err
-**Contract evidence:** inferred (ARM C6 Rd/Rn are ZR not SP; llvm-mc rejects `uxtb wsp, w0`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_uxtb([Reg("wsp"), Reg("w0")])
-**Expected / Actual:** Err / Ok(Word)
-**Impact:** `uxtb wsp, w0` encodes as `uxtb wzr, w0`; using the stack pointer as a UXTB operand is silently rewritten to ZR.
-**Root cause:** data_processing.rs:901 calls get_reg → parse_reg_num, which maps SP/WSP and XZR/WZR both to 31; encode_uxtb does not distinguish them.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:901`
-```rust
-    let (rd, is_64) = get_reg(operands, 0)?;
-```
-**Suggested fix:** Reject SP/WSP before encoding.
-```rust
-    fn is_sp(name: &str) -> bool {
-        matches!(name.to_ascii_lowercase().as_str(), "sp" | "wsp")
-    }
-    if operands.iter().any(|op| matches!(op, Operand::Reg(n) if is_sp(n))) {
-        return Err("uxtb: SP/WSP is not a valid operand".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_uxtb_sp.md
-**Repro seed:** which = 0, is_64_sp = false, a = 0, dest64 = false
-**Raw output:**
-```text
-Test failed: SP/WSP is not a valid UXTB operand (which=0 names=["wsp", "w0"]) at src/backend/arm/assembler/encoder/encode_uxtb_pbt.rs:345.
-minimal failing input: which = 0, is_64_sp = false, a = 0, dest64 = false
-```
-
-### B5: encode_uxtb accepts FP/SIMD registers as GPRs
-
-**Formal:** ∀ which ∈ {0,1}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_uxtb with Reg(prefix+n) in slot which is Err
-**Contract evidence:** inferred (UXTB operands are GPRs; llvm-mc rejects `uxtb d0, w1`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_uxtb([Reg("d0"), Reg("w1")])
-**Expected / Actual:** Err / Ok(Word(0x53001C20))
-**Impact:** `uxtb d0, w1` encodes as `uxtb w0, w1` because parse_reg_num accepts the `d` prefix and returns 0.
-**Root cause:** data_processing.rs:901 calls get_reg → parse_reg_num, which accepts prefixes d/s/q/v/h/b; encode_uxtb does not reject FP/SIMD names.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:901`
-```rust
-    let (rd, is_64) = get_reg(operands, 0)?;
-```
-**Suggested fix:** Reject FP/SIMD register names before encoding.
-```rust
-    fn is_fp_name(name: &str) -> bool {
-        matches!(name.chars().next().unwrap_or(' ').to_ascii_lowercase(), 'd' | 's' | 'q' | 'v' | 'h' | 'b')
-    }
-    if operands.iter().any(|op| matches!(op, Operand::Reg(n) if is_fp_name(n))) {
-        return Err("uxtb: FP/SIMD register is not a valid operand".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_uxtb_fp.md
-**Repro seed:** which = 0, prefix = "d", n = 0
-**Raw output:**
-```text
-Test failed: FP/SIMD register d0 is not a valid UXTB operand (which=0) at src/backend/arm/assembler/encoder/encode_uxtb_pbt.rs:365.
-minimal failing input: which = 0, prefix = "d", n = 0
+STRB W0, [X0], X0 must Err; extra operand is invalid (llvm-mc rejects it)
 ```
 
 ## Design Caveats
@@ -184,44 +253,27 @@ minimal failing input: which = 0, prefix = "d", n = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_uxtb_pbt.rs | 12 properties + 3 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs | 11 properties + 5 KAT + 8 regressions |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_ldr_str_pbt` |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_uxtb -- --test-threads=1
+cargo test --lib encode_ldr_str -- --test-threads=1
 ```
 
-B1 (X dest as 64-bit UBFM):
+Per-bug:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_uxtb_regression_x_dest -- --test-threads=1
-```
-
-B2 (extra operand):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_uxtb_regression_extra_operand -- --test-threads=1
-```
-
-B3 (X source):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_uxtb_regression_x_src -- --test-threads=1
-```
-
-B4 (SP/WSP):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_uxtb_regression_sp -- --test-threads=1
-```
-
-B5 (FP/SIMD):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_uxtb_regression_fp -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_byte_lsl0 -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_sp_dest -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_xzr_base -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_w_base -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_w_index -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_writeback_overlap -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_imm9_range -- --test-threads=1
+cargo test --lib test_encode_ldr_str_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
@@ -232,26 +284,24 @@ cargo test --lib test_encode_uxtb_regression_fp -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/report.json
+- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_uxtb_x_dest.md
-- pbt-out/bug_reports/encode_uxtb_x_dest.html
-- pbt-out/bug_reports/encode_uxtb_extra_operand.md
-- pbt-out/bug_reports/encode_uxtb_extra_operand.html
-- pbt-out/bug_reports/encode_uxtb_x_src.md
-- pbt-out/bug_reports/encode_uxtb_x_src.html
-- pbt-out/bug_reports/encode_uxtb_sp.md
-- pbt-out/bug_reports/encode_uxtb_sp.html
-- pbt-out/bug_reports/encode_uxtb_fp.md
-- pbt-out/bug_reports/encode_uxtb_fp.html
+- pbt-out/bug_reports/encode_ldr_str_byte_lsl0.md (+ .html)
+- pbt-out/bug_reports/encode_ldr_str_sp_dest.md (+ .html)
+- pbt-out/bug_reports/encode_ldr_str_xzr_base.md (+ .html)
+- pbt-out/bug_reports/encode_ldr_str_w_base.md (+ .html)
+- pbt-out/bug_reports/encode_ldr_str_w_index.md (+ .html)
+- pbt-out/bug_reports/encode_ldr_str_writeback_overlap.md (+ .html)
+- pbt-out/bug_reports/encode_ldr_str_offset_range.md (+ .html)
+- pbt-out/bug_reports/encode_ldr_str_extra_operand.md (+ .html)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 08:49 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 174/307 total | PBT candidates: 174 | Tested: 174 (100%) | 1 pass, 174 fail
+> Last updated: 2026-10-06 09:19 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 175/307 total | PBT candidates: 175 | Tested: 175 (100%) | 1 pass, 175 fail
 
 ## Summary
 
@@ -260,10 +310,10 @@ cargo test --lib test_encode_uxtb_regression_fp -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 174 |
-| **Tested (of PBT candidates)** | **174 / 174 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 174 / -1 |
-| **Overall (tested / all functions)** | **174 / 307 (57%)** |
+| PBT candidates (from FUNCTION_INDEX) | 175 |
+| **Tested (of PBT candidates)** | **175 / 175 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 175 / -1 |
+| **Overall (tested / all functions)** | **175 / 307 (57%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -271,13 +321,13 @@ cargo test --lib test_encode_uxtb_regression_fp -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 174 | 174 | 0 | 100% |
+|  | 175 | 175 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 174 | 174 | 0 | 100% |
+| unknown | 175 | 175 | 0 | 100% |
 
 ## File Coverage
 
@@ -289,7 +339,7 @@ cargo test --lib test_encode_uxtb_regression_fp -- --test-threads=1
 | data_processing.rs | 36 | 30 | 30 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 14 | 14 | 100% | covered |
+| load_store.rs | 20 | 15 | 15 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -474,3 +524,4 @@ cargo test --lib test_encode_uxtb_regression_fp -- --test-threads=1
 | encode_sxtb | data_processing.rs |
 | encode_uxth | data_processing.rs |
 | encode_uxtb | data_processing.rs |
+| encode_ldr_str | load_store.rs |

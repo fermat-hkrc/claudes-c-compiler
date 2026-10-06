@@ -1,3 +1,20 @@
+# Confirmed invariants (encode_ldr_str)
+
+- Valid unsigned LDR/STR/LDRB/STRB/LDRH/STRH Rt, [Xn|SP, #pimm] with pimm = imm12*(1<<size) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins ldr x0,[x1]=0xF9400020, ldr x0,[x1,#8]=0xF9400420, str w2,[x3,#4]=0xB9000462, ldrb w0,[x1,#1]=0x39400420, ldrh w0,[x1,#2]=0x79400420.
+- Unscaled/pre/post with simm9 in [-256,255] (excluding writeback Rt==Rn) match llvm-mc, including LDR-to-LDUR canonicalization (1000 cases). KAT pins ldr x0,[x1,#4]=0xF8404020, post #8=0xF8408420, pre #8=0xF8408C20, [x1,x2]=0xF8626820.
+- ARM unsigned GPR layout: size [31:30], bits[29:27]=111, V=0, bits[25:24]=01, opc=01 load / 00 store, imm12, Rn, Rt (1000 cases).
+- Metamorphic: Rt+1 adds 1, Rn+1 adds 32, imm12+1 adds 1<<10, load XOR store = 1<<22, pre XOR post = 0b10<<10 (1000 cases).
+- Arity 0/1 and non-memory second operands return Err (1000 cases).
+- SIMD S/D/Q unsigned LDR/STR match llvm-mc (1000 cases, sweep).
+- Alt spellings x31 / uppercase Xn,XZR,SP / lr match llvm-mc (1000 cases, sweep).
+- LDR literal Symbol produces WordWithReloc { Ldr19, symbol, addend 0 } with opc 00/01; STR literal returns Err (1000 cases, sweep).
+- SP dest, XZR/x31 base, W base, W-index without extend, writeback Rt==Rn, out-of-range offset, extra operand, and byte lsl #0 S-bit currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_ldr_str)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/arm/assembler/encoder/encode_ldr_str_pbt.rs, cargo test --lib encode_ldr_str, proptest cases=1000.
+
 # Confirmed invariants (encode_uxtb)
 
 - Valid UXTB Wd, Wn with Wd, Wn in {w0..w30, wzr, w31} (and w31/WZR/uppercase aliases) match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins uxtb w0,w1=0x53001c20, uxtb wzr,wzr=0x53001fff, ubfm w0,w1,#0,#7 aliases to the same word.
