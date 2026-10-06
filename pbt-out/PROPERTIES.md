@@ -1,222 +1,213 @@
-# Properties: encode_fence
+# Properties: encode_amo
 
-## encode_fence_diff_llvm_mc
+## encode_amo_diff_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent RISC-V assembler. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree FENCE decoder). encode_i / fence.i / fence.tso rejected as same-job siblings (private packer / different mnemonics). Domain is llvm-mc-valid letter combinations: non-empty subsequences of iorw selected in order.
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc, an independent RISC-V assembler (A-extension). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree AMO decoder). encode_r / encode_amo_suffixed / encode_sc rejected as same-job siblings (private packer / aqrl-suffixed mnemonic / store-conditional). Domain is llvm-mc-valid unsuffixed AMO: amo{swap,add,xor,and,or,min,max,minu,maxu}.{w,d} with GPR rd, rs2 and mem (rs1) / 0(rs1).
 - Doc contract: encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint 077a9290
-- Seed: encode_csr_pbt.rs:368 encode_csr_diff_llvm_mc
-- Formal: ∀ pred, succ ∈ in-order-subsequences(iorw). encode_fence([FenceArg(pred), FenceArg(succ)]) = Word(w) ∧ w = llvm-mc("fence pred, succ")
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
+- Seed: encode_alu_reg_pbt.rs:368 encode_alu_reg_diff_llvm_mc
+- Formal: ∀ mn ∈ AMO_MN, rd, rs2, rs1 ∈ GPR. encode_amo([Reg(rd), Reg(rs2), Mem{rs1, 0}], funct3(mn), funct5(mn)) = Word(w) ∧ w = llvm-mc("mn rd, rs2, (rs1)")
+- Test file: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fence
+function: encoder.encode_amo
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [pred, succ]
-  domain: { pred: in_order_iorw, succ: in_order_iorw }
+  vars: [mn, rd, rs2, rs1]
+  domain: { mn: amo_mnemonic, rd: gpr, rs2: gpr, rs1: gpr }
   relation:
     op: eq
-    lhs: sut_word([FenceArg(pred), FenceArg(succ)])
-    rhs: llvm_mc_word("fence " + pred + ", " + succ)
+    lhs: sut_word([Reg(rd), Reg(rs2), Mem{rs1, 0}], funct3(mn), funct5(mn))
+    rhs: llvm_mc_word(mn + " " + rd + ", " + rs2 + ", (" + rs1 + ")")
 generators:
-  pred: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-evidence: encoder/mod.rs:682 fence => encode_fence; llvm-mc -triple=riscv64 -show-encoding
+  mn: { gen: oneof, options: [amoswap.w, amoadd.w, amoxor.w, amoand.w, amoor.w, amomin.w, amomax.w, amominu.w, amomaxu.w, amoswap.d, amoadd.d, amoxor.d, amoand.d, amoor.d, amomin.d, amomax.d, amominu.d, amomaxu.d] }
+  rd: { gen: string, type: gpr_name }
+  rs2: { gen: string, type: gpr_name }
+  rs1: { gen: string, type: gpr_name }
+evidence: encoder/mod.rs:657-674 amo*.w/d => encode_amo; llvm-mc -triple=riscv64 -mattr=+a -show-encoding
 ```
 
-## encode_fence_empty_is_iorw
-- Tier: 3
-- Rationale: Algebraic metamorphic from system.rs:7 and llvm-mc (bare `fence` encodes identically to `fence iorw, iorw`). Stronger differential for the empty case is included as a KAT; this property checks the SUT identity independently of llvm-mc so a packer regression still fails.
-- Doc contract: system.rs:7 "fence iorw, iorw" — asserted fingerprint 525bd367
-- Seed: (none)
-- Formal: ∀. encode_fence([]) = encode_fence([FenceArg("iorw"), FenceArg("iorw")]) = Word(0x0FF0000F)
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_fence
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [unit]
-  domain: { unit: unit }
-  relation:
-    op: eq
-    lhs: sut_word([])
-    rhs: sut_word([FenceArg("iorw"), FenceArg("iorw")])
-generators:
-  unit: { gen: const, value: 0 }
-evidence: system.rs:7 empty operands comment fence iorw, iorw; llvm-mc fence encoding [0x0f,0x00,0xf0,0x0f]
-```
-
-## encode_fence_i_type_fields
+## encode_amo_r_type_fields
 - Tier: 4
-- Rationale: Algebraic invariant from RISC-V ISA / README.md:353 / encoder/mod.rs:303 I-type layout. Weaker than differential (does not pin pred/succ bit assignment against an independent assembler) but catches rd/rs1/funct3/fm/opcode packing bugs even if llvm-mc is unavailable. Independent unpack, not a copy of encode_i.
-- Doc contract: encoder/mod.rs:303 "I-type: imm[31:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 274cd4b0
-- Seed: encode_csr_pbt.rs:399 encode_csr_i_type_fields
-- Formal: ∀ pred, succ ∈ in-order-subsequences(iorw). let w = encode_fence([FenceArg(pred), FenceArg(succ)]) in opcode(w)=0b0001111 ∧ rd(w)=0 ∧ funct3(w)=0 ∧ rs1(w)=0 ∧ fm(w)=0 ∧ pred_bits(w)=iorw_mask(pred) ∧ succ_bits(w)=iorw_mask(succ)
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
+- Rationale: Algebraic invariant from RISC-V ISA / README.md:352 / encoder/mod.rs:300 R-type layout and atomics.rs:25 aq=rl=0. Weaker than differential (does not pin funct5 bit assignment against an independent assembler) but catches rd/rs1/rs2/funct3/opcode/aq/rl packing bugs even if llvm-mc is unavailable. Independent unpack, not a copy of encode_r.
+- Doc contract: encoder/mod.rs:300 "R-type: funct7[31:25] | rs2[24:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 34009d12
+- Seed: encode_alu_reg_pbt.rs:399 encode_alu_reg_r_type_fields
+- Formal: ∀ mn ∈ AMO_MN, rd, rs2, rs1 ∈ 0..31. let w = encode_amo([Reg(x(rd)), Reg(x(rs2)), Mem{x(rs1), 0}], funct3(mn), funct5(mn)) in opcode(w)=0b0101111 ∧ rd(w)=rd ∧ rs1(w)=rs1 ∧ rs2(w)=rs2 ∧ funct3(w)=funct3(mn) ∧ funct5(w)=funct5(mn) ∧ aq(w)=0 ∧ rl(w)=0
+- Test file: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fence
+function: encoder.encode_amo
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [pred, succ]
-  domain: { pred: in_order_iorw, succ: in_order_iorw }
+  vars: [mn, rd, rs2, rs1]
+  domain: { mn: amo_mnemonic, rd: u32(0..31), rs2: u32(0..31), rs1: u32(0..31) }
   relation:
     op: holds
-    expr: unpack_fence_ok(sut_word([FenceArg(pred), FenceArg(succ)]), pred, succ)
+    expr: unpack_amo_ok(sut_word([Reg(x(rd)), Reg(x(rs2)), Mem{x(rs1), 0}], funct3(mn), funct5(mn)), mn, rd, rs2, rs1)
 generators:
-  pred: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-evidence: README.md:353 I-type layout; encoder/mod.rs:303 I-type; encoder/mod.rs:357 OP_MISC_MEM; RISC-V ISA FENCE fm|pred|succ
+  mn: { gen: oneof, options: [amoswap.w, amoadd.w, amoxor.w, amoand.w, amoor.w, amomin.w, amomax.w, amominu.w, amomaxu.w, amoswap.d, amoadd.d, amoxor.d, amoand.d, amoor.d, amomin.d, amomax.d, amominu.d, amomaxu.d] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rs2: { gen: int, min: 0, max: 31, type: u32 }
+  rs1: { gen: int, min: 0, max: 31, type: u32 }
+evidence: encoder/mod.rs:300 R-type layout; atomics.rs:25 aq=0, rl=0; RISC-V ISA AMO opcode 0101111
 ```
 
-## encode_fence_imm0_diff_llvm_mc
-- Tier: 2
-- Rationale: llvm-mc accepts numeric 0 as a fence operand ("or be 0"). The parser emits Operand::Imm(0) for `fence 0, ...` (is_fence_arg rejects '0'). Differential over Imm(0) mixed with in-order letter args. Stronger than a crash-only check because the encoding is specified.
-- Doc contract: (none) on encode_fence for numeric 0. Contract inferred from llvm-mc operand rule and parser.rs:1004 is_fence_arg (digits are not FenceArg). fingerprint (none)
-- Seed: encode_csr_pbt.rs:384 encode_csr_imm_auto_diff_llvm_mc
-- Formal: ∀ a, b ∈ in-order-subsequences(iorw) ∪ {0}. encode_fence(op(a), op(b)) = llvm-mc("fence a, b") where op(0)=Imm(0) and op(letters)=FenceArg(letters)
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
-- Status: failing
-- Counterexample: encode_fence([Imm(0), Imm(0)])
-- Bug report: pbt-out/bug_reports/encode_fence_imm0_as_full_barrier.md
+## encode_amo_abi_xn_alias
+- Tier: 3
+- Rationale: Algebraic metamorphic: ABI names (zero/ra/sp/...), xN, and fp (x8) name the same GPR, so encode_amo must emit the same word. Independent of llvm-mc so a packer regression still fails.
+- Doc contract: parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7" — asserted fingerprint 00db3ff1
+- Seed: encode_alu_reg_pbt.rs:426 encode_alu_reg_abi_xn_alias
+- Formal: ∀ mn ∈ AMO_MN, n, m, k ∈ 0..31. encode_amo([Reg(xN(n)), Reg(xN(m)), Mem{xN(k), 0}], f3, f5) = encode_amo([Reg(ABI(n)), Reg(ABI(m)), Mem{ABI(k), 0}], f3, f5) ∧ (n=8 ⇒ fp-as-rd equal) ∧ (m=8 ⇒ fp-as-rs2 equal) ∧ (k=8 ⇒ fp-as-base equal)
+- Test file: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.encode_fence
-oracle: differential
+function: encoder.encode_amo
+oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [a, b]
-  domain: { a: in_order_iorw_or_zero, b: in_order_iorw_or_zero }
+  vars: [mn, n, m, k]
+  domain: { mn: amo_mnemonic, n: u32(0..31), m: u32(0..31), k: u32(0..31) }
   relation:
     op: eq
-    lhs: sut_word([op_fence(a), op_fence(b)])
-    rhs: llvm_mc_word("fence " + a + ", " + b)
+    lhs: sut_word([Reg(xN(n)), Reg(xN(m)), Mem{xN(k), 0}], funct3(mn), funct5(mn))
+    rhs: sut_word([Reg(ABI(n)), Reg(ABI(m)), Mem{ABI(k), 0}], funct3(mn), funct5(mn))
 generators:
-  a: { gen: oneof, options: [0, i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-  b: { gen: oneof, options: [0, i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-evidence: llvm-mc "operand must be formed of letters selected in-order from 'iorw' or be 0"; parser.rs:1004 is_fence_arg
+  mn: { gen: oneof, options: [amoswap.w, amoadd.w, amoxor.w, amoand.w, amoor.w, amomin.w, amomax.w, amominu.w, amomaxu.w, amoswap.d, amoadd.d, amoxor.d, amoand.d, amoor.d, amomin.d, amomax.d, amominu.d, amomaxu.d] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  m: { gen: int, min: 0, max: 31, type: u32 }
+  k: { gen: int, min: 0, max: 31, type: u32 }
+evidence: parser.rs:23 GPR name set; encoder/mod.rs:373 get_reg via reg_num
 ```
 
-## encode_fence_neg_extra
+## encode_amo_neg_extra
 - Tier: 5
-- Rationale: llvm-mc rejects a third operand (`invalid operand for instruction`). encode_instruction passes operands through, so extra operands are caller-reachable. Negative/error contract: encode_fence must Err. Stronger differential does not apply on the error path (no encoding to compare).
-- Doc contract: (none) on encode_fence for extra operands. Contract inferred (llvm-mc + public wrapper encode_instruction passes operands through). fingerprint (none)
-- Seed: encode_csr_pbt.rs:474 encode_csr_neg_extra
-- Formal: ∀ pred, succ ∈ in-order-subsequences(iorw), extra ∈ Operand. encode_fence([FenceArg(pred), FenceArg(succ), extra]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
+- Rationale: Negative/error contract from llvm-mc (rejects a fourth operand as "invalid operand for instruction"). encode_instruction passes operands through; extra operands must not be silently ignored. Documented error: Err.
+- Doc contract: encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint 077a9290
+- Seed: encode_alu_reg_pbt.rs:460 encode_alu_reg_neg_extra
+- Formal: ∀ mn ∈ AMO_MN, rd, rs2, rs1 ∈ GPR, extra ∈ Operand. encode_amo([Reg(rd), Reg(rs2), Mem{rs1, 0}, extra], funct3(mn), funct5(mn)) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs
 - Status: failing
-- Counterexample: encode_fence([FenceArg("i"), FenceArg("i"), Imm(0)]) = Ok(Word)
-- Bug report: pbt-out/bug_reports/encode_fence_extra_operand.md
+- Counterexample: encode_amo([Reg("x0"), Reg("x0"), Mem { base: "x0", offset: 0 }, Imm(0)], 0b010, 0b00001) = Ok(Word(0x0800202f))
+- Bug report: pbt-out/bug_reports/encode_amo_extra_operand.md
 
 ```property
-function: encoder.encode_fence
+function: encoder.encode_amo
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [pred, succ, extra]
-  domain: { pred: in_order_iorw, succ: in_order_iorw, extra: Operand }
+  vars: [mn, rd, rs2, rs1, extra]
+  domain: { mn: amo_mnemonic, rd: gpr, rs2: gpr, rs1: gpr, extra: Operand }
   relation:
     op: throws
-    expr: encode_fence([FenceArg(pred), FenceArg(succ), extra])
-expected_error: String
+    expr: encode_amo([Reg(rd), Reg(rs2), Mem{rs1, 0}, extra], funct3(mn), funct5(mn))
 generators:
-  pred: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-  extra: { gen: oneof, options: [Imm(0), Imm(-1), Reg(x0), Symbol(foo), FenceArg(iorw)] }
-evidence: llvm-mc fence iorw, iorw, x0 -> invalid operand; encoder/mod.rs:682 operands passed through
+  mn: { gen: oneof, options: [amoswap.w, amoadd.w, amoxor.w, amoand.w, amoor.w, amomin.w, amomax.w, amominu.w, amomaxu.w, amoswap.d, amoadd.d, amoxor.d, amoand.d, amoor.d, amomin.d, amomax.d, amominu.d, amomaxu.d] }
+  rd: { gen: string, type: gpr_name }
+  rs2: { gen: string, type: gpr_name }
+  rs1: { gen: string, type: gpr_name }
+  extra: { gen: oneof, options: [Imm(0), Imm(-1), Reg(x0), Symbol(foo), Label(L0), Csr(mstatus), FenceArg(iorw)] }
+expected_error: String
+evidence: llvm-mc rejects amoswap.w a0, a1, (a2), a3 as invalid operand
 ```
 
-## encode_fence_neg_arity
+## encode_amo_neg_nonzero_offset
 - Tier: 5
-- Rationale: llvm-mc rejects a single fence operand (`too few operands for instruction`). Empty is valid (defaults to iorw,iorw); one operand is not. Negative/error contract: encode_fence must Err for len==1.
-- Doc contract: (none) on encode_fence for arity 1. Contract inferred (llvm-mc). fingerprint (none)
-- Seed: encode_csr_pbt.rs:544 encode_csr_neg_arity_fp_unknown
-- Formal: ∀ op ∈ Operand. encode_fence([op]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
+- Rationale: Negative/error contract from llvm-mc ("optional integer offset must be 0") and RISC-V ISA AMO (no immediate; address is rs1 only). encode_amo currently binds `_offset` and drops it. Nonzero offset is accepted by the parser as Operand::Mem and must be rejected, not encoded as offset 0. Documented bound 0 is sampled at ±1 and far from 0.
+- Doc contract: (none) on encode_amo for offset — `_offset` at atomics.rs:24 is the producing statement, not a domain restriction
+- Seed: encode_store_pbt.rs Mem offset handling; llvm-mc error on `amoswap.w a0, a1, 8(a2)`
+- Formal: ∀ mn ∈ AMO_MN, rd, rs2, rs1 ∈ GPR, off ∈ ℤ\{0}. encode_amo([Reg(rd), Reg(rs2), Mem{rs1, off}], funct3(mn), funct5(mn)) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs
 - Status: failing
-- Counterexample: encode_fence([FenceArg("iorw")]) = Ok(Word(0x0ff0000f))
-- Bug report: pbt-out/bug_reports/encode_fence_arity_one.md
+- Counterexample: encode_amo([Reg("x0"), Reg("x0"), Mem { base: "x0", offset: 1 }], 0b010, 0b00001) = Ok(Word(0x0800202f))
+- Bug report: pbt-out/bug_reports/encode_amo_nonzero_offset.md
 
 ```property
-function: encoder.encode_fence
+function: encoder.encode_amo
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [op]
-  domain: { op: Operand }
+  vars: [mn, rd, rs2, rs1, off]
+  domain: { mn: amo_mnemonic, rd: gpr, rs2: gpr, rs1: gpr, off: nonzero_i64 }
   relation:
     op: throws
-    expr: encode_fence([op])
-expected_error: String
+    expr: encode_amo([Reg(rd), Reg(rs2), Mem{rs1, off}], funct3(mn), funct5(mn))
 generators:
-  op: { gen: oneof, options: [FenceArg(iorw), FenceArg(rw), Imm(0), Reg(x0), Symbol(foo)] }
-evidence: llvm-mc fence iorw -> too few operands; llvm-mc fence 0 -> too few operands
+  mn: { gen: oneof, options: [amoswap.w, amoadd.w, amoxor.w, amoand.w, amoor.w, amomin.w, amomax.w, amominu.w, amomaxu.w, amoswap.d, amoadd.d, amoxor.d, amoand.d, amoor.d, amomin.d, amomax.d, amominu.d, amomaxu.d] }
+  rd: { gen: string, type: gpr_name }
+  rs2: { gen: string, type: gpr_name }
+  rs1: { gen: string, type: gpr_name }
+  off: { gen: int, min: -2147483648, max: 2147483647, type: i64, filter: "off != 0" }
+expected_error: String
+evidence: llvm-mc "optional integer offset must be 0"; RISC-V ISA AMO address is rs1 with no imm field
 ```
 
-## encode_fence_neg_out_of_order
+## encode_amo_neg_arity_fp
 - Tier: 5
-- Rationale: llvm-mc requires letters selected in-order from iorw (rejects wroi, irow, ii, IORW). parse_fence_bits uses contains() so order/duplicates/case are ignored. Negative/error: encode_fence must Err (or at least not silently encode a valid-looking fence) for out-of-order, duplicate, and uppercase letter strings that llvm-mc rejects.
-- Doc contract: encoder/mod.rs:442 "Parse a fence ordering string (e.g., \"iorw\") into a 4-bit mask." — asserted fingerprint 7cb05145. The helper comment does not declare out-of-order input invalid; llvm-mc does. Classification: asserted (mask from iorw letters) not a domain restriction excluding order.
-- Seed: (none)
-- Formal: ∀ pred ∈ {wroi, irow, ri, wi, oi, wr, ro, wo, ii, rr, ww, IORW, I, Rw}, succ ∈ in-order-subsequences(iorw). encode_fence([FenceArg(pred), FenceArg(succ)]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
-- Status: failing
-- Counterexample: encode_fence([FenceArg("wroi"), FenceArg("i")]) = Ok(Word)
-- Bug report: pbt-out/bug_reports/encode_fence_out_of_order_letters.md
+- Rationale: Negative/error contract: llvm-mc rejects too few operands and FP registers (`ft0` is "invalid operand"). get_reg/get_mem must Err on empty/missing slots and on FP names that are not GPRs.
+- Doc contract: parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7" — asserted fingerprint 00db3ff1
+- Seed: encode_alu_reg_pbt.rs:478 encode_alu_reg_neg_arity_fp
+- Formal: ∀ mn ∈ AMO_MN, rd, rs2, rs1 ∈ GPR, fp ∈ FP_NAMES. encode_amo([], f3, f5)=Err ∧ encode_amo([Reg(rd)], f3, f5)=Err ∧ encode_amo([Reg(rd), Reg(rs2)], f3, f5)=Err ∧ encode_amo([Reg(fp), Reg(rs2), Mem{rs1, 0}], f3, f5)=Err ∧ encode_amo([Reg(rd), Reg(fp), Mem{rs1, 0}], f3, f5)=Err ∧ encode_amo([Reg(rd), Reg(rs2), Mem{fp, 0}], f3, f5)=Err
+- Test file: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.encode_fence
+function: encoder.encode_amo
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [pred, succ]
-  domain: { pred: invalid_fence_letters, succ: in_order_iorw }
+  vars: [mn, rd, rs2, rs1, fp]
+  domain: { mn: amo_mnemonic, rd: gpr, rs2: gpr, rs1: gpr, fp: fp_name }
   relation:
-    op: throws
-    expr: encode_fence([FenceArg(pred), FenceArg(succ)])
-expected_error: String
+    op: holds
+    expr: encode_amo([],f3,f5).is_err() && encode_amo([Reg(rd)],f3,f5).is_err() && encode_amo([Reg(rd),Reg(rs2)],f3,f5).is_err() && encode_amo([Reg(fp),Reg(rs2),Mem{rs1,0}],f3,f5).is_err() && encode_amo([Reg(rd),Reg(fp),Mem{rs1,0}],f3,f5).is_err() && encode_amo([Reg(rd),Reg(rs2),Mem{fp,0}],f3,f5).is_err()
 generators:
-  pred: { gen: oneof, options: [wroi, irow, ri, wi, oi, wr, ro, wo, ii, rr, ww, IORW, I, Rw] }
-  succ: { gen: oneof, options: [i, o, r, w, io, ir, iw, or, ow, rw, ior, iow, irw, orw, iorw] }
-evidence: llvm-mc operand must be formed of letters selected in-order from iorw or be 0
+  mn: { gen: oneof, options: [amoswap.w, amoadd.w, amoxor.w, amoand.w, amoor.w, amomin.w, amomax.w, amominu.w, amomaxu.w, amoswap.d, amoadd.d, amoxor.d, amoand.d, amoor.d, amomin.d, amomax.d, amominu.d, amomaxu.d] }
+  rd: { gen: string, type: gpr_name }
+  rs2: { gen: string, type: gpr_name }
+  rs1: { gen: string, type: gpr_name }
+  fp: { gen: oneof, options: [ft0, fs0, fa0, fa7, ft11, f0, f31] }
+expected_error: String
+evidence: llvm-mc rejects too few operands and `amoswap.w ft0, a1, (a2)` / `(ft0)`
 ```
 
-## encode_fence_neg_invalid_operand
+## encode_amo_neg_non_mem
 - Tier: 5
-- Rationale: llvm-mc rejects registers, symbols, and numeric values other than 0 as fence operands. encode_fence currently maps any non-FenceArg to 0xF. Negative/error: those operands must Err.
-- Doc contract: (none) on encode_fence for operand kinds. Contract inferred (llvm-mc). fingerprint (none)
-- Seed: encode_csr_pbt.rs:544 encode_csr_neg_arity_fp_unknown
-- Formal: ∀ kind ∈ {Reg, Symbol, Csr, RoundingMode, Mem, Imm(n) where n≠0}. encode_fence([kind, FenceArg("rw")]) is Err ∧ encode_fence([FenceArg("rw"), kind]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fence_pbt.rs
-- Status: failing
-- Counterexample: encode_fence([Reg("x0"), FenceArg("rw")]) = Ok(Word)
-- Bug report: pbt-out/bug_reports/encode_fence_invalid_operand.md
+- Rationale: Negative/error contract: slot 2 must be a memory operand `(rs1)`. llvm-mc requires `(` / optional integer offset. Non-Mem kinds (Reg, Imm, Symbol, Label, Csr, FenceArg, MemSymbol, RoundingMode) must Err via get_mem.
+- Doc contract: parser.rs:31 "Memory operand: offset(base) e.g., 8(sp) or -16(s0)" — asserted fingerprint b251460e
+- Seed: encode_store_pbt.rs memory-operand requirement
+- Formal: ∀ mn ∈ AMO_MN, rd, rs2 ∈ GPR, bad ∉ Mem. encode_amo([Reg(rd), Reg(rs2), bad], funct3(mn), funct5(mn)) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.encode_fence
+function: encoder.encode_amo
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad]
-  domain: { bad: non_fence_operand }
+  vars: [mn, rd, rs2, bad]
+  domain: { mn: amo_mnemonic, rd: gpr, rs2: gpr, bad: non_mem_operand }
   relation:
     op: throws
-    expr: encode_fence([bad, FenceArg("rw")])
-expected_error: String
+    expr: encode_amo([Reg(rd), Reg(rs2), bad], funct3(mn), funct5(mn))
 generators:
-  bad: { gen: oneof, options: [Reg(x0), Symbol(foo), Csr(mstatus), RoundingMode(rne), Imm(1), Imm(15), Imm(-1), Imm(16)] }
-evidence: llvm-mc fence x0, x0 / fence 1, 2 / fence 15, 15 -> operand must be letters in-order from iorw or be 0
+  mn: { gen: oneof, options: [amoswap.w, amoadd.w, amoxor.w, amoand.w, amoor.w, amomin.w, amomax.w, amominu.w, amomaxu.w, amoswap.d, amoadd.d, amoxor.d, amoand.d, amoor.d, amomin.d, amomax.d, amominu.d, amomaxu.d] }
+  rd: { gen: string, type: gpr_name }
+  rs2: { gen: string, type: gpr_name }
+  bad: { gen: oneof, options: [Imm(0), Reg(x1), Symbol(foo), Label(L0), Csr(mstatus), FenceArg(iorw), RoundingMode(rne)] }
+expected_error: String
+evidence: encoder/mod.rs:433 get_mem expected memory operand; llvm-mc requires (rs1)
 ```

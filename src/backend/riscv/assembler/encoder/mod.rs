@@ -42,6 +42,8 @@ mod encode_alu_reg_w_pbt;
 mod encode_csr_pbt;
 #[cfg(test)]
 mod encode_fence_pbt;
+#[cfg(test)]
+mod encode_amo_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

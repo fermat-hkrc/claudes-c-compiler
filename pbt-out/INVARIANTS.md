@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_amo)
+
+- Unsuffixed amo{swap,add,xor,and,or,min,max,minu,maxu}.{w,d} with GPR rd, rs2 and Mem offset 0 matches llvm-mc `-triple=riscv64 -mattr=+a -show-encoding` (1000 cases). KAT pins amoswap.w a0, a1, (a2) = 0x08b6252f, amoadd.d x1, x2, (x3) = 0x0021b0af, amomaxu.d x31, x0, (sp) = 0xe0013faf. llvm-mc `0(rs1)` equals `(rs1)`.
+- R-type AMO layout holds: opcode=0b0101111, rd/rs1/rs2/funct3 as given, funct5 in bits[31:27], aq=0, rl=0 (atomics.rs:25) (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs2/rs1 (1000 cases).
+- Empty, missing mem, FP GPR slots, and non-Mem slot 2 return Err (1000 cases).
+- Extra operands and nonzero Mem offset currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_amo)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+a -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_amo_pbt.rs, cargo test --lib encode_amo, proptest cases=1000.
+- Dispatch: encoder/mod.rs:657-674 unsuffixed amo*.w/d => encode_amo; suffixed .aq/.rl/.aqrl go to encode_amo_suffixed (out of scope).
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries). Sweep was a manual audit of valid 3-operand / extra / nonzero offset / arity / FP / non-Mem. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_amo)
+
+- get_reg accepts Imm 0..=31 as a register number (encoder/mod.rs:376 GCC inline-asm comment); not encode_amo's own contract.
+- Codegen always emits offset-less `(t1)` / `(t0)` forms (codegen/atomics.rs:447).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_fence)
 
 - Requested `--func encode_fence` is absent from base.rs; the FENCE I-type encoder is encode_fence (system.rs:5), dispatched from encoder/mod.rs:682 with operands passed through.
