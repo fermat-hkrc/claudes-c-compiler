@@ -54,3 +54,4 @@
 | 26 | src/backend/x86/assembler | parser accepts xmm in GPR slots (addq/shlq/pushq/imulq → rax) | **new issue filed** (#825 class on x86 path) | [#826](https://github.com/fermat-hkrc/claudes-c-compiler/issues/826) |
 | 26 | src/backend/x86/assembler | parser accepts every non-GPR class in GPR slots (mm/cs/st + i686) | **new issue filed** (#826 class extends to all classes) | [#827](https://github.com/fermat-hkrc/claudes-c-compiler/issues/827) |
 | 26 | src/backend/arm/assembler | XZR/WSP/x31 as memory base silently accepted (encodes as SP) | **new issue filed** | [#828](https://github.com/fermat-hkrc/claudes-c-compiler/issues/828) |
+| 26 | src/backend/arm/assembler | cset/cneg silently accept AL condition (encodes nv slot = wrong value) | **new issue filed** (85-form cond-code sweep) | [#829](https://github.com/fermat-hkrc/claudes-c-compiler/issues/829) |
