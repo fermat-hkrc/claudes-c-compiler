@@ -98,6 +98,8 @@ mod encode_c_jalr_pbt;
 mod encode_vsetvli_pbt;
 #[cfg(test)]
 mod encode_vsetivli_pbt;
+#[cfg(test)]
+mod encode_vsetvl_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

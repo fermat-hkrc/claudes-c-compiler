@@ -225,3 +225,4 @@
 | encode_c_jalr | compressed.rs | encode_c_jalr_pbt.rs | cargo test --lib encode_c_jalr | 5 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/fp passing, extra/rs1=x0 failing) |
 | encode_vsetvli | vector.rs | encode_vsetvli_pbt.rs | cargo test --lib encode_vsetvli | 6 passing / 3 failing properties (plus 6 passing KAT + 3 failing regression witnesses; 3 bugs; sweep fp passing, extra/arity-two/wide-sew failing) |
 | encode_vsetivli | vector.rs | encode_vsetivli_pbt.rs | cargo test --lib encode_vsetivli | 6 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep fp passing, extra/arity-two/wide-sew/uimm-oob/vtypei-oob failing) |
+| encode_vsetvl | vector.rs | encode_vsetvl_pbt.rs | cargo test --lib encode_vsetvl_ | 6 passing / 1 failing properties (plus 6 passing KAT + 1 failing regression witness; 1 bug; sweep arity/fp/nonreg passing, extra failing) |

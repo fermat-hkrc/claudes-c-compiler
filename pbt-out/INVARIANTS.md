@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_vsetvl)
+
+- Valid 3-GPR vsetvl with rd, rs1, rs2 ∈ {x0..x31} ∪ ABI ∪ {fp} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vsetvl a0, a1, a2 = 0x80c5f557; vsetvl zero, ra, sp = 0x8020f057; vsetvl x0, x0, x0 = 0x80007057; vsetvl x31, x31, x31 = 0x81ffffd7; vsetvl x10, x11, x12 = 0x80c5f557; vsetvl t0, t1, t2 = 0x807372d7.
+- Format layout holds: opcode=1010111, funct3=111, bits[31:25]=1000000, rd in [11:7], rs1 in [19:15], rs2 in [24:20] (1000 cases).
+- ABI names (zero/ra/sp/a0/…/fp) encode the same word as xN (1000 cases).
+- Field isolation: rd/rs1/rs2 bits independent of the other fields (1000 cases).
+- Too few operands and FP/vector registers as rd/rs1/rs2 return Err (1000 cases).
+- Non-register operand kinds (Imm outside 0..=31, Symbol, Label, Mem, Csr, FenceArg, RoundingMode, SymbolOffset) at any of the three positions return Err (1000 cases).
+- Extra operand currently disagrees with llvm-mc (see bugs).
+
+## Environment (encode_vsetvl)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6). Default riscv64 without +v rejects vsetvl.
+- Harness: src/backend/riscv/assembler/encoder/encode_vsetvl_pbt.rs, cargo test --lib encode_vsetvl_, proptest cases=1000.
+- Dispatch: encoder/mod.rs:949 "vsetvl" => encode_vsetvl(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vsetvl NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / format / ABI / isolation / arity-FP / extra / nonreg. Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_vsetvl)
+
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number. llvm-mc rejects numeric rd/rs1/rs2.
+- llvm-mc rejects uppercase register names; reg_num lowercases.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vsetivli)
 
 - Valid 6-operand named vsetivli with rd ∈ GPR, uimm ∈ 0..=31, SEW ∈ {e8,e16,e32,e64}, LMUL ∈ {m1,m2,m4,m8,mf2,mf4,mf8}, ta/tu, ma/mu matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vsetivli a0, 1, e32, m1, ta, ma = 0xcd00f557; vsetivli a0, 0, e8, m8, tu, mu = 0xc0307557; vsetivli a0, 31, e64, mf2, ta, ma = 0xcdfff557; vsetivli x10, 5, e16, mf4, tu, ma = 0xc8e2f557; vsetivli zero, 0, e8, m1, tu, mu = 0xc0007057.
