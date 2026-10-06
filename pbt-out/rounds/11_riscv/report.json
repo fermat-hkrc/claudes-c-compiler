@@ -1,0 +1,42 @@
+{
+ "schemaVersion": 3,
+ "generator": {
+  "tool": "pi-pbt",
+  "version": "0.1.25 (pi 0.87.1)"
+ },
+ "run": {
+  "date": "2026-10-05",
+  "revision": "c11de636",
+  "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "target": "src/backend/riscv",
+  "tier": "standard"
+ },
+ "build": {
+  "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+  "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "result": "success"
+ },
+ "properties": [
+  {
+   "id": "p1",
+   "name": "riscv_asm_matches_llvm_mc",
+   "formal": "\u2200 generated label-free RV64 sequences S: bytes(.text of ccc-assemble(S)) == bytes(.text of llvm-mc(S))",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/riscv/mod.rs",
+   "sourceLine": 1,
+   "functionName": "backend::riscv::assembler",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/riscv/mod.rs",
+   "testTarget": "cargo test --lib backend::riscv::pbt_asm",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  }
+ ],
+ "bugs": [],
+ "totals": {
+  "properties": 1,
+  "passing": 1,
+  "failing": 0,
+  "bugs": 0
+ }
+}

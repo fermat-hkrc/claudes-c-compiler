@@ -159,3 +159,16 @@ Environment quirks (round 05):
   + eligibility whitelist all hold on random CFGs across 4 pool shapes.
 - Cast classification: x86 F128-reduction (F128≈F64) makes F128↔X classify as
   the F64 form under f128_is_native=false — documented, not a defect.
+
+## Rounds 09-12 — backends (2026-10-06)
+
+- E2E differential harness (driver in-process, gcc reference, native run)
+  works for x86-64 AND i686 (-m32; i386 ELF executes natively on this host).
+- ARM/RISC-V rounds: no qemu — assembler differential vs llvm-mc is the
+  oracle (validated byte-exact on general surfaces).
+- i686 include path bug #770: ccc -m32 needs -I <gcc-internal-include>
+  workaround on this host until fixed.
+- Generated C: always declare parameter types (K&R implicit int caused UB);
+  ldur imm range [-256,-1]; ARM ldr/str base must be X registers; RISC-V
+  ld/st 12-bit offsets (max 2047).
+- asm >> is LOGICAL per GNU as AND llvm-mc (both references agree).

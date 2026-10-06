@@ -1,0 +1,64 @@
+{
+ "schemaVersion": 3,
+ "generator": {
+  "tool": "pi-pbt",
+  "version": "0.1.25 (pi 0.87.1)"
+ },
+ "run": {
+  "date": "2026-10-05",
+  "revision": "c11de636",
+  "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "target": "src/backend/i686",
+  "tier": "standard"
+ },
+ "build": {
+  "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+  "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "result": "success"
+ },
+ "properties": [
+  {
+   "id": "p1",
+   "name": "i686_e2e_matches_gcc_m32",
+   "formal": "\u2200 generated programs P: stdout(ccc -m32 -O0/-O2, P) == stdout(gcc -m32, P), native i386 execution",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/i686/mod.rs",
+   "sourceLine": 1,
+   "functionName": "backend::i686 full pipeline",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/i686/mod.rs",
+   "testTarget": "cargo test --lib backend::i686::pbt_e2e",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  }
+ ],
+ "bugs": [
+  {
+   "id": "b1",
+   "propertyId": "p1",
+   "summary": "i686 target strips the arch-neutral gcc-internal include path (stddef.h/stdarg.h unfindable)",
+   "severity": "medium",
+   "impact": "ccc -m32 / ccc-i686 cannot compile any glibc-header-including program on standard multilib hosts",
+   "expected": "compiles like the x86-64 target",
+   "actual": "2 preprocessor errors: stddef.h/stdarg.h not found",
+   "counterexample": "ccc -m32 on #include <stdio.h>; int main(void){return 0;}",
+   "fix": "retain the arch-neutral gcc-internal include dirs in the i686 arm (only strip the x86_64 multiarch dir) or append them to the i686 list",
+   "reportPath": "bug_reports/backend_i686_include_path_strips_gcc_internal.md",
+   "contractBasis": "inferred",
+   "documentedBehavior": null,
+   "reproduction": {
+    "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo build --release",
+    "run": "./target/release/ccc -m32 -o /tmp/t32 /tmp/t32.c",
+    "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+    "seed": null,
+    "path": null
+   }
+  }
+ ],
+ "totals": {
+  "properties": 1,
+  "passing": 1,
+  "failing": 0,
+  "bugs": 1
+ }
+}
