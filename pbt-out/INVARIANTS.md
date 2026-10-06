@@ -237,3 +237,10 @@ Environment quirks (round 05):
   RISC-V fcvt/fmv/fcmp 14/14; i686 -S roundtrip matches (no #807 class).
   Probe hygiene: NEVER printf C asm with % — printf eats %xmm/%rsp as
   format specs (use run_probe.sh style read-loop + printf '%s').
+
+- Round-26 series (memory-operand/x87/avx512/rvc/imm8 batteries): 5 issues
+  (#818-#822). Notable: i686 assembler HAS the cvtt family that x86-64
+  lacks (cross-note on #818) — the two paths diverge; ARM writeback
+  addressing ([x,#imm]! / post-index) all accept; AVX-512 'initial' =
+  unmasked VL forms only (#820); RVC subset partial (#821); SSE imm8
+  range unvalidated (#822 — the #776 class recurs; grep every imm path!).
