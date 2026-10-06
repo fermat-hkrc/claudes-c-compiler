@@ -54,6 +54,8 @@ mod encode_sfence_vma_pbt;
 mod encode_csri_pbt;
 #[cfg(test)]
 mod encode_float_load_pbt;
+#[cfg(test)]
+mod encode_float_store_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

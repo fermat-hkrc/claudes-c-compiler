@@ -1,112 +1,155 @@
-# PBT Campaign Report: encode_float_load
+# PBT Campaign Report: encode_float_store
 
 ## Summary
 
-**Verdict:** 3 bugs (2 high, 1 medium): encode_float_load truncates out-of-range immediates (2048 encodes as -2048), silently drops extra operands, and remaps %hi/%pcrel_hi to lo12 relocs instead of rejecting them.
+**Verdict:** 4 bugs (3 high, 1 medium): encode_float_store truncates out-of-range immediates (2048 encodes as -2048), silently drops extra operands, remaps %hi/%pcrel_hi to lo12 relocs instead of rejecting them, and emits I-type lo relocs (Lo12I/PcrelLo12I) on S-type FSW/FSD so the linker patches the wrong bits.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_float_load
+**Modules tested:** encode_float_store
 **Tests:** 8
-**Result:** 5 passing, 3 bugs
+**Result:** 4 passing, 4 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_float_load). The cargo test run executed the Rust symbol; the C++ coverage reporter cannot see it.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_float_store). The cargo test run executed the Rust symbol; the C++ coverage reporter cannot see it.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_float_load | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_float_store | 8 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_float_load silently truncates out-of-range I-type immediates
+### B1: encode_float_store silently truncates out-of-range S-type immediates
 
-**Formal:** ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, imm ∉ [-2048, 2047]. llvm-mc rejects mn rd, imm(rs1) ∧ encode_float_load([Reg(rd), Mem{rs1, imm}], funct3(mn)) = Err(_)
-**Contract evidence:** inferred (RISC-V I-type imm[11:0] at encoder/mod.rs:317; llvm-mc rejects integers outside [-2048, 2047]; encode_instruction passes operands through)
+**Formal:** ∀ mn ∈ {fsw, fsd}, rs2 ∈ FPRegs, rs1 ∈ GPRs, imm ∉ [-2048, 2047]. llvm-mc rejects mn rs2, imm(rs1) ⇒ encode_float_store([Reg(rs2), Mem{rs1, imm}], funct3(mn)) is Err
+**Contract evidence:** inferred (RISC-V S-type imm[11:5]|imm[4:0] at encoder/mod.rs:325; llvm-mc rejects integers outside [-2048, 2047]; encode_instruction passes operands through)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_float_load([Reg("f0"), Mem { base: "x0", offset: 2048 }], 0b010)
-**Expected / Actual:** Err / Ok(Word(2147491847)) = 0x80002007 (flw f0, -2048(x0))
-**Impact:** A load whose offset is 2048 is assembled as offset -2048 (off by 4096), so the runtime reads the wrong address.
-**Root cause:** float.rs:10 passes `*offset as i32` into encode_i, which masks to 12 bits with no range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:10`
+**Counterexample:** encode_float_store([Reg("f0"), Mem { base: "x0", offset: 2048 }], 0b010)
+**Expected / Actual:** Err / Ok(Word(2147491879)) = 0x80002027 (fsw f0, -2048(x0))
+**Impact:** A store whose offset is 2048 is assembled as offset -2048 (off by 4096), so the runtime writes the wrong address.
+**Root cause:** float.rs:38 passes `*offset as i32` into encode_s, which takes the low 12 bits with no range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:38`
 ```rust
-            Ok(EncodeResult::Word(encode_i(OP_LOAD_FP, rd, funct3, rs1, *offset as i32)))
+            Ok(EncodeResult::Word(encode_s(OP_STORE_FP, funct3, rs1, rs2, *offset as i32)))
 ```
 **Suggested fix:** Reject offsets outside signed imm12 before packing.
 ```rust
             if !(-2048..=2047).contains(offset) {
-                return Err(format!("float load immediate out of range: {}", offset));
+                return Err(format!("float store immediate out of range: {}", offset));
             }
-            Ok(EncodeResult::Word(encode_i(OP_LOAD_FP, rd, funct3, rs1, *offset as i32)))
+            Ok(EncodeResult::Word(encode_s(OP_STORE_FP, funct3, rs1, rs2, *offset as i32)))
 ```
-**Bug report:** bug_reports/encode_float_load_imm_oob.md
-**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_load_regression_imm_oob)
+**Bug report:** bug_reports/encode_float_store_imm_oob.md
+**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_store_regression_imm_oob)
 **Raw output:**
 ```
-Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147491847)) at src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs:481.
-minimal failing input: (mn, f3) = ("flw", 2), rd = "f0", rs1 = "x0", imm = 2048
+Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147491879)) at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:512.
+minimal failing input: (mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", imm = 2048
 ```
 
-### B2: encode_float_load ignores extra operands
+### B2: encode_float_store ignores extra operands
 
-**Formal:** ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, imm ∈ [-2048, 2047], extra ∈ Operands. encode_float_load([Reg(rd), Mem{rs1, imm}, extra], funct3(mn)) = Err(_)
-**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on a third operand; encode_instruction at mod.rs:715/743 passes the full operand slice through)
+**Formal:** ∀ mn ∈ {fsw, fsd}, rs2 ∈ FPRegs, rs1 ∈ GPRs, imm ∈ [-2048, 2047], extra ∈ Operand. encode_float_store([Reg(rs2), Mem{rs1, imm}, extra], funct3(mn)) is Err
+**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on a third operand; encode_instruction at mod.rs:718/746 passes the full operand slice through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_float_load([Reg("f0"), Mem { base: "x0", offset: 0 }, Imm(0)], 0b010)
-**Expected / Actual:** Err / Ok(Word(8199)) = 0x00002007 (flw f0, 0(x0))
-**Impact:** A third operand is dropped; malformed FLW/FLD still assembles.
-**Root cause:** float.rs:7 matches only operands.get(1) and never checks operands.len().
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:7`
+**Counterexample:** encode_float_store([Reg("f0"), Mem { base: "x0", offset: 0 }, Imm(0)], 0b010)
+**Expected / Actual:** Err / Ok(Word(8231)) = 0x00002027 (fsw f0, 0(x0))
+**Impact:** A third operand is dropped; malformed FSW/FSD still assembles.
+**Root cause:** float.rs:35 matches only operands.get(1) and never checks operands.len().
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:35`
 ```rust
     match &operands.get(1) {
 ```
 **Suggested fix:** Require exactly two operands before encoding.
 ```rust
     if operands.len() != 2 {
-        return Err("float load: unexpected extra operand".to_string());
+        return Err("float store: unexpected extra operand".to_string());
     }
     match &operands.get(1) {
 ```
-**Bug report:** bug_reports/encode_float_load_extra_operand.md
-**Repro seed:** cc dbd5062a5b0302848715acddbe367c05ad0e1c9b5239180e68fe5f5e8efcd16d
+**Bug report:** bug_reports/encode_float_store_extra_operand.md
+**Repro seed:** cc 37bb301224666ee6a1abe2c26cb00fb38e2a778c654818ddc9738bd686a6fc81
 **Raw output:**
 ```
-Test failed: extra operand must Err for flw f0, 0(x0) (llvm-mc rejects extra operands); got Ok(Word(8199)) at src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs:499.
-minimal failing input: (mn, f3) = ("flw", 2), rd = "f0", rs1 = "x0", off = 0, extra = Imm(0)
+Test failed: extra operand must Err for fsw f0, 0(x0) (llvm-mc rejects extra operands); got Ok(Word(8231)) at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:531.
+minimal failing input: (mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", off = 0, extra = Imm(0)
 ```
 
-### B3: encode_float_load accepts %hi/%pcrel_hi/%tprel_hi on FLW/FLD
+### B3: encode_float_store accepts %hi/%pcrel_hi/%tprel_hi on STORE-FP memory operands
 
-**Formal:** ∀ mn ∈ {flw, fld}, rd ∈ FPRegs, rs1 ∈ GPRs, s ∈ Idents, hi ∈ {%hi, %pcrel_hi, %tprel_hi}. llvm-mc rejects mn rd, hi(s)(rs1) ∧ encode_float_load([Reg(rd), MemSymbol{rs1, hi(s)}], funct3(mn)) = Err(_)
-**Contract evidence:** inferred (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on LOAD-FP; encoder/mod.rs:95 documents PCREL_LO12_I for loads)
-**Documentation conflict:** (none) — float.rs:15-18 remaps hi to lo without a comment declaring hi-type modifiers valid
+**Formal:** ∀ mn ∈ {fsw, fsd}, rs2 ∈ FPRegs, rs1 ∈ GPRs, s ∈ Idents, hi ∈ {%hi, %pcrel_hi, %tprel_hi}. llvm-mc rejects mn rs2, hi(s)(rs1) ⇒ encode_float_store([Reg(rs2), MemSymbol{rs1, hi(s)}], funct3(mn)) is Err
+**Contract evidence:** inferred (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on STORE-FP memory operands)
+**Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_float_load([Reg("f0"), MemSymbol { base: "x0", symbol: "%hi(foo)", modifier: "" }], 0b010)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 8199, reloc_type: Lo12I, symbol: "foo", addend: 0 })
-**Impact:** A high reloc requested by the author is emitted as R_RISCV_LO12_I, so the linker patches the wrong 12 bits of the symbol.
-**Root cause:** float.rs:16 remaps PcrelHi20 to PcrelLo12I and Hi20 to Lo12I instead of rejecting hi-type modifiers.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:16`
-```rust
-                RelocType::PcrelHi20 => RelocType::PcrelLo12I,
-```
-**Suggested fix:** Accept only lo12 reloc kinds on LOAD-FP; reject hi-type modifiers.
+**Counterexample:** encode_float_store([Reg("f0"), MemSymbol { base: "x0", symbol: "%hi(foo)", modifier: "" }], 0b010)
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 8231, reloc_type: Lo12S, symbol: "foo", addend: 0 })
+**Impact:** A hi-type modifier is remapped to Lo12S and a store with imm=0 is emitted; the linker patches the low 12 S-type bits from a high-part symbol.
+**Root cause:** float.rs:43-47 remaps PcrelHi20/Hi20 onto S-type lo relocs instead of rejecting hi modifiers.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:43`
 ```rust
             let reloc_type = match reloc_type {
-                RelocType::PcrelLo12I | RelocType::Lo12I | RelocType::TprelLo12I => reloc_type,
-                other => {
-                    return Err(format!("float load: unsupported reloc modifier {:?}", other));
-                }
+                RelocType::PcrelHi20 => RelocType::PcrelLo12S,
+                RelocType::Hi20 => RelocType::Lo12S,
+                other => other,
             };
 ```
-**Bug report:** bug_reports/encode_float_load_hi_modifier.md
-**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_load_regression_hi_modifier)
+**Suggested fix:** Return Err for hi-type modifiers; keep only lo-type S relocs.
+```rust
+            let reloc_type = match reloc_type {
+                RelocType::PcrelLo12I => RelocType::PcrelLo12S,
+                RelocType::Lo12I => RelocType::Lo12S,
+                RelocType::TprelLo12I => RelocType::TprelLo12S,
+                RelocType::PcrelLo12S | RelocType::Lo12S | RelocType::TprelLo12S => reloc_type,
+                _ => return Err("float store: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
+            };
+```
+**Bug report:** bug_reports/encode_float_store_hi_modifier.md
+**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_store_regression_hi_modifier)
 **Raw output:**
 ```
-Test failed: hi-type modifier %hi(foo) must Err on float load (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 8199, reloc: Relocation { reloc_type: Lo12I, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs:568.
-minimal failing input: (mn, f3) = ("flw", 2), rd = "f0", rs1 = "x0", s = "foo", hi = "%hi"
+Test failed: hi-type modifier %hi(foo) must Err on float store (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 8231, reloc: Relocation { reloc_type: Lo12S, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:602.
+minimal failing input: (mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", s = "foo", hi = "%hi"
+```
+
+### B4: encode_float_store emits I-type lo relocs on S-type STORE-FP
+
+**Formal:** ∀ rs2 ∈ FPRegs, rs1 ∈ GPRs, f3 ∈ {0b010, 0b011}, s ∈ Idents. encode_float_store([Reg(rs2), MemSymbol{rs1, %pcrel_lo(s)}], f3) = WordWithReloc{word = encode_float_store([Reg(rs2), Mem{rs1, 0}], f3), reloc_type = PcrelLo12S, symbol = s, addend = 0} ∧ likewise %lo → Lo12S ∧ %tprel_lo → TprelLo12S
+**Contract evidence:** documented src/backend/riscv/assembler/encoder/mod.rs:99 "R_RISCV_PCREL_LO12_S - for SW/SD (low 12 bits of PC-relative, S-type)"; llvm-mc fixup_riscv_lo12_s / pcrel_lo12_s / tprel_lo12_s on fsw/fsd
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_float_store([Reg("f0"), MemSymbol { base: "x0", symbol: "%pcrel_lo(foo)", modifier: "" }], 0b010)
+**Expected / Actual:** reloc_type PcrelLo12S / PcrelLo12I (and Lo12I for %lo)
+**Impact:** The ELF writer applies I-type imm[31:20] patching to an S-type instruction, overwriting rs2 and the scattered S-type immediate. Relocatable fsw/fsd with %lo/%pcrel_lo/%tprel_lo link to a corrupted store.
+**Root cause:** parse_reloc_modifier returns I-type lo variants; float.rs:43-47 only remaps Hi20 kinds and leaves Lo12I/PcrelLo12I/TprelLo12I unchanged.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:43`
+```rust
+            let reloc_type = match reloc_type {
+                RelocType::PcrelHi20 => RelocType::PcrelLo12S,
+                RelocType::Hi20 => RelocType::Lo12S,
+                other => other,
+            };
+```
+**Suggested fix:** Remap the I-type lo variants that parse_reloc_modifier actually returns.
+```rust
+            let reloc_type = match reloc_type {
+                RelocType::PcrelLo12I | RelocType::PcrelHi20 => RelocType::PcrelLo12S,
+                RelocType::Lo12I | RelocType::Hi20 => RelocType::Lo12S,
+                RelocType::TprelLo12I | RelocType::TprelHi20 => RelocType::TprelLo12S,
+                RelocType::PcrelLo12S | RelocType::Lo12S | RelocType::TprelLo12S => reloc_type,
+                _ => return Err("float store: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
+            };
+```
+**Bug report:** bug_reports/encode_float_store_lo_reloc_i_type.md
+**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_store_regression_lo_is_s_type)
+**Raw output:**
+```
+Test failed: assertion failed: `(left == right)`
+  left: `"PcrelLo12I"`,
+ right: `"PcrelLo12S"` at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:467.
+minimal failing input: (_mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", s = "foo"
 ```
 
 ## Design Caveats
@@ -117,32 +160,42 @@ minimal failing input: (mn, f3) = ("flw", 2), rd = "f0", rs1 = "x0", s = "foo", 
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_float_load_pbt.rs | 8 properties + 4 KAT + 3 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs | 8 properties + 4 KAT + 4 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_load -- --test-threads=1
+cargo test --lib encode_float_store -- --test-threads=1
 ```
 
 B1 (imm oob):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_load_neg_imm_oob -- --test-threads=1
+cargo test --lib encode_float_store_neg_imm_oob -- --test-threads=1
+cargo test --lib test_encode_float_store_regression_imm_oob -- --test-threads=1
 ```
 
 B2 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_load_neg_extra -- --test-threads=1
+cargo test --lib encode_float_store_neg_extra -- --test-threads=1
+cargo test --lib test_encode_float_store_regression_extra_operand -- --test-threads=1
 ```
 
 B3 (hi modifier):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_load_neg_hi_modifier -- --test-threads=1
+cargo test --lib encode_float_store_neg_hi_modifier -- --test-threads=1
+cargo test --lib test_encode_float_store_regression_hi_modifier -- --test-threads=1
+```
+
+B4 (I-type lo reloc):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_float_store_reloc_lo -- --test-threads=1
+cargo test --lib test_encode_float_store_regression_lo_is_s_type -- --test-threads=1
 ```
 
 ## Output Directories
@@ -153,23 +206,26 @@ cargo test --lib encode_float_load_neg_hi_modifier -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
 - pbt-out/INVARIANTS.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_float_store_imm_oob.md
+- pbt-out/bug_reports/encode_float_store_imm_oob.html
+- pbt-out/bug_reports/encode_float_store_extra_operand.md
+- pbt-out/bug_reports/encode_float_store_extra_operand.html
+- pbt-out/bug_reports/encode_float_store_hi_modifier.md
+- pbt-out/bug_reports/encode_float_store_hi_modifier.html
+- pbt-out/bug_reports/encode_float_store_lo_reloc_i_type.md
+- pbt-out/bug_reports/encode_float_store_lo_reloc_i_type.html
+- pbt-out/run/encode_float_store_test.log
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_float_load_imm_oob.md
-- pbt-out/bug_reports/encode_float_load_imm_oob.html
-- pbt-out/bug_reports/encode_float_load_extra_operand.md
-- pbt-out/bug_reports/encode_float_load_extra_operand.html
-- pbt-out/bug_reports/encode_float_load_hi_modifier.md
-- pbt-out/bug_reports/encode_float_load_hi_modifier.html
-- pbt-out/run/encode_float_load_test.log
+- pbt-out/CHANGE_SURFACE.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 17:35 (campaign: coverage)
-> Files: 14/14 scanned (100%) | Functions: 200/351 total | PBT candidates: 200 | Tested: 200 (100%) | 1 pass, 200 fail
+> Last updated: 2026-10-06 17:53 (campaign: coverage)
+> Files: 14/14 scanned (100%) | Functions: 201/351 total | PBT candidates: 201 | Tested: 201 (100%) | 1 pass, 201 fail
 
 ## Summary
 
@@ -178,10 +234,10 @@ cargo test --lib encode_float_load_neg_hi_modifier -- --test-threads=1
 | Total source files | 14 |
 | Files scanned | 14 / 14 (100%) |
 | Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 200 |
-| **Tested (of PBT candidates)** | **200 / 200 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 200 / -1 |
-| **Overall (tested / all functions)** | **200 / 351 (57%)** |
+| PBT candidates (from FUNCTION_INDEX) | 201 |
+| **Tested (of PBT candidates)** | **201 / 201 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 201 / -1 |
+| **Overall (tested / all functions)** | **201 / 351 (57%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -189,13 +245,13 @@ cargo test --lib encode_float_load_neg_hi_modifier -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 200 | 200 | 0 | 100% |
+|  | 201 | 201 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 200 | 200 | 0 | 100% |
+| unknown | 201 | 201 | 0 | 100% |
 
 ## File Coverage
 
@@ -418,3 +474,4 @@ cargo test --lib encode_float_load_neg_hi_modifier -- --test-threads=1
 | encode_sfence_vma | system.rs |
 | encode_csri | system.rs |
 | encode_float_load | float.rs |
+| encode_float_store | float.rs |
