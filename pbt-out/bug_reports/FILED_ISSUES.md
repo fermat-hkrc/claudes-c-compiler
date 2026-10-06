@@ -66,3 +66,4 @@
 | 26 | src/backend/arm/assembler | bti/rmif no arch gate; rev32-W silent X-width coercion | **new issue filed** (31-form battery) | [#838](https://github.com/fermat-hkrc/claudes-c-compiler/issues/838) |
 | 26 | src/backend/arm/assembler | scalar FP: GPR-as-FP silent coercion + fcmp #0.0→NOP + fnmul/fcmpe/fcsel missing | **new issue filed** (32-form battery) | [#839](https://github.com/fermat-hkrc/claudes-c-compiler/issues/839) |
 | 26 | src/backend/x86/assembler | cmpxchg reg-to-reg form rejected (mem form works) | **new issue filed** | [#840](https://github.com/fermat-hkrc/claudes-c-compiler/issues/840) |
+| 26 | src/backend/x86/assembler | suffix-less movzx/movsx + cwde/cdqe rejected (8 forms; suffixed forms all byte-exact) | **new issue filed** | [#841](https://github.com/fermat-hkrc/claudes-c-compiler/issues/841) |
