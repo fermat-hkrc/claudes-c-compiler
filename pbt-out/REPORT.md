@@ -1,122 +1,121 @@
-# PBT Campaign Report: encode_c_li
+# PBT Campaign Report: encode_c_addi
 
 ## Summary
 
-**Verdict:** 1 high: encode_c_li silently wraps out-of-range immediates (`c.li x0, 32` encodes as `c.li x0, -32`), plus 1 medium: extra operands are ignored instead of rejected.
+**Verdict:** 1 high: encode_c_addi silently wraps out-of-range immediates (`c.addi x0, 32` encodes as `c.addi x0, -32`), plus 1 medium: extra operands are ignored instead of rejected.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_c_li
+**Modules tested:** encode_c_addi
 **Tests:** 7
 **Result:** 5 passing, 2 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (build tree not instrumented for C++ coverage) and listed unrelated C++ binaries with encode_c_li NOT LINKED; Rust cargo tests are not those binaries. Execution evidence is `cargo test --lib encode_c_li` (11 passed, 4 failed of the encode_c_li harness).
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (build tree not instrumented for C++ coverage) and listed unrelated C++ binaries with encode_c_addi NOT LINKED; Rust cargo tests are not those binaries. Execution evidence is `cargo test --lib encode_c_addi` (11 passed, 4 failed of the encode_c_addi harness). Sweep closed: tier round spent; remaining documented gaps are the two filed bugs.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_c_li | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_c_addi | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_c_li ignores extra operands
+### B1: encode_c_addi ignores extra operands
 
-**Formal:** ∀ rd ∈ GPR, ∀ imm ∈ [-32,31], ∀ extra. encode_c_li([Reg(rd), Imm(imm), extra]) = Err
-**Contract evidence:** inferred (two-operand mnemonic compressed.rs:17 `c.li rd, imm`; llvm-mc rejects a third operand; public dispatch encoder/mod.rs:918 passes operands through)
+**Formal:** ∀ rd ∈ GPR, ∀ imm ∈ [-32,31], ∀ extra. encode_c_addi([Reg(rd), Imm(imm), extra]) = Err(_)
+**Contract evidence:** inferred (two-operand mnemonic compressed.rs:26 `c.addi rd, nzimm`; llvm-mc rejects a third operand; public dispatch encoder/mod.rs:921 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_c_li([Reg("x0"), Imm(0), Imm(0)])
-**Expected / Actual:** Err / Ok(Half(0x4001))
-**Impact:** A third (or later) operand is silently dropped, so `c.li x0, 0, 0` encodes as `c.li x0, 0` instead of being rejected. Handwritten assembly that accidentally passes extra tokens gets a valid-looking 16-bit instruction rather than an assembler error.
-**Root cause:** compressed.rs:18-23 reads only operands[0] and operands[1] via get_reg/get_imm and never checks operands.len(), so a third token is ignored and the CI-type halfword is still returned.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:18`
+**Counterexample:** encode_c_addi([Reg("x0"), Imm(0), Imm(0)])
+**Expected / Actual:** Err / Ok(Half(0x0001))
+**Impact:** A third (or later) operand is silently dropped, so `c.addi x0, 0, 0` encodes as `c.addi x0, 0` (C.NOP) instead of being rejected. Handwritten assembly that accidentally passes extra tokens gets a valid-looking 16-bit instruction rather than an assembler error.
+**Root cause:** compressed.rs:27-32 reads only operands[0] and operands[1] via get_reg/get_imm and never checks operands.len(), so a third token is ignored and the CI-type halfword is still returned.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:27`
 ```rust
-pub(crate) fn encode_c_li(operands: &[Operand]) -> Result<EncodeResult, String> {
+pub(crate) fn encode_c_addi(operands: &[Operand]) -> Result<EncodeResult, String> {
     let rd = get_reg(operands, 0)?;
     let imm = get_imm(operands, 1)? as i32;
     let bit5 = ((imm >> 5) & 1) as u16;
     let bits4_0 = (imm & 0x1F) as u16;
-    Ok(EncodeResult::Half(0b01 | (bits4_0 << 2) | ((rd as u16) << 7) | (bit5 << 12) | (0b010 << 13)))
+    Ok(EncodeResult::Half(0b01 | (bits4_0 << 2) | ((rd as u16) << 7) | (bit5 << 12)))
 }
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2 before packing.
 ```rust
 if operands.len() != 2 {
-    return Err(format!("c.li: expected 2 operands, got {}", operands.len()));
+    return Err(format!("c.addi: expected 2 operands, got {}", operands.len()));
 }
 ```
-**Bug report:** bug_reports/encode_c_li_extra_operand.md
-**Repro seed:** cc 5723fdcb91ba698431c9caaab531629e955639ac7b68bc9725af8d2eb8b7ba98
+**Bug report:** bug_reports/encode_c_addi_extra_operand.md
+**Repro seed:** cc f827f82f4e423a5506f15f1ade1e05e203f90ab1266a22c346f843ab35587923
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_c_li_pbt::encode_c_li_neg_extra' (2842760) panicked at src/backend/riscv/assembler/encoder/encode_c_li_pbt.rs:289:1:
-Test failed: extra operand must Err for c.li x0, 0 (llvm-mc rejects extra operands); got Ok(Half(16385)) at src/backend/riscv/assembler/encoder/encode_c_li_pbt.rs:364.
+thread 'backend::riscv::assembler::encoder::encode_c_addi_pbt::encode_c_addi_neg_extra' (2844740) panicked at src/backend/riscv/assembler/encoder/encode_c_addi_pbt.rs:289:1:
+Test failed: extra operand must Err for c.addi x0, 0 (llvm-mc rejects extra operands); got Ok(Half(1)) at src/backend/riscv/assembler/encoder/encode_c_addi_pbt.rs:364.
 minimal failing input: rd = "x0", imm = 0, extra = Imm(
     0,
 )
 ```
 
-### B2: encode_c_li truncates out-of-range immediates to 6 bits
+### B2: encode_c_addi truncates out-of-range immediates to 6 bits
 
-**Formal:** ∀ rd ∈ GPR, ∀ imm ∉ [-32,31]. llvm-mc rejects "c.li rd, imm" ⇒ encode_c_li([Reg(rd), Imm(imm)]) = Err
-**Contract evidence:** inferred (RISC-V Unprivileged ISA C.LI signed 6-bit imm; llvm-mc `immediate must be an integer in the range [-32, 31]`; compress.rs:99 `if !(-32..=31).contains(&imm) { return None; }`)
+**Formal:** ∀ rd ∈ GPR, ∀ imm ∉ [-32,31]. llvm-mc("c.addi rd, imm") errors ∧ encode_c_addi([Reg(rd), Imm(imm)]) = Err(_)
+**Contract evidence:** inferred (RISC-V Unprivileged ISA C.ADDI signed 6-bit imm; llvm-mc `immediate must be non-zero in the range [-32, 31]`; compress.rs:64 `rd == rs1 && rd != 0 && imm != 0 && (-32..=31).contains(&imm)`)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_c_li([Reg("x0"), Imm(32)])
-**Expected / Actual:** Err / Ok(Half(0x5001)) — the encoding of `c.li x0, -32`
-**Impact:** An immediate that cannot be represented in C.LI's signed 6-bit field is silently wrapped. `c.li x0, 32` encodes as C.LI of imm=-32, so a caller that meant to load 32 gets -32.
-**Root cause:** compressed.rs:21-23 take bit 5 and bits 4:0 of imm with no range check, so 32 (0b100000) is packed as the 6-bit pattern of -32.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:21`
+**Counterexample:** encode_c_addi([Reg("x0"), Imm(32)])
+**Expected / Actual:** Err / Ok(Half(0x1001)) — the encoding of `c.addi x0, -32`
+**Impact:** An immediate that cannot be represented in C.ADDI's signed 6-bit field is silently wrapped. `c.addi x0, 32` encodes as C.ADDI of imm=-32, so a caller that meant to add 32 gets -32.
+**Root cause:** compressed.rs:30-32 take bit 5 and bits 4:0 of imm with no range check, so 32 (0b100000) is packed as the 6-bit pattern of -32.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:30`
 ```rust
     let bit5 = ((imm >> 5) & 1) as u16;
     let bits4_0 = (imm & 0x1F) as u16;
-    Ok(EncodeResult::Half(0b01 | (bits4_0 << 2) | ((rd as u16) << 7) | (bit5 << 12) | (0b010 << 13)))
+    Ok(EncodeResult::Half(0b01 | (bits4_0 << 2) | ((rd as u16) << 7) | (bit5 << 12)))
 ```
 **Suggested fix:** Reject immediates that do not fit in signed 6 bits before packing.
 ```rust
 if !(-32..=31).contains(&imm) {
-    return Err("c.li: imm out of range".into());
+    return Err("c.addi: imm out of range".into());
 }
 ```
-**Bug report:** bug_reports/encode_c_li_imm_oob.md
+**Bug report:** bug_reports/encode_c_addi_imm_oob.md
 **Repro seed:** (deterministic; shrunk to rd="x0", imm=32)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_c_li_pbt::encode_c_li_neg_imm_oob' (2842761) panicked at src/backend/riscv/assembler/encoder/encode_c_li_pbt.rs:289:1:
-Test failed: oob imm 32 must Err (llvm-mc range [-32, 31]); got Ok(Half(20481)) at src/backend/riscv/assembler/encoder/encode_c_li_pbt.rs:352.
+thread 'backend::riscv::assembler::encoder::encode_c_addi_pbt::encode_c_addi_neg_imm_oob' (2844741) panicked at src/backend/riscv/assembler/encoder/encode_c_addi_pbt.rs:289:1:
+Test failed: oob imm 32 must Err (llvm-mc range [-32, 31]); got Ok(Half(4097)) at src/backend/riscv/assembler/encoder/encode_c_addi_pbt.rs:352.
 minimal failing input: rd = "x0", imm = 32
 ```
 
 ## Design Caveats
 
-| Observation | Doc evidence |
-|-------------|--------------|
+(none)
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_c_li_pbt.rs | 7 properties + 6 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_c_addi_pbt.rs | 7 properties + 6 KAT + 2 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_c_li -- --test-threads=1
+cargo test --lib encode_c_addi -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_c_li_neg_extra -- --test-threads=1
+cargo test --lib encode_c_addi_neg_extra -- --test-threads=1
 ```
 
 B2 out-of-range immediate:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_c_li_neg_imm_oob -- --test-threads=1
+cargo test --lib encode_c_addi_neg_imm_oob -- --test-threads=1
 ```
 
 ## Output Directories
@@ -130,17 +129,17 @@ cargo test --lib encode_c_li_neg_imm_oob -- --test-threads=1
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_c_li_extra_operand.md
-- pbt-out/bug_reports/encode_c_li_extra_operand.html
-- pbt-out/bug_reports/encode_c_li_imm_oob.md
-- pbt-out/bug_reports/encode_c_li_imm_oob.html
+- pbt-out/bug_reports/encode_c_addi_extra_operand.md
+- pbt-out/bug_reports/encode_c_addi_extra_operand.html
+- pbt-out/bug_reports/encode_c_addi_imm_oob.md
+- pbt-out/bug_reports/encode_c_addi_imm_oob.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 21:34 (campaign: coverage)
-> Files: 15/15 scanned (100%) | Functions: 215/367 total | PBT candidates: 215 | Tested: 215 (100%) | 1 pass, 215 fail
+> Last updated: 2026-10-06 21:47 (campaign: coverage)
+> Files: 15/15 scanned (100%) | Functions: 216/367 total | PBT candidates: 216 | Tested: 216 (100%) | 1 pass, 216 fail
 
 ## Summary
 
@@ -149,10 +148,10 @@ cargo test --lib encode_c_li_neg_imm_oob -- --test-threads=1
 | Total source files | 15 |
 | Files scanned | 15 / 15 (100%) |
 | Total functions (all files) | 367 |
-| PBT candidates (from FUNCTION_INDEX) | 215 |
-| **Tested (of PBT candidates)** | **215 / 215 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 215 / -1 |
-| **Overall (tested / all functions)** | **215 / 367 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 216 |
+| **Tested (of PBT candidates)** | **216 / 216 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 216 / -1 |
+| **Overall (tested / all functions)** | **216 / 367 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -160,13 +159,13 @@ cargo test --lib encode_c_li_neg_imm_oob -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 215 | 215 | 0 | 100% |
+|  | 216 | 216 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 215 | 215 | 0 | 100% |
+| unknown | 216 | 216 | 0 | 100% |
 
 ## File Coverage
 
@@ -404,3 +403,4 @@ cargo test --lib encode_c_li_neg_imm_oob -- --test-threads=1
 | encode_fma | float.rs |
 | encode_c_lui | compressed.rs |
 | encode_c_li | compressed.rs |
+| encode_c_addi | compressed.rs |

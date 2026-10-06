@@ -218,3 +218,4 @@
 | encode_fma | float.rs | encode_fma_pbt.rs | cargo test --lib encode_fma_pbt | 6 passing / 2 failing properties (plus 2 passing KAT + 2 failing regression witnesses; 2 bugs; sweep 4-op/rm/R4/ABI/dyn/arity-GPR passing, extra/non-rm-fifth failing) |
 | encode_c_lui | compressed.rs | encode_c_lui_pbt.rs | cargo test --lib encode_c_lui | 7 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep signed-vs-uimm20 passing, extra/oob failing) |
 | encode_c_li | compressed.rs | encode_c_li_pbt.rs | cargo test --lib encode_c_li | 5 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/fp passing, extra/oob failing) |
+| encode_c_addi | compressed.rs | encode_c_addi_pbt.rs | cargo test --lib encode_c_addi | 5 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/fp passing, extra/oob failing) |

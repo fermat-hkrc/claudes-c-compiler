@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_c_addi)
+
+- Valid 2-operand C.ADDI with rd ∈ {x0..x31} and imm ∈ [-32, 31] matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.addi x1, 1 = 0x0085, c.addi x1, 0 = 0x0081, c.addi x1, 31 = 0x00fd, c.addi x1, -1 = 0x10fd, c.addi x1, -32 = 0x1081, c.addi a0, 5 = 0x0515.
+- CI-type layout holds for signed 6-bit imm ∈ [-32, 31]: op=01, funct3=000, rd, imm[5] in bit 12, imm[4:0] in bits 6:2 (1000 cases).
+- ABI names (zero/ra/sp/a0/t6/fp/s0/…) encode the same halfword as xN (1000 cases).
+- Field isolation: rd bits[11:7] independent of imm; imm/op/funct3 bits independent of rd (1000 cases).
+- Empty/1-operand and FP dest return Err (1000 cases).
+- Extra operand and out-of-range imm currently disagree with llvm-mc (see bugs): extra ignored; 32 truncated to imm=-32.
+
+## Environment (encode_c_addi)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+c -show-encoding (LLVM 15.0.6). Default riscv64 without +c rejects C.ADDI.
+- Harness: src/backend/riscv/assembler/encoder/encode_c_addi_pbt.rs, cargo test --lib encode_c_addi, proptest cases=1000.
+- Dispatch: encoder/mod.rs:921 "c.addi" => encode_c_addi(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_c_addi NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / CI-type / ABI / isolation / arity-FP / extra / oob. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_c_addi)
+
+- llvm-mc prints `c.addi x1, 1` as `addi ra, ra, 1` with a 16-bit encoding ([0x85,0x00]). HINT/NOP forms `c.addi x1, 0` and `c.addi x0, 0` are printed as `c.addi`. Signed immediates are accepted as decimal (`c.addi x1, -1`).
+- llvm-mc encodes `c.addi x0, 1` as a HINT and `c.addi x0, 0` as C.NOP; SUT also encodes them (no rd=x0 / imm=0 rejection, unlike C.LUI). ISA: C.ADDI with rd=x0 or nzimm=0 is HINT (C.NOP when both).
+- C.ADDI allows rd=x2 and imm=0 (unlike C.LUI).
+- The comment field name `nzimm` is the ISA packing name; llvm-mc still accepts 0. The llvm-mc diagnostic for out-of-range values says "immediate must be non-zero in the range [-32, 31]" even though 0 is accepted.
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number. llvm-mc rejects numeric rd.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_c_li)
 
 - Valid 2-operand C.LI with rd ∈ {x0..x31} and imm ∈ [-32, 31] matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.li x1, 0 = 0x4081, c.li x1, 1 = 0x4085, c.li x1, 31 = 0x40fd, c.li x1, -1 = 0x50fd, c.li x1, -32 = 0x5081, c.li a0, 5 = 0x4515.
