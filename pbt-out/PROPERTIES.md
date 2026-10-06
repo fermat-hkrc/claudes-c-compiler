@@ -1,68 +1,68 @@
-# Properties: encode_mrs
+# Properties: encode_msr
 
-## encode_mrs_diff_named
+## encode_msr_diff_named
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc, the independent AArch64 assembler the README claims gas-compatibility with. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree MRS decoder). Sibling encode_msr rejected (same-job gate: MSR is write / L=0 / reversed operands). Domain is the closed SUT named-sysreg table × Xt; llvm-mc success must agree on the word and llvm-mc rejection must be matched by SUT Err.
-- Doc contract: system.rs:55 "MRS Xt, system_reg" — asserted fingerprint c8f0bb20
-- Seed: src/backend/arm/codegen/globals.rs:25 `mrs x0, tpidr_el0`; encode_dmb_pbt.rs llvm-mc differential
-- Formal: ∀ name ∈ NAMED, xt ∈ Xt. let asm = "mrs "+xt+", "+name; let sut = encode_mrs([Reg(xt), Symbol(name)]); (llvm-mc(asm)=Ok(w) ∧ sut=Ok(Word(w))) ∨ (llvm-mc(asm)=Err ∧ sut=Err)
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc, the independent AArch64 assembler the README claims gas-compatibility with. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree MSR decoder). Sibling encode_mrs rejected (same-job gate: MRS is read / L=1 / reversed operands / no PSTATE immediate). Domain is the closed SUT named-sysreg table × Xt; llvm-mc success must agree on the word and llvm-mc rejection must be matched by SUT Err.
+- Doc contract: system.rs:294 "MSR (register): msr sysreg, Xt" — asserted fingerprint bfb88aaf
+- Seed: encode_mrs_pbt.rs llvm-mc named differential; README.md:12
+- Formal: ∀ name ∈ NAMED, xt ∈ Xt. let asm = "msr "+name+", "+xt; let sut = encode_msr([Symbol(name), Reg(xt)]); (llvm-mc(asm)=Ok(w) ∧ sut=Ok(Word(w))) ∨ (llvm-mc(asm)=Err ∧ sut=Err)
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: failing
-- Counterexample: name = "oslar_el1", xt = "x0"; SUT encoded mrs x0, oslar_el1 as 0xd5301080, llvm-mc rejected (expected readable system register)
-- Bug report: pbt-out/bug_reports/encode_mrs_oslar_el1_write_only.md
+- Counterexample: name = "cntv_cval_el0", xt = "x0"; SUT Word(0xd51be380) vs llvm-mc Word(0xd51be340)
+- Bug report: pbt-out/bug_reports/encode_msr_cntv_cval_el0_encoding.md
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
 oracle: differential
 predicate:
   quantifier: forall
   vars: [name, xt]
   domain: { name: NAMED, xt: Xt }
-  body: (llvm_mc("mrs "+xt+", "+name)=Ok(w) and encode_mrs([Reg(xt), Symbol(name)])=Ok(Word(w))) or (llvm_mc(...) = Err and encode_mrs(...) = Err)
+  body: (llvm_mc("msr "+name+", "+xt)=Ok(w) and encode_msr([Symbol(name), Reg(xt)])=Ok(Word(w))) or (llvm_mc(...) = Err and encode_msr(...) = Err)
 generators:
   name: { gen: oneof, items: NAMED }
   xt: { gen: oneof, items: [x0, x30, xzr, lr, x31] }
-evidence: README.md:12 gas-compatible textual assembly; encoder/mod.rs:971 mrs => encode_mrs; ARM ARM MRS Xt, sysreg
+evidence: "system.rs:294 MSR register form; encoder/mod.rs:974 msr => encode_msr; README.md:12 gas-compatible textual assembly"
 ```
 
-## encode_mrs_diff_named_word
+## encode_msr_diff_named_readonly
 - Tier: 2
-- Rationale: Implication half of the named differential: when llvm-mc accepts a named sysreg the SUT word must match. Write-only names (llvm-mc Err) do not discharge this property; they fail encode_mrs_diff_named. Catches encoding-table typos that the combined property may shrink past (cntv_cval_el0).
-- Doc contract: system.rs:55 "MRS Xt, system_reg" — asserted fingerprint c8f0bb20
-- Seed: encode_mrs_diff_named
-- Formal: ∀ name ∈ NAMED, xt ∈ Xt. llvm-mc("mrs "+xt+", "+name)=Ok(w) ⇒ encode_mrs([Reg(xt), Symbol(name)])=Ok(Word(w))
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+- Rationale: Implication half of the named differential: when llvm-mc rejects a named sysreg the SUT must Err. Encoding-table typos (llvm-mc Ok, SUT wrong word) fail encode_msr_diff_named instead. Isolates read-only names (oslsr_el1).
+- Doc contract: system.rs:294 "MSR (register): msr sysreg, Xt" — asserted fingerprint bfb88aaf
+- Seed: encode_msr_diff_named
+- Formal: ∀ name ∈ NAMED, xt ∈ Xt. llvm-mc("msr "+name+", "+xt)=Err ⇒ encode_msr([Symbol(name), Reg(xt)])=Err
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: failing
-- Counterexample: name = "cntv_cval_el0", xt = "x0"; SUT Word(0xd53be380) vs llvm-mc Word(0xd53be340)
-- Bug report: pbt-out/bug_reports/encode_mrs_cntv_cval_el0_encoding.md
+- Counterexample: name = "oslsr_el1", xt = "x0"; SUT encoded 0xd5101180, llvm-mc rejected
+- Bug report: pbt-out/bug_reports/encode_msr_oslsr_el1_read_only.md
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
 oracle: differential
 predicate:
   quantifier: forall
   vars: [name, xt]
   domain: { name: NAMED, xt: Xt }
-  body: llvm_mc("mrs "+xt+", "+name)=Ok(w) implies encode_mrs([Reg(xt), Symbol(name)])=Ok(Word(w))
+  body: llvm_mc("msr "+name+", "+xt)=Err implies encode_msr([Symbol(name), Reg(xt)])=Err
 generators:
   name: { gen: oneof, items: NAMED }
   xt: { gen: oneof, items: [x0, x30, xzr, lr, x31] }
-evidence: README.md:12; ARM ARM CNTV_CVAL_EL0 is S3_3_C14_C3_2
+evidence: "system.rs:294 MSR register form; OSLSR_EL1 is read-only"
 ```
 
-## encode_mrs_diff_generic
+## encode_msr_diff_generic
 - Tier: 2
-- Rationale: Differential vs llvm-mc on the generic S<op0>_<op1>_C<CRn>_C<CRm>_<op2> form with fields inside the ARM encoding widths (op0 0..=3, op1 0..=7, CRn/CRm 0..=15, op2 0..=7). llvm-mc accepts this entire box (probed). Independent of the named table.
-- Doc contract: system.rs:178 "Bits [20:19] = op0, supplied entirely by the sysreg encoding field." — asserted fingerprint 68fa2cc0
-- Seed: encode_dmb_pbt.rs llvm-mc differential
-- Formal: ∀ op0∈0..=3, op1∈0..=7, crn∈0..=15, crm∈0..=15, op2∈0..=7, rt∈0..=31. encode_mrs([Reg("x"+rt), Symbol("s"+op0+"_"+op1+"_c"+crn+"_c"+crm+"_"+op2)]) = Ok(Word(llvm-mc("mrs x"+rt+", s"+op0+"_"+op1+"_c"+crn+"_c"+crm+"_"+op2)))
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+- Rationale: Differential vs llvm-mc on the generic S<op0>_<op1>_C<CRn>_C<CRm>_<op2> form with fields inside the ARM encoding widths (op0 0..=3, op1 0..=7, CRn/CRm 0..=15, op2 0..=7). llvm-mc accepts this entire box (probed). Independent of the named table. Required metamorphic/differential property.
+- Doc contract: system.rs:384 "Bits [20:19] = op0, supplied entirely by the sysreg encoding field." — asserted fingerprint 68fa2cc0
+- Seed: encode_mrs_pbt.rs encode_mrs_diff_generic
+- Formal: ∀ op0∈0..=3, op1∈0..=7, crn∈0..=15, crm∈0..=15, op2∈0..=7, rt∈0..=31. encode_msr([Symbol("s"+op0+"_"+op1+"_c"+crn+"_c"+crm+"_"+op2), Reg(xt_name(rt))]) = Ok(Word(llvm-mc("msr s"+op0+"_"+op1+"_c"+crn+"_c"+crm+"_"+op2+", "+xt_name(rt))))
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
 oracle: differential
 predicate:
   quantifier: forall
@@ -70,8 +70,8 @@ predicate:
   domain: { op0: 0..=3, op1: 0..=7, crn: 0..=15, crm: 0..=15, op2: 0..=7, rt: 0..=31 }
   relation:
     op: eq
-    lhs: encode_mrs([Reg("x"+rt), Symbol(sform(op0,op1,crn,crm,op2))])
-    rhs: Word(llvm_mc("mrs x"+rt+", "+sform(op0,op1,crn,crm,op2)))
+    lhs: encode_msr([Symbol(sform(op0,op1,crn,crm,op2)), Reg(xt_name(rt))])
+    rhs: Word(llvm_mc("msr "+sform(op0,op1,crn,crm,op2)+", "+xt_name(rt)))
 generators:
   op0: { gen: int, min: 0, max: 3, type: u32 }
   op1: { gen: int, min: 0, max: 7, type: u32 }
@@ -79,22 +79,22 @@ generators:
   crm: { gen: int, min: 0, max: 15, type: u32 }
   op2: { gen: int, min: 0, max: 7, type: u32 }
   rt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12; ARM ARM MRS generic S-register form; llvm-mc accepts op0 0..=3 / op1 0..=7 / CRn CRm 0..=15 / op2 0..=7
+evidence: "system.rs:384 Bits [20:19] = op0; ARM ARM MSR generic S-register form"
 ```
 
-## encode_mrs_diff_numbered
+## encode_msr_diff_numbered
 - Tier: 2
 - Rationale: Differential vs llvm-mc on numbered debug/PMU families. Domain is the documented n ranges (dbg* 0..=15, pmev* 0..=30).
-- Doc contract: system.rs:55 "MRS Xt, system_reg" — asserted fingerprint c8f0bb20. Numbered family n-bounds are documented on the helper encode_mrs calls (system.rs:199 "if n <= 15", system.rs:221 "if n <= 30").
-- Seed: encode_dmb_pbt.rs llvm-mc differential
-- Formal: ∀ fam ∈ {dbgbcr,dbgbvr,dbgwcr,dbgwvr}, n∈0..=15, rt∈0..=31. encode_mrs([Reg(xt_name(rt)), Symbol(fam+n+"_el1")]) = Ok(Word(llvm-mc(...))). And ∀ fam ∈ {pmevcntr,pmevtyper}, n∈0..=30, rt∈0..=31. same agreement with `_el0` suffix.
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+- Doc contract: system.rs:294 "MSR (register): msr sysreg, Xt" — asserted fingerprint bfb88aaf
+- Seed: encode_mrs_pbt.rs encode_mrs_diff_numbered
+- Formal: ∀ fam ∈ {dbgbcr,dbgbvr,dbgwcr,dbgwvr}, n∈0..=15, rt∈0..=31. encode_msr([Symbol(fam+n+"_el1"), Reg(xt_name(rt))]) = Ok(Word(llvm-mc(...))). And ∀ fam ∈ {pmevcntr,pmevtyper}, n∈0..=30, rt∈0..=31. same agreement with `_el0` suffix.
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
 oracle: differential
 predicate:
   quantifier: forall
@@ -102,149 +102,203 @@ predicate:
   domain: { fam: DBG_OR_PMU, n: family_range(fam), rt: 0..=31 }
   relation:
     op: eq
-    lhs: encode_mrs([Reg("x"+rt), Symbol(fam_name(fam,n))])
-    rhs: Word(llvm_mc("mrs x"+rt+", "+fam_name(fam,n)))
+    lhs: encode_msr([Symbol(fam_name(fam,n)), Reg(xt_name(rt))])
+    rhs: Word(llvm_mc("msr "+fam_name(fam,n)+", "+xt_name(rt)))
 generators:
   fam: { gen: oneof, items: ["dbgbcr","dbgbvr","dbgwcr","dbgwvr","pmevcntr","pmevtyper"] }
   n: { gen: int, min: 0, max: 30, type: u32 }
   rt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: system.rs:186-232 numbered family comments (dbgbcr n<=15, pmevcntr n<=30); llvm-mc accepts those ranges
+evidence: "system.rs:294 MSR register form; system.rs:186-232 numbered family comments"
 ```
 
-## encode_mrs_inv_arm_layout
-- Tier: 4
-- Rationale: Algebraic invariant from ARM ARM MRS encoding: bits[31:21]=0b11010101001 (fixed group + L=1), bits[4:0]=Rt. Metamorphic isolation: two Xt values for the same sysreg differ only in bits[4:0].
-- Doc contract: system.rs:177 "MRS encoding: 0xd520_0000 has L=1 (bit 21) for read." — asserted fingerprint 50168250
-- Seed: encode_dmb_pbt.rs ARM layout invariant
-- Formal: ∀ name ∈ NAMED, rt∈0..=31. encode_mrs([Reg(xt_name(rt)), Symbol(name)])=Ok(Word(w)) ⇒ (w>>21)=0b11010101001 ∧ (w&0x1F)=rt. ∀ rt1≠rt2. (w(rt1) xor w(rt2)) & ~0x1F = 0 ∧ (w(rt1) xor w(rt2)) ≠ 0
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+## encode_msr_diff_imm_pstate
+- Tier: 2
+- Rationale: Differential vs llvm-mc on the MSR-immediate PSTATE form unique to this symbol. Domain is {daifset, daifclr, spsel} × imm 0..=15 (ARM CRm width and llvm-mc range). Documented bounds sampled exactly (0 and 15 pinned by generator min/max).
+- Doc contract: system.rs:268 "MSR (immediate): msr <pstatefield>, #imm" — asserted fingerprint 009607ca
+- Seed: encode_mrs_pbt.rs llvm-mc differential (generalized to PSTATE immediate)
+- Formal: ∀ field ∈ {daifset, daifclr, spsel}, imm∈0..=15. encode_msr([Symbol(field), Imm(imm)]) = Ok(Word(llvm-mc("msr "+field+", #"+imm)))
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [field, imm]
+  domain: { field: {daifset, daifclr, spsel}, imm: 0..=15 }
+  relation:
+    op: eq
+    lhs: encode_msr([Symbol(field), Imm(imm)])
+    rhs: Word(llvm_mc("msr "+field+", #"+imm))
+generators:
+  field: { gen: oneof, items: ["daifset","daifclr","spsel"] }
+  imm: { gen: int, min: 0, max: 15, type: i64 }
+evidence: "system.rs:268 MSR immediate pstatefield; system.rs:270 daifset/daifclr/spsel op1/op2"
+```
+
+## encode_msr_inv_arm_layout
+- Tier: 4
+- Rationale: Algebraic invariant from ARM ARM MSR (register) encoding: bits[31:21]=0b11010101000 (fixed group + L=0), bits[4:0]=Rt. Metamorphic isolation: two Xt values for the same sysreg differ only in bits[4:0]. Stronger differential already used on the success path; this pins the ARM field layout independently of llvm-mc.
+- Doc contract: system.rs:383 "MSR encoding: 0xd500_0000 has L=0 (bit 21) for write." — asserted fingerprint 4d4576e5
+- Seed: encode_mrs_pbt.rs encode_mrs_inv_arm_layout
+- Formal: ∀ name ∈ NAMED, rt∈0..=31. encode_msr([Symbol(name), Reg(xt_name(rt))])=Ok(Word(w)) ⇒ (w>>21)=0b11010101000 ∧ (w&0x1F)=rt. ∀ rt1≠rt2. (w(rt1) xor w(rt2)) & ~0x1F = 0 ∧ (w(rt1) xor w(rt2)) ≠ 0
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.system.encode_msr
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [name, rt]
-  domain: { name: NAMED, rt: 0..=31 }
-  body: let Word(w)=encode_mrs([Reg("x"+rt), Symbol(name)]); (w>>21)==0b11010101001 and (w&0x1f)==rt
+  vars: [name, rt1, rt2]
+  domain: { name: NAMED, rt1: 0..=31, rt2: 0..=31 }
+  body: let w1=encode_msr([Symbol(name), Reg(xt_name(rt1))]); let w2=encode_msr([Symbol(name), Reg(xt_name(rt2))]); (w1>>21)=0b11010101000 and (w1&0x1F)=rt1 and ((w1 xor w2) & ~0x1F)=0
 generators:
   name: { gen: oneof, items: NAMED }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM MRS 1101 0101 00 1 op0 op1 CRn CRm op2 Rt; system.rs:177 L=1 bit 21
+  rt1: { gen: int, min: 0, max: 31, type: u32 }
+  rt2: { gen: int, min: 0, max: 31, type: u32 }
+evidence: "system.rs:383 MSR encoding 0xd500_0000 has L=0 for write"
 ```
 
-## encode_mrs_meta_casefold
+## encode_msr_meta_casefold
 - Tier: 4
-- Rationale: Algebraic metamorphic: encode_mrs lowercases the Symbol before matching, so any ASCII case-fold of a named sysreg must produce the same word (llvm-mc is case-insensitive on sysreg names).
-- Doc contract: system.rs:55 "MRS Xt, system_reg" — asserted fingerprint c8f0bb20. README.md:12 gas-compatible names.
-- Seed: encode_dmb_pbt.rs Barrier vs Symbol / case-fold
-- Formal: ∀ name ∈ NAMED, cased ∈ casefolds(name), rt∈0..=31. encode_mrs([Reg(xt_name(rt)), Symbol(cased)]) = encode_mrs([Reg(xt_name(rt)), Symbol(name.to_lowercase())])
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+- Rationale: Algebraic metamorphic: ASCII case-fold of a named sysreg is encoding-invariant (SUT lowercases; llvm-mc / gas accept mixed case). Weaker than differential but independently evidenced by the to_lowercase call and GNU assembler case-insensitivity.
+- Doc contract: system.rs:294 "MSR (register): msr sysreg, Xt" — asserted fingerprint bfb88aaf
+- Seed: encode_mrs_pbt.rs encode_mrs_meta_casefold
+- Formal: ∀ name ∈ NAMED, cased = casefold(name), rt∈0..=31. encode_msr([Symbol(cased), Reg(xt_name(rt))]) = encode_msr([Symbol(name.to_lowercase()), Reg(xt_name(rt))])
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [name, cased, rt]
-  domain: { name: NAMED, cased: casefolds(name), rt: 0..=31 }
+  domain: { name: NAMED, cased: casefold(name), rt: 0..=31 }
   relation:
     op: eq
-    lhs: encode_mrs([Reg("x"+rt), Symbol(cased)])
-    rhs: encode_mrs([Reg("x"+rt), Symbol(name)])
+    lhs: encode_msr([Symbol(cased), Reg(xt_name(rt))])
+    rhs: encode_msr([Symbol(name.to_lowercase()), Reg(xt_name(rt))])
 generators:
   name: { gen: oneof, items: NAMED }
-  cased: { gen: map, of: name, fn: case_fold }
   rt: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12 gas-compatible; llvm-mc accepts NZCV / CurrentEL / mixed case
+evidence: "system.rs:294 MSR register form; system.rs:264 to_lowercase"
 ```
 
-## encode_mrs_neg_extra
-- Tier: 5
-- Rationale: Negative/error contract from gas/llvm-mc: MRS takes exactly two operands. Extra trailing operands are rejected by llvm-mc (`invalid operand`). SUT currently ignores extras (only operands[0] and [1] are read). No documented exclusion of extra operands on encode_mrs.
-- Doc contract: system.rs:55 "MRS Xt, system_reg" — asserted fingerprint c8f0bb20 (two-operand form). Extra operands are not declared valid.
-- Seed: encode_dmb_pbt.rs encode_dmb_neg_extra
-- Formal: ∀ name ∈ NAMED, xt ∈ Xt, extra ∈ Operand. llvm-mc("mrs "+xt+", "+name+", "+extra)=Err ⇒ encode_mrs([Reg(xt), Symbol(name), extra])=Err
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+## encode_msr_neg_extra
+- Tier: 4
+- Rationale: Negative/error contract from llvm-mc/gas: extra operands are invalid. encode_msr does not document extra operands as valid; README gas-compatibility requires rejection. Stronger differential already covers the 2-operand success path.
+- Doc contract: system.rs:294 "MSR (register): msr sysreg, Xt" — asserted fingerprint bfb88aaf
+- Seed: encode_mrs_pbt.rs encode_mrs_neg_extra
+- Formal: ∀ name ∈ NAMED, xt ∈ Xt, extra ∈ ExtraOperand. llvm-mc("msr "+name+", "+xt+", "+extra)=Err ⇒ encode_msr([Symbol(name), Reg(xt), extra])=Err
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: failing
-- Counterexample: name = "sp_el0", xt = "x0", extra = Reg("x0"); encode_mrs Ok while llvm-mc rejects `mrs x0, sp_el0, x0`
-- Bug report: pbt-out/bug_reports/encode_mrs_extra_operand.md
+- Counterexample: name = "sp_el0", xt = "x0", extra = Reg("x0"); SUT Ok(Word) while llvm-mc rejects
+- Bug report: pbt-out/bug_reports/encode_msr_extra_operand.md
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [name, xt, extra]
-  domain: { name: NAMED, xt: Xt, extra: Operand }
-  relation:
-    op: throws
-    expr: encode_mrs([Reg(xt), Symbol(name), extra])
+  domain: { name: NAMED, xt: Xt, extra: ExtraOperand }
+  body: encode_msr([Symbol(name), Reg(xt), extra]) = Err
 generators:
   name: { gen: oneof, items: NAMED }
-  xt: { gen: oneof, items: [x0, x30, xzr] }
-  extra: { gen: oneof, items: [Reg, Imm, Symbol, Cond, Barrier] }
-expected_error: extra operand (llvm-mc rejects arity>2)
-evidence: llvm-mc `mrs x0, nzcv, x1` → invalid operand; README.md:12 gas-compatible
+  xt: { gen: oneof, items: [x0, x30, xzr, lr, x31] }
+  extra: { gen: oneof, items: [Reg, Imm, Symbol, Cond, Barrier, Label] }
+expected_error: String
+evidence: "system.rs:294 MSR register two-operand form; llvm-mc rejects extra operands"
 ```
 
-## encode_mrs_neg_wrong_dest
-- Tier: 5
-- Rationale: Negative/error contract from ARM ARM / the function's own "MRS Xt" comment: destination is a 64-bit GPR. llvm-mc rejects W registers, SP/WSP, and FP/SIMD registers (`invalid operand`). get_reg discards is_64 and parse_reg_num accepts w/sp/d/s/q/v/h/b.
-- Doc contract: system.rs:55 "MRS Xt, system_reg" — asserted fingerprint c8f0bb20 (Xt, not Wt/SP/FP)
-- Seed: encode_dmb_pbt.rs encode_dmb_neg_wrong_kind; callers only emit x0
-- Formal: ∀ dest ∈ {w0..w30, wzr, sp, wsp, d0, s0, q0, v0, h0, b0}, name ∈ NAMED. llvm-mc("mrs "+dest+", "+name)=Err ⇒ encode_mrs([Reg(dest), Symbol(name)])=Err
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+## encode_msr_neg_wrong_src_unknown_arity_oob
+- Tier: 4
+- Rationale: Negative/error contract. Non-Xt second operand, unknown names, omitted operands, out-of-range generic S-form, out-of-range numbered families, and PSTATE imm outside 0..=15 are rejected by llvm-mc. encode_msr comments do not declare those inputs valid.
+- Doc contract: system.rs:265 "msr needs system register name" — domain-restriction fingerprint 1cc385e5
+- Seed: encode_mrs_pbt.rs encode_mrs_neg_wrong_dest / encode_mrs_neg_unknown_arity_oob
+- Formal: ∀ dest ∉ Xt, name ∈ NAMED. encode_msr([Symbol(name), Reg(dest)])=Err. ∀ unknown ∉ NAMED∪S-form∪numbered. encode_msr([Symbol(unknown), Reg(x0)])=Err. encode_msr([])=Err. encode_msr([Symbol(name)])=Err. ∀ oob S-form/numbered. encode_msr(...)=Err. ∀ field ∈ {daifset,daifclr,spsel}, imm ∉ 0..=15. encode_msr([Symbol(field), Imm(imm)])=Err
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: failing
-- Counterexample: dest = "w0", name = "sp_el0"; encode_mrs Ok(Word(0xd5384100)) while llvm-mc rejects `mrs w0, sp_el0`
-- Bug report: pbt-out/bug_reports/encode_mrs_w_dest.md
+- Counterexample: kind = 4, oob_g = "s4_0_c1_c0_1", xt = "x0"; SUT encodes (op0 masked to 0) while llvm-mc rejects
+- Bug report: pbt-out/bug_reports/encode_msr_oob_generic.md
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [kind, dest, unknown, oob_g, oob_n, field, imm]
+  domain: { kind: 0..=6, dest: WrongXt, unknown: UnknownName, oob_g: OobGeneric, oob_n: OobNumbered, field: PSTATE, imm: OobImm }
+  body: encode_msr(ops_for(kind)) = Err
+generators:
+  kind: { gen: int, min: 0, max: 6, type: u8 }
+  dest: { gen: oneof, items: [w0, wzr, sp, wsp, d0, s0, q0, v0] }
+  unknown: { gen: string }
+  oob_g: { gen: string }
+  oob_n: { gen: string }
+  field: { gen: oneof, items: ["daifset","daifclr","spsel"] }
+  imm: { gen: int, min: -32, max: 32, type: i64 }
+expected_error: String
+evidence: "system.rs:265 msr needs system register name; ARM ARM Xt and CRm 0..=15"
+```
+
+## encode_msr_neg_wrong_src
+- Tier: 4
+- Rationale: Strengthening split of the combined negative property. Non-Xt second operand (Wt/SP/FP) is rejected by llvm-mc; MSR requires Xt. encode_msr discards is_64 from get_reg and accepts any parse_reg_num name.
+- Doc contract: system.rs:294 "MSR (register): msr sysreg, Xt" — asserted fingerprint bfb88aaf
+- Seed: encode_msr_neg_wrong_src_unknown_arity_oob kind 0
+- Formal: ∀ dest ∉ Xt, name ∈ NAMED. llvm-mc("msr "+name+", "+dest)=Err ⇒ encode_msr([Symbol(name), Reg(dest)])=Err
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
+- Status: failing
+- Counterexample: dest = "w0", name = "sp_el0"; SUT Ok(Word(0xd5184100)) while llvm-mc rejects
+- Bug report: pbt-out/bug_reports/encode_msr_w_src.md
+
+```property
+function: encoder.system.encode_msr
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [dest, name]
-  domain: { dest: W_SP_FP, name: NAMED }
-  relation:
-    op: throws
-    expr: encode_mrs([Reg(dest), Symbol(name)])
+  domain: { dest: WrongXt, name: NAMED }
+  body: encode_msr([Symbol(name), Reg(dest)]) = Err
 generators:
-  dest: { gen: oneof, items: [w0, w30, wzr, sp, wsp, d0, s0, q0, v0, h0, b0] }
+  dest: { gen: oneof, items: [w0, wzr, sp, wsp, d0, s0] }
   name: { gen: oneof, items: NAMED }
-expected_error: invalid operand (llvm-mc rejects non-Xt dest)
-evidence: system.rs:55 "MRS Xt, system_reg"; llvm-mc rejects mrs w0/sp/d0, nzcv
+expected_error: String
+evidence: "system.rs:294 MSR register Xt; ARM ARM Xt is a 64-bit GPR not SP"
 ```
 
-## encode_mrs_neg_unknown_arity_oob
-- Tier: 5
-- Rationale: Negative/error contract. Unknown sysreg names, missing operands, generic fields outside ARM widths, and numbered families out of documented n range must Err when llvm-mc rejects them. SUT masks oob generic fields via sysreg_encoding instead of rejecting.
-- Doc contract: system.rs:59 "mrs needs system register name" — domain-restriction fingerprint 637b5f4f (non-Symbol / missing second operand). Unknown names and oob fields are not declared valid.
-- Seed: encode_dmb_pbt.rs encode_dmb_neg_unknown / encode_dmb_neg_empty
-- Formal: ∀ bad ∈ UnknownName ∪ Empty ∪ MissingSysreg ∪ OobGeneric ∪ OobNumbered. llvm-mc(asm(bad))=Err ⇒ encode_mrs(ops(bad))=Err
-- Test file: src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+## encode_msr_neg_oob_imm
+- Tier: 4
+- Rationale: Strengthening split. PSTATE CRm immediate is documented as bits[11:8] (4 bits); llvm-mc requires integer in range [0, 15]. encode_msr masks with & 0xF instead of rejecting.
+- Doc contract: system.rs:269 "Encoding: 1101_0101_0000_0 op1[18:16] 0100 CRm[11:8] op2[7:5] 11111[4:0]" — asserted fingerprint 27999f64
+- Seed: encode_msr_neg_wrong_src_unknown_arity_oob kind 6
+- Formal: ∀ field ∈ {daifset, daifclr, spsel}, imm ∉ 0..=15. llvm-mc("msr "+field+", #"+imm)=Err ⇒ encode_msr([Symbol(field), Imm(imm)])=Err
+- Test file: src/backend/arm/assembler/encoder/encode_msr_pbt.rs
 - Status: failing
-- Counterexample: kind = 3, oob_g = "s4_0_c1_c0_1", xt = "x0"; SUT encodes while llvm-mc rejects `mrs x0, s4_0_c1_c0_1`
-- Bug report: pbt-out/bug_reports/encode_mrs_oob_generic.md
+- Counterexample: field = "daifset", imm = -2; SUT Ok (masked CRm) while llvm-mc rejects
+- Bug report: pbt-out/bug_reports/encode_msr_oob_imm.md
 
 ```property
-function: encoder.system.encode_mrs
+function: encoder.system.encode_msr
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad]
-  domain: { bad: UnknownName | Empty | MissingSysreg | OobGeneric | OobNumbered }
-  relation:
-    op: throws
-    expr: encode_mrs(ops(bad))
+  vars: [field, imm]
+  domain: { field: {daifset, daifclr, spsel}, imm: OobImm }
+  body: encode_msr([Symbol(field), Imm(imm)]) = Err
 generators:
-  bad: { gen: oneof, items: [unknown_name, empty, missing_sysreg, oob_generic, oob_numbered] }
-expected_error: llvm-mc-rejected MRS form
-evidence: system.rs:59 "mrs needs system register name"; parse_generic_sysreg unsupported system register; llvm-mc rejects s9_0_c1_c0_1 / s3_8_c1_c0_1 / dbgbcr16_el1 / mrs x0 / mrs
+  field: { gen: oneof, items: ["daifset","daifclr","spsel"] }
+  imm: { gen: int, min: -32, max: 32, type: i64 }
+expected_error: String
+evidence: "system.rs:269 CRm[11:8] encoding; llvm-mc immediate must be an integer in range [0, 15]"
 ```

@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_mrs)
-> Files: 11/11 scanned (100%) | Functions: 151/307 total | PBT candidates: 151 | Tested: 151 (100%) | 0 pass, 151 fail
+> Last updated: 2026-10-06 (campaign: encode_msr, English)
+> Files: 11/11 scanned (100%) | Functions: 152/307 total | PBT candidates: 152 | Tested: 152 (100%) | 0 pass, 152 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 151 |
-| **Tested (of PBT candidates)** | **151 / 151 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 151 / 0 |
-| **Overall (tested / all functions)** | **151 / 307 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 152 |
+| **Tested (of PBT candidates)** | **152 / 152 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 152 / 0 |
+| **Overall (tested / all functions)** | **152 / 307 (50%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -42,7 +42,6 @@
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
-| system.rs | 18 | 3 | 3 | 100% | covered |
 
 ## Recommended Focus
 
@@ -202,7 +201,3 @@
 | encode_dmb | system.rs |
 | encode_dsb | system.rs |
 | encode_mrs | system.rs |
-
-## Coverage evidence
-
-file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). cargo test --lib encode_mrs executed encode_mrs (KAT + 1000-case properties). Sweep: tier round spent.

@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 151 | Excluded: 156
+> Total files: 11 | Total functions: 307 | PBT candidates: 152 | Excluded: 155
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -297,7 +297,7 @@
 | sysreg_encoding | system.rs | 184 | function | no | out of campaign scope |
 | parse_numbered_sysreg | system.rs | 190 | function | no | out of campaign scope |
 | parse_generic_sysreg | system.rs | 241 | function | no | out of campaign scope |
-| encode_msr | system.rs | 262 | function | no | out of campaign scope |
+| encode_msr | system.rs | 262 | function | yes | - |
 | encode_svc | system.rs | 389 | function | no | out of campaign scope |
 | encode_hvc | system.rs | 395 | function | no | out of campaign scope |
 | encode_ic | system.rs | 401 | function | no | out of campaign scope |

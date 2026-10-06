@@ -1,61 +1,36 @@
-# PBT Campaign Report: encode_mrs
+# PBT Campaign Report: encode_msr
 
 ## Summary
 
-**Verdict:** 1 high: encode_mrs encodes `cntv_cval_el0` as S3_3_C14_C3_4 (op2=4) instead of ARM CNTV_CVAL_EL0 S3_3_C14_C3_2, so a virtual-timer compare-value read hits the wrong sysreg; plus 4 medium (write-only OSLAR_EL1 accepted, extra operands ignored, Wt dest accepted, out-of-range S-form masked).
+**Verdict:** 1 high, 5 medium: encode_msr writes CNTV_CVAL_EL0 as op2=4 (ARM op2=2), so `msr cntv_cval_el0, x0` programs the wrong timer register; it also encodes read-only OSLSR_EL1, ignores extra operands, masks out-of-range S-form fields, accepts Wt/SP/FP as Xt, and wraps PSTATE immediates outside 0..=15.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mrs
-**Tests:** 9 properties (plus 4 KAT + 5 regression witnesses)
-**Result:** 4 passing, 5 bugs
+**Modules tested:** encode_msr
+**Tests:** 11 properties (plus 7 KAT + 6 regression witnesses)
+**Result:** 5 passing, 6 failing properties, 6 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). cargo test --lib encode_mrs executed the production symbol (KAT + 1000-case properties). Sweep: tier round spent; documented behaviors have properties.
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_msr. Sweep was a manual arm audit of named/generic/numbered/imm/layout/case-fold/extra/wrong-src/unknown/arity/oob. Closed: tier round spent.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mrs | 9 | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_msr | 11 properties | 6 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_mrs encodes write-only OSLAR_EL1
+### B1: encode_msr encodes CNTV_CVAL_EL0 with the wrong sysreg field
 
-**Formal:** ∀ name ∈ NAMED, xt ∈ Xt. let asm = "mrs "+xt+", "+name; let sut = encode_mrs([Reg(xt), Symbol(name)]); (llvm-mc(asm)=Ok(w) ∧ sut=Ok(Word(w))) ∨ (llvm-mc(asm)=Err ∧ sut=Err)
-**Contract evidence:** inferred (llvm-mc / ARM MRS requires a readable system register; README.md:12 gas-compatible assembly)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_mrs([Reg("x0"), Symbol("oslar_el1")])  (`mrs x0, oslar_el1`)
-**Expected / Actual:** Err (llvm-mc: expected readable system register) / Ok(Word(0xd5301080))
-**Impact:** A write-only OS-lock register is assembled as MRS; the object file contains a read the architecture does not define.
-**Root cause:** system.rs:131 `"oslar_el1" => 0x8084` is in the MRS named table; OSLAR_EL1 is MSR-only.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:131`
-```rust
-        "oslar_el1" => 0x8084,
-```
-**Suggested fix:** Drop oslar_el1 from the MRS table so unknown-name handling returns Err.
-```rust
-        // oslar_el1 is write-only (MSR); do not match it here
-```
-**Bug report:** bug_reports/encode_mrs_oslar_el1_write_only.md
-**Repro seed:** cc bcdcbef1e10d742ca3362a6c8cb12669a33a82305d4a6265718d96d9cb96118a
-**Raw output:**
-```text
-Test failed: SUT encoded mrs x0, oslar_el1 as d5301080, llvm-mc rejected: llvm-mc error: <stdin>:1:9: error: expected readable system register
-minimal failing input: name = "oslar_el1", xt = "x0"
-```
-
-### B2: encode_mrs encodes CNTV_CVAL_EL0 with the wrong sysreg field
-
-**Formal:** ∀ name ∈ NAMED, xt ∈ Xt. llvm-mc("mrs "+xt+", "+name)=Ok(w) ⇒ encode_mrs([Reg(xt), Symbol(name)])=Ok(Word(w))
-**Contract evidence:** inferred (ARM CNTV_CVAL_EL0 is S3_3_C14_C3_2; llvm-mc encoding 0xd53be340; README.md:12 gas-compatible)
+**Formal:** ∀ name ∈ NAMED, xt ∈ Xt. let asm = "msr "+name+", "+xt; let sut = encode_msr([Symbol(name), Reg(xt)]); (llvm-mc(asm)=Ok(w) ∧ sut=Ok(Word(w))) ∨ (llvm-mc(asm)=Err ∧ sut=Err)
+**Contract evidence:** inferred (ARM ARM CNTV_CVAL_EL0 is S3_3_C14_C3_2; llvm-mc encodes 0xd51be340; README.md:12 gas-compatible assembly)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_mrs([Reg("x0"), Symbol("cntv_cval_el0")])  (`mrs x0, cntv_cval_el0`)
-**Expected / Actual:** Ok(Word(0xd53be340)) / Ok(Word(0xd53be380))
-**Impact:** A virtual-timer compare-value read hits S3_3_C14_C3_4 (op2=4) instead of CNTV_CVAL_EL0, so sampled timer values are wrong.
-**Root cause:** system.rs:125 `"cntv_cval_el0" => 0xdf1c` uses op2=4; ARM encoding is 0xdf1a (op2=2).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:125`
+**Counterexample:** encode_msr([Symbol("cntv_cval_el0"), Reg("x0")])  (`msr cntv_cval_el0, x0`)
+**Expected / Actual:** Ok(Word(0xd51be340)) / Ok(Word(0xd51be380))
+**Impact:** Kernel/runtime code that programs CNTV_CVAL_EL0 through this assembler writes a reserved encoding (op2=4) instead of the virtual timer compare-value register.
+**Root cause:** system.rs:364 `"cntv_cval_el0" => 0xdf1c` uses op2=4; ARM encoding is 0xdf1a (op2=2).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:364`
 ```rust
         "cntv_cval_el0" => 0xdf1c,
 ```
@@ -63,97 +38,149 @@ minimal failing input: name = "oslar_el1", xt = "x0"
 ```rust
         "cntv_cval_el0" => 0xdf1a,
 ```
-**Bug report:** bug_reports/encode_mrs_cntv_cval_el0_encoding.md
-**Repro seed:** cc e031e081d69a61ee97d20c3f25ccd16f53422009f1be332f3b287082b8e4dc3d
+**Bug report:** bug_reports/encode_msr_cntv_cval_el0_encoding.md
+**Repro seed:** cc fbe1e436ef5d0b120e6509dc52ba7417a0e23c84a8ecfcb4e5fb884b5c9f0deb
 **Raw output:**
 ```text
-Test failed: assertion failed: `(left == right)` left: `3577471872`, right: `3577471808`: SUT vs llvm-mc for mrs x0, cntv_cval_el0
+Test failed: SUT vs llvm-mc for msr cntv_cval_el0, x0: sut=d51be380 mc=d51be340
 minimal failing input: name = "cntv_cval_el0", xt = "x0"
 ```
 
-### B3: encode_mrs ignores extra operands
+### B2: encode_msr encodes read-only OSLSR_EL1
 
-**Formal:** ∀ name ∈ NAMED, xt ∈ Xt, extra ∈ Operand. llvm-mc("mrs "+xt+", "+name+", "+extra)=Err ⇒ encode_mrs([Reg(xt), Symbol(name), extra])=Err
-**Contract evidence:** inferred (llvm-mc rejects arity>2; system.rs:55 "MRS Xt, system_reg" is a two-operand form; README.md:12)
+**Formal:** ∀ name ∈ NAMED, xt ∈ Xt. let asm = "msr "+name+", "+xt; let sut = encode_msr([Symbol(name), Reg(xt)]); (llvm-mc(asm)=Ok(w) ∧ sut=Ok(Word(w))) ∨ (llvm-mc(asm)=Err ∧ sut=Err)
+**Contract evidence:** inferred (OSLSR_EL1 is MRS-only; llvm-mc rejects `msr oslsr_el1, x0`; README.md:12 gas-compatible assembly)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_mrs([Reg("x0"), Symbol("sp_el0"), Reg("x0")])  (`mrs x0, sp_el0, x0`)
-**Expected / Actual:** Err (llvm-mc: invalid operand) / Ok(Word(0xd5384100))
-**Impact:** Trailing typos assemble as a silent two-operand MRS.
-**Root cause:** system.rs:56–57 read only operands[0] and operands[1]; len is never checked.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:56`
+**Counterexample:** encode_msr([Symbol("oslsr_el1"), Reg("x0")])  (`msr oslsr_el1, x0`)
+**Expected / Actual:** Err / Ok(Word(0xd5101180))
+**Impact:** A write of a read-only OS-lock status register is assembled instead of rejected.
+**Root cause:** system.rs:311 `"oslsr_el1" => 0x808c` is in the MSR named table; OSLSR_EL1 is read-only.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:311`
 ```rust
-    let (rt, _) = get_reg(operands, 0)?;
+        "oslsr_el1" => 0x808c,
 ```
-**Suggested fix:** Reject a slice whose length is not 2.
+**Suggested fix:** Drop `oslsr_el1` from the MSR table so it falls through to Err.
 ```rust
-    if operands.len() != 2 {
-        return Err("mrs: expected Xt, system_reg".to_string());
-    }
+        // oslsr_el1 is read-only (MRS); do not match it here
 ```
-**Bug report:** bug_reports/encode_mrs_extra_operand.md
-**Repro seed:** (none — first generated case)
+**Bug report:** bug_reports/encode_msr_oslsr_el1_read_only.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: extra operand must Err (llvm-mc rejects mrs x0, sp_el0, x0)
+msr oslsr_el1, x0 must Err (OSLSR_EL1 is read-only)
+```
+
+### B3: encode_msr ignores extra operands
+
+**Formal:** ∀ name ∈ NAMED, xt ∈ Xt, extra ∈ ExtraOperand. llvm-mc("msr "+name+", "+xt+", "+extra)=Err ⇒ encode_msr([Symbol(name), Reg(xt), extra])=Err
+**Contract evidence:** inferred (ARM ARM MSR is two-operand; llvm-mc rejects extra; README.md:12)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_msr([Symbol("sp_el0"), Reg("x0"), Reg("x0")])  (`msr sp_el0, x0, x0`)
+**Expected / Actual:** Err / Ok(Word) encoding as `msr sp_el0, x0`
+**Impact:** Typos with a trailing operand assemble silently as the two-operand form.
+**Root cause:** system.rs:295 `get_reg(operands, 1)` — only the first two operands are examined; `operands.len()` is never checked.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:295`
+```rust
+    let (rt, _) = get_reg(operands, 1)?;
+```
+**Suggested fix:** Reject a slice longer than two operands before encoding.
+```rust
+    if operands.len() != 2 {
+        return Err("msr: expected system_reg, Xt".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_msr_extra_operand.md
+**Repro seed:** (deterministic; first example)
+**Raw output:**
+```text
+Test failed: extra operand must Err (llvm-mc rejects msr sp_el0, x0, x0)
 minimal failing input: name = "sp_el0", xt = "x0", extra = Reg("x0")
 ```
 
-### B4: encode_mrs accepts a 32-bit Wt destination
+### B4: encode_msr masks out-of-range generic S-form fields
 
-**Formal:** ∀ dest ∈ {w0..w30, wzr, sp, wsp, d0, s0, q0, v0, h0, b0}, name ∈ NAMED. llvm-mc("mrs "+dest+", "+name)=Err ⇒ encode_mrs([Reg(dest), Symbol(name)])=Err
-**Contract evidence:** documented system.rs:55 "MRS Xt, system_reg" (Xt, not Wt/SP/FP); llvm-mc rejects `mrs w0, sp_el0`
-**Documentation conflict:** system.rs:55 states the form is MRS Xt; the code discards is_64. The comment states the behavior IS handled as Xt — contract the code violates.
+**Formal:** ∀ dest ∉ Xt, name ∈ NAMED. encode_msr([Symbol(name), Reg(dest)])=Err. ∀ unknown ∉ NAMED∪S-form∪numbered. encode_msr([Symbol(unknown), Reg(x0)])=Err. encode_msr([])=Err. encode_msr([Symbol(name)])=Err. ∀ oob S-form/numbered. encode_msr(...)=Err. ∀ field ∈ {daifset,daifclr,spsel}, imm ∉ 0..=15. encode_msr([Symbol(field), Imm(imm)])=Err
+**Contract evidence:** inferred (ARM generic S-form widths op0 0..=3; llvm-mc rejects s4_*; README.md:12)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_mrs([Reg("w0"), Symbol("sp_el0")])  (`mrs w0, sp_el0`)
-**Expected / Actual:** Err (llvm-mc: invalid operand) / Ok(Word(0xd5384100))
-**Impact:** A width typo is rewritten to the 64-bit Xt encoding; SP and FP dests are accepted the same way.
-**Root cause:** system.rs:56 `let (rt, _) = get_reg(operands, 0)?` discards is_64; parse_reg_num accepts w/sp/d/s/q/v/h/b.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:56`
+**Counterexample:** encode_msr([Symbol("s4_0_c1_c0_1"), Reg("x0")])  (`msr s4_0_c1_c0_1, x0`)
+**Expected / Actual:** Err / Ok(Word) with op0 masked to 0
+**Impact:** An illegal sysreg name silently becomes a different legal one.
+**Root cause:** system.rs:381 `_ => parse_generic_sysreg(&sysreg)?` then sysreg_encoding masks `op0 & 3`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:381`
 ```rust
-    let (rt, _) = get_reg(operands, 0)?;
+        _ => parse_generic_sysreg(&sysreg)?,
 ```
-**Suggested fix:** Require a 64-bit GPR that is not SP.
+**Suggested fix:** Reject out-of-range generic fields before masking.
 ```rust
-    let (rt, is_64) = get_reg(operands, 0)?;
-    if !is_64 {
-        return Err("mrs: destination must be Xt".to_string());
-    }
+        _ => parse_generic_sysreg(&sysreg)?, // range-check op0..=3, op1..=7, CRn/CRm..=15, op2..=7
 ```
-**Bug report:** bug_reports/encode_mrs_w_dest.md
-**Repro seed:** (none — first generated case)
+**Bug report:** bug_reports/encode_msr_oob_generic.md
+**Repro seed:** cc 4599dc9e4b7fc390546eef5e82cb0e015ebc399c5e06a2b641c417937b05a887
 **Raw output:**
 ```text
-Test failed: non-Xt dest must Err (llvm-mc rejects mrs w0, sp_el0), got Ok(Word(3577233664))
+Test failed: oob generic sysreg must Err (llvm-mc rejects msr s4_0_c1_c0_1, x0)
+minimal failing input: kind = 4, oob_g = "s4_0_c1_c0_1", xt = "x0"
+```
+
+### B5: encode_msr accepts Wt/SP/FP as Xt
+
+**Formal:** ∀ dest ∉ Xt, name ∈ NAMED. llvm-mc("msr "+name+", "+dest)=Err ⇒ encode_msr([Symbol(name), Reg(dest)])=Err
+**Contract evidence:** inferred (ARM ARM MSR requires Xt, a 64-bit GPR not SP; llvm-mc rejects Wt/SP/FP; system.rs:294 "msr sysreg, Xt")
+**Documentation conflict:** (none) — the comment states Xt; it does not declare Wt valid.
+**Severity:** medium
+**Counterexample:** encode_msr([Symbol("sp_el0"), Reg("w0")])  (`msr sp_el0, w0`)
+**Expected / Actual:** Err / Ok(Word(0xd5184100)) encoding as `msr sp_el0, x0`
+**Impact:** A width or register-class error is silently rewritten to Xt.
+**Root cause:** system.rs:295 `let (rt, _) = get_reg(operands, 1)?` discards is_64; parse_reg_num accepts w/sp/d/s prefixes.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:295`
+```rust
+    let (rt, _) = get_reg(operands, 1)?;
+```
+**Suggested fix:** Require a 64-bit GPR and reject SP.
+```rust
+    let (rt, is_64) = get_reg(operands, 1)?;
+    if !is_64 {
+        return Err("msr: Xt must be a 64-bit GPR".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_msr_w_src.md
+**Repro seed:** (first example)
+**Raw output:**
+```text
+Test failed: non-Xt source must Err (llvm-mc rejects msr sp_el0, w0), got Ok(Word(3575136512))
 minimal failing input: dest = "w0", name = "sp_el0"
 ```
 
-### B5: encode_mrs masks out-of-range generic sysreg fields
+### B6: encode_msr masks PSTATE immediates outside 0..=15
 
-**Formal:** ∀ bad ∈ UnknownName ∪ Empty ∪ MissingSysreg ∪ OobGeneric ∪ OobNumbered. llvm-mc(asm(bad))=Err ⇒ encode_mrs(ops(bad))=Err
-**Contract evidence:** inferred (llvm-mc rejects op0>3 / op1>7 / CRn>15 / CRm>15 / op2>7; ARM MRS field widths)
-**Documentation conflict:** (none)
+**Formal:** ∀ field ∈ {daifset, daifclr, spsel}, imm ∉ 0..=15. llvm-mc("msr "+field+", #"+imm)=Err ⇒ encode_msr([Symbol(field), Imm(imm)])=Err
+**Contract evidence:** inferred (ARM CRm is 4 bits; llvm-mc requires integer in range [0, 15]; system.rs:269 CRm[11:8])
+**Documentation conflict:** (none) — the comment names the CRm field; it does not declare values outside 0..=15 valid.
 **Severity:** medium
-**Counterexample:** encode_mrs([Reg("x0"), Symbol("s4_0_c1_c0_1")])  (`mrs x0, s4_0_c1_c0_1`)
-**Expected / Actual:** Err (llvm-mc: expected readable system register) / Ok(Word) with op0 masked to 0
-**Impact:** An out-of-range S-form silently becomes a different system register.
-**Root cause:** system.rs:185 sysreg_encoding masks `op0 & 3` (and the other fields) instead of rejecting; encode_mrs reaches this via parse_generic_sysreg.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:185`
+**Counterexample:** encode_msr([Symbol("daifset"), Imm(-2)])  (`msr daifset, #-2`)
+**Expected / Actual:** Err / Ok(Word) with CRm = 14
+**Impact:** An out-of-range PSTATE immediate silently wraps, so DAIF set/clear hits the wrong bits (`#16` becomes `#0`).
+**Root cause:** system.rs:273 `get_imm(operands, 1)? as u32 & 0xF` truncates instead of range-checking.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:273`
 ```rust
-    ((op0 & 3) << 14) | ((op1 & 7) << 11) | ((crn & 0xF) << 7) | ((crm & 0xF) << 3) | (op2 & 7)
+            let imm = get_imm(operands, 1)? as u32 & 0xF;
 ```
-**Suggested fix:** Range-check fields in parse_generic_sysreg before encoding.
+**Suggested fix:** Reject immediates outside 0..=15.
 ```rust
-        if op0 > 3 || op1 > 7 || crn > 15 || crm > 15 || op2 > 7 {
-            return Err(format!("unsupported system register: {}", name));
-        }
+            let imm = get_imm(operands, 1)?;
+            if !(0..=15).contains(&imm) {
+                return Err("msr: PSTATE immediate must be in 0..=15".to_string());
+            }
 ```
-**Bug report:** bug_reports/encode_mrs_oob_generic.md
-**Repro seed:** cc 5cb784c4cdba23f2241aeebc409e8f1b6554a1162bfd5a6d2e412a3b256c493e
+**Bug report:** bug_reports/encode_msr_oob_imm.md
+**Repro seed:** (first example)
 **Raw output:**
 ```text
-Test failed: oob generic sysreg must Err (llvm-mc rejects mrs x0, s4_0_c1_c0_1)
-minimal failing input: kind = 3, unknown = "foo", oob_g = "s4_0_c1_c0_1", oob_n = "dbgbcr16_el1", xt = "x0"
+Test failed: oob PSTATE imm must Err (llvm-mc rejects msr daifset, #-2)
+minimal failing input: field = "daifset", imm = -2
 ```
 
 ## Design Caveats
@@ -164,68 +191,85 @@ minimal failing input: kind = 3, unknown = "foo", oob_g = "s4_0_c1_c0_1", oob_n 
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_mrs_pbt.rs | 9 properties + 4 KAT + 5 regressions |
+| src/backend/arm/assembler/encoder/encode_msr_pbt.rs | 11 properties, 7 KAT, 6 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_msr_pbt` |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_mrs -- --test-threads=1
+cargo test --lib encode_msr -- --test-threads=1
 ```
 
 B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mrs_regression_oslar_el1 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_msr_regression_cntv_cval_el0 -- --test-threads=1 --nocapture
 ```
 
 B2:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mrs_regression_cntv_cval_el0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_msr_regression_oslsr_el1 -- --test-threads=1 --nocapture
 ```
 
 B3:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mrs_regression_extra_x0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_msr_regression_extra_x0 -- --test-threads=1 --nocapture
 ```
 
 B4:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mrs_regression_w0_dest -- --test-threads=1 --nocapture
+cargo test --lib test_encode_msr_regression_oob_generic_s4 -- --test-threads=1 --nocapture
 ```
 
 B5:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mrs_regression_oob_generic_s4 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_msr_regression_w0_src -- --test-threads=1 --nocapture
+```
+
+B6:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_msr_regression_daifset_imm16 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md, pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md, pbt-out/PLAN.md
-- pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_mrs_oslar_el1_write_only.md (+ .html)
-- pbt-out/bug_reports/encode_mrs_cntv_cval_el0_encoding.md (+ .html)
-- pbt-out/bug_reports/encode_mrs_extra_operand.md (+ .html)
-- pbt-out/bug_reports/encode_mrs_w_dest.md (+ .html)
-- pbt-out/bug_reports/encode_mrs_oob_generic.md (+ .html)
-- pbt-out/run/encode_mrs_kat.log, encode_mrs_full.log, encode_mrs_full2.log, encode_mrs_unknown.log
-- src/backend/arm/assembler/encoder/encode_mrs_pbt.rs
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_msr_cntv_cval_el0_encoding.md
+- pbt-out/bug_reports/encode_msr_cntv_cval_el0_encoding.html
+- pbt-out/bug_reports/encode_msr_oslsr_el1_read_only.md
+- pbt-out/bug_reports/encode_msr_oslsr_el1_read_only.html
+- pbt-out/bug_reports/encode_msr_extra_operand.md
+- pbt-out/bug_reports/encode_msr_extra_operand.html
+- pbt-out/bug_reports/encode_msr_oob_generic.md
+- pbt-out/bug_reports/encode_msr_oob_generic.html
+- pbt-out/bug_reports/encode_msr_w_src.md
+- pbt-out/bug_reports/encode_msr_w_src.html
+- pbt-out/bug_reports/encode_msr_oob_imm.md
+- pbt-out/bug_reports/encode_msr_oob_imm.html
+- pbt-out/run/ (kat.log, encode_msr.log, regression.log)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 00:17 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 151/307 total | PBT candidates: 151 | Tested: 151 (100%) | 0 pass, 151 fail
+> Last updated: 2026-10-06 00:38 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 152/307 total | PBT candidates: 152 | Tested: 152 (100%) | 0 pass, 152 fail
 
 ## Summary
 
@@ -234,10 +278,10 @@ cargo test --lib test_encode_mrs_regression_oob_generic_s4 -- --test-threads=1 -
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 151 |
-| **Tested (of PBT candidates)** | **151 / 151 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 151 / 0 |
-| **Overall (tested / all functions)** | **151 / 307 (49%)** |
+| PBT candidates (from FUNCTION_INDEX) | 152 |
+| **Tested (of PBT candidates)** | **152 / 152 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 152 / 0 |
+| **Overall (tested / all functions)** | **152 / 307 (50%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -245,13 +289,13 @@ cargo test --lib test_encode_mrs_regression_oob_generic_s4 -- --test-threads=1 -
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 151 | 151 | 0 | 100% |
+|  | 152 | 152 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 151 | 151 | 0 | 100% |
+| unknown | 152 | 152 | 0 | 100% |
 
 ## File Coverage
 
@@ -425,3 +469,4 @@ cargo test --lib test_encode_mrs_regression_oob_generic_s4 -- --test-threads=1 -
 | encode_dmb | system.rs |
 | encode_dsb | system.rs |
 | encode_mrs | system.rs |
+| encode_msr | system.rs |

@@ -116,6 +116,8 @@ mod encode_dmb_pbt;
 mod encode_dsb_pbt;
 #[cfg(test)]
 mod encode_mrs_pbt;
+#[cfg(test)]
+mod encode_msr_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

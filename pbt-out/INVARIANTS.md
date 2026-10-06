@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_msr)
+
+- Generic S-form with in-range fields (op0 0..=3, op1 0..=7, CRn/CRm 0..=15, op2 0..=7) × Xt matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc word equals the unmasked ARM MSR formula 0xD5000000 | (enc << 5) | Rt.
+- Numbered families dbgbcr/dbgbvr/dbgwcr/dbgwvr n∈0..=15 and pmevcntr/pmevtyper n∈0..=30 match llvm-mc (1000 cases).
+- PSTATE immediate daifset/daifclr/spsel × imm 0..=15 matches llvm-mc (1000 cases).
+- ARM MSR layout holds for named sysregs: bits[31:21]=0b11010101000 (group + L=0); bits[4:0]=Rt; different Xt differ only in bits[4:0] (1000 cases).
+- ASCII case-fold of a named sysreg is encoding-invariant (1000 cases).
+- Known-answer: `msr tpidr_el0, x0` = 0xd51bd040; `msr nzcv, x0` = 0xd51b4200; `msr nzcv, xzr` = 0xd51b421f; `msr daifset, #2` = 0xd50342df; `msr spsel, #1` = 0xd50041bf; `msr spsel, x0` = 0xd5184200; llvm-mc `msr cntv_cval_el0, x0` = 0xd51be340 (SUT disagrees).
+- Named table vs llvm-mc currently disagrees on oslsr_el1 (read-only, SUT encodes) and cntv_cval_el0 (wrong op2). Extra operands, Wt/SP/FP Xt, out-of-range S-form, and PSTATE imm outside 0..=15 currently disagree (see bugs).
+
+## Environment (encode_msr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM MSR (register): 1101 0101 00 0 op0 op1 CRn CRm op2 Rt = 0xD5000000 | (sysreg << 5) | Rt; Xt is a 64-bit GPR (not SP).
+- ARM ARM MSR (immediate): 1101 0101 0000 0 op1 0100 CRm op2 11111; daifset op1=3 op2=6; daifclr op1=3 op2=7; spsel op1=0 op2=5; CRm = imm ∈ 0..=15.
+- Dispatch: encoder/mod.rs:974 `"msr" => encode_msr(operands)`. Operands passed through unchanged.
+- Sibling encode_mrs is not a same-job differential (MRS L=1 read, reversed operands, no PSTATE immediate).
+- encode_msr requires operand 0 Symbol; uses get_imm for daifset/daifclr (and spsel when Imm); uses get_reg on operand 1 for the register form (discards is_64); extra operands ignored; unknown names fall through to parse_generic_sysreg / parse_numbered_sysreg; sysreg_encoding masks out-of-range fields; PSTATE imm is masked `& 0xF`.
+- No ARM codegen caller currently emits `msr`; encode() still routes the mnemonic.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of named/generic/numbered/imm/layout/case-fold/extra/wrong-src/unknown/arity/oob. Closed: tier round spent.
+- Six failing property groups are SUT bugs, not quirks. See pbt-out/bug_reports/encode_msr_*.md.
+
 # Confirmed invariants (encode_mrs)
 
 - Generic S-form with in-range fields (op0 0..=3, op1 0..=7, CRn/CRm 0..=15, op2 0..=7) × Xt matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). llvm-mc word equals the unmasked ARM MRS formula 0xD5200000 | (enc << 5) | Rt.
