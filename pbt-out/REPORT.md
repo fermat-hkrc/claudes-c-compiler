@@ -1,129 +1,68 @@
-# PBT Campaign Report: encode_alu_imm
+# PBT Campaign Report: encode_alu_reg (requested encode_op)
 
 ## Summary
 
-**Verdict:** 4 high: encode_alu_imm silently wraps out-of-range immediates, ignores extra operands, remaps %hi/%pcrel_hi/%tprel_hi to lo-12 I-type relocs, and accepts GOT/TLS/plain symbols that llvm-mc rejects, so any caller assembling addi/slti/sltiu/xori/ori/andi on those inputs emits the wrong word or the wrong relocation.
+**Verdict:** 1 high: encode_alu_reg silently ignores a fourth operand and still emits a well-formed OP word (add x0,x0,x0,0 -> 0x00000033), so a mistyped extra operand is never diagnosed.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_alu_imm
-**Tests:** 9
-**Result:** 5 passing, 4 bugs
-**Change surface:** (no change source given)
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries). Sweep was a manual arm audit of encode_alu_imm plus encode_alu_imm_neg_other_modifier. Tier: standard.
-**Effort tier:** standard
+**Modules tested:** encode_alu_reg (src/backend/riscv/assembler/encoder/base.rs)
+**Tests:** 8
+**Result:** 7 passing, 1 bug
+**Change surface:** requested encode_op unresolved in base.rs; in-scope symbol encode_alu_reg tested with 8 properties (1 negative extra-operand failure-path)
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (build tree not instrumented / C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of encode_alu_reg plus invalid-name sweep.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_alu_imm | 9 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_alu_reg | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_alu_imm ignores extra operands
+### B1: encode_alu_reg ignores extra operands
 
-**Formal:** ∀ mn, rd, rs1, imm ∈ [-2048,2047], extra. encode_alu_imm([Reg(rd),Reg(rs1),Imm(imm), extra], f3) = Err
-**Contract evidence:** inferred (llvm-mc `-triple=riscv64` rejects extra operands on addi/slti/sltiu/xori/ori/andi; README.md:300 three-operand I-type OP-IMM)
+**Formal:** ∀ mn ∈ OP_MNEMONICS, ∀ rd,rs1,rs2 ∈ GPR, ∀ extra. encode_alu_reg([Reg(rd),Reg(rs1),Reg(rs2), extra], f3, f7) = Err(_)
+**Contract evidence:** inferred (README.md:352 R-type has exactly three register fields; llvm-mc 15.0.6 rejects a fourth operand on add/sub/…)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_alu_imm([Reg("x0"), Reg("x0"), Imm(0), Imm(0)], funct3=0) // addi x0, x0, 0, 0
-**Expected / Actual:** Err / Ok(Word(0x00000013))
-**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed OP-IMM word instead of diagnosing the line.
-**Root cause:** base.rs:226 matches only operands.get(2) and never checks operands.len(), so any trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:226`
+**Counterexample:** encode_alu_reg([Reg("x0"), Reg("x0"), Reg("x0"), Imm(0)], funct3=0, funct7=0)
+**Expected / Actual:** Err / Ok(Word(51))  // 0x00000033 = add x0, x0, x0
+**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed OP word instead of diagnosing the line.
+**Root cause:** base.rs:261-264 reads only operands[0..2] via get_reg and never checks operands.len(), so any trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:260`
 ```rust
-    match &operands.get(2) {
+pub(crate) fn encode_alu_reg(operands: &[Operand], funct3: u32, funct7: u32) -> Result<EncodeResult, String> {
+    let rd = get_reg(operands, 0)?;
+    let rs1 = get_reg(operands, 1)?;
+    let rs2 = get_reg(operands, 2)?;
+    Ok(EncodeResult::Word(encode_r(OP_OP, rd, funct3, rs1, rs2, funct7)))
+}
 ```
 **Suggested fix:** Reject anything other than exactly three operands before packing.
 ```rust
+pub(crate) fn encode_alu_reg(operands: &[Operand], funct3: u32, funct7: u32) -> Result<EncodeResult, String> {
     if operands.len() != 3 {
-        return Err("alu_imm: expected rd, rs1, imm".to_string());
+        return Err("alu_reg: expected rd, rs1, rs2".to_string());
     }
-    match &operands.get(2) {
+    let rd = get_reg(operands, 0)?;
+    let rs1 = get_reg(operands, 1)?;
+    let rs2 = get_reg(operands, 2)?;
+    Ok(EncodeResult::Word(encode_r(OP_OP, rd, funct3, rs1, rs2, funct7)))
+}
 ```
-**Bug report:** bug_reports/encode_alu_imm_extra_operand.md
-**Repro seed:** cc 489679c0787af63a7f0cd6e5e5732fc48d9d118248498f0a3cf0f566128302fc
-**Raw output:** Test failed: extra operand must Err for addi x0, x0, 0 (llvm-mc rejects extra operands); got Ok(Word(19)) at src/backend/riscv/assembler/encoder/encode_alu_imm_pbt.rs:519. minimal failing input: (mn, f3) = ("addi", 0), rd = "x0", rs1 = "x0", imm = 0, extra = Imm(0)
-
-### B2: encode_alu_imm wraps out-of-range OP-IMM immediates
-
-**Formal:** ∀ mn, rd, rs1, imm ∉ [-2048,2047]. llvm-mc rejects mn rd, rs1, imm ∧ encode_alu_imm([Reg(rd),Reg(rs1),Imm(imm)], f3) = Err
-**Contract evidence:** inferred (README.md:353 12-bit I-type immediate; llvm-mc: operand must be an integer in [-2048, 2047])
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_alu_imm([Reg("x0"), Reg("x0"), Imm(2048)], funct3=0) // addi x0, x0, 2048
-**Expected / Actual:** Err / Ok(Word(0x80000013)) wrapping to addi x0, x0, -2048
-**Impact:** Immediates such as 2048 are encoded as the wrapped 12-bit pattern, so an addi/andi/xori that the source wrote with a large constant silently computes the wrong value.
-**Root cause:** base.rs:228 casts `*imm as i32` into encode_i, which keeps only imm[11:0] (`& 0xFFF`) and never range-checks the 12-bit signed field.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:228`
-```rust
-            Ok(EncodeResult::Word(encode_i(OP_OP_IMM, rd, funct3, rs1, *imm as i32)))
+**Bug report:** bug_reports/encode_alu_reg_extra_operand.md
+**Repro seed:** cc 81387cb9f925b310574950728700f589094b21e81c3a2f952d72adad31b14415
+**Raw output:**
+```text
+Test failed: extra operand must Err for add x0, x0, x0 (llvm-mc rejects extra operands); got Ok(Word(51)) at src/backend/riscv/assembler/encoder/encode_alu_reg_pbt.rs:456.
+minimal failing input: (mn, f3, f7) = (
+    "add",
+    0,
+    0,
+), rd = "x0", rs1 = "x0", rs2 = "x0", extra = Imm(
+    0,
+)
 ```
-**Suggested fix:** Reject immediates outside [-2048, 2047] before packing.
-```rust
-            if !(-2048..=2047).contains(imm) {
-                return Err("alu_imm: immediate out of range [-2048, 2047]".to_string());
-            }
-            Ok(EncodeResult::Word(encode_i(OP_OP_IMM, rd, funct3, rs1, *imm as i32)))
-```
-**Bug report:** bug_reports/encode_alu_imm_imm_oob.md
-**Repro seed:** (none — deterministic first shrink)
-**Raw output:** Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147483667)) at src/backend/riscv/assembler/encoder/encode_alu_imm_pbt.rs:501. minimal failing input: (mn, f3) = ("addi", 0), rd = "x0", rs1 = "x0", imm = 2048
-
-### B3: encode_alu_imm accepts %hi/%pcrel_hi/%tprel_hi on OP-IMM immediates
-
-**Formal:** ∀ mn, rd, rs1, s, hi ∈ {%hi,%pcrel_hi,%tprel_hi}. llvm-mc rejects mn rd, rs1, hi(s) ∧ encode_alu_imm([Reg(rd),Reg(rs1),Symbol("hi(s)")], f3) = Err
-**Contract evidence:** inferred (encoder/mod.rs:69/75 lo-12 I-type relocs for ADDI; llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on OP-IMM)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_alu_imm([Reg("x0"), Reg("x0"), Symbol("%hi(foo)")], funct3=0) // addi x0, x0, %hi(foo)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00000013, reloc_type: Lo12I, symbol: "foo", addend: 0 })
-**Impact:** A hi-type modifier is remapped to an I-type lo reloc and an OP-IMM word with imm=0 is emitted. The linker then patches the low 12 I-type bits from a high-part symbol, producing a wrong immediate.
-**Root cause:** base.rs:232-237 remaps PcrelHi20/Hi20/TprelHi20 onto the I-type lo reloc kinds instead of rejecting hi modifiers that llvm-mc does not accept on OP-IMM.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:232`
-```rust
-            let reloc_type = match reloc_type {
-                RelocType::PcrelHi20 => RelocType::PcrelLo12I,
-                RelocType::Hi20 => RelocType::Lo12I,
-                RelocType::TprelHi20 => RelocType::TprelLo12I,
-                other => other,
-            };
-```
-**Suggested fix:** Accept only lo-12 I-type modifiers; reject hi/GOT/TLS/plain forms.
-```rust
-            let reloc_type = match reloc_type {
-                RelocType::PcrelLo12I | RelocType::Lo12I | RelocType::TprelLo12I => reloc_type,
-                _ => return Err("alu_imm: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
-            };
-```
-**Bug report:** bug_reports/encode_alu_imm_hi_modifier.md
-**Repro seed:** (none — deterministic first shrink)
-**Raw output:** Test failed: hi-type modifier %hi(foo) must Err on OP-IMM (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 19, reloc: Relocation { reloc_type: Lo12I, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_alu_imm_pbt.rs:589. minimal failing input: (mn, f3) = ("addi", 0), rd = "x0", rs1 = "x0", s = "foo", hi = "%hi"
-
-### B4: encode_alu_imm accepts GOT/TLS/plain symbols as OP-IMM immediates
-
-**Formal:** ∀ mn, rd, rs1, form ∈ {%got_pcrel_hi(s), %tls_ie_pcrel_hi(s), %tls_gd_pcrel_hi(s), %tprel_add(s), s}. llvm-mc rejects mn rd, rs1, form ∧ encode_alu_imm([Reg(rd),Reg(rs1),Symbol(form)], f3) = Err
-**Contract evidence:** inferred (encoder/mod.rs:69 PcrelLo12I for ADDI; llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on OP-IMM)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_alu_imm([Reg("x0"), Reg("x0"), Symbol("%got_pcrel_hi(foo)")], funct3=0) // addi x0, x0, %got_pcrel_hi(foo)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00000013, reloc_type: GotHi20, symbol: "foo", addend: 0 })
-**Impact:** %got_pcrel_hi, TLS hi modifiers, %tprel_add, and a bare symbol are accepted and emitted as WordWithReloc with a non-lo reloc kind (or PcrelLo12I for a bare name). The linker then applies the wrong RISC-V relocation to an I-type immediate.
-**Root cause:** base.rs:236 `other => other` keeps GotHi20/TlsGotHi20/TlsGdHi20/TprelAdd, and a plain symbol is classified as PcrelHi20 then remapped to PcrelLo12I.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:236`
-```rust
-                other => other,
-```
-**Suggested fix:** Accept only lo-12 I-type modifiers; reject every other reloc kind.
-```rust
-            let reloc_type = match reloc_type {
-                RelocType::PcrelLo12I | RelocType::Lo12I | RelocType::TprelLo12I => reloc_type,
-                _ => return Err("alu_imm: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
-            };
-```
-**Bug report:** bug_reports/encode_alu_imm_other_modifier.md
-**Repro seed:** (none — deterministic first shrink)
-**Raw output:** Test failed: non-lo modifier %got_pcrel_hi(foo) must Err on OP-IMM; got Ok(WordWithReloc { word: 19, reloc: Relocation { reloc_type: GotHi20, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_alu_imm_pbt.rs:634. minimal failing input: (mn, f3) = ("addi", 0), rd = "x0", rs1 = "x0", form = "%got_pcrel_hi(foo)"
 
 ## Design Caveats
 
@@ -133,37 +72,21 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_alu_imm_pbt.rs | 9 properties (5 passing / 4 failing) plus 6 passing KAT and 4 failing regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_alu_reg_pbt.rs | 8 properties + 5 KAT + 1 regression witness |
+| src/backend/riscv/assembler/encoder/mod.rs | one additive `#[cfg(test)] mod encode_alu_reg_pbt;` line |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_imm -- --test-threads=1
+cargo test --lib encode_alu_reg -- --test-threads=1
 ```
 
-B1 extra operand:
+Bug B1 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_imm_neg_extra -- --test-threads=1
-```
-
-B2 out-of-range immediate:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_imm_neg_imm_oob -- --test-threads=1
-```
-
-B3 hi modifier:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_imm_neg_hi_modifier -- --test-threads=1
-```
-
-B4 other modifier:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_imm_neg_other_modifier -- --test-threads=1
+cargo test --lib encode_alu_reg_neg_extra -- --test-threads=1
 ```
 
 ## Output Directories
@@ -174,26 +97,19 @@ cargo test --lib encode_alu_imm_neg_other_modifier -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_alu_imm_extra_operand.md
-- pbt-out/bug_reports/encode_alu_imm_extra_operand.html
-- pbt-out/bug_reports/encode_alu_imm_imm_oob.md
-- pbt-out/bug_reports/encode_alu_imm_imm_oob.html
-- pbt-out/bug_reports/encode_alu_imm_hi_modifier.md
-- pbt-out/bug_reports/encode_alu_imm_hi_modifier.html
-- pbt-out/bug_reports/encode_alu_imm_other_modifier.md
-- pbt-out/bug_reports/encode_alu_imm_other_modifier.html
-- src/backend/riscv/assembler/encoder/encode_alu_imm_pbt.rs
-- proptest-regressions/backend/riscv/assembler/encoder/encode_alu_imm_pbt.txt
+- pbt-out/bug_reports/encode_alu_reg_extra_operand.md
+- pbt-out/bug_reports/encode_alu_reg_extra_operand.html
+- pbt-out/run/encode_alu_reg_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 14:41 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 189/324 total | PBT candidates: 189 | Tested: 189 (100%) | 1 pass, 189 fail
+> Last updated: 2026-10-06 14:57 (campaign: coverage)
+> Files: 12/12 scanned (100%) | Functions: 190/324 total | PBT candidates: 190 | Tested: 190 (100%) | 1 pass, 190 fail
 
 ## Summary
 
@@ -202,10 +118,10 @@ cargo test --lib encode_alu_imm_neg_other_modifier -- --test-threads=1
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 189 |
-| **Tested (of PBT candidates)** | **189 / 189 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 189 / -1 |
-| **Overall (tested / all functions)** | **189 / 324 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 190 |
+| **Tested (of PBT candidates)** | **190 / 190 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 190 / -1 |
+| **Overall (tested / all functions)** | **190 / 324 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -213,13 +129,13 @@ cargo test --lib encode_alu_imm_neg_other_modifier -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 189 | 189 | 0 | 100% |
+|  | 190 | 190 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 189 | 189 | 0 | 100% |
+| unknown | 190 | 190 | 0 | 100% |
 
 ## File Coverage
 
@@ -431,3 +347,4 @@ cargo test --lib encode_alu_imm_neg_other_modifier -- --test-threads=1
 | encode_load | base.rs |
 | encode_store | base.rs |
 | encode_alu_imm | base.rs |
+| encode_alu_reg | base.rs |

@@ -1,3 +1,22 @@
+# Confirmed invariants (encode_alu_reg / requested encode_op)
+
+- Requested `--func encode_op` is absent from base.rs; the in-scope OP/R-type encoder is encode_alu_reg (base.rs:260).
+- Valid `mn rd, rs1, rs2` for the 27 OP mnemonics (RV64I add/sub/sll/slt/sltu/xor/srl/sra/or/and, M mul/mulh/mulhsu/mulhu/div/divu/rem/remu, Zbb andn/orn/xnor/max/maxu/min/minu/rol/ror) with rd/rs1/rs2 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -mattr=+m,+zbb -show-encoding` (1000 cases). KAT pins add x1,x2,x3=0x003100b3, sub=0x403100b3, and=0x003170b3, xor=0x003140b3, or=0x003160b3, sll=0x003110b3, srl=0x003150b3, sra=0x403150b3, slt=0x003120b3, sltu=0x003130b3, mul=0x023100b3, add x0,x0,x0=0x00000033, andn=0x403170b3, rol=0x603110b3.
+- R-type layout holds: opcode=0b0110011, funct3 in bits[14:12], rd in bits[11:7], rs1 in bits[19:15], rs2 in bits[24:20], funct7 in bits[31:25] (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs1/rs2 (1000 cases).
+- Imm n in 0..=31 encodes as x{n} (get_reg GCC bare-register-number contract) (1000 cases).
+- Empty operand list, missing rs1/rs2, FP dest/rs1/rs2, non-register 3rd operand, Imm outside 0..=31, and invalid names (x32/foo/v0/xzr/w0) return Err (1000 cases).
+- Extra operands currently disagree with llvm-mc (see bug encode_alu_reg_extra_operand).
+
+## Environment (encode_alu_reg)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+m,+zbb -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_alu_reg_pbt.rs, cargo test --lib encode_alu_reg, proptest cases=1000.
+- Dispatch: encoder/mod.rs:512-631 add/sub/sll/slt/sltu/xor/srl/sra/or/and and M/Zbb => encode_alu_reg.
+- Requested `--func encode_op` is absent from base.rs; the in-scope symbol is encode_alu_reg.
+- Sibling encode_r / encode_alu_reg_w / C.ADD are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_alu_reg_neg_invalid_name.
+
 # Confirmed invariants (encode_alu_imm / requested encode_op_imm)
 
 - Requested `--func encode_op_imm` is absent from base.rs; the in-scope OP-IMM encoder is encode_alu_imm.
