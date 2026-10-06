@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_vstore)
+
+- Valid 2-operand unit-stride vector stores with vs3 ∈ {v0..v31}, rs1 ∈ {x0..x31} ∪ ABI ∪ {fp}, (mnem,width,sumop) ∈ {(vse8.v,000,0),(vse16.v,101,0),(vse32.v,110,0),(vse64.v,111,0),(vsm.v,000,0x0B)} match llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vse8.v v0, (a0) = 0x02050027; vse16.v v1, (a1) = 0x0205d0a7; vse32.v v2, (sp) = 0x02016127; vse64.v v31, (zero) = 0x02007fa7; vsm.v v0, (a0) = 0x02b50027; vse8.v v0, (x10) = 0x02050027.
+- Format layout holds: opcode=0100111, nf=000, mew=0, mop=00, vm=1, sumop in [24:20], rs1 in [19:15], width in [14:12], vs3 in [11:7] (1000 cases over width 0..7 and sumop 0..31).
+- Operand::Mem { offset: 0 } and Operand::Reg for rs1 encode the same word (1000 cases).
+- ABI names (zero/ra/sp/a0/…/fp) encode the same rs1 field as xN (1000 cases).
+- Field isolation: vs3/rs1/width/sumop bits independent of the other fields (1000 cases).
+- Too few operands, non-vector vs3, and non-GPR rs1 return Err (1000 cases).
+- Non-zero Mem offset and non-Mem/non-Reg operand 1 return Err (1000 cases).
+- Extra operand currently disagrees with llvm-mc (see bugs).
+
+## Environment (encode_vstore)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6). Default riscv64 without +v rejects vse*.v / vsm.v.
+- Harness: src/backend/riscv/assembler/encoder/encode_vstore_pbt.rs, cargo test --lib encode_vstore, proptest cases=1000.
+- Dispatch: encoder/mod.rs:962-965 vse{8,16,32,64}.v => encode_vstore(operands, width, 0); encoder/mod.rs:969 vsm.v => encode_vstore(operands, 0b000, 0x0B). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vstore NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / format / mem-reg / ABI / isolation / arity-bad-regs / extra / nonzero-offset. Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_vstore)
+
+- encode_vstore accepts Operand::Reg as rs1; llvm-mc requires parentheses and rejects `vse8.v v0, a0` and `vse8.v v0, 0(a0)`.
+- vreg_num / reg_num lowercase; llvm-mc rejects uppercase register names.
+- vm is hardcoded to 1 (unmasked). Dispatcher TODO encoder/mod.rs:947: masked variants (v0.t) are not yet supported.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vload)
 
 - Valid 2-operand unit-stride vector loads with vd ∈ {v0..v31}, rs1 ∈ {x0..x31} ∪ ABI ∪ {fp}, (mnem,width,lumop) ∈ {(vle8.v,000,0),(vle16.v,101,0),(vle32.v,110,0),(vle64.v,111,0),(vlm.v,000,0x0B)} match llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vle8.v v0, (a0) = 0x02050007; vle16.v v1, (a1) = 0x0205d087; vle32.v v2, (sp) = 0x02016107; vle64.v v31, (zero) = 0x02007f87; vlm.v v0, (a0) = 0x02b50007; vle8.v v0, (x10) = 0x02050007.

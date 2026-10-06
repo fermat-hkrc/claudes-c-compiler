@@ -1,69 +1,67 @@
-# PBT Campaign Report: encode_vload
+# PBT Campaign Report: encode_vstore
 
 ## Summary
 
-**Verdict:** 1 medium: encode_vload ignores extra operands, so `vle8.v v0, (x0), 0` (and any trailing token, including a `v0.t` mask) encodes as unmasked `vle8.v v0, (x0)` instead of being rejected the way llvm-mc rejects it.
+**Verdict:** 1 medium: encode_vstore ignores extra operands, so `vse8.v v0, (x0), 0` (and any trailing token, including a `v0.t` mask) encodes as unmasked `vse8.v v0, (x0)` instead of being rejected the way llvm-mc rejects it.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_vload
+**Modules tested:** encode_vstore
 **Tests:** 8
 **Result:** 7 passing, 1 bug
-**Change surface:** 1 changed function (encode_vload), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vload NOT LINKED in C++ reporter binaries; Rust cargo tests are not those binaries. Manual audit of the documented 2-operand / format / mem-reg / ABI / isolation / arity / extra / nonzero-offset surface.
+**Change surface:** 1 changed function (encode_vstore), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vstore NOT LINKED in C++ reporter binaries; Rust cargo tests are not those binaries. Manual audit of the documented 2-operand / format / mem-reg / ABI / isolation / arity / extra / nonzero-offset surface.
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_vload | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_vstore | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_vload ignores extra operands
+### B1: encode_vstore ignores extra operands
 
-**Formal:** ∀ vd ∈ {v0..v31}, rs1 ∈ GPR names, extra ∈ Operand. encode_vload([Reg(vd), Mem{base:rs1, offset:0}, extra], width, lumop) = Err(_)
-**Contract evidence:** inferred (rustdoc two-operand syntax `vle{8,16,32,64}.v vd, (rs1)` at vector.rs:76; llvm-mc `-triple=riscv64 -mattr=+v` rejects a third non-mask token; encoder/mod.rs:954-966 passes operands through)
+**Formal:** ∀ vs3 ∈ {v0..v31}, rs1 ∈ GPR names, extra ∈ Operand. encode_vstore([Reg(vs3), Mem{base:rs1, offset:0}, extra], width, sumop) = Err(_)
+**Contract evidence:** inferred (rustdoc two-operand syntax `vse{8,16,32,64}.v vs3, (rs1)` at vector.rs:101; llvm-mc `-triple=riscv64 -mattr=+v` rejects a third non-mask token with `operand must be v0.t`; encoder/mod.rs:962-969 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_vload([Reg("v0"), Mem{base:"x0", offset:0}, Imm(0)], width=0b000, lumop=0)
-**Expected / Actual:** Err / Ok(Word(0x02000007)) — same encoding as `vle8.v v0, (x0)`
-**Impact:** Invalid assembly with a stray third operand is assembled into a valid-looking unit-stride load. A trailing `v0.t` mask token is also dropped, so a masked load is silently encoded as unmasked (vm=1).
-**Root cause:** vector.rs:82-99 reads only operands 0 and 1 and never checks operands.len() == 2, so extra tokens are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:82`
+**Counterexample:** encode_vstore([Reg("v0"), Mem{base:"x0", offset:0}, Imm(0)], width=0b000, sumop=0)
+**Expected / Actual:** Err / Ok(Word(0x02000027)) — same encoding as `vse8.v v0, (x0)`
+**Impact:** Invalid assembly with a stray third operand is assembled into a valid-looking unit-stride store. A trailing `v0.t` mask token is also dropped, so a masked store is silently encoded as unmasked (vm=1).
+**Root cause:** vector.rs:105-119 reads only operands 0 and 1 and never checks operands.len() == 2, so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:105`
 ```rust
-    let vd = get_vreg(operands, 0)?;
-    // The second operand should be a memory operand (rs1) like (a1)
+    let vs3 = get_vreg(operands, 0)?;
     let rs1 = match operands.get(1) {
         Some(Operand::Mem { base, offset: 0 }) => {
             reg_num(base).ok_or_else(|| format!("invalid base register: {}", base))?
         }
         Some(Operand::Reg(name)) => {
-            // Parenthesized register may be parsed differently
             reg_num(name).ok_or_else(|| format!("invalid register: {}", name))?
         }
         other => return Err(format!("expected (rs1) at operand 1, got {:?}", other)),
     };
-    // vm=1 means unmasked (no v0.t)
     let vm: u32 = 1;
-    // nf=000 (single segment), mew=0, mop=00 (bits 31:26 = 0)
+    // nf=000, mew=0, mop=00 (bits 31:26 = 0)
     let word = (vm << 25)
-        | (lumop << 20) | (rs1 << 15) | (width << 12) | (vd << 7) | OP_LOAD_FP;
+        | (sumop << 20) | (rs1 << 15) | (width << 12) | (vs3 << 7) | OP_STORE_FP;
     Ok(EncodeResult::Word(word))
 ```
 **Suggested fix:** Reject any operand list that is not exactly two operands.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("vle*.v/vlm.v expects 2 operands, got {}", operands.len()));
+        return Err(format!("vse*.v/vsm.v expects 2 operands, got {}", operands.len()));
     }
-    let vd = get_vreg(operands, 0)?;
+    let vs3 = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_vload_extra_operand.md
-**Repro seed:** cc 0be212f64da7f5a8f8765de77b84347b214f2d448af824796fcb0f999ce41c80
+**Bug report:** bug_reports/encode_vstore_extra_operand.md
+**Repro seed:** cc 7a6b2270397084ba17246537dbbb41a441204e7b189bb03dc37f937227e8c407
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_vload_pbt::encode_vload_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_vload_pbt.rs:325:1:
-Test failed: extra operand Imm(0) must Err for vload (llvm-mc rejects extra); got Ok(Word(33554439)) at src/backend/riscv/assembler/encoder/encode_vload_pbt.rs:476.
-minimal failing input: vd = 0, rs1 = "x0", extra = Imm(
+thread 'backend::riscv::assembler::encoder::encode_vstore_pbt::encode_vstore_neg_extra' (2875549) panicked at src/backend/riscv/assembler/encoder/encode_vstore_pbt.rs:324:1:
+Test failed: extra operand Imm(0) must Err for vstore (llvm-mc rejects extra); got Ok(Word(33554471)) at src/backend/riscv/assembler/encoder/encode_vstore_pbt.rs:475.
+minimal failing input: vs3 = 0, rs1 = "x0", extra = Imm(
     0,
 ), kind = 0
 	successes: 0
@@ -79,43 +77,45 @@ minimal failing input: vd = 0, rs1 = "x0", extra = Imm(
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_vload_pbt.rs | 8 properties + 6 KAT + 1 regression |
+| src/backend/riscv/assembler/encoder/encode_vstore_pbt.rs | 8 properties + 6 KAT + 1 regression witness |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (expect 13 passed, 2 failed — the extra-operand property and its regression witness):
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_vload -- --test-threads=1
+cargo test --lib encode_vstore -- --test-threads=1
 ```
 
 B1 extra operand:
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_vload_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_vstore_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_vload_extra_operand.md
-- pbt-out/bug_reports/encode_vload_extra_operand.html
-- proptest-regressions/backend/riscv/assembler/encoder/encode_vload_pbt.txt
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage status
+- pbt-out/report.json — machine-readable report
+- pbt-out/FUNCTION_INDEX.md — function index (merged)
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/bug_reports/encode_vstore_extra_operand.md — B1
+- pbt-out/bug_reports/encode_vstore_extra_operand.html — B1 HTML
+- pbt-out/run/encode_vstore_pbt.log — test run log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 23:43 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 224/383 total | PBT candidates: 224 | Tested: 224 (100%) | 1 pass, 224 fail
+> Last updated: 2026-10-06 23:55 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 225/383 total | PBT candidates: 225 | Tested: 225 (100%) | 1 pass, 225 fail
 
 ## Summary
 
@@ -124,10 +124,10 @@ cargo test --lib test_encode_vload_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 224 |
-| **Tested (of PBT candidates)** | **224 / 224 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 224 / -1 |
-| **Overall (tested / all functions)** | **224 / 383 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 225 |
+| **Tested (of PBT candidates)** | **225 / 225 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 225 / -1 |
+| **Overall (tested / all functions)** | **225 / 383 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -135,13 +135,13 @@ cargo test --lib test_encode_vload_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 224 | 224 | 0 | 100% |
+|  | 225 | 225 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 224 | 224 | 0 | 100% |
+| unknown | 225 | 225 | 0 | 100% |
 
 ## File Coverage
 
@@ -388,3 +388,4 @@ cargo test --lib test_encode_vload_regression_extra_operand -- --test-threads=1
 | encode_vsetivli | vector.rs |
 | encode_vsetvl | vector.rs |
 | encode_vload | vector.rs |
+| encode_vstore | vector.rs |
