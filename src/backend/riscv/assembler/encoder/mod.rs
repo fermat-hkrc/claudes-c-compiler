@@ -56,6 +56,8 @@ mod encode_csri_pbt;
 mod encode_float_load_pbt;
 #[cfg(test)]
 mod encode_float_store_pbt;
+#[cfg(test)]
+mod encode_fp_arith_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

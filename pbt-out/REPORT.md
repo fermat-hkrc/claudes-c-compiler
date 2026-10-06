@@ -1,155 +1,99 @@
-# PBT Campaign Report: encode_float_store
+# PBT Campaign Report: encode_fp_arith
 
 ## Summary
 
-**Verdict:** 4 bugs (3 high, 1 medium): encode_float_store truncates out-of-range immediates (2048 encodes as -2048), silently drops extra operands, remaps %hi/%pcrel_hi to lo12 relocs instead of rejecting them, and emits I-type lo relocs (Lo12I/PcrelLo12I) on S-type FSW/FSD so the linker patches the wrong bits.
+**Verdict:** 2 medium: encode_fp_arith silently encodes a 5th extra operand and a non-rounding-mode 4th operand as if they were absent / DYN, so malformed `fadd.s` (and siblings) assemble instead of erroring.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_float_store
-**Tests:** 8
-**Result:** 4 passing, 4 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_float_store). The cargo test run executed the Rust symbol; the C++ coverage reporter cannot see it.
+**Modules tested:** encode_fp_arith
+**Tests:** 8 properties (plus 5 KAT + 2 regression witnesses)
+**Result:** 6 passing, 2 bugs
+**Change surface:** 1 changed function (encode_fp_arith), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries; the Rust cargo test binary is not in that set). Execution evidence is the 5 KAT + 8 properties that called encode_fp_arith.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_float_store | 8 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fp_arith | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_float_store silently truncates out-of-range S-type immediates
+### B1: encode_fp_arith ignores a 5th operand
 
-**Formal:** ∀ mn ∈ {fsw, fsd}, rs2 ∈ FPRegs, rs1 ∈ GPRs, imm ∉ [-2048, 2047]. llvm-mc rejects mn rs2, imm(rs1) ⇒ encode_float_store([Reg(rs2), Mem{rs1, imm}], funct3(mn)) is Err
-**Contract evidence:** inferred (RISC-V S-type imm[11:5]|imm[4:0] at encoder/mod.rs:325; llvm-mc rejects integers outside [-2048, 2047]; encode_instruction passes operands through)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_float_store([Reg("f0"), Mem { base: "x0", offset: 2048 }], 0b010)
-**Expected / Actual:** Err / Ok(Word(2147491879)) = 0x80002027 (fsw f0, -2048(x0))
-**Impact:** A store whose offset is 2048 is assembled as offset -2048 (off by 4096), so the runtime writes the wrong address.
-**Root cause:** float.rs:38 passes `*offset as i32` into encode_s, which takes the low 12 bits with no range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:38`
-```rust
-            Ok(EncodeResult::Word(encode_s(OP_STORE_FP, funct3, rs1, rs2, *offset as i32)))
-```
-**Suggested fix:** Reject offsets outside signed imm12 before packing.
-```rust
-            if !(-2048..=2047).contains(offset) {
-                return Err(format!("float store immediate out of range: {}", offset));
-            }
-            Ok(EncodeResult::Word(encode_s(OP_STORE_FP, funct3, rs1, rs2, *offset as i32)))
-```
-**Bug report:** bug_reports/encode_float_store_imm_oob.md
-**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_store_regression_imm_oob)
-**Raw output:**
-```
-Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147491879)) at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:512.
-minimal failing input: (mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", imm = 2048
-```
-
-### B2: encode_float_store ignores extra operands
-
-**Formal:** ∀ mn ∈ {fsw, fsd}, rs2 ∈ FPRegs, rs1 ∈ GPRs, imm ∈ [-2048, 2047], extra ∈ Operand. encode_float_store([Reg(rs2), Mem{rs1, imm}, extra], funct3(mn)) is Err
-**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on a third operand; encode_instruction at mod.rs:718/746 passes the full operand slice through)
+**Formal:** ∀ mn ∈ FP_ARITH_MN, ∀ rd,rs1,rs2 ∈ FPRegs, ∀ extra. encode_fp_arith([Reg(rd),Reg(rs1),Reg(rs2),RoundingMode("rne"), extra], funct7(mn)) is Err
+**Contract evidence:** inferred (llvm-mc rejects extra operands; RISC-V OP-FP is 3 registers plus optional rm; encode_instruction at encoder/mod.rs:721 passes the operand slice through; float.rs:65 documents only an optional rounding mode, not trailing operands)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_float_store([Reg("f0"), Mem { base: "x0", offset: 0 }, Imm(0)], 0b010)
-**Expected / Actual:** Err / Ok(Word(8231)) = 0x00002027 (fsw f0, 0(x0))
-**Impact:** A third operand is dropped; malformed FSW/FSD still assembles.
-**Root cause:** float.rs:35 matches only operands.get(1) and never checks operands.len().
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:35`
+**Counterexample:** encode_fp_arith([Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 0)
+**Expected / Actual:** Err / Ok(Word(83)) = 0x00000053 (fadd.s f0, f0, f0, rne)
+**Impact:** A typo or extra token on fadd.s/fsub.s/fmul.s/fdiv.s (and .d) is silently dropped; the assembler emits a valid OP-FP word instead of diagnosing the extra operand.
+**Root cause:** float.rs:66 only tests `operands.len() > 3` to read optional rm and never rejects `operands.len() > 4`, so line 74 still returns Ok.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:66`
 ```rust
-    match &operands.get(1) {
+    let rm = if operands.len() > 3 {
 ```
-**Suggested fix:** Require exactly two operands before encoding.
+**Suggested fix:** Reject more than four operands before packing the R-type word.
 ```rust
-    if operands.len() != 2 {
-        return Err("float store: unexpected extra operand".to_string());
+    if operands.len() > 4 {
+        return Err("fp arith: unexpected extra operand".to_string());
     }
-    match &operands.get(1) {
+    let rm = if operands.len() > 3 {
 ```
-**Bug report:** bug_reports/encode_float_store_extra_operand.md
-**Repro seed:** cc 37bb301224666ee6a1abe2c26cb00fb38e2a778c654818ddc9738bd686a6fc81
+**Bug report:** bug_reports/encode_fp_arith_trailing_operand.md
+**Repro seed:** cc ae04d2b2c816f145b47c8424c489a31bf6e3e04cf10dd9f939985006b3438a0d
 **Raw output:**
-```
-Test failed: extra operand must Err for fsw f0, 0(x0) (llvm-mc rejects extra operands); got Ok(Word(8231)) at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:531.
-minimal failing input: (mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", off = 0, extra = Imm(0)
+```text
+Test failed: 5th operand must Err for fadd.s f0, f0, f0, rne (llvm-mc rejects extra operands); got Ok(Word(83)) at src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs:482.
+minimal failing input: (mn, f7) = (
+    "fadd.s",
+    0,
+), rd = "f0", rs1 = "f0", rs2 = "f0", extra = Imm(
+    0,
+)
+	successes: 0
+	local rejects: 0
+	global rejects: 0
 ```
 
-### B3: encode_float_store accepts %hi/%pcrel_hi/%tprel_hi on STORE-FP memory operands
+### B2: encode_fp_arith treats a non-rounding-mode 4th operand as DYN
 
-**Formal:** ∀ mn ∈ {fsw, fsd}, rs2 ∈ FPRegs, rs1 ∈ GPRs, s ∈ Idents, hi ∈ {%hi, %pcrel_hi, %tprel_hi}. llvm-mc rejects mn rs2, hi(s)(rs1) ⇒ encode_float_store([Reg(rs2), MemSymbol{rs1, hi(s)}], funct3(mn)) is Err
-**Contract evidence:** inferred (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on STORE-FP memory operands)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_float_store([Reg("f0"), MemSymbol { base: "x0", symbol: "%hi(foo)", modifier: "" }], 0b010)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 8231, reloc_type: Lo12S, symbol: "foo", addend: 0 })
-**Impact:** A hi-type modifier is remapped to Lo12S and a store with imm=0 is emitted; the linker patches the low 12 S-type bits from a high-part symbol.
-**Root cause:** float.rs:43-47 remaps PcrelHi20/Hi20 onto S-type lo relocs instead of rejecting hi modifiers.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:43`
+**Formal:** ∀ rd,rs1,rs2 ∈ FPRegs, ∀ extra ∉ RoundingMode, ∀ funct7 ∈ FP_ARITH_FUNCT7. encode_fp_arith([Reg(rd),Reg(rs1),Reg(rs2), extra], funct7) is Err
+**Contract evidence:** inferred (llvm-mc requires a valid rounding-mode mnemonic as the 4th operand; float.rs:65 "Check for optional rounding mode"; parser.rs:41 closed set rne/rtz/rdn/rup/rmm/dyn)
+**Documentation conflict:** float.rs:69 `_ => 0b111, // dynamic` is the producing statement (fallback), not a declaration that a non-RM 4th operand is valid. It does not retire the fail.
+**Severity:** medium
+**Counterexample:** encode_fp_arith([Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 0)
+**Expected / Actual:** Err / Ok(Word(28755)) = 0x00007053 (fadd.s f0, f0, f0 with rm=DYN)
+**Impact:** A mistaken 4th token (immediate, GPR, memory, CSR) is silently reinterpreted as dynamic rounding, so the assembler emits a valid instruction instead of an error.
+**Root cause:** float.rs:69 maps every non-RoundingMode 4th operand to rm=0b111 instead of returning Err.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:69`
 ```rust
-            let reloc_type = match reloc_type {
-                RelocType::PcrelHi20 => RelocType::PcrelLo12S,
-                RelocType::Hi20 => RelocType::Lo12S,
-                other => other,
-            };
+            _ => 0b111, // dynamic
 ```
-**Suggested fix:** Return Err for hi-type modifiers; keep only lo-type S relocs.
+**Suggested fix:** Reject a 4th operand that is not a rounding mode.
 ```rust
-            let reloc_type = match reloc_type {
-                RelocType::PcrelLo12I => RelocType::PcrelLo12S,
-                RelocType::Lo12I => RelocType::Lo12S,
-                RelocType::TprelLo12I => RelocType::TprelLo12S,
-                RelocType::PcrelLo12S | RelocType::Lo12S | RelocType::TprelLo12S => reloc_type,
-                _ => return Err("float store: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
-            };
+            other => {
+                return Err(format!(
+                    "fp arith: expected rounding mode, got {:?}",
+                    other
+                ))
+            }
 ```
-**Bug report:** bug_reports/encode_float_store_hi_modifier.md
-**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_store_regression_hi_modifier)
+**Bug report:** bug_reports/encode_fp_arith_non_rm_fourth.md
+**Repro seed:** (deterministic regression; proptest shrunk to Imm(0))
 **Raw output:**
-```
-Test failed: hi-type modifier %hi(foo) must Err on float store (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 8231, reloc: Relocation { reloc_type: Lo12S, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:602.
-minimal failing input: (mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", s = "foo", hi = "%hi"
-```
-
-### B4: encode_float_store emits I-type lo relocs on S-type STORE-FP
-
-**Formal:** ∀ rs2 ∈ FPRegs, rs1 ∈ GPRs, f3 ∈ {0b010, 0b011}, s ∈ Idents. encode_float_store([Reg(rs2), MemSymbol{rs1, %pcrel_lo(s)}], f3) = WordWithReloc{word = encode_float_store([Reg(rs2), Mem{rs1, 0}], f3), reloc_type = PcrelLo12S, symbol = s, addend = 0} ∧ likewise %lo → Lo12S ∧ %tprel_lo → TprelLo12S
-**Contract evidence:** documented src/backend/riscv/assembler/encoder/mod.rs:99 "R_RISCV_PCREL_LO12_S - for SW/SD (low 12 bits of PC-relative, S-type)"; llvm-mc fixup_riscv_lo12_s / pcrel_lo12_s / tprel_lo12_s on fsw/fsd
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_float_store([Reg("f0"), MemSymbol { base: "x0", symbol: "%pcrel_lo(foo)", modifier: "" }], 0b010)
-**Expected / Actual:** reloc_type PcrelLo12S / PcrelLo12I (and Lo12I for %lo)
-**Impact:** The ELF writer applies I-type imm[31:20] patching to an S-type instruction, overwriting rs2 and the scattered S-type immediate. Relocatable fsw/fsd with %lo/%pcrel_lo/%tprel_lo link to a corrupted store.
-**Root cause:** parse_reloc_modifier returns I-type lo variants; float.rs:43-47 only remaps Hi20 kinds and leaves Lo12I/PcrelLo12I/TprelLo12I unchanged.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:43`
-```rust
-            let reloc_type = match reloc_type {
-                RelocType::PcrelHi20 => RelocType::PcrelLo12S,
-                RelocType::Hi20 => RelocType::Lo12S,
-                other => other,
-            };
-```
-**Suggested fix:** Remap the I-type lo variants that parse_reloc_modifier actually returns.
-```rust
-            let reloc_type = match reloc_type {
-                RelocType::PcrelLo12I | RelocType::PcrelHi20 => RelocType::PcrelLo12S,
-                RelocType::Lo12I | RelocType::Hi20 => RelocType::Lo12S,
-                RelocType::TprelLo12I | RelocType::TprelHi20 => RelocType::TprelLo12S,
-                RelocType::PcrelLo12S | RelocType::Lo12S | RelocType::TprelLo12S => reloc_type,
-                _ => return Err("float store: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
-            };
-```
-**Bug report:** bug_reports/encode_float_store_lo_reloc_i_type.md
-**Repro seed:** (none — shrunk input is deterministic; regression test_encode_float_store_regression_lo_is_s_type)
-**Raw output:**
-```
-Test failed: assertion failed: `(left == right)`
-  left: `"PcrelLo12I"`,
- right: `"PcrelLo12S"` at src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs:467.
-minimal failing input: (_mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", s = "foo"
+```text
+Test failed: 4th non-RoundingMode operand must Err for fadd.s f0, f0, f0 (optional rm only); got Ok(Word(28755)) at src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs:501.
+minimal failing input: (mn, f7) = (
+    "fadd.s",
+    0,
+), rd = "f0", rs1 = "f0", rs2 = "f0", extra = Imm(
+    0,
+)
+	successes: 0
+	local rejects: 0
+	global rejects: 0
 ```
 
 ## Design Caveats
@@ -160,42 +104,32 @@ minimal failing input: (_mn, f3) = ("fsw", 2), rs2 = "f0", rs1 = "x0", s = "foo"
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs | 8 properties + 4 KAT + 4 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs | 5 KAT + 8 properties + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_fp_arith_pbt` registration |
 
 ## Reproduction
 
-Whole suite (serial, as run):
+Whole suite (RISC-V module only; a bare `encode_fp_arith` filter also matches ARM fp_scalar tests):
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_store -- --test-threads=1
+cargo test --lib backend::riscv::assembler::encoder::encode_fp_arith_pbt -- --test-threads=1
 ```
 
-B1 (imm oob):
+B1 extra operand:
+
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_store_neg_imm_oob -- --test-threads=1
-cargo test --lib test_encode_float_store_regression_imm_oob -- --test-threads=1
+cargo test --lib encode_fp_arith_neg_extra -- --test-threads=1
+cargo test --lib test_encode_fp_arith_regression_extra_operand -- --test-threads=1
 ```
 
-B2 (extra operand):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_store_neg_extra -- --test-threads=1
-cargo test --lib test_encode_float_store_regression_extra_operand -- --test-threads=1
-```
+B2 non-RM 4th:
 
-B3 (hi modifier):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_store_neg_hi_modifier -- --test-threads=1
-cargo test --lib test_encode_float_store_regression_hi_modifier -- --test-threads=1
-```
-
-B4 (I-type lo reloc):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_float_store_reloc_lo -- --test-threads=1
-cargo test --lib test_encode_float_store_regression_lo_is_s_type -- --test-threads=1
+cargo test --lib encode_fp_arith_neg_non_rm_fourth -- --test-threads=1
+cargo test --lib test_encode_fp_arith_regression_non_rm_fourth -- --test-threads=1
 ```
 
 ## Output Directories
@@ -207,25 +141,22 @@ cargo test --lib test_encode_float_store_regression_lo_is_s_type -- --test-threa
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_float_store_imm_oob.md
-- pbt-out/bug_reports/encode_float_store_imm_oob.html
-- pbt-out/bug_reports/encode_float_store_extra_operand.md
-- pbt-out/bug_reports/encode_float_store_extra_operand.html
-- pbt-out/bug_reports/encode_float_store_hi_modifier.md
-- pbt-out/bug_reports/encode_float_store_hi_modifier.html
-- pbt-out/bug_reports/encode_float_store_lo_reloc_i_type.md
-- pbt-out/bug_reports/encode_float_store_lo_reloc_i_type.html
-- pbt-out/run/encode_float_store_test.log
 - pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_fp_arith_trailing_operand.md
+- pbt-out/bug_reports/encode_fp_arith_trailing_operand.html
+- pbt-out/bug_reports/encode_fp_arith_non_rm_fourth.md
+- pbt-out/bug_reports/encode_fp_arith_non_rm_fourth.html
 - pbt-out/CHANGE_SURFACE.md
+- pbt-out/build.log
+- pbt-out/run/ (scratch)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 17:53 (campaign: coverage)
-> Files: 14/14 scanned (100%) | Functions: 201/351 total | PBT candidates: 201 | Tested: 201 (100%) | 1 pass, 201 fail
+> Last updated: 2026-10-06 18:11 (campaign: coverage)
+> Files: 14/14 scanned (100%) | Functions: 202/351 total | PBT candidates: 202 | Tested: 202 (100%) | 1 pass, 202 fail
 
 ## Summary
 
@@ -234,10 +165,10 @@ cargo test --lib test_encode_float_store_regression_lo_is_s_type -- --test-threa
 | Total source files | 14 |
 | Files scanned | 14 / 14 (100%) |
 | Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 201 |
-| **Tested (of PBT candidates)** | **201 / 201 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 201 / -1 |
-| **Overall (tested / all functions)** | **201 / 351 (57%)** |
+| PBT candidates (from FUNCTION_INDEX) | 202 |
+| **Tested (of PBT candidates)** | **202 / 202 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 202 / -1 |
+| **Overall (tested / all functions)** | **202 / 351 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -245,13 +176,13 @@ cargo test --lib test_encode_float_store_regression_lo_is_s_type -- --test-threa
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 201 | 201 | 0 | 100% |
+|  | 202 | 202 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 201 | 201 | 0 | 100% |
+| unknown | 202 | 202 | 0 | 100% |
 
 ## File Coverage
 
@@ -475,3 +406,4 @@ cargo test --lib test_encode_float_store_regression_lo_is_s_type -- --test-threa
 | encode_csri | system.rs |
 | encode_float_load | float.rs |
 | encode_float_store | float.rs |
+| encode_fp_arith | float.rs |

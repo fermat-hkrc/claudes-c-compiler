@@ -1,22 +1,24 @@
-# Confirmed invariants (encode_float_store)
+# Confirmed invariants (encode_fp_arith)
 
-- Valid 2-operand `fsw`/`fsd` with FP rs2, GPR base, and offset in [-2048, 2047] matches llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins fsw fa0, 0(x1) = 0x00a0a027, fsd fa0, 8(sp) = 0x00a13427, fsw fa0, 2047(x1) = 0x7ea0afa7, fsw fa0, -2048(x1) = 0x80a0a027, fsd ft0, -8(s0) = 0xfe043c27, fsw ft11, -1(t6) = 0xffffafa7.
-- S-type STORE-FP layout holds: opcode=0b0100111, rs2/funct3/rs1/imm as given (1000 cases).
-- FP ABI names (ft0/fa0/fs0/...) encode the same rs2 as fN; GPR ABI names and fp=s0=x8 encode the same rs1 as xN (1000 cases).
-- Empty, missing memory operand, GPR rs2, FP base, and non-memory 2nd operand return Err (1000 cases).
-- Extra operands, immediates outside [-2048, 2047], hi-type modifiers, and %lo/%pcrel_lo/%tprel_lo currently disagree with llvm-mc (see bugs): extra ignored, oob wrapped, hi remapped to Lo12S, lo modifiers kept as I-type Lo12I/PcrelLo12I.
+- Valid 3-operand `fadd.s`/`fsub.s`/`fmul.s`/`fdiv.s`/`fadd.d`/`fsub.d`/`fmul.d`/`fdiv.d` with FP rd, rs1, rs2 matches llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). Default omitted rm is DYN (111). KAT pins fadd.s fa0, fa1, fa2 = 0x00c5f553, fsub.s ft0, ft1, ft2 = 0x0820f053, fmul.s fs0, fs1, fs2 = 0x1124f453, fdiv.s ft11, ft0, fa0 = 0x18a07fd3, fadd.d fa0, fa1, fa2 = 0x02c5f553, fadd.s f0, f1, f2 = 0x0020f053.
+- Valid 4th RoundingMode in {rne,rtz,rdn,rup,rmm,dyn} matches llvm-mc (1000 cases). KAT pins fadd.s fa0, fa1, fa2, rne = 0x00c58553 and ..., rtz = 0x00c59553.
+- R-type OP-FP layout holds: opcode=0b1010011, rm in funct3[14:12], rd/rs1/rs2/funct7 as given (1000 cases).
+- FP ABI names (ft0/fa0/fs0/...) encode the same rd/rs1/rs2 as fN (1000 cases).
+- Omitted rm equals explicit RoundingMode("dyn") and unpacks rm=111 (1000 cases).
+- Empty, 1-operand, 2-operand, GPR in an FP slot, and non-Reg rd return Err (1000 cases).
+- A 5th operand and a 4th non-RoundingMode operand currently disagree with llvm-mc (see bugs): extra ignored; non-RM 4th mapped to rm=DYN.
 
-## Environment (encode_float_store)
+## Environment (encode_fp_arith)
 
-- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+f,+d -show-encoding (LLVM 15.0.6). Default riscv64 without +f,+d rejects fsw/fsd as missing F/D; RV64GC includes both (README.md:13).
-- Harness: src/backend/riscv/assembler/encoder/encode_float_store_pbt.rs, cargo test --lib encode_float_store, proptest cases=1000.
-- Dispatch: encoder/mod.rs:718 fsw => encode_float_store(..., 0b010); mod.rs:746 fsd => encode_float_store(..., 0b011) with operands passed through.
-- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries). Sweep was a manual audit of valid Mem / extra / imm OOB / hi-type / arity / GPR rs2 / FP base / reloc-lo. Closed: tier round spent; remaining documented gaps are the four filed bugs.
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+f,+d -show-encoding (LLVM 15.0.6). Default riscv64 without +f,+d rejects F/D arith; RV64GC includes both (README.md:13).
+- Harness: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs, cargo test --lib backend::riscv::assembler::encoder::encode_fp_arith_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:721-724 fadd.s/fsub.s/fmul.s/fdiv.s => encode_fp_arith; mod.rs:749-752 .d variants go through encode_fp_arith_d which calls encode_fp_arith. Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / rm / R-type / ABI / dyn-default / arity-GPR / extra / non-rm 4th. Closed: tier round spent; remaining documented gaps are the two filed bugs.
 
-## Quirks (encode_float_store)
+## Quirks (encode_fp_arith)
 
-- llvm-mc reloc-form encodings contain unresolved fixup bits (`0x27'A'`); reloc-form oracle compares SUT word against offset-0 Mem encoding and RelocType, not llvm-mc bytes. llvm-mc reports fixup_riscv_lo12_s / pcrel_lo12_s / tprel_lo12_s on fsw/fsd.
-- encode_s takes low 12 bits of the i32; encode_float_store does not range-check before that pack (B1).
-- parse_reloc_modifier always returns I-type lo variants (%lo → Lo12I); encode_float_store remaps only Hi20 → Lo12S / PcrelHi20 → PcrelLo12S, so valid %lo stays I-type (B4) while invalid %hi becomes Lo12S (B3).
-- Bare `fsw fa0, foo` is rejected by llvm-mc and by the SUT (`float store: expected memory operand`).
+- llvm-mc prints `fadd.s f0, f1, f2` as ft0, ft1, ft2 (same encoding). `fadd.s ..., dyn` is printed without the dyn token; encoding still has rm=111.
+- parse_rm lowercases and maps unknown strings to 0b111; the parser only constructs RoundingMode for the closed set {rne,rtz,rdn,rup,rmm,dyn}, so unknown RM strings are not caller-reachable through encode_instruction.
+- encode_fp_arith does not range-check funct7; callers supply the ISA funct7 including S/D fmt bits.
 - proptest 1.11 requires `#[test]` inside `proptest!`.
+- Filter `cargo test --lib encode_fp_arith` also matches ARM fp_scalar::encode_fp_arith_pbt; use `backend::riscv::assembler::encoder::encode_fp_arith_pbt`.
