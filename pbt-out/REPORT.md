@@ -1,130 +1,128 @@
-# PBT Campaign Report: encode_at
+# PBT Campaign Report: encode_tlbi
 
 ## Summary
 
-**Verdict:** 2 medium and 1 low (documented by the author): encode_at encodes a missing Xt as XZR, treats W/SP/SIMD as 64-bit GPRs, and rejects ARM AT ops S1E2/S1E3/S12E* that gas/llvm-mc assemble.
+**Verdict:** 3 medium, 1 low: encode_tlbi silently encodes missing Xt as XZR, extra Xt on no-Xt ops, and W/SP/SIMD as X registers; it also rejects ARM default-CPU ops (alle2/alle3/vae3/vale3) that llvm-mc/gas assemble.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_at
+**Modules tested:** encode_tlbi
 **Tests:** 10
-**Result:** 7 passing, 3 bugs
-**Change surface:** 1 changed function (encode_at), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). encode_at ran via `cargo test --lib encode_at_`; sweep was a manual arm audit of the 20-line body plus encode_at_neg_invalid_reg.
+**Result:** 6 passing, 4 bugs
+**Change surface:** 1 changed function (encode_tlbi), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_tlbi_neg_invalid_reg and encode_tlbi_neg_unknown_op. Closed: every documented behavior has a property; tier round spent.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_at | 10 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_tlbi | 10 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_at encodes AT without Xt as AT XZR
+### B1: encode_tlbi defaults a missing Xt to XZR
 
-**Formal:** ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ case/ws of op with no comma. llvm-mc("at "+raw) fails ∧ encode_at([], raw) = Err(_)
-**Contract evidence:** inferred (ARM ARM AT requires Xt; llvm-mc "specified at op requires a register"; gas "comma expected between operands at operand 2"; README.md:12 gas-compat)
-**Documentation conflict:** (none)
+**Formal:** ∀ op ∈ XtRequired. llvm_mc("tlbi " + op) = Err ⇒ encode_tlbi([], op) = Err
+**Contract evidence:** inferred (ARM ARM / llvm-mc require Xt for VA*/VALE*/VAAE*/VAALE*/ASIDE*/IPAS2*/R*; README.md:12 gas-compat)
+**Documentation conflict:** (none) — system.rs:485 `31 // xzr` is a producing-statement default, not a domain restriction declaring missing Xt valid
 **Severity:** medium
-**Counterexample:** encode_at(&[], "s1e1r") then llvm-mc("at s1e1r")
-**Expected / Actual:** Err / Ok(Word(0xd508781f))
-**Impact:** `at s1e1r` with a missing address register assembles as `at s1e1r, xzr`. A dropped operand becomes a real address-translate instruction against XZR instead of an assembler error.
-**Root cause:** system.rs:432-434 default Rt to 31 (XZR) whenever raw_operands contains no comma. Every ARM AT op requires Xt, so this default is never valid.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:432`
+**Counterexample:** encode_tlbi([], "vale1is")
+**Expected / Actual:** Err / Ok(Word(0xd50883bf))
+**Impact:** Dropping the register still assembles; the invalidate uses XZR instead of being rejected as GNU gas / llvm-mc would
+**Root cause:** system.rs:483-485 sets Rt=31 whenever no comma is present, without checking that the matched op requires Xt
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:483`
 ```rust
     } else {
-        31
+        31 // xzr
     };
 ```
-**Suggested fix:** Require a register operand for every AT op.
+**Suggested fix:** Return Err on Xt-required ops with no register operand
 ```rust
+    } else if needs_xt(op_name) {
+        return Err(format!("tlbi: {} requires a register", op_name));
     } else {
-        return Err("at: operation requires a register".to_string());
+        31 // xzr
     };
 ```
-**Bug report:** bug_reports/encode_at_missing_xt.md
-**Repro seed:** cc bdf1400b0d97cdf266f4f651c302f6aadeaff2e8393d3bd6a8c8ea68c0546865 (raw = "s1e1r")
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_at_pbt::encode_at_neg_missing_reg' (2583788) panicked at src/backend/arm/assembler/encoder/encode_at_pbt.rs:337:1:
-Test failed: AT without register must Err (llvm-mc rejects at s1e1r); SUT raw "s1e1r": Word(3574102047).
-minimal failing input: raw = "s1e1r"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
+**Bug report:** bug_reports/encode_tlbi_missing_xt.md
+**Repro seed:** (deterministic regression)
+**Raw output:** `Test failed: Xt-required TLBI without register must Err (llvm-mc rejects tlbi vale1is); SUT raw "vale1is": Word(3574105023). minimal failing input: raw = "vale1is"`
 
-### B2: encode_at accepts W/SP/SIMD registers as AT Xt
+### B2: encode_tlbi accepts a register on no-Xt ops
 
-**Formal:** ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ bad ∈ {w0..w30,wzr,wsp,sp,w31,dN,sN,qN,vN,hN,bN}. llvm-mc("at op, bad") fails ∧ encode_at([], op+", "+bad) = Err(_)
-**Contract evidence:** inferred (ARM ARM AT Xt is a 64-bit GPR; llvm-mc "invalid operand for instruction"; gas "operand mismatch" / "must be an integer register"; README.md:12 gas-compat)
+**Formal:** ∀ op ∈ NoXt, xt ∈ ValidXt. llvm_mc("tlbi " + op + ", " + xt) = Err ⇒ encode_tlbi([], op + ", " + xt) = Err
+**Contract evidence:** inferred (ARM ARM / llvm-mc: "specified tlbi op does not use a register"; README.md:12 gas-compat)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_at(&[], "s1e1r, w0") then llvm-mc("at s1e1r, w0")
-**Expected / Actual:** Err / Ok(Word(0xd5087800))
-**Impact:** `at s1e1r, w0` encodes identically to `at s1e1r, x0`. A 32-bit, SP, or SIMD register is silently treated as the corresponding 5-bit encoding, so a width/class typo is not diagnosed.
-**Root cause:** system.rs:431 uses parse_reg_num, which accepts W/SP/WZR/WSP and SIMD/FP prefixes (d/s/q/v/h/b) as 5-bit numbers, with no 64-bit GPR check for AT Xt.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:431`
+**Counterexample:** encode_tlbi([], "vmalle1is, x0")
+**Expected / Actual:** Err / Ok(Word(0xd5088300))
+**Impact:** `tlbi vmalle1is, x0` is assembled with Rt=x0 instead of rejected; the word is not the architectural VMALLE1IS encoding
+**Root cause:** system.rs:480-485 parse optional Rt for every op; system.rs:537 patches bits[4:0] even when Rt must stay XZR
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:537`
 ```rust
-        parse_reg_num(reg_str).ok_or_else(|| format!("at: invalid register '{}'", reg_str))?
+    let word = (base & !0x1F) | rt;
 ```
-**Suggested fix:** Restrict AT Xt to 64-bit integer registers (Xn / XZR / LR).
+**Suggested fix:** Reject a second operand on no-Xt ops
 ```rust
-        let rt = parse_reg_num(reg_str).ok_or_else(|| format!("at: invalid register '{}'", reg_str))?;
-        let low = reg_str.trim().to_lowercase();
-        let is_x = low.starts_with('x') || low == "xzr" || low == "lr";
-        if !is_x {
-            return Err(format!("at: Xt must be a 64-bit GPR, got '{}'", reg_str));
+    if !needs_xt(op_name) && parts.len() > 1 {
+        return Err(format!("tlbi: {} does not use a register", op_name));
+    }
+```
+**Bug report:** bug_reports/encode_tlbi_extra_xt.md
+**Repro seed:** (deterministic regression)
+**Raw output:** `Test failed: no-Xt TLBI with register must Err (llvm-mc rejects tlbi vmalle1is, x0); SUT raw "vmalle1is, x0": Word(3574104832). minimal failing input: op = "vmalle1is", xt = "x0"`
+
+### B3: encode_tlbi accepts W/SP/SIMD as Xt
+
+**Formal:** ∀ op ∈ XtRequired, bad ∈ WrongRegClass. llvm_mc("tlbi " + op + ", " + bad) = Err ⇒ encode_tlbi([], op + ", " + bad) = Err
+**Contract evidence:** inferred (ARM ARM TLBI Xt is a 64-bit GPR / XZR / LR; llvm-mc "invalid operand for instruction")
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_tlbi([], "vale1is, w0")
+**Expected / Actual:** Err / Ok(Word(0xd50883a0)) (same as x0)
+**Impact:** A W or SIMD operand is encoded as the corresponding X register; gas / llvm-mc refuse the same text
+**Root cause:** system.rs:482 uses parse_reg_num, which accepts w/sp/simd prefixes, with no is_64bit_reg check
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:482`
+```rust
+        parse_reg_num(reg_str).ok_or_else(|| format!("tlbi: invalid register '{}'", reg_str))?
+```
+**Suggested fix:** Require a 64-bit GPR name after parsing
+```rust
+        if !is_64bit_gpr(reg_str) {
+            return Err(format!("tlbi: Xt must be a 64-bit GPR, got '{}'", reg_str));
         }
 ```
-**Bug report:** bug_reports/encode_at_wrong_reg_class.md
-**Repro seed:** op = "s1e1r", bad = "w0"
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_at_pbt::encode_at_neg_wrong_reg_class' (2584808) panicked at src/backend/arm/assembler/encoder/encode_at_pbt.rs:337:1:
-Test failed: AT with non-X register must Err (llvm-mc rejects at s1e1r, w0); SUT raw "s1e1r, w0": Word(3574102016).
-minimal failing input: op = "s1e1r", bad = "w0"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
+**Bug report:** bug_reports/encode_tlbi_wrong_reg_class.md
+**Repro seed:** (deterministic regression)
+**Raw output:** `Test failed: TLBI with non-X register must Err (llvm-mc rejects tlbi vale1is, w0); SUT raw "vale1is, w0": Word(3574104992). minimal failing input: op = "vale1is", bad = "w0"`
 
-### B3: encode_at rejects ARM AT ops S1E2/S1E3/S12E*
+### B4: encode_tlbi rejects ARM default-CPU TLBI ops
 
-**Formal:** ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w,s1e2r,s1e2w,s1e3r,s1e3w,s12e1r,s12e1w,s12e0r,s12e0w}, ∀ t ∈ 0..31. encode_at([], op+", xt") = llvm-mc("at "+op+", xt")
+**Formal:** ∀ op ∈ ArmDefaultTlbi, xt ∈ ValidXt∪{ε}. well_formed(op, xt) ⇒ encode_tlbi([], asm(op, xt)) = Word(llvm_mc("tlbi " + asm(op, xt)))
 **Contract evidence:** documented limitation encoder/mod.rs:4 "This covers the subset of instructions emitted by our codegen."
-**Documentation conflict:** encoder/mod.rs:4 admits a subset on an input the assembler API accepts (README.md:12 gas-compat; llvm-mc/gas assemble `at s1e2r, x0`). The comment documents the limitation rather than declaring S1E2/S1E3/S12E* invalid.
+**Documentation conflict:** encoder/mod.rs:4 admits a codegen subset on an input the assembler API accepts (README.md:12 gas-compat; README.md:239 lists tlbi). Limitation on accepted input, not a domain restriction — filed one step down
 **Severity:** low (documented by the author)
-**Counterexample:** encode_at(&[], "s1e2r, x0") then llvm-mc("at s1e2r, x0")
-**Expected / Actual:** Ok(Word(0xd50c7800)) / Err("unsupported at operation: s1e2r")
-**Impact:** Kernel/hypervisor assembly using AT at EL2/EL3 or stage-1+2 fails to assemble though gas accepts it.
-**Root cause:** system.rs:436-441 match table only lists S1E1R/S1E1W/S1E0R/S1E0W; every other ARM AT op hits the `_` arm.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:441`
+**Counterexample:** encode_tlbi([], "vae3is, x0"); also alle2, alle3, alle3is, vae3, vale3, vale3is
+**Expected / Actual:** Ok(Word(0xd50e8320)) / Err("unsupported tlbi operation: vae3is")
+**Impact:** Valid GNU `tlbi alle2` / `tlbi vae3is, x0` fails to assemble
+**Root cause:** system.rs:534 — the match table omits alle2 and all EL3 variants llvm-mc accepts on the default CPU
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:534`
 ```rust
-        _ => return Err(format!("unsupported at operation: {}", op_name)),
+        _ => return Err(format!("unsupported tlbi operation: {}", op_name)),
 ```
-**Suggested fix:** Encode the remaining default-CPU AT ops as SYS with CRn=7, CRm=8.
+**Suggested fix:** Add the missing ARMv8.0 encodings
 ```rust
-        "s1e2r" => 0xd50c7800,
-        "s1e2w" => 0xd50c7820,
-        "s1e3r" => 0xd50e7800,
-        "s1e3w" => 0xd50e7820,
-        "s12e1r" => 0xd50c7880,
-        "s12e1w" => 0xd50c78a0,
-        "s12e0r" => 0xd50c78c0,
-        "s12e0w" => 0xd50c78e0,
+        "alle2"     => 0xd50c871f,
+        "alle3is"   => 0xd50e831f,
+        "alle3"     => 0xd50e871f,
+        "vae3is"    => 0xd50e8320,
+        "vae3"      => 0xd50e8720,
+        "vale3is"   => 0xd50e83a0,
+        "vale3"     => 0xd50e87a0,
 ```
-**Bug report:** bug_reports/encode_at_unimplemented_ops.md
-**Repro seed:** cc e5f189a171b0943795b039cb175abcb5949161c23f40c8c212614d6bc4e95d05 (op = "s1e2r", t = 0)
-**Raw output:**
-```text
-thread 'backend::arm::assembler::encoder::encode_at_pbt::encode_at_diff_arm_ops' (2586973) panicked at src/backend/arm/assembler/encoder/encode_at_pbt.rs:377:1:
-Test failed: ARM AT op "s1e2r" must encode (llvm-mc accepts at s1e2r, x0): "unsupported at operation: s1e2r".
-minimal failing input: op = "s1e2r", t = 0
-	successes: 1
-	local rejects: 0
-	global rejects: 0
-```
+**Bug report:** bug_reports/encode_tlbi_unimplemented_arm_ops.md
+**Repro seed:** cc 75f53c0582588bfe0a9e8730a8931d2fba4e14c7fe82d9d69dde0e947fc900e1
+**Raw output:** `Test failed: ARM TLBI op "vae3is" must encode (llvm-mc accepts tlbi vae3is, x0): "unsupported tlbi operation: vae3is". minimal failing input: kind = 1, i = 12, t = 0`
 
 ## Design Caveats
 
@@ -134,32 +132,37 @@ minimal failing input: op = "s1e2r", t = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_at_pbt.rs | 10 properties + 5 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs | 10 properties + 6 KAT + 4 regression witnesses |
 
 ## Reproduction
 
-Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_at_ -- --test-threads=1
+cargo test --lib encode_tlbi -- --test-threads=1
 ```
 
-B1 missing Xt:
+B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_at_regression_missing_xt -- --test-threads=1 --nocapture
+cargo test --lib test_encode_tlbi_regression_missing_xt -- --test-threads=1
 ```
 
-B2 wrong register class:
+B2:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_at_regression_w0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_tlbi_regression_extra_xt -- --test-threads=1
 ```
 
-B3 unimplemented AT ops:
+B3:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_at_regression_s1e2r -- --test-threads=1 --nocapture
+cargo test --lib test_encode_tlbi_regression_w0 -- --test-threads=1
+```
+
+B4:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_tlbi_regression_alle2 -- --test-threads=1
 ```
 
 ## Output Directories
@@ -172,22 +175,22 @@ cargo test --lib test_encode_at_regression_s1e2r -- --test-threads=1 --nocapture
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_at_missing_xt.md
-- pbt-out/bug_reports/encode_at_missing_xt.html
-- pbt-out/bug_reports/encode_at_wrong_reg_class.md
-- pbt-out/bug_reports/encode_at_wrong_reg_class.html
-- pbt-out/bug_reports/encode_at_unimplemented_ops.md
-- pbt-out/bug_reports/encode_at_unimplemented_ops.html
-- pbt-out/run/encode_at.log
-- src/backend/arm/assembler/encoder/encode_at_pbt.rs
-- proptest-regressions/backend/arm/assembler/encoder/encode_at_pbt.txt
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_tlbi_missing_xt.md
+- pbt-out/bug_reports/encode_tlbi_missing_xt.html
+- pbt-out/bug_reports/encode_tlbi_extra_xt.md
+- pbt-out/bug_reports/encode_tlbi_extra_xt.html
+- pbt-out/bug_reports/encode_tlbi_wrong_reg_class.md
+- pbt-out/bug_reports/encode_tlbi_wrong_reg_class.html
+- pbt-out/bug_reports/encode_tlbi_unimplemented_arm_ops.md
+- pbt-out/bug_reports/encode_tlbi_unimplemented_arm_ops.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 03:29 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 161/307 total | PBT candidates: 161 | Tested: 161 (100%) | 1 pass, 161 fail
+> Last updated: 2026-10-06 03:58 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 162/307 total | PBT candidates: 162 | Tested: 162 (100%) | 1 pass, 162 fail
 
 ## Summary
 
@@ -196,10 +199,10 @@ cargo test --lib test_encode_at_regression_s1e2r -- --test-threads=1 --nocapture
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 161 |
-| **Tested (of PBT candidates)** | **161 / 161 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 161 / -1 |
-| **Overall (tested / all functions)** | **161 / 307 (52%)** |
+| PBT candidates (from FUNCTION_INDEX) | 162 |
+| **Tested (of PBT candidates)** | **162 / 162 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 162 / -1 |
+| **Overall (tested / all functions)** | **162 / 307 (53%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -207,13 +210,13 @@ cargo test --lib test_encode_at_regression_s1e2r -- --test-threads=1 --nocapture
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 161 | 161 | 0 | 100% |
+|  | 162 | 162 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 161 | 161 | 0 | 100% |
+| unknown | 162 | 162 | 0 | 100% |
 
 ## File Coverage
 
@@ -397,3 +400,4 @@ cargo test --lib test_encode_at_regression_s1e2r -- --test-threads=1 --nocapture
 | encode_dc | system.rs |
 | encode_sys | system.rs |
 | encode_at | system.rs |
+| encode_tlbi | system.rs |

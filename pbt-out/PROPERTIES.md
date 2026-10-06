@@ -1,272 +1,283 @@
-# Properties: encode_at
+# encode_tlbi
 
-## encode_at_diff_valid
-- Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the ARM AT grammar for the four ops the encoder implements. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree AT decoder). Sibling encode_ic/encode_dc/encode_tlbi/encode_sys rejected (same-job gate: named aliases of fixed SYS encodings, different operand grammar). ARM ARM field formula is an independent layout check, not a substitute for llvm-mc agreement. Weaker available: metamorphic Rt isolation / case-ws; ARM layout invariant; negative_error.
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_diff_valid
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ xt ∈ {x0..x30,xzr,x31,lr}, ∀ case/ws variants. encode_at([], raw) = Word(w) ∧ llvm-mc("at "+raw) = w ∧ w = ARM_SYS(0,7,8,op2(op),Rt(xt))
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+## encode_tlbi_diff_valid
+- Tier: 5
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the ARM TLBI grammar for the ops the encoder implements. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree TLBI decoder). Sibling encode_ic/encode_dc/encode_at/encode_sys rejected (same-job gate: named aliases of fixed SYS encodings, different operand grammar). ARM ARM field formula is an independent layout check, not a substitute for llvm-mc agreement. Weaker available: metamorphic Rt isolation / case-ws; ARM layout invariant; negative_error.
+- Doc contract: system.rs:486 "TLBI encoding: SYS instruction with fixed fields" — other fingerprint a3610a45
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:1 (llvm-mc differential on SYS helper with mixed Xt grammar)
+- Formal: ∀ op ∈ ImplementedTlbi, xt ∈ ValidXt∪{ε}. well_formed(op, xt) ⇒ encode_tlbi([], asm(op, xt)) = Word(w) ∧ llvm_mc("tlbi " + asm(op, xt)) = w ∧ w = arm_sys(op, rt(xt))
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_at
+function: encoder.encode_tlbi
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [op, xt, raw]
-  domain: { op: {s1e1r,s1e1w,s1e0r,s1e0w}, xt: x0..x30|xzr|x31|lr, raw: case_ws(op, xt) }
+  vars: [op, xt]
+  domain: { op: implemented_tlbi_ops, xt: valid_xt_or_omitted }
   relation:
     op: eq
-    lhs: encode_at([], raw)
-    rhs: llvm_mc("at " + raw)
+    lhs: encode_tlbi([], asm(op, xt))
+    rhs: llvm_mc("tlbi " + asm(op, xt))
 generators:
-  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
-  xt: { gen: oneof, options: ["x0..x30", "xzr", "x31", "lr"] }
-evidence: README.md:12 gas-compat; ARM ARM AT = SYS #0, C7, C8, #op2, Xt; encoder/mod.rs:998
+  op: { gen: element, of: implemented_tlbi_ops, type: String }
+  xt: { gen: element, of: valid_xt_tokens, type: String }
+evidence: README.md:12 llvm-mc -triple=aarch64 -show-encoding; ARM ARM TLBI is SYS CRn=8
 ```
 
-## encode_at_diff_arm_ops
-- Tier: 2
-- Rationale: Differential vs llvm-mc over the ARM AT ops the reference accepts on the default CPU (including S1E2/S1E3/S12E*). README.md:12 gas-compat is the assembler contract. encoder/mod.rs:4 admits a subset — a documented limitation on inputs the API accepts, not an exclusion. Domain includes the unimplemented names; the property fails there.
-- Doc contract: encoder/mod.rs:4 "This covers the subset of instructions emitted by our codegen." — limitation fingerprint 323827bd
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_diff_valid
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w,s1e2r,s1e2w,s1e3r,s1e3w,s12e1r,s12e1w,s12e0r,s12e0w}, ∀ t ∈ 0..31. encode_at([], op+", xt") = llvm-mc("at "+op+", xt")
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
-- Status: failing
-- Counterexample: encode_at(&[], "s1e2r, x0") → Err("unsupported at operation: s1e2r")
-- Bug report: bug_reports/encode_at_unimplemented_ops.md
-
-```property
-function: encoder.encode_at
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [op, t]
-  domain: { op: ARM AT ops llvm-mc accepts, t: 0..31 }
-  relation:
-    op: eq
-    lhs: encode_at([], op+", x"+t)
-    rhs: llvm_mc("at "+op+", x"+t)
-generators:
-  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w", "s1e2r", "s1e2w", "s1e3r", "s1e3w", "s12e1r", "s12e1w", "s12e0r", "s12e0w"] }
-  t: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12 gas-compat; llvm-mc accepts s1e2r; encoder/mod.rs:4 subset limitation
-```
-
-## encode_at_inv_arm_layout
+## encode_tlbi_inv_arm_layout
 - Tier: 4
-- Rationale: Every AT word must satisfy the ARM SYS field layout (bits[31:21]=0b11010101000, op1=0, CRn=7, CRm=8, op2 in {0,1,2,3}, Rt = t). Stronger differential is the sibling encode_at_diff_valid; this is the independent ARM formula check. State machine / round-trip rejected as above.
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_inv_arm_layout
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ t ∈ 0..31. let w = encode_at([], "op, xt"). w>>21 = 0b11010101000 ∧ (w>>16)&7 = 0 ∧ (w>>12)&0xF = 7 ∧ (w>>8)&0xF = 8 ∧ (w>>5)&7 = op2(op) ∧ w&0x1F = t ∧ w = 0xD5080000 | (8<<8) | (op2<<5) | t
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+- Rationale: ARM ARM SYS field layout is an independent structural invariant (bits[31:21]=0b11010101000, CRn=8, (op1,CRm,op2,Rt) from the ARM TLBI table). Stronger differential is the sibling property; this pins the architectural packing independently of llvm-mc.
+- Doc contract: system.rs:486 "TLBI encoding: SYS instruction with fixed fields" — other fingerprint a3610a45
+- Seed: src/backend/arm/assembler/encoder/encode_at_pbt.rs encode_at_inv_arm_layout
+- Formal: ∀ op ∈ ImplementedTlbi, t ∈ 0..31. well_formed(op, t) ⇒ let w = encode_tlbi([], asm(op, t)) in w>>21 = 0b11010101000 ∧ ((w>>12)&0xF)=8 ∧ w = arm_sys(op1(op), 8, crm(op), op2(op), rt(op,t))
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_at
+function: encoder.encode_tlbi
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [op, t]
-  domain: { op: {s1e1r,s1e1w,s1e0r,s1e0w}, t: 0..31 }
-  body: word_fields(encode_at([], op+", x"+t)) == {hi:0b11010101000, op1:0, crn:7, crm:8, op2:op2(op), rt:t}
+  domain: { op: implemented_tlbi_ops, t: u32_0_31 }
+  relation:
+    op: eq
+    lhs: encode_tlbi([], asm(op, t))
+    rhs: arm_sys(op1(op), 8, crm(op), op2(op), rt(op, t))
 generators:
-  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
+  op: { gen: element, of: implemented_tlbi_ops, type: String }
   t: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM AT = SYS #0, C7, C8, #op2, Xt; system.rs:435
+evidence: ARM ARM SYS encoding; system.rs:486 SYS instruction with fixed fields
 ```
 
-## encode_at_meta_rt_isolation
-- Tier: 3
-- Rationale: Metamorphic: encodings of the same AT op must differ only in Rt bits[4:0]; the four ops encode distinctly (op2 bits). Stronger differential is encode_at_diff_valid. No true inverse.
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_meta_rt_isolation
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ t ∈ 0..31. encode_at(op, xt) ⊕ encode_at(op, x0) = t ∧ (encode_at(op, xt) & !0x1F) = (encode_at(op, x0) & !0x1F). The four op bases (Rt=0) are pairwise distinct and differ only in op2 bits[7:5].
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+## encode_tlbi_meta_rt_isolation
+- Tier: 4
+- Rationale: Metamorphic: encodings of the same Xt-required op differ only in Rt bits[4:0]; no-Xt ops always encode Rt=31. Stronger differential is the sibling; this isolates the Rt patch (system.rs:537).
+- Doc contract: system.rs:536 "Replace Rt field (bits 4:0)" — asserted fingerprint 4485e9a5
+- Seed: src/backend/arm/assembler/encoder/encode_at_pbt.rs encode_at_meta_rt_isolation
+- Formal: ∀ op ∈ XtRequired, t ∈ 0..31. encode(op, xt) ⊕ encode(op, x0) = t ∧ (encode(op, xt) & ~0x1F) = (encode(op, x0) & ~0x1F). ∀ op ∈ NoXt. encode(op) & 0x1F = 31
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_at
+function: encoder.encode_tlbi
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [op, t]
-  domain: { op: {s1e1r,s1e1w,s1e0r,s1e0w}, t: 0..31 }
-  body: (encode_at(op, xt) ^ encode_at(op, x0)) == t
+  domain: { op: xt_required_ops, t: u32_0_31 }
+  relation:
+    op: eq
+    lhs: encode_tlbi([], op + ", x" + t) XOR encode_tlbi([], op + ", x0")
+    rhs: t
 generators:
-  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
+  op: { gen: element, of: xt_required_ops, type: String }
   t: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM AT Rt is bits[4:0]; op2 distinguishes the four ops
+evidence: system.rs:536 Replace Rt field (bits 4:0)
 ```
 
-## encode_at_meta_case_ws
-- Tier: 3
-- Rationale: ASCII case-fold and surrounding space/tab are behavior-preserving (trim + to_lowercase). Metamorphic transform of a valid encoding. Stronger differential already covers cased inputs vs llvm-mc; this asserts SUT(raw) = SUT(canonical(raw)).
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_meta_case_ws
-- Formal: ∀ raw in case/ws variants of valid (op, xt). encode_at([], raw) = encode_at([], canonical(raw))
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+## encode_tlbi_meta_case_ws
+- Tier: 4
+- Rationale: Metamorphic invariance: ASCII case-fold and surrounding space/tab are behavior-preserving (trim + to_lowercase on the op; parse_reg_num lowercases). Documented by the body, independently required by GNU-style assembly.
+- Doc contract: system.rs:479 (trim + to_lowercase on op_name) — other fingerprint a3610a45
+- Seed: src/backend/arm/assembler/encoder/encode_at_pbt.rs encode_at_meta_case_ws
+- Formal: ∀ raw ∈ ValidTlbiWithCaseWs. encode_tlbi([], raw) = encode_tlbi([], canonical(raw))
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_at
+function: encoder.encode_tlbi
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [raw]
-  domain: { raw: case_ws(valid_at) }
+  domain: { raw: valid_tlbi_case_ws }
   relation:
     op: eq
-    lhs: encode_at([], raw)
-    rhs: encode_at([], canonical(raw))
+    lhs: encode_tlbi([], raw)
+    rhs: encode_tlbi([], canonical(raw))
 generators:
-  raw: { gen: string }
-evidence: system.rs:427-428 trim + to_lowercase
+  raw: { gen: string, type: String }
+evidence: system.rs:479 op_name = parts[0].trim().to_lowercase(); README.md:12 GNU-style assembly
 ```
 
-## encode_at_neg_unknown_op
-- Tier: 4
-- Rationale: Names that llvm-mc rejects as an AT operation ("invalid operand for AT instruction") must return Err. Negative-error contract evidenced by llvm-mc/gas rejection of the same strings, not by the SUT match table. Generator is co-filtered by llvm-mc.err so the domain is the reference-rejected set (empty, foo, ialluis, civac, sy, #0, x0, …).
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_unknown_op
-- Formal: ∀ s. llvm-mc("at "+s) fails ⇒ encode_at([], s) = Err(e) ∧ ("unsupported at operation" ∈ e ∨ "invalid register" ∈ e)
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_at
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [s]
-  domain: { s: unknown_at_op_rejected_by_llvm_mc }
-  relation:
-    op: throws
-    expr: encode_at([], s)
-expected_error: String
-generators:
-  s: { gen: string }
-evidence: system.rs:441; llvm-mc "invalid operand for AT instruction"
-```
-
-## encode_at_neg_missing_reg
-- Tier: 4
-- Rationale: ARM AT requires Xt. llvm-mc: "specified at op requires a register"; gas: "comma expected between operands at operand 2". The SUT currently defaults missing Xt to Rt=31; that is in the generator (documented domain, not the passing one).
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_ivau_missing_reg
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ case/ws of op with no comma. llvm-mc("at "+raw) fails ∧ encode_at([], raw) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+## encode_tlbi_diff_arm_ops
+- Tier: 5
+- Rationale: Differential vs llvm-mc on ARM TLBI ops the default CPU accepts that the SUT match table omits (alle2, alle3, alle3is, vae3, vae3is, vale3, vale3is). encoder/mod.rs:4 admits a codegen subset — a documented limitation on accepted assembler input, not a domain restriction (README.md:12 gas-compat and README.md:239 list tlbi). Keep these ops in the generator.
+- Doc contract: encoder/mod.rs:4 "This covers the subset of instructions emitted by our codegen." — limitation fingerprint 323827bd
+- Seed: src/backend/arm/assembler/encoder/encode_at_pbt.rs encode_at_diff_arm_ops
+- Formal: ∀ op ∈ ArmDefaultTlbi, xt ∈ ValidXt∪{ε}. well_formed(op, xt) ⇒ encode_tlbi([], asm(op, xt)) = Word(llvm_mc("tlbi " + asm(op, xt)))
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
 - Status: failing
-- Counterexample: encode_at(&[], "s1e1r") → Ok(Word(0xd508781f))
-- Bug report: bug_reports/encode_at_missing_xt.md
+- Counterexample: encode_tlbi([], "vae3is, x0") -> Err("unsupported tlbi operation: vae3is"); llvm-mc accepts tlbi vae3is, x0. Also alle2, alle3, alle3is, vae3, vale3, vale3is.
+- Bug report: bug_reports/encode_tlbi_unimplemented_arm_ops.md
 
 ```property
-function: encoder.encode_at
-oracle: negative_error
+function: encoder.encode_tlbi
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [raw]
-  domain: { raw: case_ws of s1e1r|s1e1w|s1e0r|s1e0w with no comma }
+  vars: [op, xt]
+  domain: { op: arm_default_tlbi_ops, xt: valid_xt_or_omitted }
   relation:
-    op: throws
-    expr: encode_at([], raw)
-expected_error: String
+    op: eq
+    lhs: encode_tlbi([], asm(op, xt))
+    rhs: llvm_mc("tlbi " + asm(op, xt))
 generators:
-  raw: { gen: string }
-evidence: llvm-mc "specified at op requires a register"; ARM ARM AT Xt required
+  op: { gen: element, of: arm_default_tlbi_ops, type: String }
+  xt: { gen: element, of: valid_xt_tokens, type: String }
+evidence: README.md:12 gas-compat; README.md:239 lists tlbi; llvm-mc accepts alle2/alle3/vae3 on the default CPU
 ```
 
-## encode_at_neg_wrong_reg_class
-- Tier: 4
-- Rationale: Xt must be a 64-bit GPR. llvm-mc/gas reject W/SP/SIMD ("invalid operand" / "operand mismatch" / "must be an integer register"). parse_reg_num currently accepts those prefixes; they stay in the generator.
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_wrong_reg_class
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ bad ∈ {w0..w30,wzr,wsp,sp,w31,dN,sN,qN,vN,hN,bN}. llvm-mc("at op, bad") fails ∧ encode_at([], op+", "+bad) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+## encode_tlbi_neg_missing_xt
+- Tier: 3
+- Rationale: Negative/error contract: ARM/llvm-mc require Xt for VA*/ASIDE*/IPAS2*/R* ops ("specified tlbi op requires a register"). The body defaults missing Xt to Rt=31 rather than declaring it invalid — that default is a producing statement, not a domain restriction. Keep missing Xt in the generator.
+- Doc contract: system.rs:486 "TLBI encoding: SYS instruction with fixed fields" — other fingerprint a3610a45
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs IVAU missing Xt; encode_at_pbt.rs encode_at_neg_missing_reg
+- Formal: ∀ op ∈ XtRequired. llvm_mc("tlbi " + op) = Err ⇒ encode_tlbi([], op) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
 - Status: failing
-- Counterexample: encode_at(&[], "s1e1r, w0") → Ok(Word(0xd5087800))
-- Bug report: bug_reports/encode_at_wrong_reg_class.md
+- Counterexample: encode_tlbi([], "vale1is") -> Word(0xd50883bf) (Rt=XZR) instead of Err; llvm-mc: specified tlbi op requires a register
+- Bug report: bug_reports/encode_tlbi_missing_xt.md
 
 ```property
-function: encoder.encode_at
+function: encoder.encode_tlbi
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [op, bad]
-  domain: { op: four AT ops, bad: W/SP/SIMD register token }
+  vars: [op]
+  domain: { op: xt_required_ops }
   relation:
     op: throws
-    expr: encode_at([], op+", "+bad)
-expected_error: String
+    lhs: encode_tlbi([], op)
+    rhs: Err
 generators:
-  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
-  bad: { gen: string }
-evidence: llvm-mc "invalid operand for instruction"; gas "operand mismatch"
+  op: { gen: element, of: xt_required_ops, type: String }
+expected_error: String
+evidence: llvm-mc "specified tlbi op requires a register"; ARM ARM TLBI VA*/ASIDE*/IPAS2* take Xt
 ```
 
-## encode_at_neg_extra_operand
-- Tier: 4
-- Rationale: Extra operands after Xt are rejected by llvm-mc ("unexpected token in argument list") and gas ("unexpected characters following instruction"). splitn(2) leaves the extra text inside the register token, which parse_reg_num should fail.
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_invalid_reg (x0, x1 extra)
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ extra ∈ {x0..x30,xzr,lr,#0,w0,x32}. llvm-mc("at op, x0, extra") fails ∧ encode_at([], op+", x0, "+extra) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_tlbi_neg_extra_xt
+- Tier: 3
+- Rationale: Negative/error contract: ARM/llvm-mc reject a register on VMALLE*/ALLE*/VMALLS12E1* ("specified tlbi op does not use a register"). The SUT still parses Rt and patches bits[4:0]. Extra Xt stays in the generator.
+- Doc contract: system.rs:486 "TLBI encoding: SYS instruction with fixed fields" — other fingerprint a3610a45
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs extra Xt on IALLU*
+- Formal: ∀ op ∈ NoXt, xt ∈ ValidXt. llvm_mc("tlbi " + op + ", " + xt) = Err ⇒ encode_tlbi([], op + ", " + xt) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
+- Status: failing
+- Counterexample: encode_tlbi([], "vmalle1is, x0") -> Word(0xd5088300) instead of Err; llvm-mc: specified tlbi op does not use a register
+- Bug report: bug_reports/encode_tlbi_extra_xt.md
 
 ```property
-function: encoder.encode_at
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [op, extra]
-  domain: { op: four AT ops, extra: extra trailing operand }
-  relation:
-    op: throws
-    expr: encode_at([], op+", x0, "+extra)
-expected_error: String
-generators:
-  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
-  extra: { gen: string }
-evidence: llvm-mc "unexpected token in argument list"; gas "unexpected characters following instruction"
-```
-
-## encode_at_neg_invalid_reg
-- Tier: 4
-- Rationale: Sweep — parse_reg_num None arm (system.rs:431) for malformed Xt (x32, empty, foo, #0). llvm-mc rejects ("expected register operand"). Documented error path not reached by extra-operand alone when the second field is a single invalid token.
-- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
-- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_invalid_reg
-- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ xt ∈ {x32, x33, empty, foo, #0, 31, x, x32..x99}. llvm-mc("at op, xt") fails ∧ encode_at([], op+", "+xt) = Err(e) ∧ ("invalid register" ∈ e ∨ "unsupported at operation" ∈ e)
-- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_at
+function: encoder.encode_tlbi
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [op, xt]
-  domain: { op: four AT ops, xt: malformed Xt token }
+  domain: { op: no_xt_ops, xt: valid_xt_tokens }
   relation:
     op: throws
-    expr: encode_at([], op+", "+xt)
-expected_error: String
+    lhs: encode_tlbi([], op + ", " + xt)
+    rhs: Err
 generators:
-  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
-  xt: { gen: string }
-evidence: system.rs:431 parse_reg_num None; llvm-mc "expected register operand"
+  op: { gen: element, of: no_xt_ops, type: String }
+  xt: { gen: element, of: valid_xt_tokens, type: String }
+expected_error: String
+evidence: llvm-mc "specified tlbi op does not use a register"; ARM ARM VMALLE*/ALLE*/VMALLS12E1* take no Xt
+```
+
+## encode_tlbi_neg_wrong_reg_class
+- Tier: 3
+- Rationale: Negative/error contract: llvm-mc/gas reject W/SP/WSP/WZR/SIMD as TLBI Xt ("invalid operand for instruction"). parse_reg_num accepts those prefixes; the encoder does not check is_64bit_reg. Keep the wrong class in the generator.
+- Doc contract: system.rs:486 "TLBI encoding: SYS instruction with fixed fields" — other fingerprint a3610a45
+- Seed: src/backend/arm/assembler/encoder/encode_at_pbt.rs encode_at_neg_wrong_reg_class
+- Formal: ∀ op ∈ XtRequired, bad ∈ WrongRegClass. llvm_mc("tlbi " + op + ", " + bad) = Err ⇒ encode_tlbi([], op + ", " + bad) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
+- Status: failing
+- Counterexample: encode_tlbi([], "vale1is, w0") -> Word(0xd50883a0) (same as x0) instead of Err; llvm-mc: invalid operand for instruction
+- Bug report: bug_reports/encode_tlbi_wrong_reg_class.md
+
+```property
+function: encoder.encode_tlbi
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [op, bad]
+  domain: { op: xt_required_ops, bad: wrong_reg_class }
+  relation:
+    op: throws
+    lhs: encode_tlbi([], op + ", " + bad)
+    rhs: Err
+generators:
+  op: { gen: element, of: xt_required_ops, type: String }
+  bad: { gen: element, of: wrong_reg_class, type: String }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction"; ARM ARM TLBI Xt is a 64-bit GPR / XZR / LR
+```
+
+## encode_tlbi_neg_invalid_reg
+- Tier: 3
+- Rationale: Sweep — parse_reg_num None path (system.rs:482) was unexercised. Malformed Xt (x32, empty, #0, foo) that llvm-mc rejects must return Err containing "invalid register". ARM default-CPU unimplemented ops are not in this domain (covered by encode_tlbi_diff_arm_ops).
+- Doc contract: system.rs:482 "tlbi: invalid register" — asserted fingerprint (error string)
+- Seed: src/backend/arm/assembler/encoder/encode_at_pbt.rs encode_at_neg_invalid_reg
+- Formal: ∀ op ∈ XtRequired, xt ∈ {x32, empty, #0, foo, x}. llvm_mc("tlbi " + op + ", " + xt) = Err ⇒ encode_tlbi([], op + ", " + xt) = Err ∧ ("invalid register" ∈ err ∨ "unsupported tlbi operation" ∈ err)
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_tlbi
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [op, xt]
+  domain: { op: xt_required_ops, xt: malformed_xt }
+  relation:
+    op: throws
+    lhs: encode_tlbi([], op + ", " + xt)
+    rhs: invalid_register
+generators:
+  op: { gen: element, of: xt_required_ops, type: String }
+  xt: { gen: element, of: malformed_xt, type: String }
+expected_error: String
+evidence: system.rs:482 tlbi: invalid register; llvm-mc expected register operand
+```
+
+## encode_tlbi_neg_unknown_op
+- Tier: 3
+- Rationale: Sweep — match-arm default (system.rs:534) for names llvm-mc also rejects. Domain is names that are not implemented SUT ops and not ARM default-CPU TLBI ops (those live in encode_tlbi_diff_arm_ops).
+- Doc contract: system.rs:534 "unsupported tlbi operation" — asserted fingerprint (error string)
+- Seed: src/backend/arm/assembler/encoder/encode_at_pbt.rs encode_at_neg_unknown_op
+- Formal: ∀ s. llvm_mc("tlbi " + s) = Err ⇒ encode_tlbi([], s) = Err ∧ ("unsupported tlbi operation" ∈ err ∨ "invalid register" ∈ err)
+- Test file: src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_tlbi
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [s]
+  domain: { s: unknown_tlbi_name }
+  relation:
+    op: throws
+    lhs: encode_tlbi([], s)
+    rhs: unsupported_or_invalid
+generators:
+  s: { gen: string, type: String }
+expected_error: String
+evidence: system.rs:534 unsupported tlbi operation; llvm-mc invalid operand for TLBI instruction
 ```

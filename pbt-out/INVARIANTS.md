@@ -1,3 +1,34 @@
+# Confirmed invariants (encode_tlbi)
+
+- Valid implemented TLBI ops (no-Xt: vmalle1is/vmalle1/alle1is/alle1/alle2is/vmalls12e1is/vmalls12e1; Xt-required v8.0 plus FEAT_TLBIRANGE with Xt in {x0..x30, xzr, x31, lr}; ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` (`-mattr=+tlb-rmi` for range ops) and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt with CRn=8 (1000 cases). KAT pins vmalle1is=0xd508831f, vae1is x0=0xd5088320, vale1is x0=0xd50883a0, alle2is=0xd50c831f, rvae1is x0=0xd5088220, vae1is xzr=0xd508833f.
+- ARM TLBI layout holds: bits[31:21]=0b11010101000; CRn=8; extracted (op1,CRm,op2,Rt) match the ARM table; no-Xt Rt=31 (1000 cases).
+- Encodings of the same Xt-required op differ only in Rt bits[4:0] (1000 cases).
+- ASCII case-fold and surrounding space/tab are behavior-preserving on the valid domain (1000 cases).
+- Malformed Xt (x32, empty, #0, foo) return Err containing "invalid register" or "unsupported tlbi operation" (sweep, 1000 cases).
+- Unknown operation names that llvm-mc rejects return Err containing "unsupported tlbi operation" or "invalid register" (sweep, 1000 cases).
+- Missing Xt, extra Xt on no-Xt ops, W/SP/SIMD Xt, and unimplemented ARM default-CPU ops (alle2/alle3/vae3/vale3) currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_tlbi)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6); range ops -mattr=+tlb-rmi.
+- ARM ARM TLBI is SYS with CRn=8. No-Xt: VMALLE*/ALLE*/VMALLS12E1*. Xt-required: VA*/VALE*/VAAE*/VAALE*/ASIDE*/IPAS2*/R*.
+- Dispatch: encoder/mod.rs:990 `"tlbi" => encode_tlbi(operands, raw_operands)`. Raw operand string passed through; `_operands` unused.
+- Sibling encode_ic / encode_dc / encode_at / encode_sys are not same-job differentials (different SYS encodings).
+- encode_tlbi splits on the first comma, lowercases the op, optionally parses Rt via parse_reg_num (default 31), then patches bits[4:0] of a GCC base word.
+- RIPAS2E1OS is SYS #4, C8, C4, #3 (op2=3), matching llvm-mc; not op2=4.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_tlbi_neg_invalid_reg and encode_tlbi_neg_unknown_op. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_tlbi_*.md.
+
+## Quirks (encode_tlbi)
+
+- Surrounding whitespace and ASCII case are accepted (trim + to_lowercase).
+- llvm-mc accepts `x31` as XZR; GNU gas rejects `x31`. The differential used llvm-mc.
+- parse_reg_num accepts `lr` as 30 (passing); it does not accept `fp` (x29), which gas/llvm-mc do.
+- Extra operands after a parsed Xt-required register (`vae1is, x0, x1`) fail parse_reg_num and return Err (passing).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the ~60-line body.
+
 # Confirmed invariants (encode_at)
 
 - Valid {s1e1r, s1e1w, s1e0r, s1e0w} with Xt in {x0..x30, xzr, x31, lr} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt with op1=0, CRn=7, CRm=8, op2∈{0,1,2,3} (1000 cases). KAT pins s1e1r x0=0xd5087800, s1e1w x0=0xd5087820, s1e0r x0=0xd5087840, s1e0w x0=0xd5087860, s1e1r xzr=0xd508781f.
