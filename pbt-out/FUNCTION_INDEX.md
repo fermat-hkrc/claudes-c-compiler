@@ -1,4 +1,4 @@
-> Total files: 15 | Total functions: 367 | PBT candidates: 219 | Excluded: 148
+> Total files: 15 | Total functions: 367 | PBT candidates: 220 | Excluded: 147
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -358,7 +358,7 @@
 | encode_c_addi | compressed.rs | 27 | function | yes | - |
 | encode_c_mv | compressed.rs | 36 | function | yes | - |
 | encode_c_add | compressed.rs | 43 | function | yes | - |
-| encode_c_jr | compressed.rs | 50 | function | no | out of campaign scope (HARD: test only encode_c_add) |
+| encode_c_jr | compressed.rs | 50 | function | yes | - |
 | encode_c_jalr | compressed.rs | 56 | function | no | out of campaign scope (HARD: test only encode_c_add) |
 | encode_insn_directive | compressed.rs | 64 | function | no | out of campaign scope (HARD: test only encode_c_add) |
 | parse_insn_int | compressed.rs | 99 | function | no | out of campaign scope (HARD: test only encode_c_add) |
