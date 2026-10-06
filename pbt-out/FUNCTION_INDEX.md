@@ -1,4 +1,4 @@
-> Total files: 13 | Total functions: 337 | PBT candidates: 199 | Excluded: 138
+> Total files: 13 | Total functions: 337 | PBT candidates: 200 | Excluded: 137
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -329,7 +329,7 @@
 | encode_fence | system.rs | 5 | function | yes | - |
 | encode_sfence_vma | system.rs | 30 | function | yes | - |
 | encode_csr | system.rs | 40 | function | yes | - |
-| encode_csri | system.rs | 56 | function | no | out of campaign scope |
+| encode_csri | system.rs | 56 | function | yes | - |
 | get_csr_num | system.rs | 64 | function | no | helper; campaign is single-symbol |
 | csr_name_to_num | system.rs | 74 | function | no | helper; campaign is single-symbol |
 | encode_lr | atomics.rs | 5 | function | yes | - |

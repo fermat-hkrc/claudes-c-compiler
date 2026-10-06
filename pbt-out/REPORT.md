@@ -1,56 +1,128 @@
-# PBT Campaign Report: encode_sfence_vma
+# PBT Campaign Report: encode_csri
 
 ## Summary
 
-**Verdict:** 1 medium: encode_sfence_vma silently ignores a third (or later) operand, so `sfence.vma x0, x0, 0` encodes as `sfence.vma x0, x0` (0x12000073) while llvm-mc rejects the extra token.
+**Verdict:** 3 high: encode_csri silently accepts extra operands, wraps zimm outside 0..=31 via `& 0x1F`, and wraps csr outside 0..=4095 via encode_i's 12-bit mask, so mistyped CSR-immediate assembly becomes a different well-formed instruction instead of an error.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sfence_vma
-**Tests:** 7 properties (plus 4 KAT + 1 regression witness)
-**Result:** 6 passing, 1 bug
-**Change surface:** 1 changed function (encode_sfence_vma), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_sfence_vma). The Rust `cargo test --lib encode_sfence_vma` run executed the production symbol.
+**Modules tested:** encode_csri
+**Tests:** 8 properties (plus 2 KAT + 3 regression witnesses)
+**Result:** 5 passing, 3 bugs
+**Change surface:** 1 changed function (encode_csri), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_csri). Execution evidence is `cargo test --lib encode_csri` (5 passing / 3 failing properties).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sfence_vma | 7 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_csri | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_sfence_vma ignores extra operands
+### B1: encode_csri ignores extra operands
 
-**Formal:** ∀ rs1, rs2 ∈ GPRNames, extra ∈ Operand. encode_sfence_vma([rs1, rs2, extra]) is Err
-**Contract evidence:** inferred (llvm-mc rejects a third operand with `invalid operand for instruction`; encode_instruction at encoder/mod.rs:699 passes operands through; rustdoc at system.rs:25-29 enumerates only the 0/1/2-operand forms)
+**Formal:** ∀ mn ∈ {csrrwi,csrrsi,csrrci}, rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ 0..=31, extra ∈ Operand. encode_csri([Reg(rd), Csr(csr), Imm(zimm), extra], funct3(mn)) = Err(_)
+**Contract evidence:** inferred (llvm-mc rejects extra operands; encode_instruction at encoder/mod.rs:706-708 passes operands through unchanged)
 **Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_sfence_vma([Reg("x0"), Reg("x0"), Imm(0)]) then Ok(Word(0x12000073))
-**Expected / Actual:** Err / Ok(Word(0x12000073)) — encoding of `sfence.vma x0, x0` with Imm(0) ignored
-**Impact:** Typos and extra tokens after a valid SFENCE.VMA are silently dropped, so the assembler accepts instructions other RISC-V assemblers reject
-**Root cause:** system.rs:31-32 — encode_sfence_vma reads at most operands[0] and operands[1] and never checks operands.len() > 2
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:31`
+**Severity:** high
+**Counterexample:** encode_csri([Reg("x0"), Csr("fflags"), Imm(0), Imm(0)], funct3=0b101)
+**Expected / Actual:** Err / Ok(Word(1069171)) = 0x00105073 = csrrwi x0, fflags, 0
+**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed SYSTEM CSR-immediate word instead of diagnosing the line.
+**Root cause:** system.rs:56-62 reads only operands[0..2] via get_reg/get_csr_num/get_imm and never checks operands.len(), so any trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:61`
 ```rust
-    let rs1 = if operands.is_empty() { 0 } else { get_reg(operands, 0)? };
-    let rs2 = if operands.len() < 2 { 0 } else { get_reg(operands, 1)? };
+    Ok(EncodeResult::Word(encode_i(OP_SYSTEM, rd, funct3, rs1, csr as i32)))
 ```
-**Suggested fix:** Reject any operand list longer than 2
+**Suggested fix:** Reject anything other than exactly three operands before packing.
 ```rust
-    if operands.len() > 2 {
-        return Err(format!("sfence.vma: expected at most 2 operands, got {}", operands.len()));
+    if operands.len() != 3 {
+        return Err("csri: expected rd, csr, zimm".to_string());
     }
-    let rs1 = if operands.is_empty() { 0 } else { get_reg(operands, 0)? };
-    let rs2 = if operands.len() < 2 { 0 } else { get_reg(operands, 1)? };
 ```
-**Bug report:** bug_reports/encode_sfence_vma_extra_operand.md
-**Repro seed:** cc 0b7719da28e1d3d095c2928475a56de2c5ad9f620ef72fc82096c07a8b4f2af5
+**Bug report:** bug_reports/encode_csri_extra_operand.md
+**Repro seed:** (deterministic regression; shrunk input Imm(0) extra)
 **Raw output:**
 ```text
-Test failed: extra operand must Err for sfence.vma x0, x0 (llvm-mc rejects extra operands); got Ok(Word(301990003)) at src/backend/riscv/assembler/encoder/encode_sfence_vma_pbt.rs:335.
-minimal failing input: rs1 = "x0", rs2 = "x0", extra = Imm(
+Test failed: extra operand must Err for csrrwi x0, fflags, 0 (llvm-mc rejects extra operands); got Ok(Word(1069171)) at src/backend/riscv/assembler/encoder/encode_csri_pbt.rs:484.
+minimal failing input: (mn, f3) = (
+    "csrrwi",
+    5,
+), rd = "x0", (csr_name, _num) = (
+    "fflags",
+    1,
+), zimm = 0, extra = Imm(
     0,
 )
+```
+
+### B2: encode_csri masks out-of-range zimm instead of rejecting
+
+**Formal:** ∀ rd ∈ GPR, csr ∈ KNOWN_CSR, zimm ∈ ℤ \ [0,31], f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(rd), Csr(csr), Imm(zimm)], f3) = Err(_)
+**Contract evidence:** inferred (RISC-V uimm5; llvm-mc "immediate must be an integer in the range [0, 31]")
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_csri([Reg("x0"), Csr("fflags"), Imm(-1)], funct3=0b101)
+**Expected / Actual:** Err / Ok(Word(2084979)) = 0x001FD073 = csrrwi x0, fflags, 31
+**Impact:** `csrrwi rd, csr, 32` is assembled as `csrrwi rd, csr, 0` and `csrrwi rd, csr, -1` as `csrrwi rd, csr, 31`, silently writing the wrong immediate into a CSR.
+**Root cause:** system.rs:59-60 casts the immediate to u32 and masks with 0x1F, so -1 becomes zimm 31 and 32 becomes zimm 0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:59`
+```rust
+    let zimm = get_imm(operands, 2)? as u32;
+    let rs1 = zimm & 0x1F;
+```
+**Suggested fix:** Reject zimm outside 0..=31 before masking.
+```rust
+    let zimm = get_imm(operands, 2)?;
+    if !(0..=31).contains(&zimm) {
+        return Err("csri: zimm out of range 0..=31".to_string());
+    }
+    let rs1 = (zimm as u32) & 0x1F;
+```
+**Bug report:** bug_reports/encode_csri_zimm_oob.md
+**Repro seed:** (deterministic regression; shrunk input zimm=-1)
+**Raw output:**
+```text
+Test failed: zimm -1 outside 0..=31 must Err (llvm-mc uimm5); got Ok(Word(2084979)) at src/backend/riscv/assembler/encoder/encode_csri_pbt.rs:501.
+minimal failing input: (_mn, f3) = (
+    "csrrwi",
+    5,
+), rd = "x0", (csr_name, _num) = (
+    "fflags",
+    1,
+), zimm = -1
+```
+
+### B3: encode_csri masks out-of-range CSR numbers instead of rejecting
+
+**Formal:** ∀ rd ∈ GPR, csr ∈ ℤ \ [0,4095], zimm ∈ 0..=31, f3 ∈ {0b101,0b110,0b111}. encode_csri([Reg(rd), Imm(csr), Imm(zimm)], f3) = Err(_)
+**Contract evidence:** inferred (RISC-V csr[11:0]; llvm-mc "immediate must be an integer in the range [0, 4095]")
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_csri([Reg("x0"), Imm(-1), Imm(0)], funct3=0b101)
+**Expected / Actual:** Err / Ok(Word(4293939315)) = 0xFFF05073 = csrrwi x0, 4095, 0
+**Impact:** `csrrwi rd, 4096, zimm` is assembled as `csrrwi rd, 0, zimm` and `csrrwi rd, -1, zimm` as `csrrwi rd, 4095, zimm`, silently targeting the wrong CSR.
+**Root cause:** system.rs:58 takes csr via get_csr_num (Imm is `*v as u32` with no range check) and system.rs:61 passes `csr as i32` into encode_i, which masks with 0xFFF, so -1 becomes csr 4095 and 4096 becomes csr 0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/system.rs:61`
+```rust
+    Ok(EncodeResult::Word(encode_i(OP_SYSTEM, rd, funct3, rs1, csr as i32)))
+```
+**Suggested fix:** Reject csr outside 0..=4095 before packing.
+```rust
+    let csr = get_csr_num(operands, 1)?;
+    if csr > 4095 {
+        return Err("csri: csr out of range 0..=4095".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_csri_csr_oob.md
+**Repro seed:** cc 745a50d4ca1ed424861fb6e37158bb42b51798a074ddde021732699eb810294a
+**Raw output:**
+```text
+Test failed: csr -1 outside 0..=4095 must Err (llvm-mc csr[11:0]); got Ok(Word(4293939315)) at src/backend/riscv/assembler/encoder/encode_csri_pbt.rs:518.
+minimal failing input: (_mn, f3) = (
+    "csrrwi",
+    5,
+), rd = "x0", zimm = 0, csr_num = -1
 ```
 
 ## Design Caveats
@@ -61,49 +133,60 @@ minimal failing input: rs1 = "x0", rs2 = "x0", extra = Imm(
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_sfence_vma_pbt.rs | 7 properties + 4 KAT + 1 regression witness |
+| src/backend/riscv/assembler/encoder/encode_csri_pbt.rs | 8 properties + 2 KAT + 3 regression witnesses |
+| src/backend/riscv/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_csri_pbt;` registration |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_sfence_vma -- --test-threads=1
+cargo test --lib encode_csri -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_sfence_vma_neg_extra -- --test-threads=1
+cargo test --lib encode_csri_neg_extra -- --test-threads=1
 ```
 
-Regression witness:
+B2 zimm OOB:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sfence_vma_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_csri_neg_zimm_oob -- --test-threads=1
+```
+
+B3 csr OOB:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_csri_neg_csr_oob -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/report.json
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/bug_reports/encode_sfence_vma_extra_operand.md
-- pbt-out/bug_reports/encode_sfence_vma_extra_operand.html
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_csri_extra_operand.md
+- pbt-out/bug_reports/encode_csri_extra_operand.html
+- pbt-out/bug_reports/encode_csri_zimm_oob.md
+- pbt-out/bug_reports/encode_csri_zimm_oob.html
+- pbt-out/bug_reports/encode_csri_csr_oob.md
+- pbt-out/bug_reports/encode_csri_csr_oob.html
+- pbt-out/run/encode_csri_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 17:03 (campaign: coverage)
-> Files: 13/13 scanned (100%) | Functions: 198/337 total | PBT candidates: 198 | Tested: 198 (100%) | 1 pass, 198 fail
+> Last updated: 2026-10-06 17:16 (campaign: coverage)
+> Files: 13/13 scanned (100%) | Functions: 199/337 total | PBT candidates: 199 | Tested: 199 (100%) | 1 pass, 199 fail
 
 ## Summary
 
@@ -112,10 +195,10 @@ cargo test --lib test_encode_sfence_vma_regression_extra_operand -- --test-threa
 | Total source files | 13 |
 | Files scanned | 13 / 13 (100%) |
 | Total functions (all files) | 337 |
-| PBT candidates (from FUNCTION_INDEX) | 198 |
-| **Tested (of PBT candidates)** | **198 / 198 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 198 / -1 |
-| **Overall (tested / all functions)** | **198 / 337 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 199 |
+| **Tested (of PBT candidates)** | **199 / 199 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 199 / -1 |
+| **Overall (tested / all functions)** | **199 / 337 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -123,13 +206,13 @@ cargo test --lib test_encode_sfence_vma_regression_extra_operand -- --test-threa
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 198 | 198 | 0 | 100% |
+|  | 199 | 199 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 198 | 198 | 0 | 100% |
+| unknown | 199 | 199 | 0 | 100% |
 
 ## File Coverage
 
@@ -350,3 +433,4 @@ cargo test --lib test_encode_sfence_vma_regression_extra_operand -- --test-threa
 | encode_lr | atomics.rs |
 | encode_sc | atomics.rs |
 | encode_sfence_vma | system.rs |
+| encode_csri | system.rs |

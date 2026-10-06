@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_csri)
+
+- Valid 3-operand `csrrwi`/`csrrsi`/`csrrci` with GPR rd, named CSR, and zimm in 0..=31 matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins csrrwi x1, mstatus, 5 = 0x3002d0f3, csrrsi a0, sstatus, 0 = 0x10006573, csrrci x31, fflags, 31 = 0x001ffff3.
+- I-type SYSTEM CSR-immediate layout holds: opcode=0b1110011, rd/funct3 as given, zimm in rs1 bits[19:15], csr in imm[11:0] (1000 cases).
+- ABI names, xN, fp=s0/x8, and Imm 0..=31 as rd encode the same word (1000 cases).
+- Csr(name), Imm(num), Symbol(name), Csr(hex), Csr(decimal), and Reg(name) encode the same CSR (1000 cases).
+- Empty, missing csr/zimm, FP rd, invalid GPR, unknown CSR, and non-Imm zimm return Err (1000 cases).
+- Extra operands, zimm outside 0..=31, and csr outside 0..=4095 currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_csri)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_csri_pbt.rs, cargo test --lib encode_csri, proptest cases=1000.
+- Dispatch: encoder/mod.rs:706-708 csrrwi/csrrsi/csrrci => encode_csri with operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries). Sweep was a manual audit of valid 3-operand / extra / zimm OOB / csr OOB / arity / FP / unknown CSR. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+
+## Quirks (encode_csri)
+
+- get_reg accepts Imm 0..=31 as a register number (encoder/mod.rs:386 GCC inline-asm comment); not encode_csri's own contract. llvm-mc rejects `csrrwi 0, mstatus, 5` as a missing-register form but the SUT treats Imm 0 as x0, matching the documented GCC inline-asm helper.
+- cycleh/timeh/instreth are in csr_name_to_num but llvm-mc RV64 rejects them ("system register use requires an option to be enabled"); generators use the 24-name KNOWN_CSR table that both accept.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_sfence_vma)
 
 - 0/1/2-operand `sfence.vma` with GPR names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins bare sfence.vma = 0x12000073, sfence.vma a0 = 0x12050073, sfence.vma a0, a1 = 0x12b50073, sfence.vma x31, x31 = 0x13ff8073.

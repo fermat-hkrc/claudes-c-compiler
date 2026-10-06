@@ -50,6 +50,8 @@ mod encode_lr_pbt;
 mod encode_sc_pbt;
 #[cfg(test)]
 mod encode_sfence_vma_pbt;
+#[cfg(test)]
+mod encode_csri_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;
