@@ -571,3 +571,98 @@ fn find_best_callee_reg(
 
     best_already_used.or(best_new)
 }
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::{allocate_registers, PhysReg, RegAllocConfig};
+    use crate::backend::liveness::compute_live_intervals;
+    use crate::backend::pbt_backend_common::{build_random_cfg, CfgSpec};
+    use crate::ir::reexports::Instruction;
+    use proptest::prelude::*;
+
+    /// P7: linear-scan soundness on random CFGs:
+    ///  (a) two values assigned the same physical register have disjoint
+    ///      live intervals;
+    ///  (b) a value whose interval strictly spans a call point is assigned a
+    ///      CALLEE-SAVED register (README Phase 1 vs Phase 2);
+    ///  (c) only whitelist-eligible defs get registers (the builder emits
+    ///      BinOp/Cmp/Cast/Copy/Call defs — all eligible — plus uses of the
+    ///      two params, which are NOT eligible and must stay unassigned).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p7_regalloc_soundness(
+            n_blocks in 2u8..8,
+            insts in prop::collection::vec(any::<(u8, u8, i64)>(), 1..10),
+            terms in prop::collection::vec(any::<(u8, u32, u32)>(), 1..8),
+            pool_shape in 0u8..4,
+        ) {
+            let spec = CfgSpec { n_blocks, insts, terms };
+            let f = build_random_cfg(&spec);
+            let (callee, caller) = match pool_shape % 4 {
+                0 => (4usize, 4usize),   // x86-like
+                1 => (9, 2),             // arm-like
+                2 => (6, 0),             // callee-only
+                _ => (0, 4),             // caller-only
+            };
+            let config = RegAllocConfig {
+                available_regs: (0..callee as u8).map(PhysReg).collect(),
+                caller_saved_regs: (100..100 + caller as u8).map(PhysReg).collect(),
+                allow_inline_asm_regalloc: false,
+            };
+            let result = allocate_registers(&f, &config);
+            let live = compute_live_intervals(&f);
+            let iv_of: std::collections::HashMap<u32, (u32, u32)> = live.intervals.iter()
+                .map(|iv| (iv.value_id, (iv.start, iv.end))).collect();
+
+            // (a) disjoint intervals per register
+            let mut by_reg: std::collections::HashMap<u8, Vec<(u32, u32)>> = std::collections::HashMap::new();
+            for (vid, reg) in &result.assignments {
+                if let Some(&(s, e)) = iv_of.get(vid) {
+                    by_reg.entry(reg.0).or_default().push((s, e));
+                }
+            }
+            for (_r, ivs) in by_reg {
+                let mut ivs = ivs;
+                ivs.sort();
+                for w in ivs.windows(2) {
+                    prop_assert!(w[0].1 < w[1].0,
+                        "overlapping intervals on one register: {:?} vs {:?}", w[0], w[1]);
+                }
+            }
+
+            // (b) call-spanning values in callee-saved registers only
+            let callee_set: std::collections::HashSet<u8> =
+                config.available_regs.iter().map(|r| r.0).collect();
+            for (vid, reg) in &result.assignments {
+                if let Some(&(s, e)) = iv_of.get(vid) {
+                    let spans_call = live.call_points.iter().any(|&cp| s < cp && cp < e);
+                    if spans_call {
+                        prop_assert!(callee_set.contains(&reg.0),
+                            "value {} spans a call but got caller-saved reg {}", vid, reg.0);
+                    }
+                }
+            }
+
+            // (c) eligibility: params (values 0/1, only ever used, never
+            // defined by an instruction) must never be assigned.
+            for pv in [0u32, 1u32] {
+                prop_assert!(!result.assignments.contains_key(&pv),
+                    "param value {} is not whitelist-eligible but got a register", pv);
+            }
+            // assigned values must be defined by eligible instruction kinds
+            let defs: std::collections::HashSet<u32> = f.blocks.iter().flat_map(|b| b.instructions.iter())
+                .filter_map(|i| match i {
+                    Instruction::BinOp { dest, .. } | Instruction::Cmp { dest, .. }
+                    | Instruction::Cast { dest, .. } | Instruction::Copy { dest, .. } => Some(dest.0),
+                    Instruction::Call { info, .. } => info.dest.map(|d| d.0),
+                    _ => None,
+                })
+                .collect();
+            for vid in result.assignments.keys() {
+                prop_assert!(defs.contains(vid),
+                    "value {} assigned a register but has no eligible def", vid);
+            }
+        }
+    }
+}

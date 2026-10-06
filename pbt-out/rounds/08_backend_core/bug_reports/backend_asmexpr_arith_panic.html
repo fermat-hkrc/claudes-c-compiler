@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Defect Report: parse_integer_expr debug panic on arithmetic overflow / out-of-range shifts</title>
+<style>body{max-width:960px;margin:2rem auto;padding:0 1rem;color:#172033;font:16px/1.6 system-ui,sans-serif}h1{color:#0d3b66}h2{margin-top:2rem;color:#174a7c}code,pre{background:#f3f6fa;border-radius:4px}pre{padding:1rem;overflow-x:auto;white-space:pre-wrap}.badge{display:inline-block;padding:.1rem .5rem;border-radius:99px;background:#fce7e7;color:#8a1c1c;font-weight:600}</style></head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: parse_integer_expr panics in debug on arithmetic overflow / out-of-range shifts</h1>
+<p><span class="badge">low</span> <code>b1</code> <span style="color:#56657a">round 08 — src/backend root · <a href="https://github.com/fermat-hkrc/claudes-c-compiler/issues/765">issue #765</a></span></p>
+<h2>Issue Synopsis</h2><p>The Result-returning asm constant-expression parser debug-panics (plain <code>*=</code> / <code>&lt;&lt;=</code> / <code>&gt;&gt;</code> on i64/u64) instead of returning Err; release builds wrap silently (1&lt;&lt;64 → 1, llvm-mc-style; GNU as warns and yields 0).</p>
+<h2>Reproduction Protocol</h2><pre>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib backend::asm_expr::pbt_regression::test_asmexpr_regression_arith_panic_not_err --exact --nocapture</pre>
+<h2>Remediation Strategy</h2><p>Use checked_mul and validate shift amounts &lt; 64 in eval_tokens, mapping to Err; red witness in src/backend/asm_expr.rs pbt_regression.</p>
+</body></html>

@@ -23,6 +23,9 @@ pub(crate) mod x86_common;  // Shared x86/i686 register names, condition codes, 
 pub(crate) mod liveness;     // Live interval computation
 pub(crate) mod regalloc;     // Linear scan register allocator
 
+#[cfg(test)]
+mod pbt_backend_common;      // Shared PBT helpers (round 08+): CFG builder + naive liveness reference
+
 
 pub(crate) mod x86;
 pub(crate) mod i686;

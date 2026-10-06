@@ -259,3 +259,116 @@ pub fn f128_const_halves(op: &Operand) -> Option<(u64, u64)> {
         None
     }
 }
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// The 14-type grid (Void excluded), with an INDEPENDENT type model:
+    /// (size in bytes, is_float, is_f128, is_ptr) — not derived from the SUT.
+    fn ty_by_index(i: u8) -> IrType {
+        const T: [IrType; 14] = [
+            IrType::I8, IrType::I16, IrType::I32, IrType::I64, IrType::I128,
+            IrType::U8, IrType::U16, IrType::U32, IrType::U64, IrType::U128,
+            IrType::F32, IrType::F64, IrType::F128, IrType::Ptr,
+        ];
+        T[(i as usize) % 14]
+    }
+    fn model(ty: &IrType) -> (usize, bool, bool, bool) {
+        // (bytes, float?, f128?, ptr?)
+        let t = *ty;
+        let size = match t {
+            IrType::I8 | IrType::U8 => 1,
+            IrType::I16 | IrType::U16 => 2,
+            IrType::I32 | IrType::U32 | IrType::F32 => 4,
+            IrType::I64 | IrType::U64 | IrType::F64 | IrType::Ptr => 8,
+            IrType::I128 | IrType::U128 | IrType::F128 => 16,
+            _ => 8,
+        };
+        (size, t.is_float(), t == IrType::F128, t == IrType::Ptr)
+    }
+
+    /// P1: README cast table Noop rows — same type, and Ptr → I64/U64
+    /// (pointer normalization). Exhaustive over the type grid × both flags.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p1_cast_noop_laws(a in 0u8..14, b in 0u8..14, native in any::<bool>()) {
+            let (from, to) = (ty_by_index(a), ty_by_index(b));
+            let kind = classify_cast_with_f128(from, to, native);
+            if from == to {
+                prop_assert_eq!(kind, CastKind::Noop, "same-type {:?}->{:?} must be Noop", from, to);
+            }
+            if from == IrType::Ptr && (to == IrType::I64 || to == IrType::U64) {
+                prop_assert_eq!(kind, CastKind::Noop, "Ptr->{:?} must be Noop", to);
+            }
+        }
+    }
+
+    /// P2: directional laws from the independent type model — IntWiden only
+    /// for widening integer pairs, IntNarrow only narrowing, FloatToFloat only
+    /// F32↔F64, same-size reinterprets only at equal size, cross-family kinds
+    /// only when exactly one side is float, F128 kinds involve F128.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p2_cast_directional_laws(a in 0u8..14, b in 0u8..14, native in any::<bool>()) {
+            let (from, to) = (ty_by_index(a), ty_by_index(b));
+            let (sf, ff, f128f, pf) = model(&from);
+            let (st, ft, f128t, _) = model(&to);
+            let int_f = !ff; // Ptr normalizes to U64 — integer family for casts
+            let int_t = !ft;
+            match classify_cast_with_f128(from, to, native) {
+                CastKind::Noop => {}
+                CastKind::IntWiden { .. } => prop_assert!(int_f && int_t && st > sf,
+                    "IntWiden for {:?}->{:?} ({}->{})", from, to, sf, st),
+                CastKind::IntNarrow { .. } => prop_assert!(int_f && int_t && st < sf,
+                    "IntNarrow for {:?}->{:?}", from, to),
+                CastKind::FloatToFloat { .. } => prop_assert!(
+                    (from == IrType::F32 && to == IrType::F64)
+                        || (from == IrType::F64 && to == IrType::F32)
+                        // x86 F128-reduction: F128 ≈ F64, so F128->F32 is a
+                        // legitimate FloatToFloat there (native=false).
+                        || (!native && (f128f || f128t) && (from.is_float() && to.is_float())),
+                    "FloatToFloat for {:?}->{:?} native={}", from, to, native),
+                CastKind::SignedToUnsignedSameSize { .. } | CastKind::UnsignedToSignedSameSize { .. } =>
+                    prop_assert!(int_f && int_t && sf == st,
+                        "same-size reinterpret for {:?}->{:?}", from, to),
+                CastKind::FloatToSigned { .. } | CastKind::FloatToUnsigned { .. } =>
+                    // x86 F128-reduction: F128 is treated as F64, so F128->int
+                    // legitimately classifies as float->int there (native=false).
+                    prop_assert!(ff && !ft && (!f128f || !native), "float->int for {:?}->{:?} native={}", from, to, native),
+                CastKind::SignedToFloat { .. } | CastKind::UnsignedToFloat { .. } =>
+                    // x86 F128-reduction: F128 is treated as F64, so int->F128
+                    // legitimately classifies as int->float there (native=false).
+                    prop_assert!(!ff && ft && (!f128t || !native), "int->float for {:?}->{:?} native={}", from, to, native),
+                k => {
+                    // Every F128-related kind must involve F128 on a side
+                    // (x86 F128-reduction paths only trigger when a side IS F128).
+                    let name = format!("{:?}", k);
+                    if name.contains("F128") {
+                        prop_assert!(f128f || f128t, "{} for {:?}->{:?}", name, from, to);
+                    }
+                }
+            }
+        }
+    }
+
+    /// P3: f128_is_native only distinguishes F128 handling — for type pairs
+    /// not involving F128 the classification must be identical under both.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p3_cast_f128_flag_independence(a in 0u8..14, b in 0u8..14) {
+            let (from, to) = (ty_by_index(a), ty_by_index(b));
+            if from != IrType::F128 && to != IrType::F128 {
+                prop_assert_eq!(
+                    classify_cast_with_f128(from, to, false),
+                    classify_cast_with_f128(from, to, true),
+                    "flag changed classification for {:?}->{:?}", from, to
+                );
+            }
+        }
+    }
+}

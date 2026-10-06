@@ -140,3 +140,22 @@ Environment quirks (round 05):
   cases) — do not mistake a 60s watchdog line for a hang.
 - Environment: RUST_TEST_THREADS=1 for serial reconfirmation; proptest seed
   files live in proptest-regressions/passes/ and replay automatically.
+
+## Round 08 — src/backend root (2026-10-05)
+
+- asm constant expressions: >> is LOGICAL (unsigned) per GNU as AND llvm-mc
+  (both evaluate (-1)>>1 to 0x7FFF...; verified by assembling .quad with both);
+  out-of-range shifts and mul overflow debug-panic in parse_integer_expr
+  (bug #765, red until fixed) — release wraps (llvm-mc-like).
+- classify_params_full encodes variadicity in config.variadic_floats_in_gp
+  (always passes is_variadic=true to the core) — non-variadic functions must
+  pair with false (call_abi.rs comment).
+- LivenessResult.block_loop_depth is EMPTY for zero-value functions (early
+  return) despite the per-block doc; consumers iterate — safe today.
+- compute_live_intervals: program point = 1/instruction + terminator point;
+  unused values' interval end falls back to start; verified against a naive
+  textbook dataflow (512 random CFGs, exact equality).
+- regalloc linear scan: disjoint-per-register + callee-saved-for-call-spanning
+  + eligibility whitelist all hold on random CFGs across 4 pool shapes.
+- Cast classification: x86 F128-reduction (F128≈F64) makes F128↔X classify as
+  the F64 form under f128_is_native=false — documented, not a defect.

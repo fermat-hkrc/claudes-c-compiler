@@ -407,3 +407,172 @@ mod tests {
     }
 
 }
+
+#[cfg(test)]
+mod pbt_tests2 {
+    use super::parse_integer_expr;
+    use proptest::prelude::*;
+
+    /// P8: a generated expression tree rendered fully parenthesized must
+    /// parse to the tree's independently computed value. Operators per the
+    /// documented grammar: | ^ & << >> + - * / % ~ and unary minus.
+    #[derive(Clone)]
+    enum Tree {
+        Lit(i64),
+        Bin(&'static str, Box<Tree>, Box<Tree>),
+        Neg(Box<Tree>),
+        Not(Box<Tree>),
+    }
+
+    fn render(t: &Tree) -> String {
+        match t {
+            Tree::Lit(v) => {
+                if *v < 16 && *v >= 0 { format!("0x{:x}", v) } else { format!("{}", v) }
+            }
+            Tree::Bin(op, a, b) => format!("({} {} {})", render(a), op, render(b)),
+            Tree::Neg(a) => format!("-({})", render(a)),
+            Tree::Not(a) => format!("~({})", render(a)),
+        }
+    }
+
+    fn eval(t: &Tree) -> i64 {
+        match t {
+            Tree::Lit(v) => *v,
+            Tree::Bin(op, a, b) => {
+                let (x, y) = (eval(a), eval(b));
+                match *op {
+                    "+" => x.wrapping_add(y),
+                    "-" => x.wrapping_sub(y),
+                    "*" => x.wrapping_mul(y),
+                    "/" => x.wrapping_div(y),
+                    "%" => x.wrapping_rem(y),
+                    "<<" => x.wrapping_shl((y & 15) as u32),
+                    // >> = LOGICAL shift per the reference assemblers:
+                    // GNU as and llvm-mc both evaluate (-1)>>1 to
+                    // 0x7FFFFFFFFFFFFFFF (unsigned expression semantics).
+                    ">>" => ((x as u64).wrapping_shr((y & 15) as u32)) as i64,
+                    "&" => x & y,
+                    "|" => x | y,
+                    "^" => x ^ y,
+                    _ => unreachable!(),
+                }
+            }
+            Tree::Neg(a) => eval(a).wrapping_neg(),
+            Tree::Not(a) => !eval(a),
+        }
+    }
+
+    /// Token stream → tree: (kind, payload). kind 0..8 = binary op, 9 = neg,
+    /// 10 = not, 11+ = literal. Stack-built (RPN-like).
+    fn build_tree(tokens: &[(u8, i64)]) -> Tree {
+        let ops = ["+", "-", "*", "/", "%", "<<", ">>", "&", "|", "^"];
+        let mut stack: Vec<Tree> = vec![];
+        for &(k, v) in tokens {
+            let t = match k % 12 {
+                0..=9 => {
+                    if stack.len() >= 2 {
+                        let b = stack.pop().unwrap();
+                        let a = stack.pop().unwrap();
+                        Tree::Bin(ops[(k % 12) as usize], Box::new(a), Box::new(b))
+                    } else {
+                        Tree::Lit(v.abs() % 4096)
+                    }
+                }
+                10 => {
+                    let a = if stack.is_empty() { Tree::Lit(1) } else { stack.pop().unwrap() };
+                    Tree::Neg(Box::new(a))
+                }
+                11 => {
+                    let a = if stack.is_empty() { Tree::Lit(1) } else { stack.pop().unwrap() };
+                    Tree::Not(Box::new(a))
+                }
+                _ => Tree::Lit(v.abs() % 4096),
+            };
+            stack.push(t);
+        }
+        let mut root = if stack.is_empty() { Tree::Lit(0) } else { stack.pop().unwrap() };
+        while let Some(a) = stack.pop() {
+            root = Tree::Bin("+", Box::new(a), Box::new(root));
+        }
+        root
+    }
+
+    /// Neutralize UB-ish forms at render time: /0 and %0 replaced by /1,
+    /// shift amounts masked to 0..15 (rendered text must match eval's domain).
+    fn fixup(t: Tree) -> Tree {
+        match t {
+            Tree::Bin(op, a, b) => {
+                let a = Box::new(fixup(*a));
+                let mut b = Box::new(fixup(*b));
+                if op == "<<" || op == ">>" {
+                    let amt = (eval(&b) & 15) as i64;
+                    b = Box::new(Tree::Lit(amt));
+                }
+                if (op == "/" || op == "%") && eval(&b) == 0 {
+                    b = Box::new(Tree::Lit(1));
+                }
+                Tree::Bin(op, a, b)
+            }
+            Tree::Neg(a) => Tree::Neg(Box::new(fixup(*a))),
+            Tree::Not(a) => Tree::Not(Box::new(fixup(*a))),
+            l => l,
+        }
+    }
+
+    /// Keep every node's |value| within i64/4: the SUT's parser uses plain
+    /// `*=`/`<<=` (debug-overflow panics — covered by the red regression),
+    /// so the SEMANTIC property stays in the defined-evaluation domain by
+    /// replacing overflowing `*`/`<<` nodes with the bounded `&`.
+    fn bound(t: Tree) -> Tree {
+        match t {
+            Tree::Bin(op, a, b) => {
+                let a = Box::new(bound(*a));
+                let b = Box::new(bound(*b));
+                let a2 = a.clone();
+                let b2 = b.clone();
+                let inner = Tree::Bin(op, a, b);
+                let v = eval(&inner).wrapping_abs();
+                if v > (i64::MAX / 4) as i64 {
+                    Tree::Bin("&", a2, b2)
+                } else {
+                    inner
+                }
+            }
+            Tree::Neg(a) => Tree::Neg(Box::new(bound(*a))),
+            Tree::Not(a) => Tree::Not(Box::new(bound(*a))),
+            l => l,
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p8_asmexpr_parse_matches_evaluator(
+            tokens in prop::collection::vec(any::<(u8, i64)>(), 1..14)
+        ) {
+            let tree = bound(fixup(build_tree(&tokens)));
+            let expected = eval(&tree);
+            let s = render(&tree);
+            let got = parse_integer_expr(&s).unwrap_or_else(|e| panic!("parse failed for {}: {}", s, e));
+            prop_assert_eq!(got, expected, "expr: {}", s);
+        }
+    }
+}
+
+#[cfg(test)]
+mod pbt_regression {
+    use super::parse_integer_expr;
+
+    /// RED WITNESS — round 08 bug (issue #765): out-of-range shift amounts
+    /// PANIC instead of returning Err — `(val as u64) >> n` / `val <<= n` on
+    /// i64 debug-panic for n >= 64, and wrap silently in release (1<<64 -> 1).
+    /// A Result-returning parser must reject the input.
+    #[test]
+    fn test_asmexpr_regression_arith_panic_not_err() {
+        assert!(parse_integer_expr("1 << 64").is_err());
+        assert!(parse_integer_expr("4 >> 64").is_err());
+        assert!(parse_integer_expr("1 << 1000").is_err());
+        // plain `*=` on i64: debug panic instead of Err
+        assert!(parse_integer_expr("9223372036854775807 * 9223372036854775807").is_err());
+    }
+}

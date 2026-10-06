@@ -868,3 +868,191 @@ pub fn compute_stack_push_bytes(arg_classes: &[CallArgClass]) -> usize {
     }
     total
 }
+
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{IrConst, Operand, Terminator};
+    use crate::passes::pbt_common::FnBuilder;
+    use proptest::prelude::*;
+
+    /// Scalar argument type grid (struct args excluded from the differential:
+    /// they need SysV eightbyte classification — a different property).
+    fn ty_by_index(i: u8) -> IrType {
+        const T: [IrType; 10] = [
+            IrType::I32, IrType::I64, IrType::Ptr, IrType::U32, IrType::U64,
+            IrType::I128, IrType::F128, IrType::F32, IrType::F64, IrType::U8,
+        ];
+        T[(i as usize) % 10]
+    }
+
+    /// The four documented configs (README: x86 6+8; ARM 8+8 (F128 in FP regs,
+    /// sret x8); RISC-V 8+8 (F128 GP pairs, variadic floats in GP, by-ref);
+    /// i686 regparm=3).
+    fn config_by_index(i: u8) -> CallAbiConfig {
+        match i % 4 {
+            0 => CallAbiConfig {
+                max_int_regs: 6, max_float_regs: 8, align_i128_pairs: false,
+                f128_in_fp_regs: false, f128_in_gp_pairs: false,
+                variadic_floats_in_gp: false, large_struct_by_ref: false,
+                use_sysv_struct_classification: true,
+                use_riscv_float_struct_classification: false,
+                allow_struct_split_reg_stack: false, align_struct_pairs: false,
+                sret_uses_dedicated_reg: false,
+            },
+            1 => CallAbiConfig {
+                max_int_regs: 8, max_float_regs: 8, align_i128_pairs: true,
+                f128_in_fp_regs: true, f128_in_gp_pairs: false,
+                variadic_floats_in_gp: false, large_struct_by_ref: true,
+                use_sysv_struct_classification: false,
+                use_riscv_float_struct_classification: false,
+                allow_struct_split_reg_stack: false, align_struct_pairs: false,
+                sret_uses_dedicated_reg: true,
+            },
+            2 => CallAbiConfig {
+                max_int_regs: 8, max_float_regs: 8, align_i128_pairs: true,
+                f128_in_fp_regs: false, f128_in_gp_pairs: true,
+                variadic_floats_in_gp: true, large_struct_by_ref: true,
+                use_sysv_struct_classification: false,
+                use_riscv_float_struct_classification: true,
+                allow_struct_split_reg_stack: true, align_struct_pairs: true,
+                sret_uses_dedicated_reg: false,
+            },
+            _ => CallAbiConfig {
+                max_int_regs: 3, max_float_regs: 8, align_i128_pairs: false,
+                f128_in_fp_regs: false, f128_in_gp_pairs: false,
+                variadic_floats_in_gp: false, large_struct_by_ref: false,
+                use_sysv_struct_classification: false,
+                use_riscv_float_struct_classification: false,
+                allow_struct_split_reg_stack: false, align_struct_pairs: false,
+                sret_uses_dedicated_reg: false,
+            },
+        }
+    }
+
+    /// Location abstraction shared by caller/callee classes: WHERE the
+    /// argument lives, resolving the F128Reg folding with config knowledge.
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    enum Loc { Gp(usize), Fp(usize), GpPair(usize), Stack, Skip }
+
+    fn caller_loc(c: &CallArgClass, cfg: &CallAbiConfig) -> Loc {
+        match c {
+            CallArgClass::IntReg { reg_idx } => Loc::Gp(*reg_idx),
+            CallArgClass::FloatReg { reg_idx } => Loc::Fp(*reg_idx),
+            CallArgClass::I128RegPair { base_reg_idx } => Loc::GpPair(*base_reg_idx),
+            CallArgClass::F128Reg { reg_idx } =>
+                if cfg.f128_in_gp_pairs { Loc::GpPair(*reg_idx) } else { Loc::Fp(*reg_idx) },
+            CallArgClass::ZeroSizeSkip => Loc::Skip,
+            _ => Loc::Stack,
+        }
+    }
+
+    fn callee_loc(c: &ParamClass) -> Loc {
+        match c {
+            ParamClass::IntReg { reg_idx } => Loc::Gp(*reg_idx),
+            ParamClass::FloatReg { reg_idx } => Loc::Fp(*reg_idx),
+            ParamClass::I128RegPair { base_reg_idx } => Loc::GpPair(*base_reg_idx),
+            ParamClass::F128FpReg { reg_idx } => Loc::Fp(*reg_idx),
+            ParamClass::F128GpPair { lo_reg_idx, .. } => Loc::GpPair(*lo_reg_idx),
+            ParamClass::ZeroSizeSkip => Loc::Skip,
+            _ => Loc::Stack,
+        }
+    }
+
+    fn classify_scalar_call(args: &[IrType], cfg: &CallAbiConfig) -> Vec<CallArgClass> {
+        let ops: Vec<Operand> = args.iter().map(|_| Operand::Const(IrConst::I64(0))).collect();
+        let n = args.len();
+        classify_call_args(
+            &ops, args,
+            &vec![None; n], &vec![None; n],
+            &vec![vec![]; n], &vec![None; n],
+            false, cfg,
+        )
+    }
+
+    /// P4: README contract — "callers and callees must agree exactly on where
+    /// each argument lives": classify_call_args (caller) vs classify_params_full
+    /// (callee) on the same scalar type list, per config.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p4_callabi_caller_callee_agreement(
+            cfg_idx in 0u8..4,
+            arg_idx in prop::collection::vec(0u8..10, 0..13),
+        ) {
+            // The callee side (classify_params_full) always passes
+            // is_variadic=true to the core and encodes variadicity in
+            // config.variadic_floats_in_gp ("set by the caller based on
+            // func.is_variadic" — call_abi.rs comment). A NON-variadic
+            // function therefore pairs with variadic_floats_in_gp=false.
+            let mut cfg = config_by_index(cfg_idx);
+            cfg.variadic_floats_in_gp = false;
+            let cfg = &cfg;
+            let tys: Vec<IrType> = arg_idx.iter().map(|&i| ty_by_index(i)).collect();
+            let caller: Vec<Loc> = classify_scalar_call(&tys, &cfg).iter()
+                .map(|c| caller_loc(c, &cfg)).collect();
+            let mut b = FnBuilder::new("f", IrType::I32, &tys);
+            b.block(vec![], Terminator::Return(None));
+            let func = b.seal();
+            let pc = classify_params_full(&func, &cfg);
+            let callee: Vec<Loc> = pc.classes.iter().map(callee_loc).collect();
+            prop_assert_eq!(caller, callee,
+                "caller/callee disagreement cfg={:?} tys={:?}", cfg_idx, tys);
+        }
+    }
+
+    /// P5: capacity + zero-size-skip bookkeeping: register indices below the
+    /// config maxima; a zero-size struct argument consumes nothing (later
+    /// arguments' locations unchanged when zero-size args are injected).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p5_callabi_capacity_and_skip(
+            cfg_idx in 0u8..4,
+            arg_idx in prop::collection::vec(0u8..10, 1..10),
+            n_zero in 0u8..4,
+            inject_at in any::<u8>(),
+        ) {
+            let cfg = config_by_index(cfg_idx);
+            let base: Vec<IrType> = arg_idx.iter().map(|&i| ty_by_index(i)).collect();
+            let classes = classify_scalar_call(&base, &cfg);
+            for c in &classes {
+                if let CallArgClass::IntReg { reg_idx } = c {
+                    prop_assert!(*reg_idx < cfg.max_int_regs, "IntReg idx {} >= max {}", reg_idx, cfg.max_int_regs);
+                }
+                if let CallArgClass::FloatReg { reg_idx } = c {
+                    prop_assert!(*reg_idx < cfg.max_float_regs, "FloatReg idx {} >= max {}", reg_idx, cfg.max_float_regs);
+                }
+                if let CallArgClass::I128RegPair { base_reg_idx } = c {
+                    prop_assert!(*base_reg_idx < cfg.max_int_regs, "I128 pair base {} >= max {}", base_reg_idx, cfg.max_int_regs);
+                }
+            }
+            // zero-size injection: struct_size Some(0) at position inject_at
+            let mut ops: Vec<Operand> = base.iter().map(|_| Operand::Const(IrConst::I64(0))).collect();
+            let mut tys = base.clone();
+            let mut sizes: Vec<Option<usize>> = vec![None; tys.len()];
+            let at = (inject_at as usize) % (tys.len() + 1);
+            tys.insert(at, IrType::Ptr);
+            sizes.insert(at, Some(0));
+            ops.push(Operand::Const(IrConst::I64(0))); // ops len may exceed; classifier reads per-index
+            let ops: Vec<Operand> = tys.iter().map(|_| Operand::Const(IrConst::I64(0))).collect();
+            let with_zero = classify_call_args(
+                &ops, &tys, &sizes, &vec![None; tys.len()],
+                &vec![vec![]; tys.len()], &vec![None; tys.len()],
+                false, &cfg,
+            );
+            prop_assert_eq!(with_zero.len(), tys.len());
+            prop_assert!(matches!(with_zero[at], CallArgClass::ZeroSizeSkip),
+                "size-0 struct at {} not skipped: {:?}", at, with_zero[at]);
+            // Non-zero args keep their locations.
+            let mut zi = 0usize;
+            for (i, c) in with_zero.iter().enumerate() {
+                if i == at { continue; }
+                prop_assert_eq!(caller_loc(c, &cfg), caller_loc(&classes[zi], &cfg),
+                    "zero-size arg shifted arg {}'s location", zi);
+                zi += 1;
+            }
+        }
+    }
+}

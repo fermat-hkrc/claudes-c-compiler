@@ -1,0 +1,162 @@
+{
+ "schemaVersion": 3,
+ "generator": {
+  "tool": "pi-pbt",
+  "version": "0.1.25 (pi 0.87.1)"
+ },
+ "run": {
+  "date": "2026-10-05",
+  "revision": "74fb6845",
+  "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "target": "src/backend root",
+  "tier": "standard"
+ },
+ "build": {
+  "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+  "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "result": "success"
+ },
+ "properties": [
+  {
+   "id": "p1",
+   "name": "cast_noop_laws",
+   "formal": "\u2200 from,to \u2208 14-type grid, native: (from==to \u2228 (Ptr \u2227 to\u2208{I64,U64})) \u21d2 classify_cast_with_f128 == Noop",
+   "oracle": "reference",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/cast.rs",
+   "sourceLine": 67,
+   "functionName": "classify_cast_with_f128",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/cast.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p2",
+   "name": "cast_directional_laws",
+   "formal": "\u2200 from,to,native: kind(classify) direction-consistent with the independent (size,float,f128,ptr) type model (x86 F128-reduction documented)",
+   "oracle": "reference",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/cast.rs",
+   "sourceLine": 67,
+   "functionName": "classify_cast_with_f128",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/cast.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p3",
+   "name": "cast_f128_flag_independence",
+   "formal": "\u2200 from,to not involving F128: classify(from,to,false) == classify(from,to,true)",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/cast.rs",
+   "sourceLine": 67,
+   "functionName": "classify_cast_with_f128",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/cast.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p4",
+   "name": "callabi_caller_callee_agreement",
+   "formal": "\u2200 config \u2208 4 documented shapes (non-variadic pairing), \u2200 scalar type lists (\u226412): locations(classify_call_args) == locations(classify_params_full)",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/call_abi.rs",
+   "sourceLine": 567,
+   "functionName": "classify_call_args",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/call_abi.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p5",
+   "name": "callabi_capacity_and_skip_bookkeeping",
+   "formal": "\u2200 config, type lists, zero-struct injections: reg indices < config maxima; size-0 args are ZeroSizeSkip and never shift later args",
+   "oracle": "algebraic.invariant",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/call_abi.rs",
+   "sourceLine": 567,
+   "functionName": "classify_call_args",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/call_abi.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p6",
+   "name": "liveness_matches_textbook_dataflow",
+   "formal": "\u2200 random CFGs: compute_live_intervals == naive textbook dataflow exactly (value_id,start,end); call_points exact; per-block depth sizing (with the zero-value caveat)",
+   "oracle": "reference",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/liveness.rs",
+   "sourceLine": 149,
+   "functionName": "compute_live_intervals",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/liveness.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p7",
+   "name": "regalloc_soundness",
+   "formal": "\u2200 random CFGs, 4 pool shapes: same register \u21d2 disjoint intervals; call-spanning \u21d2 callee-saved; only whitelist-eligible defs assigned; params never assigned",
+   "oracle": "algebraic.invariant",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/regalloc.rs",
+   "sourceLine": 80,
+   "functionName": "allocate_registers",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/regalloc.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  },
+  {
+   "id": "p8",
+   "name": "asmexpr_parse_matches_evaluator",
+   "formal": "\u2200 generated int-expr trees (defined-evaluation domain, logical >>): parse_integer_expr(render(T)) == Ok(eval(T))",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/asm_expr.rs",
+   "sourceLine": 308,
+   "functionName": "parse_integer_expr",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/backend/asm_expr.rs",
+   "testTarget": "cargo test --lib backend::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  }
+ ],
+ "bugs": [
+  {
+   "id": "b1",
+   "propertyId": "p8",
+   "summary": "parse_integer_expr panics in debug on arithmetic overflow and out-of-range shifts instead of returning Err",
+   "severity": "low",
+   "impact": "debug-compiler crash on oversized asm constant expressions; silent value change between debug and release profiles (release wraps, llvm-mc-style)",
+   "expected": "Err(...) for overflow / shift >= 64",
+   "actual": "debug panic (multiply/shift with overflow); release wraps (1<<64 -> 1)",
+   "counterexample": "parse_integer_expr(\"1 << 64\") and parse_integer_expr(\"9223372036854775807 * 9223372036854775807\")",
+   "fix": "checked_mul / shift-amount validation with Err in eval_tokens' mul and shift levels",
+   "reportPath": "bug_reports/backend_asmexpr_arith_panic.md",
+   "contractBasis": "inferred",
+   "documentedBehavior": null,
+   "reproduction": {
+    "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+    "run": "PATH=\"$HOME/.cargo/bin:$PATH\" RUST_TEST_THREADS=1 cargo test --lib backend::asm_expr::pbt_regression::test_asmexpr_regression_arith_panic_not_err --exact --nocapture",
+    "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+    "seed": null,
+    "path": null
+   }
+  }
+ ],
+ "totals": {
+  "properties": 8,
+  "passing": 8,
+  "failing": 0,
+  "bugs": 1
+ }
+}
