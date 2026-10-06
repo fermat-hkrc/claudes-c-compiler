@@ -1,4 +1,4 @@
-> Total files: 13 | Total functions: 337 | PBT candidates: 197 | Excluded: 140
+> Total files: 13 | Total functions: 337 | PBT candidates: 198 | Excluded: 139
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -333,7 +333,7 @@
 | get_csr_num | system.rs | 64 | function | no | helper; campaign is single-symbol |
 | csr_name_to_num | system.rs | 74 | function | no | helper; campaign is single-symbol |
 | encode_lr | atomics.rs | 5 | function | yes | - |
-| encode_sc | atomics.rs | 13 | function | no | out of campaign scope |
+| encode_sc | atomics.rs | 13 | function | yes | - |
 | encode_amo | atomics.rs | 21 | function | yes | - |
 | encode_lr_suffixed | atomics.rs | 29 | function | no | out of campaign scope |
 | encode_sc_suffixed | atomics.rs | 44 | function | no | out of campaign scope |

@@ -1,89 +1,89 @@
-# PBT Campaign Report: encode_lr
+# PBT Campaign Report: encode_sc
 
 ## Summary
 
-**Verdict:** 1 high: encode_lr discards a nonzero memory offset, so `lr.w a0, 8(a1)` encodes as `(a1)` and the load-reserved hits the wrong address; 1 medium: extra operands after a valid LR are silently ignored.
+**Verdict:** 1 high: encode_sc discards a nonzero memory offset, so `sc.w a0, a1, 8(a2)` encodes as `(a2)` and the store-conditional hits the wrong address; 1 medium: extra operands after a valid SC are silently ignored.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_lr
+**Modules tested:** encode_sc
 **Tests:** 7
 **Result:** 5 passing, 2 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and listed unrelated C++ binaries as NOT LINKED for encode_lr; the Rust `cargo test --lib encode_lr` run executed the production symbol (5 passing + 2 failing properties, 3 KAT). Manual audit: get_reg, get_mem, funct7=0b0001000, and encode_r were all reached.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and listed unrelated C++ binaries as NOT LINKED for encode_sc; the Rust `cargo test --lib encode_sc` run executed the production symbol (5 passing + 2 failing properties, 3 KAT). Manual audit: get_reg, get_mem, funct7=0b0001100, and encode_r were all reached.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_lr | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_sc | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_lr ignores extra operands
+### B1: encode_sc ignores extra operands
 
-**Formal:** ∀ mn ∈ {lr.w, lr.d}, rd, rs1 ∈ GPR, extra ∈ Operand. encode_lr([Reg(rd), Mem{rs1, 0}, extra], funct3(mn)) is Err
-**Contract evidence:** inferred (llvm-mc rejects a third operand as `invalid operand for instruction`; encode_instruction at encoder/mod.rs:655-656 passes the operand slice through unchanged)
+**Formal:** ∀ mn ∈ {sc.w, sc.d}, ∀ rd, rs2, rs1 ∈ GPRNames, ∀ extra ∈ Operand. encode_sc([Reg(rd), Reg(rs2), Mem{base: rs1, offset: 0}, extra], funct3(mn)) is Err
+**Contract evidence:** inferred (llvm-mc rejects a fourth operand as `invalid operand for instruction`; encode_instruction at encoder/mod.rs:659-660 passes the operand slice through unchanged)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_lr([Reg("x0"), Mem { base: "x0", offset: 0 }, Imm(0)], funct3=0b010)
-**Expected / Actual:** Err / Ok(Word(0x1000202f))
-**Impact:** Typos and extra tokens after a valid LR are silently dropped, so the assembler accepts instructions other RISC-V assemblers reject
-**Root cause:** atomics.rs:10 returns Ok after reading only operands[0..1] via get_reg/get_mem and never checks operands.len()
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/atomics.rs:10`
+**Counterexample:** encode_sc([Reg("x0"), Reg("x0"), Mem { base: "x0", offset: 0 }, Imm(0)], funct3=0b010)
+**Expected / Actual:** Err / Ok(Word(0x1800202f))
+**Impact:** Typos and extra tokens after a valid SC are silently dropped, so the assembler accepts instructions other RISC-V assemblers reject
+**Root cause:** atomics.rs:18 returns Ok after reading only operands[0..2] via get_reg/get_mem and never checks operands.len()
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/atomics.rs:18`
 ```rust
-    Ok(EncodeResult::Word(encode_r(OP_AMO, rd, funct3, rs1, 0, funct7)))
+    Ok(EncodeResult::Word(encode_r(OP_AMO, rd, funct3, rs1, rs2, funct7)))
 ```
-**Suggested fix:** Reject any operand list whose length is not exactly 2
+**Suggested fix:** Reject any operand list whose length is not exactly 3
 ```rust
-    if operands.len() != 2 {
-        return Err(format!("lr: expected 2 operands, got {}", operands.len()));
+    if operands.len() != 3 {
+        return Err(format!("sc: expected 3 operands, got {}", operands.len()));
     }
-    Ok(EncodeResult::Word(encode_r(OP_AMO, rd, funct3, rs1, 0, funct7)))
+    Ok(EncodeResult::Word(encode_r(OP_AMO, rd, funct3, rs1, rs2, funct7)))
 ```
-**Bug report:** bug_reports/encode_lr_extra_operand.md
-**Repro seed:** cc 8b8ff3f0a81c5c67270b4a1d8795c928705a48efc8a356450a77f81fce5c19ea
+**Bug report:** bug_reports/encode_sc_extra_operand.md
+**Repro seed:** cc fd3ac7342f29da0786e8bb2d58b24d10d258536dbcad18e67948fb315259608b
 **Raw output:**
 ```text
-Test failed: extra operand must Err for lr.w x0, (x0) (llvm-mc rejects extra operands); got Ok(Word(268443695)) at src/backend/riscv/assembler/encoder/encode_lr_pbt.rs:351.
+Test failed: extra operand must Err for sc.w x0, x0, (x0) (llvm-mc rejects extra operands); got Ok(Word(402661423)) at src/backend/riscv/assembler/encoder/encode_sc_pbt.rs:362.
 minimal failing input: (mn, f3) = (
-    "lr.w",
+    "sc.w",
     2,
-), rd = "x0", rs1 = "x0", extra = Imm(
+), rd = "x0", rs2 = "x0", rs1 = "x0", extra = Imm(
     0,
 )
 ```
 
-### B2: encode_lr silently drops a nonzero memory offset
+### B2: encode_sc silently drops a nonzero memory offset
 
-**Formal:** ∀ mn ∈ {lr.w, lr.d}, rd, rs1 ∈ GPR, off ∈ ℤ\{0}. encode_lr([Reg(rd), Mem{rs1, off}], funct3(mn)) is Err
-**Contract evidence:** inferred (llvm-mc `optional integer offset must be 0`; RISC-V unprivileged ISA LR has no immediate — address is rs1 only; README.md:352 encoding follows the ISA R-type layout)
-**Documentation conflict:** (none) — `_offset` at atomics.rs:7 is the producing statement that discards the offset, not a domain restriction or documented limitation
+**Formal:** ∀ mn ∈ {sc.w, sc.d}, ∀ rd, rs2, rs1 ∈ GPRNames, ∀ off ∈ ℤ\{0}. encode_sc([Reg(rd), Reg(rs2), Mem{base: rs1, offset: off}], funct3(mn)) is Err
+**Contract evidence:** inferred (llvm-mc `optional integer offset must be 0`; RISC-V unprivileged ISA SC has no immediate — address is rs1 only; README.md:352 encoding follows the ISA R-type layout)
+**Documentation conflict:** (none) — `_offset` at atomics.rs:16 is the producing statement that discards the offset, not a domain restriction or documented limitation
 **Severity:** high
-**Counterexample:** encode_lr([Reg("x0"), Mem { base: "x0", offset: 1 }], funct3=0b010)
-**Expected / Actual:** Err / Ok(Word(0x1000202f)) identical to offset 0
-**Impact:** Source that names a displaced address such as `8(a1)` is assembled as `(a1)`, so the load-reserved operates on a different location than the assembly text says
-**Root cause:** atomics.rs:7 `let (rs1, _offset) = get_mem(operands, 1)?` binds the offset and discards it, then encodes rs1 only
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/atomics.rs:7`
+**Counterexample:** encode_sc([Reg("x0"), Reg("x0"), Mem { base: "x0", offset: 1 }], funct3=0b010)
+**Expected / Actual:** Err / Ok(Word(0x1800202f)) identical to offset 0
+**Impact:** Source that names a displaced address such as `8(a2)` is assembled as `(a2)`, so the store-conditional operates on a different location than the assembly text says
+**Root cause:** atomics.rs:16 `let (rs1, _offset) = get_mem(operands, 2)?` binds the offset and discards it, then encodes rs1 only
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/atomics.rs:16`
 ```rust
-    let (rs1, _offset) = get_mem(operands, 1)?;
+    let (rs1, _offset) = get_mem(operands, 2)?;
 ```
 **Suggested fix:** Reject any nonzero offset before packing the R-type word
 ```rust
-    let (rs1, offset) = get_mem(operands, 1)?;
+    let (rs1, offset) = get_mem(operands, 2)?;
     if offset != 0 {
-        return Err(format!("lr: memory offset must be 0, got {}", offset));
+        return Err(format!("sc: memory offset must be 0, got {}", offset));
     }
 ```
-**Bug report:** bug_reports/encode_lr_nonzero_offset.md
-**Repro seed:** (none — shrunk to offset=1; deterministic regression test_encode_lr_regression_nonzero_offset)
+**Bug report:** bug_reports/encode_sc_nonzero_offset.md
+**Repro seed:** (none — shrunk to offset=1; deterministic regression test_encode_sc_regression_nonzero_offset)
 **Raw output:**
 ```text
-Test failed: nonzero offset must Err for lr.w x0, 1(x0) (llvm-mc: optional integer offset must be 0); got Ok(Word(268443695)) at src/backend/riscv/assembler/encoder/encode_lr_pbt.rs:368.
+Test failed: nonzero offset must Err for sc.w x0, x0, 1(x0) (llvm-mc: optional integer offset must be 0); got Ok(Word(402661423)) at src/backend/riscv/assembler/encoder/encode_sc_pbt.rs:380.
 minimal failing input: (mn, f3) = (
-    "lr.w",
+    "sc.w",
     2,
-), rd = "x0", rs1 = "x0", off = 1
+), rd = "x0", rs2 = "x0", rs1 = "x0", off = 1
 ```
 
 ## Design Caveats
@@ -94,53 +94,52 @@ minimal failing input: (mn, f3) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_lr_pbt.rs | 7 properties + 3 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_sc_pbt.rs | 7 properties + 3 KAT + 2 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (5 passing, 2 failing properties plus KAT and regressions):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_lr -- --test-threads=1
+cargo test --lib encode_sc -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_lr_neg_extra -- --test-threads=1
+cargo test --lib encode_sc_neg_extra -- --test-threads=1
 ```
 
 B2 nonzero offset:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_lr_neg_nonzero_offset -- --test-threads=1
+cargo test --lib encode_sc_neg_nonzero_offset -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/report.json
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/bug_reports/encode_lr_extra_operand.md
-- pbt-out/bug_reports/encode_lr_extra_operand.html
-- pbt-out/bug_reports/encode_lr_nonzero_offset.md
-- pbt-out/bug_reports/encode_lr_nonzero_offset.html
-- pbt-out/run/encode_lr_test.log
-- proptest-regressions/backend/riscv/assembler/encoder/encode_lr_pbt.txt
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_sc_extra_operand.md
+- pbt-out/bug_reports/encode_sc_extra_operand.html
+- pbt-out/bug_reports/encode_sc_nonzero_offset.md
+- pbt-out/bug_reports/encode_sc_nonzero_offset.html
+- pbt-out/run/ (scratch)
+- proptest-regressions/backend/riscv/assembler/encoder/encode_sc_pbt.txt (proptest shrink seed for B1)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 16:39 (campaign: coverage)
-> Files: 13/13 scanned (100%) | Functions: 196/337 total | PBT candidates: 196 | Tested: 196 (100%) | 1 pass, 196 fail
+> Last updated: 2026-10-06 16:50 (campaign: coverage)
+> Files: 13/13 scanned (100%) | Functions: 197/337 total | PBT candidates: 197 | Tested: 197 (100%) | 1 pass, 197 fail
 
 ## Summary
 
@@ -149,10 +148,10 @@ cargo test --lib encode_lr_neg_nonzero_offset -- --test-threads=1
 | Total source files | 13 |
 | Files scanned | 13 / 13 (100%) |
 | Total functions (all files) | 337 |
-| PBT candidates (from FUNCTION_INDEX) | 196 |
-| **Tested (of PBT candidates)** | **196 / 196 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 196 / -1 |
-| **Overall (tested / all functions)** | **196 / 337 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 197 |
+| **Tested (of PBT candidates)** | **197 / 197 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 197 / -1 |
+| **Overall (tested / all functions)** | **197 / 337 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -160,13 +159,13 @@ cargo test --lib encode_lr_neg_nonzero_offset -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 196 | 196 | 0 | 100% |
+|  | 197 | 197 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 196 | 196 | 0 | 100% |
+| unknown | 197 | 197 | 0 | 100% |
 
 ## File Coverage
 
@@ -385,3 +384,4 @@ cargo test --lib encode_lr_neg_nonzero_offset -- --test-threads=1
 | encode_fence | system.rs |
 | encode_amo | atomics.rs |
 | encode_lr | atomics.rs |
+| encode_sc | atomics.rs |
