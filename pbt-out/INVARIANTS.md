@@ -4847,3 +4847,36 @@
 - Writeback with Rn=SP is valid even when Rt numbers match 31.
 - proptest 1.11 requires `#[test]` inside `proptest! { }`.
 
+
+# Confirmed invariants (encode_ldnp_stnp)
+
+- Valid integer LDNP/STNP Rt1, Rt2, [Xn|SP{, #simm}] with simm = imm7*(4 or 8) in the ARM range matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins ldnp x0,x1,[x2]=0xA8400440, ldnp x0,x1,[x2,#8]=0xA8408440, stnp w2,w3,[x4,#4]=0x28008C82, ldnp x0,x1,[x2,#-8]=0xA87F8440, stnp xzr,xzr,[sp]=0xA8007FFF.
+- ARM LDNP/STNP layout holds: opc 101 V=0 000 L imm7 Rt2 Rn Rt; opc=10 Xt / 00 Wt; bits[25:23]=000 (1000 cases).
+- Metamorphic: Rt1+1 adds 1, Rt2+1 adds 1<<10, Rn+1 adds 1<<5, imm7+1 isolates bits[21:15], load XOR store = 1<<22 (1000 cases).
+- Arity 0/1/2 and non-Mem third operand (including pre/post writeback) return Err (1000 cases).
+- Alt spellings uppercase X / wzr,W30,SP / lr / w31 match llvm-mc (1000 cases, sweep).
+- Extra operands, SP dest, XZR/x31/W/WSP base, mixed X/W, out-of-range/unaligned offset, and SIMD S/D/Q currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_ldnp_stnp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). GNU as 2.38 agrees on SIMD and register-class rejections. gas warns but still encodes LDNP Rt1==Rt2; llvm-mc encodes it without warning — not a rejection contract.
+- ARM ARM C6 LDNP/STNP: opc 101 V 000 L imm7 Rt2 Rn Rt. No pre/post-index. Integer opc=00 Wt scale=4 [-256,252]; opc=10 Xt scale=8 [-512,504]. SIMD V=1 opc=00/01/10 for S/D/Q.
+- Dispatch: encoder/mod.rs:496-497 `"ldnp"`/`"stnp"` => encode_ldnp_stnp.
+- Sibling encode_ldp_stp is not a same-job independent differential (pre/post, bits[25:23] in {001,010,011}; shared get_reg / same crate).
+- Doc contract load_store.rs:517 TODO admits V=1 unimplemented on an input get_reg accepts.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_ldnp_stnp_diff_alt_spellings. Closed: every documented behavior has a property; remaining gaps are filed bugs.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ldnp_stnp_*.md.
+
+## Quirks (encode_ldnp_stnp)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_ldnp_stnp does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- get_reg width of Rt2 is discarded (see bugs).
+- Offset is shifted and masked into imm7 with no range/align check (see bugs).
+- V is hardcoded 0 (see bugs / documented limitation).
+- llvm-mc accepts `w31` as WZR and `lr` as x30.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 22-line body.

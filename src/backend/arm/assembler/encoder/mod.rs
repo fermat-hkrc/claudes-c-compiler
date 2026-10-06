@@ -168,6 +168,8 @@ mod encode_uxtb_pbt;
 mod encode_ldr_str_pbt;
 #[cfg(test)]
 mod encode_ldp_stp_pbt;
+#[cfg(test)]
+mod encode_ldnp_stnp_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
