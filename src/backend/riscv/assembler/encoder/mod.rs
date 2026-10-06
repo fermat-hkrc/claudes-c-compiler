@@ -60,6 +60,8 @@ mod encode_float_store_pbt;
 mod encode_fp_arith_pbt;
 #[cfg(test)]
 mod encode_fp_arith_d_pbt;
+#[cfg(test)]
+mod encode_fp_unary_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

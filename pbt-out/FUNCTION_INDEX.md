@@ -1,4 +1,4 @@
-> Total files: 14 | Total functions: 351 | PBT candidates: 204 | Excluded: 147
+> Total files: 14 | Total functions: 351 | PBT candidates: 205 | Excluded: 146
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -343,13 +343,13 @@
 | encode_float_store | float.rs | 33 | function | yes | - |
 | encode_fp_arith | float.rs | 61 | function | yes | - |
 | encode_fp_arith_d | float.rs | 77 | function | yes | - |
-| encode_fp_unary | float.rs | 81 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fp_sgnj | float.rs | 95 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fp_cmp | float.rs | 102 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fclass | float.rs | 110 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fcvt_int | float.rs | 116 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fcvt_from_int | float.rs | 131 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fcvt_fp | float.rs | 146 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fmv_x_f | float.rs | 161 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fmv_f_x | float.rs | 168 | function | no | HARD: test only encode_fp_arith_d |
-| encode_fma | float.rs | 175 | function | no | HARD: test only encode_fp_arith_d |
+| encode_fp_unary | float.rs | 81 | function | yes | - |
+| encode_fp_sgnj | float.rs | 95 | function | no | HARD: test only encode_fp_unary |
+| encode_fp_cmp | float.rs | 102 | function | no | HARD: test only encode_fp_unary |
+| encode_fclass | float.rs | 110 | function | no | HARD: test only encode_fp_unary |
+| encode_fcvt_int | float.rs | 116 | function | no | HARD: test only encode_fp_unary |
+| encode_fcvt_from_int | float.rs | 131 | function | no | HARD: test only encode_fp_unary |
+| encode_fcvt_fp | float.rs | 146 | function | no | HARD: test only encode_fp_unary |
+| encode_fmv_x_f | float.rs | 161 | function | no | HARD: test only encode_fp_unary |
+| encode_fmv_f_x | float.rs | 168 | function | no | HARD: test only encode_fp_unary |
+| encode_fma | float.rs | 175 | function | no | HARD: test only encode_fp_unary |

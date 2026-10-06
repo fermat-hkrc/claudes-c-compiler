@@ -1,55 +1,55 @@
-# PBT Campaign Report: encode_fp_arith_d
+# PBT Campaign Report: encode_fp_unary
 
 ## Summary
 
-**Verdict:** 2 medium: encode_fp_arith_d silently accepts a 5th operand and a non-rounding-mode 4th operand, so malformed `fadd.d`/`fsub.d`/`fmul.d`/`fdiv.d` still assembles as a valid OP-FP D-extension word instead of returning Err.
+**Verdict:** 2 medium: encode_fp_unary silently accepts a 4th extra operand and a 3rd non-rounding-mode operand, so `fsqrt.s f0, f0, rne, 0` and `fsqrt.s f0, f0, 0` assemble as valid FSQRT words instead of errors.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fp_arith_d
-**Tests:** 8
+**Modules tested:** encode_fp_unary
+**Tests:** 8 properties (plus 5 KAT + 2 regression witnesses)
 **Result:** 6 passing, 2 bugs
-**Change surface:** 1 changed function (encode_fp_arith_d), 1 with a property, 0 error-handling changes
-**Coverage evidence:** none — no .gcda/.profraw (the build was not instrumented / reporter is missing). File-level reporter listed unrelated C++ binaries and marked encode_fp_arith_d NOT LINKED; that is a reporter gap, not an untested function — `cargo test --lib encode_fp_arith_d_pbt` executed the symbol (5 KAT + 6 passing properties + 2 failing). Sweep: 1 round, manual audit of 3-op / rm / R-type+D-fmt / ABI / dyn-default / arity-GPR / extra / non-rm 4th. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+**Change surface:** 1 changed function (encode_fp_unary), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries) and marked encode_fp_unary NOT LINKED; campaign executed the real symbol via cargo test --lib encode_fp_unary_pbt
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fp_arith_d | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fp_unary | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_fp_arith_d ignores a 5th operand
+### B1: encode_fp_unary ignores a 4th operand
 
-**Formal:** ∀ mn ∈ {fadd.d,fsub.d,fmul.d,fdiv.d}, ∀ rd,rs1,rs2 ∈ FPRegs, ∀ extra. encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2),RoundingMode("rne"), extra], funct7(mn)) is Err
-**Contract evidence:** inferred (llvm-mc rejects extra operands as "invalid operand for instruction"; encoder/mod.rs:749-752 passes the operand slice through unchanged; encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words")
+**Formal:** ∀ mn ∈ {fsqrt.s,fsqrt.d}, ∀ rd,rs1 ∈ FPRegs, ∀ extra ∈ Operand. encode_fp_unary([Reg(rd),Reg(rs1),RoundingMode("rne"), extra], funct7(mn), 0) is Err
+**Contract evidence:** inferred (llvm-mc same-job assembler rejects extra operands; encode_instruction at encoder/mod.rs:727 and :755 passes the operand slice through unchanged)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fp_arith_d([Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 1)
-**Expected / Actual:** Err / Ok(Word(33554515)) = 0x02000053 (fadd.d f0, f0, f0, rne)
-**Impact:** Malformed `fadd.d f0, f0, f0, rne, 0` still assembles as `fadd.d f0, f0, f0, rne`. A typo or extra token is silently dropped.
-**Root cause:** float.rs:66 (callee encode_fp_arith, forwarded by encode_fp_arith_d) only tests `operands.len() > 3` to read optional rm and never rejects `operands.len() > 4`, so line 74 still returns Ok.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:66`
+**Counterexample:** encode_fp_unary([Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 0b0101100, 0)
+**Expected / Actual:** Err / Ok(Word(0x58000053)) = fsqrt.s f0, f0, rne
+**Impact:** Malformed `fsqrt.s f0, f0, rne, 0` still assembles as `fsqrt.s f0, f0, rne`. A typo or extra token is silently dropped.
+**Root cause:** float.rs:84 only tests `operands.len() > 2` to read optional rm and never rejects `operands.len() > 3`, so a 4th operand is ignored and line 92 still returns Ok.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:84`
 ```rust
-    let rm = if operands.len() > 3 {
+    let rm = if operands.len() > 2 {
 ```
-**Suggested fix:** Reject more than four operands before packing the R-type word.
+**Suggested fix:** Reject more than three operands before packing the R-type word.
 ```rust
-    if operands.len() > 4 {
-        return Err("fp arith: unexpected extra operand".to_string());
+    if operands.len() > 3 {
+        return Err("fp unary: unexpected extra operand".to_string());
     }
-    let rm = if operands.len() > 3 {
+    let rm = if operands.len() > 2 {
 ```
-**Bug report:** bug_reports/encode_fp_arith_d_trailing_operand.md
-**Repro seed:** cc 612dbcdaff62455438fde85085475af720926c10e7be08b849684daf860bd803
+**Bug report:** bug_reports/encode_fp_unary_extra_operand.md
+**Repro seed:** cc 99e8d998d00cc77ff94f73a854bf9bfdbf35de30fa2e1ca39f0db9bf14a444c2
 **Raw output:**
 ```text
-Test failed: 5th operand must Err for fadd.d f0, f0, f0, rne (llvm-mc rejects extra operands); got Ok(Word(33554515)) at src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs:504.
+Test failed: 4th operand must Err for fsqrt.s f0, f0, rne (llvm-mc rejects extra operands); got Ok(Word(1476395091)) at src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs:492.
 minimal failing input: (mn, f7) = (
-    "fadd.d",
-    1,
-), rd = "f0", rs1 = "f0", rs2 = "f0", extra = Imm(
+    "fsqrt.s",
+    44,
+), rd = "f0", rs1 = "f0", extra = Imm(
     0,
 )
 	successes: 0
@@ -57,38 +57,38 @@ minimal failing input: (mn, f7) = (
 	global rejects: 0
 ```
 
-### B2: encode_fp_arith_d treats a non-rounding-mode 4th operand as DYN
+### B2: encode_fp_unary treats a non-rounding-mode 3rd operand as DYN
 
-**Formal:** ∀ rd,rs1,rs2 ∈ FPRegs, ∀ extra ∉ RoundingMode, ∀ funct7 ∈ {1,5,9,13}. encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2), extra], funct7) is Err
-**Contract evidence:** inferred (llvm-mc "operand must be a valid floating point rounding mode mnemonic"; parser.rs:41 closed RM set {rne,rtz,rdn,rup,rmm,dyn}; float.rs:65 "Check for optional rounding mode" documents an optional RM, not an arbitrary 4th operand)
-**Documentation conflict:** (none) — float.rs:69 `_ => 0b111, // dynamic` is the producing statement, not a contract that a non-RM 4th operand is valid
+**Formal:** ∀ mn ∈ {fsqrt.s,fsqrt.d}, ∀ rd,rs1 ∈ FPRegs, ∀ extra ∉ RoundingMode. encode_fp_unary([Reg(rd),Reg(rs1), extra], funct7(mn), 0) is Err
+**Contract evidence:** inferred (llvm-mc same-job assembler requires the optional 3rd operand to be a rounding-mode mnemonic; parser.rs:41 closed RoundingMode set; encode_instruction passes operands through)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fp_arith_d([Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 1)
-**Expected / Actual:** Err / Ok(Word(33583187)) = 0x02007053 (fadd.d f0, f0, f0 with rm=DYN)
-**Impact:** `fadd.d f0, f0, f0, 0` still encodes as `fadd.d f0, f0, f0` with rm=DYN. A mistaken 4th token is silently reinterpreted as dynamic rounding.
-**Root cause:** float.rs:69 (callee encode_fp_arith, forwarded by encode_fp_arith_d) maps every non-RoundingMode 4th operand to rm=0b111 (dynamic) instead of returning Err, then line 74 still packs a valid OP-FP word.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:69`
+**Counterexample:** encode_fp_unary([Reg("f0"), Reg("f0"), Imm(0)], 0b0101100, 0)
+**Expected / Actual:** Err / Ok(Word(0x58007053)) = fsqrt.s f0, f0 with rm=DYN
+**Impact:** `fsqrt.s f0, f0, 0` still encodes as `fsqrt.s f0, f0` with rm=DYN. A mistaken 3rd token is silently reinterpreted as dynamic rounding.
+**Root cause:** float.rs:87 maps every non-RoundingMode 3rd operand to rm=0b111 (dynamic) instead of returning Err, then line 92 still packs a valid OP-FP word.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:87`
 ```rust
-            _ => 0b111, // dynamic
+            _ => 0b111,
 ```
-**Suggested fix:** Return Err on a 4th operand that is not a RoundingMode.
+**Suggested fix:** Return Err on a 3rd operand that is not a RoundingMode.
 ```rust
             other => {
                 return Err(format!(
-                    "fp arith: expected rounding mode, got {:?}",
+                    "fp unary: expected rounding mode, got {:?}",
                     other
                 ))
             }
 ```
-**Bug report:** bug_reports/encode_fp_arith_d_non_rm_fourth.md
-**Repro seed:** (deterministic regression; proptest seed cc 612dbcdaff62455438fde85085475af720926c10e7be08b849684daf860bd803 also shrinks the extra-operand case)
+**Bug report:** bug_reports/encode_fp_unary_non_rm_third.md
+**Repro seed:** (deterministic regression; proptest shrunk to Imm(0) on first case)
 **Raw output:**
 ```text
-Test failed: 4th non-RoundingMode operand must Err for fadd.d f0, f0, f0 (optional rm only); got Ok(Word(33583187)) at src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs:523.
+Test failed: 3rd non-RoundingMode operand must Err for fsqrt.s f0, f0 (optional rm only); got Ok(Word(1476423763)) at src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs:510.
 minimal failing input: (mn, f7) = (
-    "fadd.d",
-    1,
-), rd = "f0", rs1 = "f0", rs2 = "f0", extra = Imm(
+    "fsqrt.s",
+    44,
+), rd = "f0", rs1 = "f0", extra = Imm(
     0,
 )
 	successes: 0
@@ -104,52 +104,53 @@ minimal failing input: (mn, f7) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs | 8 properties + 5 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs | 8 properties + 5 KAT + 2 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fp_arith_d_pbt -- --test-threads=1
+cargo test --lib encode_fp_unary_pbt -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fp_arith_d_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_fp_unary_regression_extra_operand -- --test-threads=1
 ```
 
-B2 non-RM fourth:
+B2 non-rm third:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fp_arith_d_regression_non_rm_fourth -- --test-threads=1
+cargo test --lib test_encode_fp_unary_regression_non_rm_third -- --test-threads=1
 ```
 
 ## Output Directories
 
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_fp_arith_d_trailing_operand.md
-- pbt-out/bug_reports/encode_fp_arith_d_trailing_operand.html
-- pbt-out/bug_reports/encode_fp_arith_d_non_rm_fourth.md
-- pbt-out/bug_reports/encode_fp_arith_d_non_rm_fourth.html
-- pbt-out/run/encode_fp_arith_d_pbt.log
-- pbt-out/run/encode_fp_arith_d_test.log
+- pbt-out/INVARIANTS.md
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_fp_unary_extra_operand.md
+- pbt-out/bug_reports/encode_fp_unary_extra_operand.html
+- pbt-out/bug_reports/encode_fp_unary_non_rm_third.md
+- pbt-out/bug_reports/encode_fp_unary_non_rm_third.html
+- pbt-out/run/ (scratch; unused by cargo test)
+- proptest-regressions/backend/riscv/assembler/encoder/encode_fp_unary_pbt.txt (framework shrink persistence, left in the test tree)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 18:28 (campaign: coverage)
-> Files: 14/14 scanned (100%) | Functions: 203/351 total | PBT candidates: 203 | Tested: 203 (100%) | 1 pass, 203 fail
+> Last updated: 2026-10-06 18:40 (campaign: coverage)
+> Files: 14/14 scanned (100%) | Functions: 204/351 total | PBT candidates: 204 | Tested: 204 (100%) | 1 pass, 204 fail
 
 ## Summary
 
@@ -158,10 +159,10 @@ cargo test --lib test_encode_fp_arith_d_regression_non_rm_fourth -- --test-threa
 | Total source files | 14 |
 | Files scanned | 14 / 14 (100%) |
 | Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 203 |
-| **Tested (of PBT candidates)** | **203 / 203 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 203 / -1 |
-| **Overall (tested / all functions)** | **203 / 351 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 204 |
+| **Tested (of PBT candidates)** | **204 / 204 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 204 / -1 |
+| **Overall (tested / all functions)** | **204 / 351 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -169,13 +170,13 @@ cargo test --lib test_encode_fp_arith_d_regression_non_rm_fourth -- --test-threa
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 203 | 203 | 0 | 100% |
+|  | 204 | 204 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 203 | 203 | 0 | 100% |
+| unknown | 204 | 204 | 0 | 100% |
 
 ## File Coverage
 
@@ -401,3 +402,4 @@ cargo test --lib test_encode_fp_arith_d_regression_non_rm_fourth -- --test-threa
 | encode_float_store | float.rs |
 | encode_fp_arith | float.rs |
 | encode_fp_arith_d | float.rs |
+| encode_fp_unary | float.rs |

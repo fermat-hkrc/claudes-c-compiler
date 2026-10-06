@@ -1,240 +1,223 @@
-# Properties: encode_fp_arith_d
+# Properties: encode_fp_unary
 
-## encode_fp_arith_d_diff_3op_llvm_mc
+## encode_fp_unary_diff_2op_llvm_mc
 - Tier: 2
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent RISC-V assembler, same OP-FP D-extension job). State machine rejected (pure function). Round-trip rejected (no OP-FP decoder). encode_fp_arith / encode_r / encode_fp_sgnj rejected by same-job gate (callee this symbol wraps / private packer / funct3-not-rm). SUT-boundary: internal-helper; encode_instruction (mod.rs:749) passes operands through. Mapping: [Reg(rd), Reg(rs1), Reg(rs2)] <-> `mn rd, rs1, rs2` with default DYN rm. Domain is D-only mnemonics dispatched to this symbol.
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent RISC-V assembler, same OP-FP FSQRT job). State machine rejected (pure function). Round-trip rejected (no OP-FP decoder). encode_fp_arith / encode_r / encode_fcvt_fp rejected by same-job gate (3-operand rs2-from-operand / private packer / different mnemonic family). SUT-boundary: internal-helper; encode_instruction (mod.rs:727,755) passes operands through. Mapping: [Reg(rd), Reg(rs1)] <-> `mn rd, rs1` with default DYN rm and hardwired rs2=0. Domain is FSQRT.S/D mnemonics dispatched to this symbol.
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_diff_3op_llvm_mc
-- Formal: ∀ mn ∈ {fadd.d,fsub.d,fmul.d,fdiv.d}, ∀ rd,rs1,rs2 ∈ FPRegs. encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2)], funct7(mn)) = llvm-mc(mn rd, rs1, rs2)
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ mn ∈ {fsqrt.s,fsqrt.d}, ∀ rd,rs1 ∈ FPRegs. encode_fp_unary([Reg(rd),Reg(rs1)], funct7(mn), 0) = llvm-mc(mn rd, rs1)
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mn, rd, rs1, rs2]
-  domain: { mn: FP_ARITH_D_MN, rd: FPRegs, rs1: FPRegs, rs2: FPRegs }
+  vars: [mn, rd, rs1]
+  domain: { mn: FP_UNARY_MN, rd: FPRegs, rs1: FPRegs }
   relation:
     op: eq
-    lhs: encode_fp_arith_d([Reg(rd), Reg(rs1), Reg(rs2)], funct7(mn))
-    rhs: llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rs2)
+    lhs: encode_fp_unary([Reg(rd), Reg(rs1)], funct7(mn), 0)
+    rhs: llvm_mc(mn + " " + rd + ", " + rs1)
 generators:
-  mn: { gen: oneof, options: ["fadd.d", "fsub.d", "fmul.d", "fdiv.d"] }
+  mn: { gen: oneof, options: ["fsqrt.s", "fsqrt.d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
-  rs2: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:749 fadd.d => encode_fp_arith_d; README.md:307-308; RISC-V Unprivileged ISA OP-FP fmt=D; llvm-mc -triple=riscv64 -mattr=+f,+d
+evidence: src/backend/riscv/assembler/encoder/mod.rs:727 fsqrt.s => encode_fp_unary; mod.rs:755 fsqrt.d; README.md:307-308; RISC-V Unprivileged ISA FSQRT rs2=00000; llvm-mc -triple=riscv64 -mattr=+f,+d
 ```
 
-## encode_fp_arith_d_diff_rm_llvm_mc
+## encode_fp_unary_diff_rm_llvm_mc
 - Tier: 2
-- Rationale: Optional 4th operand is a documented rounding mode (float.rs:65 on the callee; parser.rs:41 closed set). Differential vs llvm-mc over {rne,rtz,rdn,rup,rmm,dyn} pins rm[14:12]. Same stronger-oracle rejection as the 3-op differential.
+- Rationale: Optional 3rd operand is a documented rounding mode (parser.rs:41 closed set; encode_fp_unary body encodes it into funct3). Differential vs llvm-mc over {rne,rtz,rdn,rup,rmm,dyn} pins rm[14:12]. Same stronger-oracle rejection as the 2-op differential.
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_diff_rm_llvm_mc
-- Formal: ∀ mn ∈ {fadd.d,fsub.d,fmul.d,fdiv.d}, ∀ rd,rs1,rs2 ∈ FPRegs, ∀ rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2),RoundingMode(rm)], funct7(mn)) = llvm-mc(mn rd, rs1, rs2, rm)
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ mn ∈ {fsqrt.s,fsqrt.d}, ∀ rd,rs1 ∈ FPRegs, ∀ rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fp_unary([Reg(rd),Reg(rs1),RoundingMode(rm)], funct7(mn), 0) = llvm-mc(mn rd, rs1, rm)
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mn, rd, rs1, rs2, rm]
-  domain: { mn: FP_ARITH_D_MN, rd: FPRegs, rs1: FPRegs, rs2: FPRegs, rm: {rne,rtz,rdn,rup,rmm,dyn} }
+  vars: [mn, rd, rs1, rm]
+  domain: { mn: FP_UNARY_MN, rd: FPRegs, rs1: FPRegs, rm: {rne,rtz,rdn,rup,rmm,dyn} }
   relation:
     op: eq
-    lhs: encode_fp_arith_d([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode(rm)], funct7(mn))
-    rhs: llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rs2 + ", " + rm)
+    lhs: encode_fp_unary([Reg(rd), Reg(rs1), RoundingMode(rm)], funct7(mn), 0)
+    rhs: llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rm)
 generators:
-  mn: { gen: oneof, options: ["fadd.d", "fsub.d", "fmul.d", "fdiv.d"] }
+  mn: { gen: oneof, options: ["fsqrt.s", "fsqrt.d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
-  rs2: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: oneof, options: ["rne", "rtz", "rdn", "rup", "rmm", "dyn"] }
-evidence: src/backend/riscv/assembler/encoder/float.rs:65 optional rounding mode; encoder/mod.rs:472 parse_rm; RISC-V rm encodings 000/001/010/011/100/111
+evidence: src/backend/riscv/assembler/parser.rs:41 RoundingMode closed set; encoder/mod.rs:474 parse_rm; RISC-V rm encodings 000/001/010/011/100/111
 ```
 
-## encode_fp_arith_d_r_type_fields
+## encode_fp_unary_r_type_fields
 - Tier: 4
-- Rationale: Algebraic invariant from the R-type layout comment (mod.rs:316) and OP_OP_FP (mod.rs:379). D-extension fmt lives in bits 26:25 and must be 01 for every funct7 this dispatcher supplies (0000001/0000101/0001001/0001101). Weaker than differential; still checks opcode/rd/rs1/rs2/rm/funct7/fmt independently of llvm-mc. Documented bounds 0..=31 for registers and the closed RM set are sampled exactly.
+- Rationale: Algebraic invariant from the R-type layout comment (mod.rs:318) and OP_OP_FP (mod.rs:377). FSQRT hardwires rs2=00000; S/D fmt lives in bits 26:25 (00 for fsqrt.s funct7=0101100, 01 for fsqrt.d funct7=0101101). Weaker than differential; still checks opcode/rd/rs1/rs2/rm/funct7 independently of llvm-mc. Documented bounds 0..=31 for registers and the closed RM set are sampled exactly.
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_r_type_fields
-- Formal: ∀ rd,rs1,rs2 ∈ 0..31, ∀ rm ∈ {0,1,2,3,4,7}, ∀ funct7 ∈ {1,5,9,13}. let w = encode_fp_arith_d([Reg(f{rd}),Reg(f{rs1}),Reg(f{rs2}),RoundingMode(name(rm))], funct7) in unpack_r(w) = (OP_OP_FP=0b1010011, rm, rd, rs1, rs2, funct7) ∧ ((w >> 25) & 0b11) = 0b01
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ rd,rs1 ∈ 0..31, ∀ rm ∈ {0,1,2,3,4,7}, ∀ (funct7,rs2) ∈ {(0b0101100,0),(0b0101101,0)}. let w = encode_fp_unary([Reg(f{rd}),Reg(f{rs1}),RoundingMode(name(rm))], funct7, rs2) in unpack_r(w) = (OP_OP_FP=0b1010011, rm, rd, rs1, rs2, funct7)
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rs1, rs2, rm, funct7]
-  domain: { rd: 0..31, rs1: 0..31, rs2: 0..31, rm: {0,1,2,3,4,7}, funct7: FP_ARITH_D_FUNCT7 }
-  body: unpack_r(encode_fp_arith_d([Reg(f{rd}),Reg(f{rs1}),Reg(f{rs2}),RoundingMode(name(rm))], funct7)) == (0b1010011, rm, rd, rs1, rs2, funct7) && fmt(w) == 0b01
+  vars: [rd, rs1, rm, funct7]
+  domain: { rd: 0..31, rs1: 0..31, rm: {0,1,2,3,4,7}, funct7: {0b0101100, 0b0101101} }
+  body: unpack_r(encode_fp_unary([Reg(f{rd}),Reg(f{rs1}),RoundingMode(name(rm))], funct7, 0)) == (0b1010011, rm, rd, rs1, 0, funct7)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
-  rs2: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: oneof, options: [0, 1, 2, 3, 4, 7] }
-  funct7: { gen: oneof, options: [1, 5, 9, 13] }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:316 R-type layout; mod.rs:379 OP_OP_FP; RISC-V OP-FP fmt=01 for D
+  funct7: { gen: oneof, options: [44, 45] }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:318 R-type layout; mod.rs:377 OP_OP_FP; RISC-V FSQRT rs2=00000
 ```
 
-## encode_fp_arith_d_abi_fn_alias
+## encode_fp_unary_abi_fn_alias
 - Tier: 4
 - Rationale: Metamorphic alias: FP ABI names (ft0/fa0/fs0/...) and fN encode the same 5-bit register (freg_num). Independent of llvm-mc. Not a same-job sibling differential.
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_abi_fn_alias
-- Formal: ∀ n,m,p ∈ 0..31, ∀ funct7 ∈ {1,5,9,13}. encode_fp_arith_d([Reg(f{n}),Reg(f{m}),Reg(f{p})], funct7) = encode_fp_arith_d([Reg(FABI[n]),Reg(FABI[m]),Reg(FABI[p])], funct7)
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ n,m ∈ 0..31, ∀ funct7 ∈ {0b0101100,0b0101101}. encode_fp_unary([Reg(f{n}),Reg(f{m})], funct7, 0) = encode_fp_unary([Reg(FABI[n]),Reg(FABI[m])], funct7, 0)
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, m, p, funct7]
-  domain: { n: 0..31, m: 0..31, p: 0..31, funct7: FP_ARITH_D_FUNCT7 }
+  vars: [n, m, funct7]
+  domain: { n: 0..31, m: 0..31, funct7: {0b0101100, 0b0101101} }
   relation:
     op: eq
-    lhs: encode_fp_arith_d([Reg(f{n}), Reg(f{m}), Reg(f{p})], funct7)
-    rhs: encode_fp_arith_d([Reg(FABI[n]), Reg(FABI[m]), Reg(FABI[p])], funct7)
+    lhs: encode_fp_unary([Reg(f{n}), Reg(f{m})], funct7, 0)
+    rhs: encode_fp_unary([Reg(FABI[n]), Reg(FABI[m])], funct7, 0)
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   m: { gen: int, min: 0, max: 31, type: u32 }
-  p: { gen: int, min: 0, max: 31, type: u32 }
-  funct7: { gen: oneof, options: [1, 5, 9, 13] }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:237-285 freg_num ABI and f0-f31
+  funct7: { gen: oneof, options: [44, 45] }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:239 freg_num ABI and fN aliases
 ```
 
-## encode_fp_arith_d_rm_default_dyn
+## encode_fp_unary_rm_default_dyn
 - Tier: 4
-- Rationale: Metamorphic: omitted rounding mode equals explicit dyn (rm=111), matching RISC-V default and llvm-mc (omitted dyn prints as 3-op with encoding rm=111). Callee float.rs:71-72 else branch 0b111.
+- Rationale: Metamorphic: omitted rm equals explicit RoundingMode("dyn") and unpacks rm=111. Documented default when the optional rounding-mode operand is absent (body float.rs:89-91; RISC-V DYN=111; llvm-mc omits dyn in print but encodes 111).
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_rm_default_dyn
-- Formal: ∀ rd,rs1,rs2 ∈ FPRegs, ∀ funct7 ∈ {1,5,9,13}. encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2)], funct7) = encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2),RoundingMode("dyn")], funct7)
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ rd,rs1 ∈ FPRegs, ∀ funct7 ∈ {0b0101100,0b0101101}. encode_fp_unary([Reg(rd),Reg(rs1)], funct7, 0) = encode_fp_unary([Reg(rd),Reg(rs1),RoundingMode("dyn")], funct7, 0) ∧ unpack_rm(that) = 0b111
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rs1, rs2, funct7]
-  domain: { rd: FPRegs, rs1: FPRegs, rs2: FPRegs, funct7: FP_ARITH_D_FUNCT7 }
-  relation:
-    op: eq
-    lhs: encode_fp_arith_d([Reg(rd), Reg(rs1), Reg(rs2)], funct7)
-    rhs: encode_fp_arith_d([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode("dyn")], funct7)
+  vars: [rd, rs1, funct7]
+  domain: { rd: FPRegs, rs1: FPRegs, funct7: {0b0101100, 0b0101101} }
+  body: encode_fp_unary([Reg(rd),Reg(rs1)], funct7, 0) == encode_fp_unary([Reg(rd),Reg(rs1),RoundingMode("dyn")], funct7, 0) && unpack_rm == 0b111
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
-  rs2: { gen: int, min: 0, max: 31, type: u32 }
-  funct7: { gen: oneof, options: [1, 5, 9, 13] }
-evidence: src/backend/riscv/assembler/encoder/float.rs:71-72 else { 0b111 }; RISC-V default DYN
+  funct7: { gen: oneof, options: [44, 45] }
+evidence: src/backend/riscv/assembler/encoder/float.rs:89-91 omitted rm => 0b111; RISC-V DYN=111
 ```
 
-## encode_fp_arith_d_neg_arity_gpr
-- Tier: 4
-- Rationale: Negative/error contract. get_freg errors on missing index and on non-FP Reg (mod.rs:400-406). llvm-mc rejects too-few operands and GPR in an FP slot. Empty / 1 / 2 operands, GPR names, and non-Reg operands must return Err.
+## encode_fp_unary_neg_arity_gpr
+- Tier: 5
+- Rationale: Negative/error contract from llvm-mc (too few operands; GPR invalid in FP slot) and get_freg (mod.rs:402 expected float register). Empty, 1-operand, GPR rd/rs1, and non-Reg rd must Err. Documented error: llvm-mc "too few operands" / "invalid operand".
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_neg_arity_gpr
-- Formal: ∀ funct7 ∈ {1,5,9,13}, ∀ ops ∈ {[], [Reg(fp)], [Reg(fp),Reg(fp)], [Reg(gpr),Reg(fp),Reg(fp)], [Reg(fp),Reg(gpr),Reg(fp)], [Reg(fp),Reg(fp),Reg(gpr)], [nonReg,Reg(fp),Reg(fp)]}. encode_fp_arith_d(ops, funct7) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ funct7 ∈ {0b0101100,0b0101101}, ∀ fp ∈ FPRegs, ∀ gpr ∈ GPRegs, ∀ bad ∉ Reg(FP). encode_fp_unary([], funct7, 0) is Err ∧ encode_fp_unary([Reg(fp)], funct7, 0) is Err ∧ encode_fp_unary([Reg(gpr),Reg(fp)], funct7, 0) is Err ∧ encode_fp_unary([Reg(fp),Reg(gpr)], funct7, 0) is Err ∧ encode_fp_unary([bad,Reg(fp)], funct7, 0) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops, funct7]
-  domain: { ops: arity_or_gpr_or_nonreg, funct7: FP_ARITH_D_FUNCT7 }
-  relation:
-    op: throws
-    expr: encode_fp_arith_d(ops, funct7)
+  vars: [funct7, fp, gpr, bad]
+  domain: { funct7: {0b0101100, 0b0101101}, fp: FPRegs, gpr: GPRegs, bad: NonReg }
+  body: encode_fp_unary(empty|one|gpr-rd|gpr-rs1|nonreg-rd, funct7, 0) is Err
 generators:
-  funct7: { gen: oneof, options: [1, 5, 9, 13] }
-  ops: { gen: oneof, options: ["empty", "arity1", "arity2", "gpr_rd", "nonreg_rd"] }
+  funct7: { gen: oneof, options: [44, 45] }
+  fp: { gen: int, min: 0, max: 31, type: u32 }
+  gpr: { gen: int, min: 0, max: 31, type: u32 }
 expected_error: String
-evidence: src/backend/riscv/assembler/encoder/mod.rs:400-406 get_freg; llvm-mc "too few operands" / "invalid operand for instruction"
+evidence: src/backend/riscv/assembler/encoder/mod.rs:402 get_freg; llvm-mc too few operands / invalid operand for GPR in FP slot
 ```
 
-## encode_fp_arith_d_neg_extra
-- Tier: 4
-- Rationale: Negative/error contract. llvm-mc rejects a 5th operand after rd,rs1,rs2[,rm] ("invalid operand for instruction"). encode_instruction passes extra operands through. A 4th RoundingMode is in-domain (optional rm); a 5th operand is not. Documented assembler contract is the ISA encoding of a 3-or-4-operand FP arith instruction, not "ignore trailing operands".
+## encode_fp_unary_neg_extra
+- Tier: 5
+- Rationale: Negative/error contract: llvm-mc rejects a 4th operand after optional rm ("invalid operand for instruction"). encode_instruction public wrapper passes operands through. Extra operand must Err, not silently encode FSQRT.
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_neg_extra
-- Formal: ∀ mn ∈ {fadd.d,fsub.d,fmul.d,fdiv.d}, ∀ rd,rs1,rs2 ∈ FPRegs, ∀ extra. encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2),RoundingMode("rne"), extra], funct7(mn)) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ mn ∈ {fsqrt.s,fsqrt.d}, ∀ rd,rs1 ∈ FPRegs, ∀ extra ∈ Operand. encode_fp_unary([Reg(rd),Reg(rs1),RoundingMode("rne"), extra], funct7(mn), 0) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: failing
-- Counterexample: encode_fp_arith_d([Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 1) → Ok(Word(33554515))
-- Bug report: pbt-out/bug_reports/encode_fp_arith_d_trailing_operand.md
+- Counterexample: encode_fp_unary([Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 0b0101100, 0) -> Ok(Word(0x58000053))
+- Bug report: pbt-out/bug_reports/encode_fp_unary_extra_operand.md
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rs1, rs2, extra, funct7]
-  domain: { rd: FPRegs, rs1: FPRegs, rs2: FPRegs, extra: Operand, funct7: FP_ARITH_D_FUNCT7 }
-  relation:
-    op: throws
-    expr: encode_fp_arith_d([Reg(rd), Reg(rs1), Reg(rs2), RoundingMode("rne"), extra], funct7)
+  vars: [mn, rd, rs1, extra]
+  domain: { mn: FP_UNARY_MN, rd: FPRegs, rs1: FPRegs, extra: Operand }
+  body: encode_fp_unary([Reg(rd), Reg(rs1), RoundingMode("rne"), extra], funct7(mn), 0) is Err
 generators:
+  mn: { gen: oneof, options: ["fsqrt.s", "fsqrt.d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
-  rs2: { gen: int, min: 0, max: 31, type: u32 }
-  funct7: { gen: oneof, options: [1, 5, 9, 13] }
-  extra: { gen: oneof, options: ["Imm(0)", "Reg(x0)", "RoundingMode(rne)"] }
 expected_error: String
-evidence: llvm-mc rejects `fadd.d fa0, fa1, fa2, rne, rne` as invalid operand; encoder/mod.rs:749 passes operands through
+evidence: llvm-mc -triple=riscv64 -mattr=+f,+d rejects `fsqrt.s fa0, fa1, rne, 0`; encode_instruction mod.rs:727 passes operands through
 ```
 
-## encode_fp_arith_d_neg_non_rm_fourth
-- Tier: 4
-- Rationale: Negative/error contract. A 4th operand that is not a RoundingMode is not the documented optional rm (float.rs:65). llvm-mc rejects `fadd.d fa0, fa1, fa2, x1` and unknown rm mnemonics. The SUT currently maps non-RoundingMode 4th operands to rm=111 (dyn) and still encodes — that is the law under test, not a pre-weakened skip.
+## encode_fp_unary_neg_non_rm_third
+- Tier: 5
+- Rationale: Negative/error contract: llvm-mc requires the optional 3rd operand to be a rounding-mode mnemonic ("operand must be a valid floating point rounding mode mnemonic"). A 3rd non-RoundingMode operand must Err, not encode as DYN.
 - Doc contract: (none)
 - Seed: src/backend/riscv/assembler/encoder/encode_fp_arith_pbt.rs encode_fp_arith_neg_non_rm_fourth
-- Formal: ∀ rd,rs1,rs2 ∈ FPRegs, ∀ extra ∉ RoundingMode, ∀ funct7 ∈ {1,5,9,13}. encode_fp_arith_d([Reg(rd),Reg(rs1),Reg(rs2), extra], funct7) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fp_arith_d_pbt.rs
+- Formal: ∀ mn ∈ {fsqrt.s,fsqrt.d}, ∀ rd,rs1 ∈ FPRegs, ∀ extra ∉ RoundingMode. encode_fp_unary([Reg(rd),Reg(rs1), extra], funct7(mn), 0) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fp_unary_pbt.rs
 - Status: failing
-- Counterexample: encode_fp_arith_d([Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 1) → Ok(Word(33583187))
-- Bug report: pbt-out/bug_reports/encode_fp_arith_d_non_rm_fourth.md
+- Counterexample: encode_fp_unary([Reg("f0"), Reg("f0"), Imm(0)], 0b0101100, 0) -> Ok(Word(0x58007053))
+- Bug report: pbt-out/bug_reports/encode_fp_unary_non_rm_third.md
 
 ```property
-function: encoder.encode_fp_arith_d
+function: encoder.encode_fp_unary
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rs1, rs2, extra, funct7]
-  domain: { rd: FPRegs, rs1: FPRegs, rs2: FPRegs, extra: Operand \ RoundingMode, funct7: FP_ARITH_D_FUNCT7 }
-  relation:
-    op: throws
-    expr: encode_fp_arith_d([Reg(rd), Reg(rs1), Reg(rs2), extra], funct7)
+  vars: [mn, rd, rs1, extra]
+  domain: { mn: FP_UNARY_MN, rd: FPRegs, rs1: FPRegs, extra: NonRoundingMode }
+  body: encode_fp_unary([Reg(rd), Reg(rs1), extra], funct7(mn), 0) is Err
 generators:
+  mn: { gen: oneof, options: ["fsqrt.s", "fsqrt.d"] }
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
-  rs2: { gen: int, min: 0, max: 31, type: u32 }
-  funct7: { gen: oneof, options: [1, 5, 9, 13] }
-  extra: { gen: oneof, options: ["Imm(0)", "Reg(x0)", "Mem", "Csr"] }
 expected_error: String
-evidence: llvm-mc "operand must be a valid floating point rounding mode mnemonic" / "invalid operand"; float.rs:65 optional rounding mode
+evidence: llvm-mc rejects `fsqrt.s fa0, fa1, 0` with "operand must be a valid floating point rounding mode mnemonic"; parser.rs:41 RoundingMode closed set
 ```
