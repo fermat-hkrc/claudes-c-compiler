@@ -1,126 +1,118 @@
-# PBT Campaign Report: encode_jalr
+# PBT Campaign Report: encode_branch_instr
 
 ## Summary
 
-**Verdict:** 1 high: encode_jalr silently wraps out-of-range immediates (`jalr x0, x1, 2048` encodes as `jalr x0, x1, -2048`); plus 2 medium: 1-operand `jalr 8(x2)` and `jalr ra, %pcrel_lo(foo)(ra)` are rejected.
+**Verdict:** 2 high: encode_branch_instr silently truncates odd/out-of-range offsets (`beq x0, x0, 1` encodes as `beq x0, x0, 0`) and ignores a fourth operand; plus 1 medium: `beq rs1, rs2, foo+N` is rejected instead of emitting R_RISCV_BRANCH with that addend.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_jalr
-**Tests:** 10
-**Result:** 7 passing, 3 bugs
-**Change surface:** 1 changed function (encode_jalr), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_jalr NOT LINKED). Execution evidence is `cargo test --lib encode_jalr` (KAT + 1000-case proptest). Tier: standard.
+**Modules tested:** encode_branch_instr
+**Tests:** 9
+**Result:** 6 passing, 3 bugs
+**Change surface:** requested encode_branch was unresolved in base.rs; tested encode_branch_instr (1 function, 1 with a property, 0 error-handling changes)
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Execution evidence is `cargo test --lib encode_branch_instr` (KAT + 1000-case proptest). Tier: standard.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_jalr | 10 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_branch_instr | 9 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_jalr silently truncates out-of-range immediates
+### B1: encode_branch_instr silently truncates odd and out-of-range immediates
 
-**Formal:** ∀ rd, rs1 ∈ GPR, ∀ off ∈ ℤ \ [-2048, 2047]. llvm-mc("jalr rd, rs1, off") errors ∧ encode_jalr([Reg(rd), Reg(rs1), Imm(off)]) = Err(_)
-**Contract evidence:** documented src/backend/riscv/assembler/README.md:353 "I-type:  [    imm[11:0]  | rs1 | funct3 |  rd  | opcode]" — 12-bit signed field; llvm-mc rejects values outside [-2048, 2047]
-**Documentation conflict:** (none) — the I-type layout states a 12-bit immediate; the code does not admit a limitation, it silently masks
+**Formal:** ∀ rs1,rs2 ∈ GPR, imm ∈ ℤ. (imm odd ∨ imm ∉ [-4096,4094]) ∧ llvm-mc rejects "beq rs1, rs2, imm" ⇒ encode_branch_instr([Reg(rs1),Reg(rs2),Imm(imm)], 0) = Err
+**Contract evidence:** documented src/backend/riscv/assembler/README.md:355 "B-type:  [imm[12|10:5] | rs2 | rs1 | funct3 | imm[4:1|11] | opcode]" — 13-bit even signed field (bit 0 implicit 0); llvm-mc rejects values that are not a multiple of 2 in [-4096, 4094]
+**Documentation conflict:** (none) — the B-type layout states a 13-bit even immediate; the code does not admit a limitation, it silently masks
 **Severity:** high
-**Counterexample:** encode_jalr([Reg("x0"), Reg("x1"), Imm(2048)])
-**Expected / Actual:** Err / Ok(Word(0x80008067)) encoding of jalr x0, x1, -2048
-**Impact:** An out-of-range JALR offset assembles to a jump in the opposite direction instead of being rejected, so callers get silent wrong machine code.
-**Root cause:** base.rs:119 casts the i64 immediate to i32 with no range check; encode_i then masks with 0xFFF, so 2048 becomes the 12-bit pattern of -2048.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:119`
+**Counterexample:** encode_branch_instr([Reg("x0"), Reg("x0"), Imm(1)], 0)
+**Expected / Actual:** Err / Ok(Word(0x00000063)) encoding of beq x0, x0, 0
+**Impact:** An odd or out-of-range branch offset assembles to a different target instead of being rejected, so callers get silent wrong machine code.
+**Root cause:** base.rs:131 casts the i64 immediate to i32 with no range or alignment check; encode_b then drops bit 0 via `(imm >> 1) & 0xF`, so odd 1 becomes 0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:131`
 ```rust
-            Ok(EncodeResult::Word(encode_i(OP_JALR, rd, 0, rs1, imm as i32)))
+            Ok(EncodeResult::Word(encode_b(OP_BRANCH, funct3, rs1, rs2, *imm as i32)))
 ```
-**Suggested fix:** Reject immediates outside the signed 12-bit range before packing.
+**Suggested fix:** Reject immediates that are odd or outside the 13-bit even signed range before packing.
 ```rust
-            let imm = get_imm(operands, 2)?;
-            if !(-2048..=2047).contains(&imm) {
+            let imm = *imm;
+            if imm % 2 != 0 || !(-4096..=4094).contains(&imm) {
                 return Err(format!(
-                    "jalr: immediate {imm} must be in [-2048, 2047]"
+                    "branch: immediate {imm} must be a multiple of 2 in [-4096, 4094]"
                 ));
             }
-            Ok(EncodeResult::Word(encode_i(OP_JALR, rd, 0, rs1, imm as i32)))
+            Ok(EncodeResult::Word(encode_b(OP_BRANCH, funct3, rs1, rs2, imm as i32)))
 ```
-**Bug report:** bug_reports/encode_jalr_imm_oob.md
-**Repro seed:** cc 0be9b7e62c879361fca694df444b990ff4923b0e01c60034a330862f9800b7c9
-**Raw output:**
-```text
-thread 'backend::riscv::assembler::encoder::encode_jalr_pbt::test_encode_jalr_regression_imm_oob' (2734246) panicked at src/backend/riscv/assembler/encoder/encode_jalr_pbt.rs:311:5:
-jalr x0, x1, 2048 must Err (imm12 range); got Ok(Word(2147516519))
-```
-
-### B2: encode_jalr rejects 1-operand mem form jalr off(rs1)
-
-**Formal:** ∀ rs1 ∈ GPR, ∀ off ∈ [-2048, 2047]. encode_jalr([Mem{base: rs1, offset: off}]) = encode_jalr([Reg("ra"), Reg(rs1), Imm(off)]) = Word(llvm-mc("jalr off(rs1)"))
-**Contract evidence:** inferred (llvm-mc accepts `jalr off(rs1)` as jalr ra, off(rs1); analogous to documented 1-operand `jalr rs1` with implicit rd=ra; parser produces Mem for that text)
-**Documentation conflict:** (none) — base.rs:96 documents `jalr rs1 (rd = ra, offset = 0)` but does not declare Mem invalid
-**Severity:** medium
-**Counterexample:** encode_jalr([Mem { base: "x2", offset: 8 }])
-**Expected / Actual:** Ok(Word) equal to jalr ra, x2, 8 / Err("expected register at operand 0, got Some(Mem { base: \"x2\", offset: 8 })")
-**Impact:** Valid textual assembly `jalr 8(x2)` cannot be encoded.
-**Root cause:** base.rs:97 the 1-operand arm always calls get_reg; Mem is not matched.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:97`
-```rust
-            let rs1 = get_reg(operands, 0)?;
-```
-**Suggested fix:** Accept a Mem operand in the 1-operand arm with implicit rd=ra.
-```rust
-                Operand::Mem { base, offset } => {
-                    let rs1 = reg_num(base).ok_or("invalid base register")?;
-                    Ok(EncodeResult::Word(encode_i(OP_JALR, 1, 0, rs1, *offset as i32)))
-                }
-```
-**Bug report:** bug_reports/encode_jalr_one_operand_mem.md
+**Bug report:** bug_reports/encode_branch_instr_imm_oob_odd.md
 **Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_jalr_pbt::test_encode_jalr_regression_one_operand_mem' (2734247) panicked at src/backend/riscv/assembler/encoder/encode_jalr_pbt.rs:342:18:
-expected Word for jalr 8(x2), got Err("expected register at operand 0, got Some(Mem { base: \"x2\", offset: 8 })")
+thread 'backend::riscv::assembler::encoder::encode_branch_instr_pbt::test_encode_branch_instr_regression_imm_oob' (2737315) panicked at src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs:368:5:
+beq x0, x1, 1 must Err (odd offset); got Ok(Word(1048675))
 ```
 
-### B3: encode_jalr rejects %pcrel_lo/%lo mem-symbol operands
+### B2: encode_branch_instr ignores a fourth operand
 
-**Formal:** ∀ rd, rs1 ∈ GPR, ∀ s ∈ ident. encode_jalr([Reg(rd), MemSymbol{base: rs1, symbol: "%pcrel_lo(s)"}]) = WordWithReloc{word: encode_jalr([Reg(rd), Mem{rs1,0}]), type: PcrelLo12I, symbol: s, addend: 0} and likewise %lo → Lo12I
-**Contract evidence:** documented src/backend/riscv/assembler/README.md:334 "`call sym` → `auipc ra, %pcrel_hi(sym)` + `jalr ra, %pcrel_lo(sym)(ra)`"; llvm-mc accepts the same syntax
-**Documentation conflict:** README.md:334 states the jalr %pcrel_lo form as the expansion of call — the comment states the behavior IS handled at assembler level; encode_jalr (the jalr mnemonic) rejects it. (not independently verified that call's pseudo path is the only producer)
+**Formal:** ∀ rs1,rs2 ∈ GPR, off ∈ even[-4096,4094], extra ∈ Operand. encode_branch_instr([Reg(rs1),Reg(rs2),Imm(off), extra], 0) = Err
+**Contract evidence:** inferred (B-type is three-operand rs1, rs2, offset; llvm-mc rejects `beq x1, x2, 4, x3` as invalid operand; encode_instruction passes operands through)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_branch_instr([Reg("x0"), Reg("x0"), Imm(0), Imm(0)], 0)
+**Expected / Actual:** Err / Ok(Word(0x00000063)) encoding of beq x0, x0, 0
+**Impact:** Extra tokens in a branch instruction are silently dropped, so typos assemble to a valid branch without an error.
+**Root cause:** base.rs:129 uses operands.get(2) and never checks operands.len() == 3, so a fourth operand is ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:129`
+```rust
+    match &operands.get(2) {
+```
+**Suggested fix:** Reject arity other than 3 before matching the offset operand.
+```rust
+    if operands.len() != 3 {
+        return Err("branch: wrong number of operands".to_string());
+    }
+    match &operands[2] {
+```
+**Bug report:** bug_reports/encode_branch_instr_extra_operand.md
+**Repro seed:** cc c8367c59bdfac9d62538e8ff3bc78142a27a713d363a3581270ff38c02fb4de6
+**Raw output:**
+```text
+thread 'backend::riscv::assembler::encoder::encode_branch_instr_pbt::test_encode_branch_instr_regression_extra_operand' (2737314) panicked at src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs:379:5:
+beq x0, x1, 0 with a fourth operand must Err; got Ok(Word(1048675))
+```
+
+### B3: encode_branch_instr rejects SymbolOffset (symbol+addend) as a branch target
+
+**Formal:** ∀ rs1,rs2 ∈ GPR, s ∈ ident, addend ∈ ℤ\{0}. encode_branch_instr([Reg(rs1),Reg(rs2),SymbolOffset(s,addend)], 0) = WordWithReloc{word=llvm-mc("beq rs1, rs2, 0"), reloc_type=Branch, symbol=s, addend=addend}
+**Contract evidence:** inferred (parser.rs:29 SymbolOffset is the parsed form of symbol+offset; llvm-mc accepts `beq x1, x2, foo+4` as a branch fixup with value foo+4; Reloc.addend is i64)
+**Documentation conflict:** (none) — base.rs:143 says "expected offset or label as 3rd operand" and does not declare symbol+addend invalid
 **Severity:** medium
-**Counterexample:** encode_jalr([Reg("ra"), MemSymbol { base: "ra", symbol: "%pcrel_lo(foo)", modifier: "" }])
-**Expected / Actual:** Ok(WordWithReloc { PcrelLo12I, symbol: "foo", addend: 0 }) / Err("jalr: invalid operands")
-**Impact:** Hand-written `jalr ra, %pcrel_lo(foo)(ra)` cannot be assembled even though the assembler documents that instruction sequence.
-**Root cause:** base.rs:112 the 2-operand match handles only Reg and Mem; MemSymbol falls through to the invalid-operands error.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:112`
+**Counterexample:** encode_branch_instr([Reg("x0"), Reg("x0"), SymbolOffset("foo", 1)], 0)
+**Expected / Actual:** Ok(WordWithReloc { word: 0x00000063, reloc_type: Branch, symbol: "foo", addend: 1 }) / Err("branch: expected offset or label as 3rd operand")
+**Impact:** Valid textual assembly `beq rs1, rs2, foo+N` cannot be encoded.
+**Root cause:** base.rs:133 matches only Symbol, Label, and Reg; SymbolOffset falls through to the error arm at base.rs:143.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:133`
 ```rust
-                _ => Err("jalr: invalid operands".to_string()),
+        Some(Operand::Symbol(s)) | Some(Operand::Label(s)) | Some(Operand::Reg(s)) => {
 ```
-**Suggested fix:** Handle MemSymbol like encode_load's I-type reloc arm (PcrelLo12I / Lo12I / TprelLo12I).
+**Suggested fix:** Accept SymbolOffset as a reloc target and preserve the addend.
 ```rust
-                Operand::MemSymbol { base, symbol, .. } => {
-                    let rs1 = reg_num(base).ok_or("invalid base register")?;
-                    let (reloc_type, sym) = parse_reloc_modifier(symbol);
-                    let reloc_type = match reloc_type {
-                        RelocType::PcrelHi20 => RelocType::PcrelLo12I,
-                        RelocType::Hi20 => RelocType::Lo12I,
-                        RelocType::TprelHi20 => RelocType::TprelLo12I,
-                        other => other,
-                    };
-                    Ok(EncodeResult::WordWithReloc {
-                        word: encode_i(OP_JALR, rd, 0, rs1, 0),
-                        reloc: Relocation {
-                            reloc_type,
-                            symbol: sym,
-                            addend: 0,
-                        },
-                    })
-                }
+        Some(Operand::SymbolOffset(s, addend)) => {
+            Ok(EncodeResult::WordWithReloc {
+                word: encode_b(OP_BRANCH, funct3, rs1, rs2, 0),
+                reloc: Relocation {
+                    reloc_type: RelocType::Branch,
+                    symbol: s.clone(),
+                    addend: *addend,
+                },
+            })
+        }
 ```
-**Bug report:** bug_reports/encode_jalr_pcrel_lo.md
+**Bug report:** bug_reports/encode_branch_instr_symbol_offset.md
 **Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_jalr_pbt::test_encode_jalr_regression_pcrel_lo' (2734248) panicked at src/backend/riscv/assembler/encoder/encode_jalr_pbt.rs:369:18:
-expected WordWithReloc for jalr ra, %pcrel_lo(foo)(ra), got Err("jalr: invalid operands")
+thread 'backend::riscv::assembler::encoder::encode_branch_instr_pbt::test_encode_branch_instr_regression_symbol_offset' (2737316) panicked at src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs:403:18:
+expected WordWithReloc for foo+4, got Err("branch: expected offset or label as 3rd operand")
 ```
 
 ## Design Caveats
@@ -131,32 +123,32 @@ expected WordWithReloc for jalr ra, %pcrel_lo(foo)(ra), got Err("jalr: invalid o
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_jalr_pbt.rs | 10 properties + 7 KAT + 3 failing regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs | 9 properties + 8 KAT + 3 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (expect 6 property failures plus 3 regression failures; 6 properties and 8 KAT pass):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_jalr -- --test-threads=1
+cargo test --lib encode_branch_instr -- --test-threads=1
 ```
 
-B1:
+B1 odd/out-of-range immediate:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_jalr_regression_imm_oob -- --test-threads=1
+cargo test --lib test_encode_branch_instr_regression_imm_oob -- --test-threads=1
 ```
 
-B2:
+B2 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_jalr_regression_one_operand_mem -- --test-threads=1
+cargo test --lib test_encode_branch_instr_regression_extra_operand -- --test-threads=1
 ```
 
-B3:
+B3 SymbolOffset:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_jalr_regression_pcrel_lo -- --test-threads=1
+cargo test --lib test_encode_branch_instr_regression_symbol_offset -- --test-threads=1
 ```
 
 ## Output Directories
@@ -168,21 +160,24 @@ cargo test --lib test_encode_jalr_regression_pcrel_lo -- --test-threads=1
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
-- pbt-out/report.json
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_jalr_imm_oob.md
-- pbt-out/bug_reports/encode_jalr_imm_oob.html
-- pbt-out/bug_reports/encode_jalr_one_operand_mem.md
-- pbt-out/bug_reports/encode_jalr_one_operand_mem.html
-- pbt-out/bug_reports/encode_jalr_pcrel_lo.md
-- pbt-out/bug_reports/encode_jalr_pcrel_lo.html
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_branch_instr_imm_oob_odd.md
+- pbt-out/bug_reports/encode_branch_instr_imm_oob_odd.html
+- pbt-out/bug_reports/encode_branch_instr_extra_operand.md
+- pbt-out/bug_reports/encode_branch_instr_extra_operand.html
+- pbt-out/bug_reports/encode_branch_instr_symbol_offset.md
+- pbt-out/bug_reports/encode_branch_instr_symbol_offset.html
+- pbt-out/run/encode_branch_instr.log
+- src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs
+- proptest-regressions/backend/riscv/assembler/encoder/encode_branch_instr_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 13:22 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 185/324 total | PBT candidates: 185 | Tested: 185 (100%) | 1 pass, 185 fail
+> Last updated: 2026-10-06 13:43 (campaign: coverage)
+> Files: 12/12 scanned (100%) | Functions: 186/324 total | PBT candidates: 186 | Tested: 186 (100%) | 1 pass, 186 fail
 
 ## Summary
 
@@ -191,10 +186,10 @@ cargo test --lib test_encode_jalr_regression_pcrel_lo -- --test-threads=1
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 185 |
-| **Tested (of PBT candidates)** | **185 / 185 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 185 / -1 |
-| **Overall (tested / all functions)** | **185 / 324 (57%)** |
+| PBT candidates (from FUNCTION_INDEX) | 186 |
+| **Tested (of PBT candidates)** | **186 / 186 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 186 / -1 |
+| **Overall (tested / all functions)** | **186 / 324 (57%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -202,13 +197,13 @@ cargo test --lib test_encode_jalr_regression_pcrel_lo -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 185 | 185 | 0 | 100% |
+|  | 186 | 186 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 185 | 185 | 0 | 100% |
+| unknown | 186 | 186 | 0 | 100% |
 
 ## File Coverage
 
@@ -416,3 +411,4 @@ cargo test --lib test_encode_jalr_regression_pcrel_lo -- --test-threads=1
 | encode_auipc | base.rs |
 | encode_jal | base.rs |
 | encode_jalr | base.rs |
+| encode_branch_instr | base.rs |

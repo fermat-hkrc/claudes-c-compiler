@@ -1,4 +1,4 @@
-> Total files: 12 | Total functions: 324 | PBT candidates: 186 | Excluded: 138
+> Total files: 12 | Total functions: 324 | PBT candidates: 187 | Excluded: 137
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -313,7 +313,7 @@
 | encode_auipc | base.rs | 30 | function | yes | - |
 | encode_jal | base.rs | 51 | function | yes | -
 | encode_jalr | base.rs | 92 | function | yes | -
-| encode_branch_instr | base.rs | 125 | function | no | out of campaign scope
+| encode_branch_instr | base.rs | 125 | function | yes | -
 | encode_load | base.rs | 147 | function | no | out of campaign scope
 | encode_store | base.rs | 194 | function | no | out of campaign scope
 | encode_alu_imm | base.rs | 223 | function | no | out of campaign scope

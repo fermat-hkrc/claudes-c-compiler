@@ -24,6 +24,8 @@ mod encode_auipc_pbt;
 mod encode_jal_pbt;
 #[cfg(test)]
 mod encode_jalr_pbt;
+#[cfg(test)]
+mod encode_branch_instr_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

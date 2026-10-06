@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_branch_instr)
+
+- Valid `mn rs1, rs2, off` for mn in {beq,bne,blt,bge,bltu,bgeu}, even off in [-4096, 4094], rs1/rs2 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins beq/bne/blt/bge/bltu/bgeu x0,x1,0 = 0x00100063 / 0x00101063 / 0x00104063 / 0x00105063 / 0x00106063 / 0x00107063; beq x1,x2,4=0x00208263; bne x1,x2,-4=0xfe209ee3; beq x1,x2,4094=0x7e208fe3; beq x1,x2,-4096=0x80208063.
+- B-type layout holds: opcode=0b1100011, funct3 in bits[14:12], rs1 in bits[19:15], rs2 in bits[24:20], reconstructed even offset matches (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rs1/rs2 (1000 cases).
+- Symbol/Label/Reg reloc-form word equals `mn rs1, rs2, 0` with RelocType::Branch, symbol=s, addend=0 (1000 cases).
+- Empty operand list, missing 3rd operand, FP rs1/rs2, and Mem/Csr/Fence/RoundingMode as 3rd operand return Err (1000 cases).
+- Odd/out-of-range immediates, extra operands, and SymbolOffset currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_branch_instr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs, cargo test --lib encode_branch_instr, proptest cases=1000.
+- Dispatch: encoder/mod.rs:468-473 beq/bne/blt/bge/bltu/bgeu => encode_branch_instr.
+- Requested `--func encode_branch` is absent from base.rs; the in-scope symbol is encode_branch_instr.
+- Sibling encode_b / beqz / bnez / bgez / bltz / bgt / C.BEQZ are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_branch_instr_neg_bad_3rd. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+- Three failing properties are SUT bugs. See pbt-out/bug_reports/encode_branch_instr_*.md.
+
+## Quirks (encode_branch_instr)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:356 GCC inline asm).
+- No operands.len() == 3 check; extra operands are ignored (see bugs).
+- Immediate is `*imm as i32` then encode_b drops bit 0; values outside even [-4096, 4094] wrap/truncate (see bugs).
+- SymbolOffset is not matched and returns "branch: expected offset or label as 3rd operand" (see bugs).
+- 3rd-operand Reg is treated as a jump-target symbol (matches parser classifying a label that looks like a register).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 21-line body.
+
 # Confirmed invariants (encode_jalr)
 
 - Valid `jalr rd, rs1, off` for off in [-2048, 2047] and rd/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins jalr x0,x1,0=0x00008067, jalr x1,x2,0=0x000100e7, jalr x1,x2,8=0x008100e7, jalr x1,x2,-8=0xff8100e7, jalr x1,x2,2047=0x7ff100e7, jalr x1,x2,-2048=0x800100e7, jalr x1,x2,1=0x001100e7 (odd imm accepted).
