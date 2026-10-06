@@ -118,6 +118,8 @@ mod encode_dsb_pbt;
 mod encode_mrs_pbt;
 #[cfg(test)]
 mod encode_msr_pbt;
+#[cfg(test)]
+mod encode_svc_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
