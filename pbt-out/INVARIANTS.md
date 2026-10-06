@@ -187,3 +187,9 @@ Environment quirks (round 05):
   swallowed without `?` — use panic!-based asserts in shared helpers so
   proptest catches and shrinks them.
 - Follow-up: elf resolve_numeric_labels GNU 1f/1b semantics property.
+
+- Round-18 parser battery: 26/27 agree with gcc -fsyntax-only on adversarial
+  declarator/initializer/type forms; #799 = inline-enum-in-type-name
+  enumerators not visible in enclosing scope (gcc/clang accept).
+  NOTE probe methodology: ALWAYS absolute paths to ccc in batch loops — a
+  relative path yields exit 127 which reads as "rejection" (burned twice).
