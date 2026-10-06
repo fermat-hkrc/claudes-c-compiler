@@ -1,344 +1,353 @@
-# Properties: encode_tbz
+# Properties: encode_crc32
 
-## encode_tbz_diff_imm_llvm_mc
+## encode_crc32_diff_valid_gpr
 - Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc on the valid TBZ/TBNZ immediate-offset domain. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree TBZ decoder). encode_cbz rejected as same-job sibling (CondBr19, no bit operand). encode_cond_branch rejected (B.cond). Weaker: ARM field invariant, TBZ/TBNZ metamorphic, negative_error.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_diff_imm_llvm_mc
-- Formal: ∀ rt ∈ GPR_W ∪ GPR_X (n∈0..31 including ZR/LR), bit ∈ 0..31 (W) / 0..63 (X), imm ∈ {k·4 | k∈ℤ, −32768 ≤ k·4 ≤ 32764}, is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Imm(imm)], is_nz) = Word(llvm-mc("tbz/tbnz rt, #bit, #imm"))
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: failing
-- Counterexample: encode_tbz([Reg("x0"), Imm(0), Imm(-32768)], false) — tbz x0, #0, #-32768
-- Bug report: pbt-out/bug_reports/encode_tbz_imm_offset.md
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler, same GNU-style text). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree CRC32 decoder). encode_clz/encode_cls rejected as same-job siblings (Data-processing 2-source, not CRC). ARM ARM field unpack is a weaker invariant used in encode_crc32_arm_fields.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: src/backend/arm/assembler/encoder/bitfield.rs encode_bfi_pbt llvm-mc differential
+- Formal: ∀ mnemonic ∈ {crc32b,crc32h,crc32w,crc32x,crc32cb,crc32ch,crc32cw,crc32cx}, rd,rn,rm ∈ 0..31. encode_crc32(mnemonic, [Wd(rd), Wn(rn), Wm|Xm(rm)]) = llvm-mc(mnemonic Wd, Wn, Wm|Xm) where Wm|Xm is W iff mnemonic ∈ {crc32b,crc32h,crc32w,crc32cb,crc32ch,crc32cw} else X
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tbz
+function: encode_crc32
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rt, bit, imm, is_nz]
-  domain: { rt: "GPR W/X 0..31 incl ZR/LR", bit: "0..31 W / 0..63 X", imm: "aligned -32768..32764", is_nz: bool }
+  vars: [mnemonic, rd, rn, rm]
+  domain: { mnemonic: eight CRC32 mnemonics, rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: encode_tbz([Reg(rt), Imm(bit), Imm(imm)], is_nz)
-    rhs: llvm_mc_word("tbz|tbnz rt, #bit, #imm")
+    lhs: encode_crc32(mnemonic, [Wd(rd), Wn(rn), W_or_X(mnemonic, rm)])
+    rhs: llvm_mc(mnemonic, Wd(rd), Wn(rn), W_or_X(mnemonic, rm))
 generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  bit: { gen: int, min: 0, max: 63, type: i64 }
-  imm: { gen: int, min: -32768, max: 32764, type: i64 }
-  is_nz: { gen: bool }
-evidence: README.md:12 gas-compat; README.md:220 tbz/tbnz; encoder/mod.rs:455-456 dispatch; ARM ARM Test and branch (immediate)
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: src/backend/arm/assembler/README.md:12 gas-compat; encoder/mod.rs:1047-1048 dispatch; llvm-mc -triple=aarch64 -mattr=+crc
 ```
 
-## encode_tbz_symbol_reloc
+## encode_crc32_arm_fields
 - Tier: 4
-- Rationale: README.md:267 TstBr14 ELF 279 and README.md:458 say TBZ/TBNZ emit a 14-bit test-and-branch relocation with imm14 left 0 for the linker/assembler. Exact structural invariant of the symbol/label form.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_symbol_reloc
-- Formal: ∀ n ∈ 0..31, bit ∈ 0..63, is_nz ∈ {false,true}, s a symbol, a ∈ ℤ. encode_tbz([Reg(xn|wn), Imm(bit), Symbol(s)|Label(s)|SymbolOffset(s,a)], is_nz) = WordWithReloc { word: (b5<<31)|(0b011011<<25)|(op<<24)|(b40<<19)|n with imm14=0, reloc_type=TstBr14, elf_type=279, symbol=s, addend=0|a }
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Rationale: ARM ARM CRC32 layout is an exact structural invariant independent of llvm-mc. Weaker than differential; kept as a second oracle so a llvm-mc mapping bug cannot hide a field-layout error. Round-trip rejected (no decoder).
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: bitfield.rs encode_bfi_pbt ARM field unpack
+- Formal: ∀ mnemonic ∈ CRC32_8, rd,rn,rm ∈ 0..31. let w = encode_crc32(mnemonic, valid_ops). w[31]=sf(mnemonic) ∧ w[30:21]=0011010110 ∧ w[20:16]=rm ∧ w[15:13]=010 ∧ w[12]=C(mnemonic) ∧ w[11:10]=sz(mnemonic) ∧ w[9:5]=rn ∧ w[4:0]=rd
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tbz
+function: encode_crc32
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [n, bit, is_nz, addend]
-  domain: { n: "0..31", bit: "0..63", is_nz: bool, addend: i64 }
-  relation:
-    op: holds
-    expr: word_imm14_zero_and_reloc_tstbr14_elf279
+  vars: [mnemonic, rd, rn, rm]
+  domain: { mnemonic: eight CRC32 mnemonics, rd: 0..31, rn: 0..31, rm: 0..31 }
+  body: fields(encode_crc32(mnemonic, valid_ops)) match ARM CRC32 layout for (sf, C, sz, rd, rn, rm)
 generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  bit: { gen: int, min: 0, max: 63, type: i64 }
-  is_nz: { gen: bool }
-  addend: { gen: int, min: -4096, max: 4096, type: i64 }
-evidence: README.md:267 TstBr14 ELF 279; README.md:458 TBZ/TBNZ deferred reloc; compare_branch.rs:261-271
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: bitfield.rs:243 encoding comment; ARM ARM CRC32/CRC32C
 ```
 
-## encode_tbz_word_layout
+## encode_crc32_meta_c_sz
 - Tier: 4
-- Rationale: ARM ARM Test and branch (immediate) field layout is an exact structural invariant of every successful encoding. Documented bounds b5/b40/op/Rt sampled at 0, 31, 32, 63.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_word_layout
-- Formal: ∀ n ∈ 0..31, bit ∈ 0..63, is_nz ∈ {false,true}. let w = encode_tbz([Reg(xn), Imm(bit), Symbol("L")], is_nz).word. bits[30:25]=011011 ∧ bit[31]=b5 ∧ bit[24]=op ∧ bits[23:19]=b40 ∧ bits[18:5]=0 ∧ bits[4:0]=n
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Rationale: Metamorphic: CRC32C vs CRC32 of the same size differs only in bit 12 (C); B/H/W/X of the same polynomial differ only in sf and sz. Independent of llvm-mc. Round-trip rejected (no decoder).
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt metamorphic Rd/Rn isolation
+- Formal: ∀ sz ∈ {b,h,w,x}, rd,rn,rm ∈ 0..31. encode_crc32(crc32c∥sz, ops) XOR encode_crc32(crc32∥sz, ops) = 1<<12. ∀ poly ∈ {crc32,crc32c}. encodings of b/h/w/x with identical regs differ only in bits {31,11,10}
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tbz
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [n, bit, is_nz]
-  domain: { n: "0..31", bit: "0..63", is_nz: bool }
-  relation:
-    op: holds
-    expr: arm_tbz_fields(w, n, bit, is_nz)
-generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  bit: { gen: int, min: 0, max: 63, type: i64 }
-  is_nz: { gen: bool }
-evidence: compare_branch.rs:261 ARM TBZ/TBNZ layout
-```
-
-## encode_tbz_meta_tbz_vs_tbnz
-- Tier: 4
-- Rationale: ARM ARM op bit is the sole TBZ/TBNZ distinction (bit 24). Metamorphic: same operands, is_nz true vs false, encodings differ only at bit 24 and share TstBr14 reloc.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_meta_cbz_vs_cbnz
-- Formal: ∀ n ∈ 0..31, bit ∈ 0..63, s a symbol, a ∈ ℤ. encode_tbz(ops, true).word XOR encode_tbz(ops, false).word = 1<<24 ∧ both reloc_type=TstBr14 ∧ same symbol ∧ same addend
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tbz
+function: encode_crc32
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, bit, addend]
-  domain: { n: "0..31", bit: "0..63", addend: i64 }
+  vars: [sz, rd, rn, rm]
+  domain: { sz: {b,h,w,x}, rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: encode_tbz(ops, true).word XOR encode_tbz(ops, false).word
-    rhs: 1u32 << 24
+    lhs: encode_crc32("crc32c"+sz, ops) XOR encode_crc32("crc32"+sz, ops)
+    rhs: 1<<12
 generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  bit: { gen: int, min: 0, max: 63, type: i64 }
-  addend: { gen: int, min: -4096, max: 4096, type: i64 }
-evidence: compare_branch.rs:259 op = is_nz; ARM ARM TBZ op=0 TBNZ op=1
+  sz: { gen: oneof, items: ["b", "h", "w", "x"] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: bitfield.rs:243 C and sz fields; ARM ARM CRC32 vs CRC32C
 ```
 
-## encode_tbz_neg_arity
-- Tier: 3
-- Rationale: llvm-mc rejects too-few-operands (`tbz x0`, `tbz x0, #0`). get_reg/get_imm/get_symbol fail on missing slots. Negative/error contract with documented exact Err.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_neg_arity
-- Formal: ∀ is_nz ∈ {false,true}. encode_tbz([], is_nz) is Err ∧ encode_tbz([Reg("x0")], is_nz) is Err ∧ encode_tbz([Reg("x0"), Imm(0)], is_nz) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tbz
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [is_nz]
-  domain: { is_nz: bool }
-  relation:
-    op: holds
-    expr: encode_tbz([], is_nz).is_err() && encode_tbz([Reg("x0")], is_nz).is_err() && encode_tbz([Reg("x0"), Imm(0)], is_nz).is_err()
-generators:
-  is_nz: { gen: bool }
-expected_error: String
-evidence: llvm-mc "too few operands for instruction"; get_reg/get_imm/get_symbol at 0/1/2
-```
-
-## encode_tbz_neg_extra_operand
-- Tier: 3
-- Rationale: llvm-mc rejects a fourth operand (`tbz x0, #0, label, x1`). Body has no operands.len() upper bound. Negative/error contract; extra operands stay in the generator (not declared invalid by this function).
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_neg_extra_operand
-- Formal: ∀ n ∈ 0..30, bit ∈ 0..63, is_nz ∈ {false,true}, extra ∈ Operand. encode_tbz([Reg(xn), Imm(bit), Symbol(s), extra], is_nz) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: failing
-- Counterexample: encode_tbz([Reg("x0"), Imm(0), Symbol("labl0"), Reg("x1")], false)
-- Bug report: pbt-out/bug_reports/encode_tbz_extra_operand.md
-
-```property
-function: encoder.compare_branch.encode_tbz
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, bit, is_nz, extra]
-  domain: { n: "0..30", bit: "0..63", is_nz: bool, extra: Operand }
-  relation:
-    op: holds
-    expr: encode_tbz([Reg(xn), Imm(bit), Symbol(s), extra], is_nz).is_err()
-generators:
-  n: { gen: int, min: 0, max: 30, type: u32 }
-  bit: { gen: int, min: 0, max: 63, type: i64 }
-  is_nz: { gen: bool }
-  extra: { gen: int, min: 0, max: 3, type: u32 }
-expected_error: String
-evidence: llvm-mc "invalid operand for instruction" on fourth operand
-```
-
-## encode_tbz_neg_wrong_reg
-- Tier: 3
-- Rationale: llvm-mc rejects SP/WSP as Rt. parse_reg_num maps SP to 31; those inputs stay in the generator (not declared invalid by this function).
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_neg_wrong_reg
-- Formal: ∀ name ∈ {sp,wsp}, is_nz ∈ {false,true}. encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: failing
-- Counterexample: encode_tbz([Reg("sp"), Imm(0), Symbol("L")], false)
-- Bug report: pbt-out/bug_reports/encode_tbz_sp_as_zr.md
-
-```property
-function: encoder.compare_branch.encode_tbz
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [name, is_nz]
-  domain: { name: "sp|wsp", is_nz: bool }
-  relation:
-    op: holds
-    expr: encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz).is_err()
-generators:
-  name: { gen: string }
-  is_nz: { gen: bool }
-expected_error: String
-evidence: llvm-mc "invalid operand for instruction" on sp
-```
-
-## encode_tbz_neg_fp_reg
-- Tier: 3
-- Rationale: llvm-mc rejects FP/SIMD Rt (d/s/q/v/h/b). parse_reg_num accepts those prefixes; inputs stay in the generator.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_neg_wrong_reg
-- Formal: ∀ prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31, is_nz ∈ {false,true}. encode_tbz([Reg(prefix+n), Imm(0), Symbol("L")], is_nz) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: failing
-- Counterexample: encode_tbz([Reg("d0"), Imm(0), Symbol("L")], false)
-- Bug report: pbt-out/bug_reports/encode_tbz_fp_reg.md
-
-```property
-function: encoder.compare_branch.encode_tbz
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [name, is_nz]
-  domain: { name: "d/s/q/v/h/b N", is_nz: bool }
-  relation:
-    op: holds
-    expr: encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz).is_err()
-generators:
-  name: { gen: string }
-  is_nz: { gen: bool }
-expected_error: String
-evidence: llvm-mc "invalid operand for instruction" on d0
-```
-
-## encode_tbz_neg_bit_oor
-- Tier: 3
-- Rationale: ARM ARM and llvm-mc require bit ∈ [0,31] for W and [0,63] for X. Documented bounds sampled at −1, 32 (W), 64 (X), i64::MIN/MAX. Body masks to 6 bits and does not declare OOR bits invalid.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: compare_branch.rs encode_cbz_neg_imm_unaligned_oor
-- Formal: ∀ rt ∈ GPR_W ∪ GPR_X, bit ∉ valid range (W: [0,31], X: [0,63]), is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Symbol("L")], is_nz) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: failing
-- Counterexample: encode_tbz([Reg("w0"), Imm(-1), Symbol("L")], false)
-- Bug report: pbt-out/bug_reports/encode_tbz_bit_oor.md
-
-```property
-function: encoder.compare_branch.encode_tbz
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rt, bit, is_nz]
-  domain: { rt: "GPR W/X", bit: "outside 0..31 W / 0..63 X", is_nz: bool }
-  relation:
-    op: holds
-    expr: encode_tbz([Reg(rt), Imm(bit), Symbol("L")], is_nz).is_err()
-generators:
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  bit: { gen: int, min: -8, max: 72, type: i64 }
-  is_nz: { gen: bool }
-expected_error: String
-evidence: llvm-mc "immediate must be an integer in range [0, 31]" / "[0, 63]"
-```
-
-## encode_tbz_neg_invalid_name
-- Tier: 3
-- Rationale: Sweep: unparsable names (x32, foo, empty, r0) must Err via parse_reg_num. Documented get_reg failure path.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: encode_tst_neg_invalid_name
-- Formal: ∀ name ∈ {x32,w32,foo,"",r0,x,x-1,x99}, is_nz ∈ {false,true}. encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tbz
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [name, is_nz]
-  domain: { name: "unparsable", is_nz: bool }
-  relation:
-    op: holds
-    expr: encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz).is_err()
-generators:
-  name: { gen: string }
-  is_nz: { gen: bool }
-expected_error: String
-evidence: parse_reg_num rejects x32/foo; llvm-mc invalid operand
-```
-
-## encode_tbz_meta_rt_isolation
+## encode_crc32_meta_rd_rn_rm
 - Tier: 4
-- Rationale: Sweep metamorphic: incrementing Rt by 1 flips only bits[4:0]. Strengthens the ARM field invariant.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: encode_cbz_word_layout
-- Formal: ∀ n ∈ 0..30, bit ∈ 0..63, is_nz ∈ {false,true}. encode_tbz(x{n}, bit, L).word XOR encode_tbz(x{n+1}, bit, L).word = n XOR (n+1)
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Rationale: Metamorphic field isolation: incrementing Rd/Rn/Rm by 1 updates only that 5-bit field. Independent of llvm-mc.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt metamorphic Rd/Rn
+- Formal: ∀ mnemonic ∈ CRC32_8, rd,rn,rm ∈ 0..30. encode_crc32(..., rd+1, ...) differs from base only in bits[4:0]; rn+1 only in bits[9:5]; rm+1 only in bits[20:16]
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tbz
+function: encode_crc32
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, bit, is_nz]
-  domain: { n: "0..30", bit: "0..63", is_nz: bool }
-  relation:
-    op: eq
-    lhs: encode_tbz(xn).word XOR encode_tbz(x{n+1}).word
-    rhs: n XOR (n+1)
+  vars: [mnemonic, rd, rn, rm]
+  domain: { mnemonic: eight CRC32 mnemonics, rd: 0..30, rn: 0..30, rm: 0..30 }
+  body: mutating one of rd/rn/rm by +1 flips only that 5-bit field
 generators:
-  n: { gen: int, min: 0, max: 30, type: u32 }
-  bit: { gen: int, min: 0, max: 63, type: i64 }
-  is_nz: { gen: bool }
-evidence: compare_branch.rs:261 Rt in bits[4:0]
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  rd: { gen: int, min: 0, max: 30, type: u32 }
+  rn: { gen: int, min: 0, max: 30, type: u32 }
+  rm: { gen: int, min: 0, max: 30, type: u32 }
+evidence: bitfield.rs:243 Rd/Rn/Rm field positions
 ```
 
-## encode_tbz_neg_bad_label_kind
-- Tier: 3
-- Rationale: Sweep: get_symbol other-kind arm (Mem/Shift/Extend/RegArrangement/Expr/RegList) must Err.
-- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
-- Seed: encode_cbz_neg_bad_label_kind
-- Formal: ∀ kind ∈ {Mem,Shift,Extend,RegArrangement,Expr,RegList}, is_nz ∈ {false,true}. encode_tbz([Reg("x0"), Imm(0), kind], is_nz) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+## encode_crc32_neg_arity
+- Tier: 4
+- Rationale: llvm-mc / gas reject CRC32 with fewer than 3 operands ("too few operands"). get_reg on a missing slot returns Err, which is the documented assembler contract. Extra-operand case is a separate property (encode_crc32_neg_extra_operand) because the body has no upper bound.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_neg_arity
+- Formal: ∀ mnemonic ∈ CRC32_8, n ∈ 0..2, ops with n registers. encode_crc32(mnemonic, ops) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tbz
+function: encode_crc32
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [which, is_nz]
-  domain: { which: "0..5", is_nz: bool }
+  vars: [mnemonic, n]
+  domain: { mnemonic: eight CRC32 mnemonics, n: 0..2 }
   relation:
     op: holds
-    expr: encode_tbz([Reg("x0"), Imm(0), bad_kind], is_nz).is_err()
+    expr: encode_crc32(mnemonic, ops_of_len(n)).is_err()
 generators:
-  which: { gen: int, min: 0, max: 5, type: u32 }
-  is_nz: { gen: bool }
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  n: { gen: int, min: 0, max: 2, type: usize }
 expected_error: String
-evidence: get_symbol other-kind arm encoder/mod.rs:1114
+evidence: llvm-mc "too few operands for instruction"; get_reg missing-slot Err
+```
+
+## encode_crc32_neg_extra_operand
+- Tier: 4
+- Rationale: llvm-mc / gas reject a 4th CRC32 operand ("invalid operand"). README.md:12 gas-compat. Body has no operands.len() check so extra operands are ignored — that is the candidate bug, not a reason to shrink the domain.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_neg_extra_operand
+- Formal: ∀ mnemonic ∈ CRC32_8, valid 3-operand CRC32 ops, extra ∈ Operand. encode_crc32(mnemonic, ops++[extra]) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: failing
+- Counterexample: encode_crc32("crc32b", [Reg("w0"), Reg("w0"), Reg("w0"), Reg("x0")]) → Ok(Word(0x1ac04000))
+- Bug report: pbt-out/bug_reports/encode_crc32_extra_operand.md
+
+```property
+function: encode_crc32
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, rd, rn, rm, extra]
+  domain: { mnemonic: eight CRC32 mnemonics, rd: 0..31, rn: 0..31, rm: 0..31, extra: Operand }
+  relation:
+    op: holds
+    expr: encode_crc32(mnemonic, valid_ops ++ [extra]).is_err()
+generators:
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  extra: { gen: oneof, items: ["Reg(x0)", "Imm(0)", "Shift(lsl,0)"] }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on 4th operand; README.md:12
+```
+
+## encode_crc32_neg_sp
+- Tier: 4
+- Rationale: ARM CRC32 uses ZR not SP at register 31; llvm-mc rejects sp/wsp in any CRC32 slot. parse_reg_num maps both to 31; the body does not distinguish them. Domain stays the full SP/WSP set.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_neg_sp
+- Formal: ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, sp ∈ {sp,wsp}. encode_crc32(mnemonic, ops with slot=sp) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: failing
+- Counterexample: encode_crc32("crc32b", [Reg("wsp"), Reg("w0"), Reg("w0")]) → Ok(Word) encoding Rd=31 as WZR
+- Bug report: pbt-out/bug_reports/encode_crc32_sp_as_zr.md
+
+```property
+function: encode_crc32
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, slot, sp]
+  domain: { mnemonic: eight CRC32 mnemonics, slot: 0..2, sp: {sp, wsp} }
+  relation:
+    op: holds
+    expr: encode_crc32(mnemonic, ops_with_sp_at(slot)).is_err()
+generators:
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  slot: { gen: int, min: 0, max: 2, type: u32 }
+  sp: { gen: oneof, items: ["sp", "wsp"] }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on sp/wsp; ARM Rd/Rn/Rm are ZR not SP
+```
+
+## encode_crc32_neg_wrong_width
+- Tier: 4
+- Rationale: ARM and llvm-mc require Wd, Wn for every CRC32 form and Wm (B/H/W) or Xm (X). Mixed/wrong-width triples (X as Rd/Rn, W as Rm of crc32x, X as Rm of crc32b) are rejected by llvm-mc. Body discards get_reg's is_64 flag.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_neg_mixed_width
+- Formal: ∀ mnemonic ∈ CRC32_8, rd,rn,rm ∈ 0..31, widths that violate (Rd=W ∧ Rn=W ∧ Rm=W_if_BH W_else_X). encode_crc32(mnemonic, ops) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: failing
+- Counterexample: encode_crc32("crc32b", [Reg("w0"), Reg("w0"), Reg("x0")]) → Ok(Word) (Rm must be W)
+- Bug report: pbt-out/bug_reports/encode_crc32_wrong_width.md
+
+```property
+function: encode_crc32
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, rd, rn, rm, rd64, rn64, rm64]
+  domain: { mnemonic: eight CRC32 mnemonics, rd: 0..31, rn: 0..31, rm: 0..31, widths: not the ARM-required shape }
+  relation:
+    op: holds
+    expr: encode_crc32(mnemonic, mixed_width_ops).is_err()
+generators:
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  rd64: { gen: bool }
+  rn64: { gen: bool }
+  rm64: { gen: bool }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on X-as-Wd/Wn or W-as-Xm; ARM CRC32 register shape
+```
+
+## encode_crc32_neg_fp
+- Tier: 4
+- Rationale: Sweep — llvm-mc rejects FP/SIMD prefixes (d/s/q/v/h/b) as CRC32 operands. parse_reg_num accepts those prefixes; the body never checks is_fp_reg. Documented by README.md:12 gas-compat.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_neg_fp
+- Formal: ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_crc32(mnemonic, ops with slot=prefix∥n) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: failing
+- Counterexample: encode_crc32("crc32b", [Reg("d0"), Reg("w1"), Reg("w2")]) → Ok(Word(0x1ac24020))
+- Bug report: pbt-out/bug_reports/encode_crc32_fp_as_gpr.md
+
+```property
+function: encode_crc32
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, slot, prefix, n]
+  domain: { mnemonic: eight CRC32 mnemonics, slot: 0..2, prefix: {d,s,q,v,h,b}, n: 0..31 }
+  relation:
+    op: holds
+    expr: encode_crc32(mnemonic, ops_with_fp_at(slot)).is_err()
+generators:
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  slot: { gen: int, min: 0, max: 2, type: u32 }
+  prefix: { gen: oneof, items: ["d", "s", "q", "v", "h", "b"] }
+  n: { gen: int, min: 0, max: 31, type: u32 }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on d/s/q/v/h/b; README.md:12
+```
+
+## encode_crc32_neg_invalid_name
+- Tier: 4
+- Rationale: Sweep — get_reg returns Err for names parse_reg_num cannot parse (x32, foo, empty). Matches llvm-mc rejection of unparsable registers.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_neg_invalid_name
+- Formal: ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, name ∈ {foo,x32,w32,x,r0,"",x-1,x99,w}. encode_crc32(mnemonic, ops with slot=name) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_crc32
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, slot, name]
+  domain: { mnemonic: eight CRC32 mnemonics, slot: 0..2, name: unparsable register names }
+  relation:
+    op: holds
+    expr: encode_crc32(mnemonic, ops_with_name_at(slot)).is_err()
+generators:
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  slot: { gen: int, min: 0, max: 2, type: u32 }
+  name: { gen: oneof, items: ["foo", "x32", "w32", "x", "r0", "", "x-1", "x99", "w"] }
+expected_error: String
+evidence: get_reg / parse_reg_num None → Err; llvm-mc invalid operand
+```
+
+## encode_crc32_neg_nonreg
+- Tier: 4
+- Rationale: Sweep — get_reg requires Operand::Reg; Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement at any slot must Err.
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_neg_nonreg
+- Formal: ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, bad ∉ Reg. encode_crc32(mnemonic, ops with slot=bad) = Err
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_crc32
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, slot, bad]
+  domain: { mnemonic: eight CRC32 mnemonics, slot: 0..2, bad: non-Reg Operand }
+  relation:
+    op: holds
+    expr: encode_crc32(mnemonic, ops_with_nonreg_at(slot)).is_err()
+generators:
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  slot: { gen: int, min: 0, max: 2, type: u32 }
+expected_error: String
+evidence: get_reg expected-register Err; llvm-mc invalid operand
+```
+
+## encode_crc32_diff_alt_spellings
+- Tier: 5
+- Rationale: Sweep — GNU-style aliases w31/WZR/uppercase W and x31/XZR/lr/uppercase X must agree with llvm-mc on the valid CRC32 domain (Rd/Rn always W; Rm W or X by form).
+- Doc contract: bitfield.rs:243 "CRC32: sf 0 0 11010110 Rm 010 C sz Rn Rd" — asserted fingerprint 61d3ed46
+- Seed: encode_bfi_pbt encode_bfi_diff_alt_spellings
+- Formal: ∀ mnemonic ∈ CRC32_8, rd,rn,rm ∈ 0..31, valid W/X aliases. encode_crc32(mnemonic, aliased_ops) = llvm-mc(aliased asm)
+- Test file: src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_crc32
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [mnemonic, rd, rn, rm, dest_spell, src_n_spell, src_m_spell]
+  domain: { mnemonic: eight CRC32 mnemonics, rd: 0..31, rn: 0..31, rm: 0..31, spellings: w31/WZR/uppercase/x31/XZR/lr }
+  relation:
+    op: eq
+    lhs: encode_crc32(mnemonic, aliased_ops)
+    rhs: llvm_mc(aliased_asm)
+generators:
+  mnemonic: { gen: oneof, items: ["crc32b", "crc32h", "crc32w", "crc32x", "crc32cb", "crc32ch", "crc32cw", "crc32cx"] }
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+evidence: README.md:12 gas-compat; llvm-mc accepts w31/x31/WZR/XZR/lr aliases
 ```

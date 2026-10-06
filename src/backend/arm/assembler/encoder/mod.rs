@@ -152,6 +152,8 @@ mod encode_fnmadd_fnmsub_pbt;
 mod encode_tst_pbt;
 #[cfg(test)]
 mod encode_tbz_pbt;
+#[cfg(test)]
+mod encode_crc32_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

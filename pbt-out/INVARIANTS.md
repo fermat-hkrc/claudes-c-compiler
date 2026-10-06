@@ -1,3 +1,37 @@
+# Confirmed invariants (encode_crc32)
+
+- Valid CRC32/CRC32C (B/H/W with Wd,Wn,Wm and X with Wd,Wn,Xm; ZR aliases; w31/x31/uppercase/lr-as-Xm) match llvm-mc `-triple=aarch64 -mattr=+crc -show-encoding` (1000 cases). KAT pins crc32b w0,w1,w2=0x1ac24020, crc32h=0x1ac24420, crc32w=0x1ac24820, crc32x w0,w1,x2=0x9ac24c20, crc32cb=0x1ac25020, crc32cx=0x9ac25c20, crc32b wzr,wzr,wzr=0x1adf43ff, crc32x wzr,w0,xzr=0x9adf4c1f.
+- ARM CRC32 layout holds: bits[30:21]=0011010110; bit31=sf; bits[20:16]=Rm; bits[15:13]=010; bit12=C; bits[11:10]=sz; bits[9:5]=Rn; bits[4:0]=Rd (1000 cases).
+- CRC32C XOR CRC32 of the same size = 1<<12; B XOR H = 1<<10; W XOR X = (1<<31)|(1<<10) (1000 cases).
+- Rd/Rn/Rm n vs n+1 differ only in that 5-bit field (1000 cases).
+- Arity 0, 1, and 2 return Err (1000 cases).
+- Unparsable names (x32, foo, empty, r0) return Err (sweep, 1000 cases).
+- Non-register operand kinds (Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement) return Err (sweep, 1000 cases).
+- Extra operands, SP/WSP, wrong W/X widths, and FP/SIMD registers currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_crc32)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+crc -show-encoding (LLVM 15.0.6).
+- ARM ARM CRC32/CRC32C: sf 00 11010110 Rm 010 C sz Rn Rd. C=1 for CRC32C. sz 00/01/10/11 = B/H/W/X. sf=1 only for X. Rd/Rn always W; Rm is W for B/H/W and X for X. Register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:1047-1048 `"crc32b"|...|"crc32cx" => encode_crc32(mnemonic, operands)`.
+- Sibling encode_clz/encode_cls are not same-job differentials (Data-processing 2-source).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 20-line body plus encode_crc32_neg_fp / encode_crc32_neg_invalid_name / encode_crc32_neg_nonreg / encode_crc32_diff_alt_spellings. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_crc32_*.md.
+
+## Quirks (encode_crc32)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_crc32 does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- get_reg width is discarded; sf/sz come only from the mnemonic (see bugs).
+- Unknown mnemonic `_` arm encodes as crc32b (sf=0,sz=00); not caller-reachable from encode_instruction (match on the eight names after lowercase).
+- llvm-mc requires `-mattr=+crc`.
+- llvm-mc accepts `w31`/`x31` as WZR/XZR.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 20-line body.
+
 # Confirmed invariants (encode_tbz)
 
 - Symbol/label/SymbolOffset form of TBZ/TBNZ emits WordWithReloc TstBr14 (ELF 279) with imm14=0 (1000 cases). KAT pins tbz x0, #0, foo = word 0x36000000, reloc TstBr14 symbol=foo addend=0.

@@ -1,178 +1,146 @@
-# PBT Campaign Report: encode_tbz
+# PBT Campaign Report: encode_crc32
 
 ## Summary
 
-**Verdict:** 5 medium: encode_tbz rejects gas-legal immediate PC offsets, ignores extra operands, and silently accepts SP, FP/SIMD Rt, and out-of-range bit numbers, so GNU-style TBZ/TBNZ that llvm-mc accepts is either refused or encoded as the wrong instruction.
+**Verdict:** 4 medium: encode_crc32 accepts extra operands, SP/WSP, wrong W/X widths, and FP/SIMD registers that llvm-mc/gas reject, so invalid GNU-style CRC32 assembly silently becomes a machine-code word.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_tbz
-**Tests:** 12
-**Result:** 7 passing, 5 bugs
-**Change surface:** 1 changed function (encode_tbz), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter listed unrelated binaries and claimed encode_tbz NOT LINKED). Sweep was a manual arm audit of the 16-line body.
-**Tier:** standard
+**Modules tested:** encode_crc32
+**Tests:** 12 properties (8 passing, 4 failing) plus 8 passing KAT and 5 failing regression witnesses
+**Result:** 8 passing, 4 bugs
+**Change surface:** 1 changed function (encode_crc32), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter, NOT LINKED). Sweep was a manual arm audit of the 20-line body. Tier: standard.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_tbz | 12 | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_crc32 | 12 properties (8 pass / 4 fail) | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_tbz rejects immediate PC-offset form
+### B1: encode_crc32 ignores extra operands
 
-**Formal:** ∀ rt ∈ GPR_W ∪ GPR_X (n∈0..31 including ZR/LR), bit ∈ 0..31 (W) / 0..63 (X), imm ∈ {k·4 | k∈ℤ, −32768 ≤ k·4 ≤ 32764}, is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Imm(imm)], is_nz) = Word(llvm-mc("tbz/tbnz rt, #bit, #imm"))
-**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM Test and branch (immediate) encodes imm14; llvm-mc accepts `tbz x0, #0, #0`)
-**Documentation conflict:** (none) — compare_branch.rs:261 states the encoding layout including imm14 but does not declare #imm invalid. README.md:458 describes deferred symbol relocations, not an exclusion of immediate offsets.
-**Severity:** medium
-**Counterexample:** encode_tbz([Reg("x0"), Imm(0), Imm(-32768)], false) (`tbz x0, #0, #-32768`)
-**Expected / Actual:** Word(0x36040000) matching llvm-mc / Err("expected symbol at operand 2, got Some(Imm(-32768))")
-**Impact:** Hand-written `.s` files that use an explicit PC offset fail to assemble; compiler output currently uses labels so the hole is latent for codegen.
-**Root cause:** compare_branch.rs:257 calls get_symbol for the branch target and never matches Operand::Imm, so imm14 is never packed.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:257`
-```rust
-    let (sym, addend) = get_symbol(operands, 2)?;
-```
-**Suggested fix:** When operand 2 is Imm, range-check a 4-byte-aligned offset in [-32768, 32764], pack imm14, and return Word.
-```rust
-    if let Some(Operand::Imm(imm)) = operands.get(2) {
-        if *imm % 4 != 0 || *imm < -32768 || *imm > 32764 {
-            return Err(format!("tbz offset out of range: {}", imm));
-        }
-        let imm14 = ((*imm as i32) >> 2) as u32 & 0x3fff;
-        let word = (b5 << 31) | (0b011011 << 25) | (op << 24) | (b40 << 19) | (imm14 << 5) | rt;
-        return Ok(EncodeResult::Word(word));
-    }
-    let (sym, addend) = get_symbol(operands, 2)?;
-```
-**Bug report:** bug_reports/encode_tbz_imm_offset.md
-**Repro seed:** cc f6e95b6455706c1bda3d8eb1af12fddb3a8ce6b18bdc43c82d8a14c4cd42c27c
-**Raw output:**
-```text
-Test failed: SUT rejected valid tbz x0, #0, #-32768: Err("expected symbol at operand 2, got Some(Imm(-32768))").
-minimal failing input: (rt, bit) = ("x0", 0), is_nz = false, imm = -32768
-```
-
-### B2: encode_tbz ignores extra operands
-
-**Formal:** ∀ n ∈ 0..30, bit ∈ 0..63, is_nz ∈ {false,true}, extra ∈ Operand. encode_tbz([Reg(xn), Imm(bit), Symbol(s), extra], is_nz) is Err
-**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on a fourth operand; gas-compat README.md:12)
+**Formal:** ∀ mnemonic ∈ CRC32_8, valid 3-operand CRC32 ops, extra ∈ Operand. encode_crc32(mnemonic, ops++[extra]) = Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc "invalid operand for instruction" on a 4th operand; ARM CRC32 is a 3-register instruction)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tbz([Reg("x0"), Imm(0), Symbol("labl0"), Reg("x1")], false)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x36000000, reloc: TstBr14 symbol=labl0 addend=0 })
-**Impact:** Invalid GNU-style assembly silently encodes as a three-operand TBZ.
-**Root cause:** compare_branch.rs:254-257 reads only operands 0..2 and has no operands.len() upper bound.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:257`
+**Counterexample:** encode_crc32("crc32b", [Reg("w0"), Reg("w0"), Reg("w0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x1ac04000))
+**Impact:** Invalid GNU-style CRC32 with a trailing operand is assembled instead of rejected.
+**Root cause:** bitfield.rs:227-229 reads only operands 0..2 via get_reg and has no operands.len() upper bound.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
 ```rust
-    let (sym, addend) = get_symbol(operands, 2)?;
+    let (rd, _) = get_reg(operands, 0)?;
+    let (rn, _) = get_reg(operands, 1)?;
+    let (rm, _) = get_reg(operands, 2)?;
 ```
 **Suggested fix:** Reject extra operands before encoding.
 ```rust
     if operands.len() != 3 {
-        return Err(format!("tbz: expected 3 operands, got {}", operands.len()));
+        return Err(format!("crc32: expected 3 operands, got {}", operands.len()));
     }
 ```
-**Bug report:** bug_reports/encode_tbz_extra_operand.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_crc32_extra_operand.md
+**Repro seed:** cc 58218e6499d74ab0c5a1ae329b88808b4bb7de692e08d6baab02d50a0fd4985c
 **Raw output:**
 ```text
-Test failed: tbz x0, #0, label, extra (which=0) must Err (llvm-mc: invalid operand)
-minimal failing input: n = 0, bit = 0, is_nz = false, suffix = 0, which = 0
+Test failed: CRC32 has no 4th operand; extra operand must Err (llvm-mc rejects it)
+minimal failing input: m = "crc32b", rd = 0, rn = 0, rm = 0, extra = Reg("x0")
 ```
 
-### B3: encode_tbz accepts SP/WSP as Rt and encodes it as ZR
+### B2: encode_crc32 accepts SP/WSP as register 31
 
-**Formal:** ∀ name ∈ {sp,wsp}, is_nz ∈ {false,true}. encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz) is Err
-**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on sp; ARM ARM Rt is a GPR not SP)
+**Formal:** ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, sp ∈ {sp,wsp}. encode_crc32(mnemonic, ops with slot=sp) = Err
+**Contract evidence:** inferred (ARM CRC32 Rd/Rn/Rm are ZR not SP; llvm-mc "invalid operand for instruction" on sp/wsp; README.md:12)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tbz([Reg("sp"), Imm(0), Symbol("L")], false)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x3600001f, reloc: TstBr14 symbol=L addend=0 })
-**Impact:** A stack-pointer test-and-branch is silently retargeted at ZR.
-**Root cause:** compare_branch.rs:255 calls get_reg, which maps SP and XZR both to 31; encode_tbz never distinguishes them.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:255`
+**Counterexample:** encode_crc32("crc32b", [Reg("wsp"), Reg("w0"), Reg("w0")])
+**Expected / Actual:** Err / Ok(Word(0x1ac0401f)) encoding Rd=31 as WZR
+**Impact:** Stack-pointer operands are silently rewritten as WZR/XZR.
+**Root cause:** bitfield.rs:227-229 calls get_reg; parse_reg_num maps sp/wsp to 31 the same as xzr/wzr.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
 ```rust
-    let (rt, _) = get_reg(operands, 0)?;
+    let (rd, _) = get_reg(operands, 0)?;
+    let (rn, _) = get_reg(operands, 1)?;
+    let (rm, _) = get_reg(operands, 2)?;
 ```
-**Suggested fix:** Reject SP/WSP as Rt.
+**Suggested fix:** Reject SP/WSP after parsing each register name.
 ```rust
-    let (rt, _) = get_reg(operands, 0)?;
-    if let Some(Operand::Reg(name)) = operands.get(0) {
-        let l = name.to_ascii_lowercase();
-        if l == "sp" || l == "wsp" {
-            return Err(format!("tbz: SP is not a valid Rt: {}", name));
-        }
+    if name.eq_ignore_ascii_case("sp") || name.eq_ignore_ascii_case("wsp") {
+        return Err(format!("crc32: SP/WSP is not a valid operand ({name})"));
     }
 ```
-**Bug report:** bug_reports/encode_tbz_sp_as_zr.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_crc32_sp_as_zr.md
+**Repro seed:** (deterministic; shrunk to slot=0 sp=wsp other=0)
 **Raw output:**
 ```text
-Test failed: tbz sp , #0, L must Err (llvm-mc rejects SP/WSP)
-minimal failing input: which = 0, is_nz = false
+Test failed: SP/WSP is not a valid CRC32 operand (slot=0 sp=wsp)
+minimal failing input: m = "crc32b", slot = 0, sp64 = false, other = 0
 ```
 
-### B4: encode_tbz accepts FP/SIMD registers as Rt
+### B3: encode_crc32 ignores W vs X register width
 
-**Formal:** ∀ prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31, is_nz ∈ {false,true}. encode_tbz([Reg(prefix+n), Imm(0), Symbol("L")], is_nz) is Err
-**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on d0; ARM ARM Rt is a GPR)
+**Formal:** ∀ mnemonic ∈ CRC32_8, rd,rn,rm ∈ 0..31, widths that violate (Rd=W ∧ Rn=W ∧ Rm=W_if_BHW else X). encode_crc32(mnemonic, ops) = Err
+**Contract evidence:** inferred (ARM CRC32 always Wd/Wn, Rm is Wm for B/H/W and Xm for X; llvm-mc "invalid operand for instruction"; README.md:12)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tbz([Reg("d0"), Imm(0), Symbol("L")], false)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x36000000, reloc: TstBr14 symbol=L addend=0 })
-**Impact:** A floating-point test-and-branch is silently retargeted at the same-numbered GPR.
-**Root cause:** compare_branch.rs:255 calls get_reg, which accepts prefixes d/s/q/v/h/b; encode_tbz never checks is_fp_reg.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:255`
+**Counterexample:** encode_crc32("crc32b", [Reg("w0"), Reg("w0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x1ac04000))
+**Impact:** Mixed-width CRC32 text is encoded as if the widths were legal.
+**Root cause:** bitfield.rs:227-229 discards get_reg's is_64 flag; sf/sz come only from the mnemonic.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
 ```rust
-    let (rt, _) = get_reg(operands, 0)?;
+    let (rd, _) = get_reg(operands, 0)?;
+    let (rn, _) = get_reg(operands, 1)?;
+    let (rm, _) = get_reg(operands, 2)?;
 ```
-**Suggested fix:** Reject FP/SIMD Rt.
+**Suggested fix:** Keep is_64 and require Wd/Wn plus Wm or Xm by mnemonic.
 ```rust
-    if let Some(Operand::Reg(name)) = operands.get(0) {
-        if is_fp_reg(name) {
-            return Err(format!("tbz: FP/SIMD register not valid Rt: {}", name));
-        }
+    let (rd, rd64) = get_reg(operands, 0)?;
+    let (rn, rn64) = get_reg(operands, 1)?;
+    let (rm, rm64) = get_reg(operands, 2)?;
+    if rd64 || rn64 || rm64 != mnemonic.ends_with('x') {
+        return Err("crc32: Rd/Rn must be W; Rm must be W (B/H/W) or X (X)".into());
     }
 ```
-**Bug report:** bug_reports/encode_tbz_fp_reg.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_crc32_wrong_width.md
+**Repro seed:** (deterministic; shrunk to crc32b w0,w0,x0)
 **Raw output:**
 ```text
-Test failed: tbz d0 , #0, L must Err (llvm-mc rejects FP/SIMD Rt)
-minimal failing input: which = 2, n = 0, is_nz = false
+Test failed: CRC32 crc32b wrong-width rd64=false rn64=false rm64=true must Err (llvm-mc rejects it)
+minimal failing input: m = "crc32b", rd = 0, rn = 0, rm = 0, rd64 = false, rn64 = false, rm64 = true
 ```
 
-### B5: encode_tbz masks out-of-range bit numbers instead of rejecting them
+### B4: encode_crc32 accepts FP/SIMD registers as GPRs
 
-**Formal:** ∀ rt ∈ GPR_W ∪ GPR_X, bit ∉ valid range (W: [0,31], X: [0,63]), is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Symbol("L")], is_nz) is Err
-**Contract evidence:** inferred (llvm-mc "immediate must be an integer in range [0, 31]" / "[0, 63]"; ARM ARM bit = b5:b40)
+**Formal:** ∀ mnemonic ∈ CRC32_8, slot ∈ {0,1,2}, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_crc32(mnemonic, ops with slot=prefix∥n) = Err
+**Contract evidence:** inferred (ARM CRC32 operands are GPRs; llvm-mc "invalid operand for instruction" on d/s/q/v/h/b; README.md:12)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tbz([Reg("w0"), Imm(-1), Symbol("L")], false)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0xb6f80000, reloc: TstBr14 symbol=L addend=0 })
-**Impact:** `tbz w0, #-1, L` encodes as `tbz x0, #63, L`; `tbz w0, #32, L` encodes as `tbz x0, #32, L`. A 32-bit test-and-branch can silently become a 64-bit one.
-**Root cause:** compare_branch.rs:258-259 casts bit to u32 and masks to 6 bits with no range check; get_reg width is discarded.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:258`
+**Counterexample:** encode_crc32("crc32b", [Reg("d0"), Reg("w1"), Reg("w2")])
+**Expected / Actual:** Err / Ok(Word(0x1ac24020))
+**Impact:** A SIMD register is treated as GPR number N and encoded.
+**Root cause:** bitfield.rs:227-229 calls get_reg; parse_reg_num accepts prefixes d/s/q/v/h/b; encode_crc32 never checks is_fp_reg.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/bitfield.rs:227`
 ```rust
-    let b5 = ((bit as u32) >> 5) & 1;
+    let (rd, _) = get_reg(operands, 0)?;
+    let (rn, _) = get_reg(operands, 1)?;
+    let (rm, _) = get_reg(operands, 2)?;
 ```
-**Suggested fix:** Reject out-of-range bits using the register width.
+**Suggested fix:** Reject FP/SIMD names after parsing each operand.
 ```rust
-    let (rt, is_64) = get_reg(operands, 0)?;
-    let bit = get_imm(operands, 1)?;
-    let max_bit = if is_64 { 63 } else { 31 };
-    if bit < 0 || bit > max_bit {
-        return Err(format!("tbz bit {} out of range 0..{}", bit, max_bit));
+    let c = name.chars().next().unwrap_or(' ').to_ascii_lowercase();
+    if matches!(c, 'd' | 's' | 'q' | 'v' | 'h' | 'b') {
+        return Err(format!("crc32: FP/SIMD register {name} is not a valid operand"));
     }
 ```
-**Bug report:** bug_reports/encode_tbz_bit_oor.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_crc32_fp_as_gpr.md
+**Repro seed:** (deterministic; shrunk to crc32b d0, w1, w2)
 **Raw output:**
 ```text
-Test failed: tbz w0, #-1, L is out of bit range and must Err
-minimal failing input: n = 0, is_64 = false, is_nz = false, which = 0
+Test failed: FP/SIMD register d0 is not a valid CRC32 operand (slot=0)
+minimal failing input: m = "crc32b", slot = 0, prefix = "d", n = 0
 ```
 
 ## Design Caveats
@@ -183,45 +151,45 @@ minimal failing input: n = 0, is_64 = false, is_nz = false, which = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_tbz_pbt.rs | 12 properties + 4 KAT + 5 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_tbz_pbt` registration |
+| src/backend/arm/assembler/encoder/encode_crc32_pbt.rs | 12 properties + 8 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_crc32_pbt` |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_tbz -- --test-threads=1
+cargo test --lib encode_crc32_pbt -- --test-threads=1
 ```
 
-B1:
+B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tbz_regression_imm_offset -- --test-threads=1
+cargo test --lib test_encode_crc32_regression_extra_operand -- --test-threads=1
 ```
 
-B2:
+B2 SP as ZR:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tbz_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_crc32_regression_sp -- --test-threads=1
 ```
 
-B3:
+B3 wrong width:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tbz_regression_sp_as_zr -- --test-threads=1
+cargo test --lib test_encode_crc32_regression_wrong_width -- --test-threads=1
 ```
 
-B4:
+B4 FP as GPR:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tbz_regression_fp_reg -- --test-threads=1
+cargo test --lib test_encode_crc32_regression_fp -- --test-threads=1
 ```
 
-B5:
+Build command (user contract, target swapped):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tbz_regression_bit_oor -- --test-threads=1
+cargo test --lib encode_crc32_pbt -- --test-threads=1
 ```
 
 ## Output Directories
@@ -235,25 +203,25 @@ cargo test --lib test_encode_tbz_regression_bit_oor -- --test-threads=1
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/run/encode_tbz_round1.log
-- pbt-out/run/encode_tbz_round2.log
-- pbt-out/bug_reports/encode_tbz_imm_offset.md
-- pbt-out/bug_reports/encode_tbz_imm_offset.html
-- pbt-out/bug_reports/encode_tbz_extra_operand.md
-- pbt-out/bug_reports/encode_tbz_extra_operand.html
-- pbt-out/bug_reports/encode_tbz_sp_as_zr.md
-- pbt-out/bug_reports/encode_tbz_sp_as_zr.html
-- pbt-out/bug_reports/encode_tbz_fp_reg.md
-- pbt-out/bug_reports/encode_tbz_fp_reg.html
-- pbt-out/bug_reports/encode_tbz_bit_oor.md
-- pbt-out/bug_reports/encode_tbz_bit_oor.html
+- pbt-out/bug_reports/encode_crc32_extra_operand.md
+- pbt-out/bug_reports/encode_crc32_extra_operand.html
+- pbt-out/bug_reports/encode_crc32_sp_as_zr.md
+- pbt-out/bug_reports/encode_crc32_sp_as_zr.html
+- pbt-out/bug_reports/encode_crc32_wrong_width.md
+- pbt-out/bug_reports/encode_crc32_wrong_width.html
+- pbt-out/bug_reports/encode_crc32_fp_as_gpr.md
+- pbt-out/bug_reports/encode_crc32_fp_as_gpr.html
+- pbt-out/build.log
+- pbt-out/CHANGE_SURFACE.md
+- src/backend/arm/assembler/encoder/encode_crc32_pbt.rs
+- proptest-regressions/backend/arm/assembler/encoder/encode_crc32_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 06:34 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 168/307 total | PBT candidates: 168 | Tested: 168 (100%) | 1 pass, 168 fail
+> Last updated: 2026-10-06 07:06 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 169/307 total | PBT candidates: 169 | Tested: 169 (100%) | 1 pass, 169 fail
 
 ## Summary
 
@@ -262,10 +230,10 @@ cargo test --lib test_encode_tbz_regression_bit_oor -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 168 |
-| **Tested (of PBT candidates)** | **168 / 168 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 168 / -1 |
-| **Overall (tested / all functions)** | **168 / 307 (55%)** |
+| PBT candidates (from FUNCTION_INDEX) | 169 |
+| **Tested (of PBT candidates)** | **169 / 169 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 169 / -1 |
+| **Overall (tested / all functions)** | **169 / 307 (55%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -273,13 +241,13 @@ cargo test --lib test_encode_tbz_regression_bit_oor -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 168 | 168 | 0 | 100% |
+|  | 169 | 169 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 168 | 168 | 0 | 100% |
+| unknown | 169 | 169 | 0 | 100% |
 
 ## File Coverage
 
@@ -470,3 +438,4 @@ cargo test --lib test_encode_tbz_regression_bit_oor -- --test-threads=1
 | encode_stop | load_store.rs |
 | encode_tst | compare_branch.rs |
 | encode_tbz | compare_branch.rs |
+| encode_crc32 | bitfield.rs |

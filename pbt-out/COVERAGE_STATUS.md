@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_tbz, English)
-> Files: 11/11 scanned (100%) | Functions: 169/307 total | PBT candidates: 169 | Tested: 168 (encode_tbz this campaign) | Coverage evidence: file-level (symbol presence)
+> Last updated: 2026-10-06 06:56 (campaign: encode_crc32, English, standard)
+> Files: 11/11 scanned (100%) | Functions: 170/307 total | PBT candidates: 170 | Tested: 169 | encode_crc32: 8 pass / 4 fail. Coverage evidence: file-level (symbol presence); coverage_gaps reported no .gcda/.profraw.
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 167 |
-| **Tested (of PBT candidates)** | **167 / 167 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 167 / -1 |
-| **Overall (tested / all functions)** | **167 / 307 (54%)** |
+| PBT candidates (from FUNCTION_INDEX) | 168 |
+| **Tested (of PBT candidates)** | **168 / 168 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 168 / -1 |
+| **Overall (tested / all functions)** | **168 / 307 (55%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,20 +21,20 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 167 | 167 | 0 | 100% |
+|  | 168 | 168 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 167 | 167 | 0 | 100% |
+| unknown | 168 | 168 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 19 | 19 | 100% | covered |
+| compare_branch.rs | 21 | 20 | 20 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
@@ -217,3 +217,4 @@
 | encode_ldop | load_store.rs |
 | encode_stop | load_store.rs |
 | encode_tst | compare_branch.rs |
+| encode_tbz | compare_branch.rs |
