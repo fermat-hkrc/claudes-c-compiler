@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 161 | Excluded: 146
+> Total files: 11 | Total functions: 307 | PBT candidates: 162 | Excluded: 145
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -302,7 +302,7 @@
 | encode_hvc | system.rs | 395 | function | yes | - |
 | encode_ic | system.rs | 401 | function | yes | - |
 | encode_smc | system.rs | 420 | function | yes | - |
-| encode_at | system.rs | 426 | function | no | out of campaign scope |
+| encode_at | system.rs | 426 | function | yes | - |
 | encode_sys | system.rs | 448 | function | yes | - |
 | encode_brk | system.rs | 471 | function | yes | - |
 | encode_tlbi | system.rs | 477 | function | no | out of campaign scope |

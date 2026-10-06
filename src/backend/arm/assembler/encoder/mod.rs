@@ -136,6 +136,8 @@ mod encode_ic_pbt;
 mod encode_dc_pbt;
 #[cfg(test)]
 mod encode_sys_pbt;
+#[cfg(test)]
+mod encode_at_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

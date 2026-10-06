@@ -1,305 +1,272 @@
-# Properties: encode_sys
+# Properties: encode_at
 
-## encode_sys_diff_valid
-- Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the ARM SYS grammar. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree SYS decoder). Sibling encode_ic/encode_dc/encode_tlbi/encode_at rejected (same-job gate: named aliases of fixed SYS encodings, different operand grammar). ARM ARM field formula is an independent layout check, not a substitute for llvm-mc agreement. Weaker available: metamorphic Rt isolation / omitted-Xt≡xzr / case-ws; ARM layout invariant; negative_error.
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_ic_pbt.rs: encode_ic_diff_valid / encode_dc_pbt.rs: encode_dc_diff_valid
-- Formal: ∀ op1 ∈ [0,7], CRn ∈ [0,15], CRm ∈ [0,15], op2 ∈ [0,7], Xt ∈ {x0..x30, xzr, x31, lr, fp, omitted}, case ∈ ASCII, ws ∈ {space,tab}*. encode_sys(raw) = llvm-mc("sys "+raw) = 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt  where Rt(omitted)=31, Rt(xzr)=Rt(x31)=31, Rt(lr)=30, Rt(fp)=29
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
-- Status: failing
-- Counterexample: encode_sys("#0, c0, c0, #0, fp")
-- Bug report: bug_reports/encode_sys_fp_alias.md
+## encode_at_diff_valid
+- Tier: 2
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler) on the ARM AT grammar for the four ops the encoder implements. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree AT decoder). Sibling encode_ic/encode_dc/encode_tlbi/encode_sys rejected (same-job gate: named aliases of fixed SYS encodings, different operand grammar). ARM ARM field formula is an independent layout check, not a substitute for llvm-mc agreement. Weaker available: metamorphic Rt isolation / case-ws; ARM layout invariant; negative_error.
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_diff_valid
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ xt ∈ {x0..x30,xzr,x31,lr}, ∀ case/ws variants. encode_at([], raw) = Word(w) ∧ llvm-mc("at "+raw) = w ∧ w = ARM_SYS(0,7,8,op2(op),Rt(xt))
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [op1, crn, crm, op2, xt]
-  domain: { op1: u32[0,7], crn: u32[0,15], crm: u32[0,15], op2: u32[0,7], xt: X64_or_omitted }
+  vars: [op, xt, raw]
+  domain: { op: {s1e1r,s1e1w,s1e0r,s1e0w}, xt: x0..x30|xzr|x31|lr, raw: case_ws(op, xt) }
   relation:
     op: eq
-    lhs: encode_sys(raw(op1,crn,crm,op2,xt))
-    rhs: llvm_mc("sys " + raw(op1,crn,crm,op2,xt))
+    lhs: encode_at([], raw)
+    rhs: llvm_mc("at " + raw)
 generators:
-  op1: { gen: int, min: 0, max: 7, type: u32 }
-  crn: { gen: int, min: 0, max: 15, type: u32 }
-  crm: { gen: int, min: 0, max: 15, type: u32 }
-  op2: { gen: int, min: 0, max: 7, type: u32 }
-  xt: { gen: oneof, args: [{ gen: int, min: 0, max: 31, type: u32 }, { gen: const, value: xzr }, { gen: const, value: lr }, { gen: const, value: fp }, { gen: const, value: omitted }] }
-evidence: README.md:11 gas-compat; encoder/mod.rs:997 sys dispatch; ARM ARM SYS 0xD5080000 template; llvm-mc -triple=aarch64 -show-encoding
+  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
+  xt: { gen: oneof, options: ["x0..x30", "xzr", "x31", "lr"] }
+evidence: README.md:12 gas-compat; ARM ARM AT = SYS #0, C7, C8, #op2, Xt; encoder/mod.rs:998
 ```
 
-## encode_sys_inv_arm_layout
+## encode_at_diff_arm_ops
+- Tier: 2
+- Rationale: Differential vs llvm-mc over the ARM AT ops the reference accepts on the default CPU (including S1E2/S1E3/S12E*). README.md:12 gas-compat is the assembler contract. encoder/mod.rs:4 admits a subset — a documented limitation on inputs the API accepts, not an exclusion. Domain includes the unimplemented names; the property fails there.
+- Doc contract: encoder/mod.rs:4 "This covers the subset of instructions emitted by our codegen." — limitation fingerprint 323827bd
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_diff_valid
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w,s1e2r,s1e2w,s1e3r,s1e3w,s12e1r,s12e1w,s12e0r,s12e0w}, ∀ t ∈ 0..31. encode_at([], op+", xt") = llvm-mc("at "+op+", xt")
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+- Status: failing
+- Counterexample: encode_at(&[], "s1e2r, x0") → Err("unsupported at operation: s1e2r")
+- Bug report: bug_reports/encode_at_unimplemented_ops.md
+
+```property
+function: encoder.encode_at
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [op, t]
+  domain: { op: ARM AT ops llvm-mc accepts, t: 0..31 }
+  relation:
+    op: eq
+    lhs: encode_at([], op+", x"+t)
+    rhs: llvm_mc("at "+op+", x"+t)
+generators:
+  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w", "s1e2r", "s1e2w", "s1e3r", "s1e3w", "s12e1r", "s12e1w", "s12e0r", "s12e0w"] }
+  t: { gen: int, min: 0, max: 31, type: u32 }
+evidence: README.md:12 gas-compat; llvm-mc accepts s1e2r; encoder/mod.rs:4 subset limitation
+```
+
+## encode_at_inv_arm_layout
 - Tier: 4
-- Rationale: Algebraic invariant from ARM ARM SYS encoding (not the SUT match table): bits[31:21]=0b11010101000, L=0, fields op1/CRn/CRm/op2/Rt extracted from the word equal the generated inputs. Stronger differential is p1; this pins the field layout independently of llvm-mc aliasing SYS to DC/IC.
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_ic_pbt.rs ARM SYS layout property
-- Formal: ∀ op1 ∈ [0,7], CRn ∈ [0,15], CRm ∈ [0,15], op2 ∈ [0,7], t ∈ [0,31]. let w = encode_sys("#op1, cCRn, cCRm, #op2, xt"). w>>21 = 0b11010101000 ∧ (w>>16)&7 = op1 ∧ (w>>12)&0xF = CRn ∧ (w>>8)&0xF = CRm ∧ (w>>5)&7 = op2 ∧ w&0x1F = t ∧ w = 0xD5080000|(op1<<16)|(CRn<<12)|(CRm<<8)|(op2<<5)|t
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
+- Rationale: Every AT word must satisfy the ARM SYS field layout (bits[31:21]=0b11010101000, op1=0, CRn=7, CRm=8, op2 in {0,1,2,3}, Rt = t). Stronger differential is the sibling encode_at_diff_valid; this is the independent ARM formula check. State machine / round-trip rejected as above.
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_inv_arm_layout
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ t ∈ 0..31. let w = encode_at([], "op, xt"). w>>21 = 0b11010101000 ∧ (w>>16)&7 = 0 ∧ (w>>12)&0xF = 7 ∧ (w>>8)&0xF = 8 ∧ (w>>5)&7 = op2(op) ∧ w&0x1F = t ∧ w = 0xD5080000 | (8<<8) | (op2<<5) | t
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [op1, crn, crm, op2, t]
-  domain: { op1: u32[0,7], crn: u32[0,15], crm: u32[0,15], op2: u32[0,7], t: u32[0,31] }
-  relation:
-    op: eq
-    lhs: encode_sys(raw(op1,crn,crm,op2,xt))
-    rhs: 0xd5080000 | (op1<<16) | (crn<<12) | (crm<<8) | (op2<<5) | t
+  vars: [op, t]
+  domain: { op: {s1e1r,s1e1w,s1e0r,s1e0w}, t: 0..31 }
+  body: word_fields(encode_at([], op+", x"+t)) == {hi:0b11010101000, op1:0, crn:7, crm:8, op2:op2(op), rt:t}
 generators:
-  op1: { gen: int, min: 0, max: 7, type: u32 }
-  crn: { gen: int, min: 0, max: 15, type: u32 }
-  crm: { gen: int, min: 0, max: 15, type: u32 }
-  op2: { gen: int, min: 0, max: 7, type: u32 }
+  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
   t: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM SYS encoding 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt
+evidence: ARM ARM AT = SYS #0, C7, C8, #op2, Xt; system.rs:435
 ```
 
-## encode_sys_meta_rt_isolation
-- Tier: 4
-- Rationale: Metamorphic: encodings of the same (op1,CRn,CRm,op2) differ only in Rt bits[4:0]; omitted Xt encodes as XZR (Rt=31) per ARM optional-Xt and body comment system.rs:464. Stronger differential is p1.
-- Doc contract: system.rs:464 "xzr if no register specified" — asserted fingerprint 4572c11f
-- Seed: encode_ic_pbt.rs / encode_dc_pbt.rs Rt isolation
-- Formal: ∀ op1 ∈ [0,7], CRn ∈ [0,15], CRm ∈ [0,15], op2 ∈ [0,7], t ∈ [0,31]. encode_sys(..., xt) XOR encode_sys(..., x0) = t ∧ encode_sys(..., omitted) = encode_sys(..., xzr) ∧ encode_sys(..., xzr) = encode_sys(..., x31)
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
+## encode_at_meta_rt_isolation
+- Tier: 3
+- Rationale: Metamorphic: encodings of the same AT op must differ only in Rt bits[4:0]; the four ops encode distinctly (op2 bits). Stronger differential is encode_at_diff_valid. No true inverse.
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_meta_rt_isolation
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ t ∈ 0..31. encode_at(op, xt) ⊕ encode_at(op, x0) = t ∧ (encode_at(op, xt) & !0x1F) = (encode_at(op, x0) & !0x1F). The four op bases (Rt=0) are pairwise distinct and differ only in op2 bits[7:5].
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [op1, crn, crm, op2, t]
-  domain: { op1: u32[0,7], crn: u32[0,15], crm: u32[0,15], op2: u32[0,7], t: u32[0,31] }
-  relation:
-    op: eq
-    lhs: encode_sys(raw(op1,crn,crm,op2,xt)) xor encode_sys(raw(op1,crn,crm,op2,x0))
-    rhs: t
+  vars: [op, t]
+  domain: { op: {s1e1r,s1e1w,s1e0r,s1e0w}, t: 0..31 }
+  body: (encode_at(op, xt) ^ encode_at(op, x0)) == t
 generators:
-  op1: { gen: int, min: 0, max: 7, type: u32 }
-  crn: { gen: int, min: 0, max: 15, type: u32 }
-  crm: { gen: int, min: 0, max: 15, type: u32 }
-  op2: { gen: int, min: 0, max: 7, type: u32 }
+  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
   t: { gen: int, min: 0, max: 31, type: u32 }
-evidence: ARM ARM SYS Rt bits[4:0]; system.rs:464 omitted Xt defaults to xzr
+evidence: ARM ARM AT Rt is bits[4:0]; op2 distinguishes the four ops
 ```
 
-## encode_sys_meta_case_ws
-- Tier: 4
-- Rationale: Metamorphic invariance: ASCII case on Cn/Cm/Xt and surrounding space/tab (and optional `#`) must not change the encoding. gas/llvm-mc accept those variants. Stronger differential is p1.
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_dc_pbt.rs encode_dc_meta_case_ws
-- Formal: ∀ valid SYS fields, case-fold and surrounding whitespace pads. encode_sys(padded/cased raw) = encode_sys(canonical raw) (both Ok with equal words, or both Err)
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
+## encode_at_meta_case_ws
+- Tier: 3
+- Rationale: ASCII case-fold and surrounding space/tab are behavior-preserving (trim + to_lowercase). Metamorphic transform of a valid encoding. Stronger differential already covers cased inputs vs llvm-mc; this asserts SUT(raw) = SUT(canonical(raw)).
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_meta_case_ws
+- Formal: ∀ raw in case/ws variants of valid (op, xt). encode_at([], raw) = encode_at([], canonical(raw))
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [op1, crn, crm, op2, xt, pads, case]
-  domain: { op1: u32[0,7], crn: u32[0,15], crm: u32[0,15], op2: u32[0,7], xt: X64, pads: ws, case: ascii }
+  vars: [raw]
+  domain: { raw: case_ws(valid_at) }
   relation:
     op: eq
-    lhs: encode_sys(cased_padded(raw))
-    rhs: encode_sys(canonical(raw))
+    lhs: encode_at([], raw)
+    rhs: encode_at([], canonical(raw))
 generators:
-  op1: { gen: int, min: 0, max: 7, type: u32 }
-  crn: { gen: int, min: 0, max: 15, type: u32 }
-  crm: { gen: int, min: 0, max: 15, type: u32 }
-  op2: { gen: int, min: 0, max: 7, type: u32 }
-  t: { gen: int, min: 0, max: 31, type: u32 }
-evidence: README.md:12 gas-compat; llvm-mc accepts SYS case/whitespace; SUT to_lowercase/trim
+  raw: { gen: string }
+evidence: system.rs:427-428 trim + to_lowercase
 ```
 
-## encode_sys_neg_too_few
+## encode_at_neg_unknown_op
 - Tier: 4
-- Rationale: Negative/error contract: ARM SYS requires four fields (op1, Cn, Cm, op2). llvm-mc/gas reject fewer than 4 operands ("too few operands" / "comma expected"). Body returns Err when parts.len() < 4. Domain includes 0, 1, 2, 3 comma-separated tokens including empty string.
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_dc_pbt.rs encode_dc_neg_missing_xt
-- Formal: ∀ s with fewer than 4 comma-separated operands. encode_sys(s) = Err ∧ llvm-mc("sys "+s) fails
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
+- Rationale: Names that llvm-mc rejects as an AT operation ("invalid operand for AT instruction") must return Err. Negative-error contract evidenced by llvm-mc/gas rejection of the same strings, not by the SUT match table. Generator is co-filtered by llvm-mc.err so the domain is the reference-rejected set (empty, foo, ialluis, civac, sy, #0, x0, …).
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_unknown_op
+- Formal: ∀ s. llvm-mc("at "+s) fails ⇒ encode_at([], s) = Err(e) ∧ ("unsupported at operation" ∈ e ∨ "invalid register" ∈ e)
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [s]
+  domain: { s: unknown_at_op_rejected_by_llvm_mc }
+  relation:
+    op: throws
+    expr: encode_at([], s)
+expected_error: String
+generators:
+  s: { gen: string }
+evidence: system.rs:441; llvm-mc "invalid operand for AT instruction"
+```
+
+## encode_at_neg_missing_reg
+- Tier: 4
+- Rationale: ARM AT requires Xt. llvm-mc: "specified at op requires a register"; gas: "comma expected between operands at operand 2". The SUT currently defaults missing Xt to Rt=31; that is in the generator (documented domain, not the passing one).
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_ivau_missing_reg
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ case/ws of op with no comma. llvm-mc("at "+raw) fails ∧ encode_at([], raw) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
+- Status: failing
+- Counterexample: encode_at(&[], "s1e1r") → Ok(Word(0xd508781f))
+- Bug report: bug_reports/encode_at_missing_xt.md
+
+```property
+function: encoder.encode_at
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [raw]
-  domain: { raw: sys_operand_strings with < 4 comma parts }
+  domain: { raw: case_ws of s1e1r|s1e1w|s1e0r|s1e0w with no comma }
   relation:
     op: throws
-    lhs: encode_sys(raw)
-    rhs: String
-generators:
-  nparts: { gen: int, min: 0, max: 3, type: usize }
+    expr: encode_at([], raw)
 expected_error: String
-evidence: ARM ARM SYS requires op1,Cn,Cm,op2; llvm-mc "too few operands"; gas "comma expected"; system.rs:451 parts.len() < 4
+generators:
+  raw: { gen: string }
+evidence: llvm-mc "specified at op requires a register"; ARM ARM AT Xt required
 ```
 
-## encode_sys_neg_oob_fields
+## encode_at_neg_wrong_reg_class
 - Tier: 4
-- Rationale: Negative/error contract: ARM/llvm-mc/gas require op1,op2 ∈ [0,7] and Cn,Cm ∈ C0–C15. Bound±1 must be sampled (op1=8, CRn=16, CRm=16, op2=8). SUT currently masks with &7/&0xF rather than rejecting; that is the candidate bug, not a domain restriction (the function's own comments do not declare oob input invalid).
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_svc_pbt.rs oob-imm (same assembler gas-compat contract)
-- Formal: ∀ (op1,CRn,CRm,op2,Xt) valid except exactly one field out of range at bound+1 or above. llvm-mc("sys "+raw) fails ∧ encode_sys(raw) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
+- Rationale: Xt must be a 64-bit GPR. llvm-mc/gas reject W/SP/SIMD ("invalid operand" / "operand mismatch" / "must be an integer register"). parse_reg_num currently accepts those prefixes; they stay in the generator.
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_wrong_reg_class
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ bad ∈ {w0..w30,wzr,wsp,sp,w31,dN,sN,qN,vN,hN,bN}. llvm-mc("at op, bad") fails ∧ encode_at([], op+", "+bad) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
 - Status: failing
-- Counterexample: encode_sys("#8, c0, c0, #0, x0")
-- Bug report: bug_reports/encode_sys_oob_fields.md
+- Counterexample: encode_at(&[], "s1e1r, w0") → Ok(Word(0xd5087800))
+- Bug report: bug_reports/encode_at_wrong_reg_class.md
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [op1, crn, crm, op2, t, which]
-  domain: { one of op1 in [8,255], crn in [16,255], crm in [16,255], op2 in [8,255]; others in range; includes bound+1 }
+  vars: [op, bad]
+  domain: { op: four AT ops, bad: W/SP/SIMD register token }
   relation:
     op: throws
-    lhs: encode_sys(raw)
-    rhs: String
-generators:
-  op1: { gen: int, min: 8, max: 255, type: u32 }
-  crn: { gen: int, min: 16, max: 255, type: u32 }
-  crm: { gen: int, min: 16, max: 255, type: u32 }
-  op2: { gen: int, min: 8, max: 255, type: u32 }
+    expr: encode_at([], op+", "+bad)
 expected_error: String
-evidence: ARM ARM SYS field widths; llvm-mc "immediate must be an integer in range [0, 7]" / "Expected cN operand where 0 <= N <= 15"; gas "immediate value out of range 0 to 7" / "C0 - C15 expected"
+generators:
+  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
+  bad: { gen: string }
+evidence: llvm-mc "invalid operand for instruction"; gas "operand mismatch"
 ```
 
-## encode_sys_neg_extra_operand
+## encode_at_neg_extra_operand
 - Tier: 4
-- Rationale: Negative/error contract: llvm-mc/gas reject a sixth operand ("invalid operand" / "unexpected characters following instruction"). Body splits on comma and ignores parts after Xt; extra operands stay in the generator (not declared out of domain by this function).
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_dc_pbt.rs encode_dc_neg_extra_operand
-- Formal: ∀ valid SYS fields, extra ∈ {x0..x31, #imm, foo}. llvm-mc("sys "+raw+", "+extra) fails ∧ encode_sys(raw+", "+extra) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
-- Status: failing
-- Counterexample: encode_sys("#0, c0, c0, #0, x0, x0")
-- Bug report: bug_reports/encode_sys_extra_operand.md
-
-```property
-function: encoder.system.encode_sys
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [op1, crn, crm, op2, t, extra]
-  domain: { valid SYS 5-operand raw, extra: extra_token }
-  relation:
-    op: throws
-    lhs: encode_sys(raw + ", " + extra)
-    rhs: String
-generators:
-  op1: { gen: int, min: 0, max: 7, type: u32 }
-  crn: { gen: int, min: 0, max: 15, type: u32 }
-  crm: { gen: int, min: 0, max: 15, type: u32 }
-  op2: { gen: int, min: 0, max: 7, type: u32 }
-  t: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: oneof, args: [{ gen: const, value: x1 }, { gen: const, value: "#0" }, { gen: const, value: foo }] }
-expected_error: String
-evidence: llvm-mc extra operand error; gas "unexpected characters following instruction at operand 5"
-```
-
-## encode_sys_neg_wrong_reg_class
-- Tier: 4
-- Rationale: Negative/error contract: ARM SYS Xt is a 64-bit GPR (XZR/LR). llvm-mc/gas reject W/SP/WZR/WSP/SIMD. parse_reg_num currently accepts those names; the function's comments do not declare them out of domain. Domain is every wrong class llvm-mc rejects, including bound names w0/w31/sp/v0.
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_dc_pbt.rs encode_dc_neg_wrong_reg_class
-- Formal: ∀ valid SYS fields, bad ∈ {w0..w31, wzr, wsp, sp, v0, d0, s0, q0, h0, b0}. llvm-mc("sys "+raw+", "+bad) fails ∧ encode_sys(raw+", "+bad) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
-- Status: failing
-- Counterexample: encode_sys("#0, c0, c0, #0, w0")
-- Bug report: bug_reports/encode_sys_wrong_reg_class.md
-
-```property
-function: encoder.system.encode_sys
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [op1, crn, crm, op2, bad]
-  domain: { valid SYS 4-field prefix, bad: W/SP/SIMD token }
-  relation:
-    op: throws
-    lhs: encode_sys(raw + ", " + bad)
-    rhs: String
-generators:
-  op1: { gen: int, min: 0, max: 7, type: u32 }
-  crn: { gen: int, min: 0, max: 15, type: u32 }
-  crm: { gen: int, min: 0, max: 15, type: u32 }
-  op2: { gen: int, min: 0, max: 7, type: u32 }
-  bad: { gen: oneof, args: [{ gen: const, value: w0 }, { gen: const, value: sp }, { gen: const, value: v0 }, { gen: const, value: wzr }] }
-expected_error: String
-evidence: ARM ARM SYS Xt is 64-bit GPR; llvm-mc "invalid operand"; gas "operand mismatch" / "must be an integer register"
-```
-
-## encode_sys_neg_invalid_reg
-- Tier: 4
-- Rationale: Sweep — documented Err arm system.rs:463 "sys: invalid register" when parse_reg_num returns None (x32, foo, empty, #imm). llvm-mc/gas reject those Xt tokens. Distinct from wrong-class (parse_reg_num Some).
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_dc_pbt.rs encode_dc_neg_invalid_reg
-- Formal: ∀ xt ∈ {x32, x33, foo, empty, x, #0, 31, x32..x99}. encode_sys("#0, c0, c0, #0, "+xt) = Err containing "invalid register" ∧ llvm-mc rejects
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
+- Rationale: Extra operands after Xt are rejected by llvm-mc ("unexpected token in argument list") and gas ("unexpected characters following instruction"). splitn(2) leaves the extra text inside the register token, which parse_reg_num should fail.
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_invalid_reg (x0, x1 extra)
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ extra ∈ {x0..x30,xzr,lr,#0,w0,x32}. llvm-mc("at op, x0, extra") fails ∧ encode_at([], op+", x0, "+extra) = Err(_)
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [xt]
-  domain: { xt: malformed Xt token parse_reg_num rejects }
+  vars: [op, extra]
+  domain: { op: four AT ops, extra: extra trailing operand }
   relation:
     op: throws
-    lhs: encode_sys("#0, c0, c0, #0, " + xt)
-    rhs: String
-generators:
-  xt: { gen: oneof, args: [{ gen: const, value: x32 }, { gen: const, value: foo }, { gen: const, value: "" }] }
+    expr: encode_at([], op+", x0, "+extra)
 expected_error: String
-evidence: system.rs:463 "sys: invalid register"; llvm-mc invalid operand
+generators:
+  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
+  extra: { gen: string }
+evidence: llvm-mc "unexpected token in argument list"; gas "unexpected characters following instruction"
 ```
 
-## encode_sys_neg_non_numeric
+## encode_at_neg_invalid_reg
 - Tier: 4
-- Rationale: Sweep — documented Err arms system.rs:454/456/458/460 for non-numeric op1/CRn/CRm/op2 ("sys: invalid op1/CRn/CRm/op2"). llvm-mc/gas reject those fields.
-- Doc contract: system.rs:447 "Encode `sys #op1, Cn, Cm, #op2, Xt` instruction." — asserted fingerprint d6e99d55
-- Seed: encode_sys parts.parse map_err arms
-- Formal: ∀ raw with a non-numeric op1, CRn, CRm, or op2 token. encode_sys(raw) = Err containing "invalid op1" ∨ "invalid CRn" ∨ "invalid CRm" ∨ "invalid op2" ∧ llvm-mc rejects
-- Test file: src/backend/arm/assembler/encoder/encode_sys_pbt.rs
+- Rationale: Sweep — parse_reg_num None arm (system.rs:431) for malformed Xt (x32, empty, foo, #0). llvm-mc rejects ("expected register operand"). Documented error path not reached by extra-operand alone when the second field is a single invalid token.
+- Doc contract: system.rs:435 "AT encoding: SYS instruction. Base words from GCC:" — other fingerprint ebf834b6
+- Seed: src/backend/arm/assembler/encoder/encode_ic_pbt.rs:encode_ic_neg_invalid_reg
+- Formal: ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ xt ∈ {x32, x33, empty, foo, #0, 31, x, x32..x99}. llvm-mc("at op, xt") fails ∧ encode_at([], op+", "+xt) = Err(e) ∧ ("invalid register" ∈ e ∨ "unsupported at operation" ∈ e)
+- Test file: src/backend/arm/assembler/encoder/encode_at_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.system.encode_sys
+function: encoder.encode_at
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [raw]
-  domain: { raw: SYS string with a non-numeric field }
+  vars: [op, xt]
+  domain: { op: four AT ops, xt: malformed Xt token }
   relation:
     op: throws
-    lhs: encode_sys(raw)
-    rhs: String
-generators:
-  raw: { gen: oneof, args: [{ gen: const, value: "foo, c0, c0, #0, x0" }, { gen: const, value: "#0, xx, c0, #0, x0" }] }
+    expr: encode_at([], op+", "+xt)
 expected_error: String
-evidence: system.rs:454-460 parse map_err; llvm-mc field errors
+generators:
+  op: { gen: oneof, options: ["s1e1r", "s1e1w", "s1e0r", "s1e0w"] }
+  xt: { gen: string }
+evidence: system.rs:431 parse_reg_num None; llvm-mc "expected register operand"
 ```

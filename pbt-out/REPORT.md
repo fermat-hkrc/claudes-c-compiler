@@ -1,144 +1,129 @@
-# PBT Campaign Report: encode_sys
+# PBT Campaign Report: encode_at
 
 ## Summary
 
-**Verdict:** 1 high and 3 medium: encode_sys masks out-of-range op1/CRn/CRm/op2 into a different SYS encoding, ignores extra operands, treats W/SP/SIMD as X registers, and rejects the GNU `fp` alias for x29.
+**Verdict:** 2 medium and 1 low (documented by the author): encode_at encodes a missing Xt as XZR, treats W/SP/SIMD as 64-bit GPRs, and rejects ARM AT ops S1E2/S1E3/S12E* that gas/llvm-mc assemble.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sys
+**Modules tested:** encode_at
 **Tests:** 10
-**Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function (encode_sys), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). encode_sys ran via `cargo test --lib encode_sys`; sweep was a manual arm audit of the 22-line body plus two parse-error properties.
+**Result:** 7 passing, 3 bugs
+**Change surface:** 1 changed function (encode_at), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). encode_at ran via `cargo test --lib encode_at_`; sweep was a manual arm audit of the 20-line body plus encode_at_neg_invalid_reg.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sys | 10 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_at | 10 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_sys rejects the GNU Xt alias fp
+### B1: encode_at encodes AT without Xt as AT XZR
 
-**Formal:** ∀ op1 ∈ [0,7], CRn ∈ [0,15], CRm ∈ [0,15], op2 ∈ [0,7], Xt ∈ {x0..x30, xzr, x31, lr, fp, omitted}, case ∈ ASCII, ws ∈ {space,tab}*. encode_sys(raw) = llvm-mc("sys "+raw) = 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt  where Rt(omitted)=31, Rt(xzr)=Rt(x31)=31, Rt(lr)=30, Rt(fp)=29
-**Contract evidence:** inferred (README.md:11 gas-compat; llvm-mc and GNU as accept `fp` as x29)
+**Formal:** ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ case/ws of op with no comma. llvm-mc("at "+raw) fails ∧ encode_at([], raw) = Err(_)
+**Contract evidence:** inferred (ARM ARM AT requires Xt; llvm-mc "specified at op requires a register"; gas "comma expected between operands at operand 2"; README.md:12 gas-compat)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_sys("#0, c0, c0, #0, fp") then llvm-mc("sys #0, c0, c0, #0, fp")
-**Expected / Actual:** Ok(Word(0xd508001d)) / Err("sys: invalid register: fp")
-**Impact:** Assembly that uses the standard `fp` alias for x29 fails to assemble `sys` instead of producing SYS with Rt=29.
-**Root cause:** system.rs:462-463 lowercases Xt and calls parse_reg_num, which has no `fp` arm, so a valid GNU alias is reported as an invalid register.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:462`
+**Counterexample:** encode_at(&[], "s1e1r") then llvm-mc("at s1e1r")
+**Expected / Actual:** Err / Ok(Word(0xd508781f))
+**Impact:** `at s1e1r` with a missing address register assembles as `at s1e1r, xzr`. A dropped operand becomes a real address-translate instruction against XZR instead of an assembler error.
+**Root cause:** system.rs:432-434 default Rt to 31 (XZR) whenever raw_operands contains no comma. Every ARM AT op requires Xt, so this default is never valid.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:432`
 ```rust
-        let reg = parts[4].trim().to_lowercase();
-        parse_reg_num(&reg).ok_or_else(|| format!("sys: invalid register: {}", parts[4]))?
+    } else {
+        31
+    };
 ```
-**Suggested fix:** Treat `fp` as x29 before the lookup.
+**Suggested fix:** Require a register operand for every AT op.
 ```rust
-        let mut reg = parts[4].trim().to_lowercase();
-        if reg == "fp" {
-            reg = "x29".to_string();
+    } else {
+        return Err("at: operation requires a register".to_string());
+    };
+```
+**Bug report:** bug_reports/encode_at_missing_xt.md
+**Repro seed:** cc bdf1400b0d97cdf266f4f651c302f6aadeaff2e8393d3bd6a8c8ea68c0546865 (raw = "s1e1r")
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_at_pbt::encode_at_neg_missing_reg' (2583788) panicked at src/backend/arm/assembler/encoder/encode_at_pbt.rs:337:1:
+Test failed: AT without register must Err (llvm-mc rejects at s1e1r); SUT raw "s1e1r": Word(3574102047).
+minimal failing input: raw = "s1e1r"
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+```
+
+### B2: encode_at accepts W/SP/SIMD registers as AT Xt
+
+**Formal:** ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w}, ∀ bad ∈ {w0..w30,wzr,wsp,sp,w31,dN,sN,qN,vN,hN,bN}. llvm-mc("at op, bad") fails ∧ encode_at([], op+", "+bad) = Err(_)
+**Contract evidence:** inferred (ARM ARM AT Xt is a 64-bit GPR; llvm-mc "invalid operand for instruction"; gas "operand mismatch" / "must be an integer register"; README.md:12 gas-compat)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_at(&[], "s1e1r, w0") then llvm-mc("at s1e1r, w0")
+**Expected / Actual:** Err / Ok(Word(0xd5087800))
+**Impact:** `at s1e1r, w0` encodes identically to `at s1e1r, x0`. A 32-bit, SP, or SIMD register is silently treated as the corresponding 5-bit encoding, so a width/class typo is not diagnosed.
+**Root cause:** system.rs:431 uses parse_reg_num, which accepts W/SP/WZR/WSP and SIMD/FP prefixes (d/s/q/v/h/b) as 5-bit numbers, with no 64-bit GPR check for AT Xt.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:431`
+```rust
+        parse_reg_num(reg_str).ok_or_else(|| format!("at: invalid register '{}'", reg_str))?
+```
+**Suggested fix:** Restrict AT Xt to 64-bit integer registers (Xn / XZR / LR).
+```rust
+        let rt = parse_reg_num(reg_str).ok_or_else(|| format!("at: invalid register '{}'", reg_str))?;
+        let low = reg_str.trim().to_lowercase();
+        let is_x = low.starts_with('x') || low == "xzr" || low == "lr";
+        if !is_x {
+            return Err(format!("at: Xt must be a 64-bit GPR, got '{}'", reg_str));
         }
-        parse_reg_num(&reg).ok_or_else(|| format!("sys: invalid register: {}", parts[4]))?
 ```
-**Bug report:** bug_reports/encode_sys_fp_alias.md
-**Repro seed:** case = (0, 0, 0, 0, 29, "#0, c0, c0, #0, fp", "#0,c0,c0,#0,fp")
+**Bug report:** bug_reports/encode_at_wrong_reg_class.md
+**Repro seed:** op = "s1e1r", bad = "w0"
 **Raw output:**
 ```text
-Test failed: SUT vs llvm-mc for sys #0,c0,c0,#0,fp: sys: invalid register: fp.
-minimal failing input: case = (0, 0, 0, 0, 29, "#0, c0, c0, #0, fp", "#0,c0,c0,#0,fp")
+thread 'backend::arm::assembler::encoder::encode_at_pbt::encode_at_neg_wrong_reg_class' (2584808) panicked at src/backend/arm/assembler/encoder/encode_at_pbt.rs:337:1:
+Test failed: AT with non-X register must Err (llvm-mc rejects at s1e1r, w0); SUT raw "s1e1r, w0": Word(3574102016).
+minimal failing input: op = "s1e1r", bad = "w0"
+	successes: 0
+	local rejects: 0
+	global rejects: 0
 ```
 
-### B2: encode_sys ignores a sixth operand
+### B3: encode_at rejects ARM AT ops S1E2/S1E3/S12E*
 
-**Formal:** ∀ valid SYS fields, extra ∈ {x0..x31, #imm, foo}. llvm-mc("sys "+raw+", "+extra) fails ∧ encode_sys(raw+", "+extra) = Err
-**Contract evidence:** inferred (llvm-mc "invalid operand"; gas "unexpected characters following instruction at operand 5")
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_sys("#0, c0, c0, #0, x0, x0")
-**Expected / Actual:** Err / Ok(Word(0xd5080000))
-**Impact:** A stray operand after Xt is not diagnosed; `sys #0, c0, c0, #0, x0, x0` assembles as SYS with the first five fields.
-**Root cause:** system.rs:451 only rejects parts.len() < 4; when parts.len() >= 5 the fifth token is Xt and later comma-fields are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:451`
+**Formal:** ∀ op ∈ {s1e1r,s1e1w,s1e0r,s1e0w,s1e2r,s1e2w,s1e3r,s1e3w,s12e1r,s12e1w,s12e0r,s12e0w}, ∀ t ∈ 0..31. encode_at([], op+", xt") = llvm-mc("at "+op+", xt")
+**Contract evidence:** documented limitation encoder/mod.rs:4 "This covers the subset of instructions emitted by our codegen."
+**Documentation conflict:** encoder/mod.rs:4 admits a subset on an input the assembler API accepts (README.md:12 gas-compat; llvm-mc/gas assemble `at s1e2r, x0`). The comment documents the limitation rather than declaring S1E2/S1E3/S12E* invalid.
+**Severity:** low (documented by the author)
+**Counterexample:** encode_at(&[], "s1e2r, x0") then llvm-mc("at s1e2r, x0")
+**Expected / Actual:** Ok(Word(0xd50c7800)) / Err("unsupported at operation: s1e2r")
+**Impact:** Kernel/hypervisor assembly using AT at EL2/EL3 or stage-1+2 fails to assemble though gas accepts it.
+**Root cause:** system.rs:436-441 match table only lists S1E1R/S1E1W/S1E0R/S1E0W; every other ARM AT op hits the `_` arm.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:441`
 ```rust
-    if parts.len() < 4 {
-        return Err(format!("sys needs at least 4 operands, got: {}", raw_operands));
-    }
+        _ => return Err(format!("unsupported at operation: {}", op_name)),
 ```
-**Suggested fix:** Also reject more than five operands.
+**Suggested fix:** Encode the remaining default-CPU AT ops as SYS with CRn=7, CRm=8.
 ```rust
-    if parts.len() < 4 || parts.len() > 5 {
-        return Err(format!("sys needs 4 or 5 operands, got: {}", raw_operands));
-    }
+        "s1e2r" => 0xd50c7800,
+        "s1e2w" => 0xd50c7820,
+        "s1e3r" => 0xd50e7800,
+        "s1e3w" => 0xd50e7820,
+        "s12e1r" => 0xd50c7880,
+        "s12e1w" => 0xd50c78a0,
+        "s12e0r" => 0xd50c78c0,
+        "s12e0w" => 0xd50c78e0,
 ```
-**Bug report:** bug_reports/encode_sys_extra_operand.md
-**Repro seed:** op1 = 0, crn = 0, crm = 0, op2 = 0, t = 0, extra = "x0"
+**Bug report:** bug_reports/encode_at_unimplemented_ops.md
+**Repro seed:** cc e5f189a171b0943795b039cb175abcb5949161c23f40c8c212614d6bc4e95d05 (op = "s1e2r", t = 0)
 **Raw output:**
 ```text
-Test failed: SYS with extra operand must Err (llvm-mc rejects sys #0, c0, c0, #0, x0, x0); SUT raw "#0, c0, c0, #0, x0, x0": Word(3574071296).
-minimal failing input: op1 = 0, crn = 0, crm = 0, op2 = 0, t = 0, extra = "x0"
-```
-
-### B3: encode_sys masks out-of-range op1/CRn/CRm/op2 instead of rejecting
-
-**Formal:** ∀ (op1,CRn,CRm,op2,Xt) valid except exactly one field out of range at bound+1 or above. llvm-mc("sys "+raw) fails ∧ encode_sys(raw) = Err
-**Contract evidence:** inferred (ARM ARM SYS field widths; llvm-mc "immediate must be an integer in range [0, 7]" / "Expected cN operand where 0 <= N <= 15"; gas "immediate value out of range 0 to 7")
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_sys("#8, c0, c0, #0, x0")
-**Expected / Actual:** Err / Ok(Word(0xd5080000))
-**Impact:** An out-of-range immediate silently wraps (8 & 7 = 0) and emits a different SYS instruction. The same wrap applies to CRn/CRm ≥ 16 and op2 ≥ 8.
-**Root cause:** system.rs:466 packs fields with (op1 & 7), (crn & 0xF), (crm & 0xF), (op2 & 7) after a successful u32 parse, so values that fit in u32 but not in the ARM field widths are truncated.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:466`
-```rust
-    let word = 0xd5080000 | ((op1 & 7) << 16) | ((crn & 0xF) << 12) | ((crm & 0xF) << 8) | ((op2 & 7) << 5) | rt;
-```
-**Suggested fix:** Reject out-of-range fields before packing.
-```rust
-    if op1 > 7 || crn > 15 || crm > 15 || op2 > 7 {
-        return Err(format!("sys: field out of range in {}", raw_operands));
-    }
-    let word = 0xd5080000 | (op1 << 16) | (crn << 12) | (crm << 8) | (op2 << 5) | rt;
-```
-**Bug report:** bug_reports/encode_sys_oob_fields.md
-**Repro seed:** raw = "#8, c0, c0, #0, x0"
-**Raw output:**
-```text
-Test failed: SYS with out-of-range op1/Cn/Cm/op2 must Err (llvm-mc rejects sys #8, c0, c0, #0, x0); SUT raw "#8, c0, c0, #0, x0": Word(3574071296).
-minimal failing input: raw = "#8, c0, c0, #0, x0"
-```
-
-### B4: encode_sys accepts W/SP/SIMD Xt as if they were X registers
-
-**Formal:** ∀ valid SYS fields, bad ∈ {w0..w31, wzr, wsp, sp, v0, d0, s0, q0, h0, b0}. llvm-mc("sys "+raw+", "+bad) fails ∧ encode_sys(raw+", "+bad) = Err
-**Contract evidence:** inferred (ARM ARM SYS Xt is a 64-bit GPR; llvm-mc "invalid operand"; gas "operand mismatch" / "must be an integer register")
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_sys("#0, c0, c0, #0, w0")
-**Expected / Actual:** Err / Ok(Word(0xd5080000))
-**Impact:** Invalid register-class assembly is not diagnosed and encodes as the 64-bit GPR of the same number (`w0` becomes Xt=x0).
-**Root cause:** system.rs:462-463 calls parse_reg_num, which returns Some(n) for w/d/s/q/v/h/b prefixes and for sp/wsp/wzr. encode_sys never checks is_64bit_reg.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:462`
-```rust
-        let reg = parts[4].trim().to_lowercase();
-        parse_reg_num(&reg).ok_or_else(|| format!("sys: invalid register: {}", parts[4]))?
-```
-**Suggested fix:** Require a 64-bit GPR before packing Rt.
-```rust
-        let reg = parts[4].trim().to_lowercase();
-        if !(reg.starts_with('x') || reg == "xzr" || reg == "lr" || reg == "fp") {
-            return Err(format!("sys: invalid register: {}", parts[4]));
-        }
-        parse_reg_num(&reg).ok_or_else(|| format!("sys: invalid register: {}", parts[4]))?
-```
-**Bug report:** bug_reports/encode_sys_wrong_reg_class.md
-**Repro seed:** op1 = 0, crn = 0, crm = 0, op2 = 0, bad = "w0"
-**Raw output:**
-```text
-Test failed: SYS with non-X register must Err (llvm-mc rejects sys #0, c0, c0, #0, w0); SUT raw "#0, c0, c0, #0, w0": Word(3574071296).
-minimal failing input: op1 = 0, crn = 0, crm = 0, op2 = 0, bad = "w0"
+thread 'backend::arm::assembler::encoder::encode_at_pbt::encode_at_diff_arm_ops' (2586973) panicked at src/backend/arm/assembler/encoder/encode_at_pbt.rs:377:1:
+Test failed: ARM AT op "s1e2r" must encode (llvm-mc accepts at s1e2r, x0): "unsupported at operation: s1e2r".
+minimal failing input: op = "s1e2r", t = 0
+	successes: 1
+	local rejects: 0
+	global rejects: 0
 ```
 
 ## Design Caveats
@@ -149,38 +134,32 @@ minimal failing input: op1 = 0, crn = 0, crm = 0, op2 = 0, bad = "w0"
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_sys_pbt.rs | 10 properties + 5 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_at_pbt.rs | 10 properties + 5 KAT + 3 regression witnesses |
 
 ## Reproduction
 
-Whole suite (expected: 6 properties + 5 KAT passing; 4 properties + 4 regressions failing):
+Whole suite (serial, as run):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_sys -- --test-threads=1
+cargo test --lib encode_at_ -- --test-threads=1
 ```
 
-B1 fp alias:
+B1 missing Xt:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sys_regression_fp_alias -- --test-threads=1 --nocapture
+cargo test --lib test_encode_at_regression_missing_xt -- --test-threads=1 --nocapture
 ```
 
-B2 extra operand:
+B2 wrong register class:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sys_regression_extra_operand -- --test-threads=1 --nocapture
+cargo test --lib test_encode_at_regression_w0 -- --test-threads=1 --nocapture
 ```
 
-B3 oob op1:
+B3 unimplemented AT ops:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sys_regression_oob_op1 -- --test-threads=1 --nocapture
-```
-
-B4 wrong register class:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sys_regression_w0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_at_regression_s1e2r -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
@@ -192,25 +171,23 @@ cargo test --lib test_encode_sys_regression_w0 -- --test-threads=1 --nocapture
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_sys_fp_alias.md
-- pbt-out/bug_reports/encode_sys_fp_alias.html
-- pbt-out/bug_reports/encode_sys_extra_operand.md
-- pbt-out/bug_reports/encode_sys_extra_operand.html
-- pbt-out/bug_reports/encode_sys_oob_fields.md
-- pbt-out/bug_reports/encode_sys_oob_fields.html
-- pbt-out/bug_reports/encode_sys_wrong_reg_class.md
-- pbt-out/bug_reports/encode_sys_wrong_reg_class.html
-- pbt-out/run/encode_sys_test.log
-- pbt-out/run/encode_sys_test2.log
+- pbt-out/bug_reports/encode_at_missing_xt.md
+- pbt-out/bug_reports/encode_at_missing_xt.html
+- pbt-out/bug_reports/encode_at_wrong_reg_class.md
+- pbt-out/bug_reports/encode_at_wrong_reg_class.html
+- pbt-out/bug_reports/encode_at_unimplemented_ops.md
+- pbt-out/bug_reports/encode_at_unimplemented_ops.html
+- pbt-out/run/encode_at.log
+- src/backend/arm/assembler/encoder/encode_at_pbt.rs
+- proptest-regressions/backend/arm/assembler/encoder/encode_at_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 03:00 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 160/307 total | PBT candidates: 160 | Tested: 160 (100%) | 1 pass, 160 fail
+> Last updated: 2026-10-06 03:29 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 161/307 total | PBT candidates: 161 | Tested: 161 (100%) | 1 pass, 161 fail
 
 ## Summary
 
@@ -219,10 +196,10 @@ cargo test --lib test_encode_sys_regression_w0 -- --test-threads=1 --nocapture
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 160 |
-| **Tested (of PBT candidates)** | **160 / 160 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 160 / -1 |
-| **Overall (tested / all functions)** | **160 / 307 (52%)** |
+| PBT candidates (from FUNCTION_INDEX) | 161 |
+| **Tested (of PBT candidates)** | **161 / 161 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 161 / -1 |
+| **Overall (tested / all functions)** | **161 / 307 (52%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -230,13 +207,13 @@ cargo test --lib test_encode_sys_regression_w0 -- --test-threads=1 --nocapture
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 160 | 160 | 0 | 100% |
+|  | 161 | 161 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 160 | 160 | 0 | 100% |
+| unknown | 161 | 161 | 0 | 100% |
 
 ## File Coverage
 
@@ -419,3 +396,4 @@ cargo test --lib test_encode_sys_regression_w0 -- --test-threads=1 --nocapture
 | encode_ic | system.rs |
 | encode_dc | system.rs |
 | encode_sys | system.rs |
+| encode_at | system.rs |

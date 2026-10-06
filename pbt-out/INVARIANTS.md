@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_at)
+
+- Valid {s1e1r, s1e1w, s1e0r, s1e0w} with Xt in {x0..x30, xzr, x31, lr} (ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt with op1=0, CRn=7, CRm=8, op2∈{0,1,2,3} (1000 cases). KAT pins s1e1r x0=0xd5087800, s1e1w x0=0xd5087820, s1e0r x0=0xd5087840, s1e0w x0=0xd5087860, s1e1r xzr=0xd508781f.
+- ARM AT layout holds: bits[31:21]=0b11010101000; op1=0; CRn=7; CRm=8; op2 distinguishes the four ops; Rt=t (1000 cases).
+- Encodings of the same op differ only in Rt bits[4:0]; S1E1W XOR S1E1R = 0x20; S1E0R XOR S1E1R = 0x40; S1E0W XOR S1E1R = 0x60 (1000 cases).
+- ASCII case-fold and surrounding space/tab are behavior-preserving on the valid domain (1000 cases).
+- Unknown operation names that llvm-mc rejects return Err containing "unsupported at operation" or "invalid register" (1000 cases).
+- Extra operands after Xt return Err, matching llvm-mc/gas (1000 cases).
+- Malformed Xt (x32, empty, #0, foo) return Err containing "invalid register" (sweep, 1000 cases).
+- Missing Xt, W/SP/SIMD Xt, and unimplemented ARM AT ops (s1e2r/…) currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_at)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM AT: S1E1R = SYS #0, C7, C8, #0, Xt; S1E1W op2=1; S1E0R op2=2; S1E0W op2=3. Xt required, 64-bit GPR.
+- Dispatch: encoder/mod.rs:998 `"at" => encode_at(operands, raw_operands)`. Raw operand string passed through; `_operands` unused.
+- Sibling encode_ic / encode_dc / encode_tlbi / encode_sys are not same-job differentials (different SYS encodings).
+- encode_at splits on the first comma, lowercases the op, optionally parses Rt via parse_reg_num (default 31), then patches bits[4:0] of a GCC base word.
+- No ARM codegen caller currently emits `at`; encode_instruction still routes the mnemonic.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_at_neg_invalid_reg. Closed: every documented behavior has a property; tier round spent.
+- Three failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_at_*.md.
+
+## Quirks (encode_at)
+
+- Surrounding whitespace and ASCII case are accepted (trim + to_lowercase).
+- llvm-mc accepts `x31` as XZR; GNU gas rejects `x31`. The differential used llvm-mc.
+- parse_reg_num accepts `lr` as 30 (passing); it does not accept `fp` (x29), which gas/llvm-mc do.
+- Extra operands after a parsed register (`s1e1r, x0, x1`) fail parse_reg_num and return Err (passing).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 20-line body.
+
 # Confirmed invariants (encode_sys)
 
 - Valid SYS op1∈[0,7] × CRn∈C0–C15 × CRm∈C0–C15 × op2∈[0,7] × Xt∈{x0..x30, xzr, x31, lr, omitted} matches the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt (1000 cases). KAT pins #0,c0,c0,#0,x0=0xd5080000; #3,c7,c14,#1,x0=0xd50b7e20; #0,c7,c1,#0 (omitted Xt)=0xd508711f; #7,c15,c15,#7,x0=0xd50fffe0; #3,c7,c14,#1,xzr=0xd50b7e3f. The GNU alias `fp` (x29) is rejected (see bugs).
