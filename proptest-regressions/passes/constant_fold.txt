@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7c5a4d89bc4b47f88364f5f17e9fe2a856e9485c5facb32835a1fcc939e267b0 # shrinks to ty0 = 0, c0 = 0, c1 = 0, steps = [(0, 0, 0, 0, 0, 0, 0)]
+cc 5675a2300d7dbcf33769c8f800568797a6f15ebd2b6d1fd0a5050c71336d081a # shrinks to ty0 = 0, c0 = 0, c1 = 1, steps = [(0, 0, 0, 0, 0, 0, 0), (39, 0, 45, 233, 16252417490783025, 0, 0), (0, 0, 59, 0, 0, 0, 0)]
+cc b593cf135611eb87b6227afa81a9974bf97a5cf4e04a0db221f425fa7ed7bd4a # shrinks to ty0 = 2, c0 = 292571853648560129, c1 = 0, steps = [(23, 0, 74, 0, 0, 0, 0), (157, 0, 0, 0, 0, 0, 184), (0, 4, 194, 64, 0, -4294967297, 0)]
+cc f31732f4dab4bb5dfd2bbe329ac5d3dfb4d57f80321ba56cd9a448c0f63f3b8c # shrinks to ty0 = 0, c0 = 0, c1 = 0, steps = [(72, 0, 0, 0, 0, 0, 43), (191, 32, 0, 21, 0, -3665, 0)]
+cc 7026ac3e336f527be159da6a57a8c154e80a617f8087d02455ebd1b5f897a52f # shrinks to ty0 = 0, c0 = 0, c1 = 0, steps = [(170, 35, 0, 0, 0, -4679482275929129454, 0)]
+cc 0a5d6e0875ddd3ab9d3537ba21b3a1e5d0ef3188bec2e6b663888dc53d50342d # shrinks to ty0 = 1, c0 = 0, c1 = -1448784488684393217, steps = [(128, 11, 2, 0, 0, 0, 0), (5, 21, 0, 0, -8006307941724848713, -1234163082012215233, 0), (15, 7, 107, 0, 0, 0, 0)]
+cc 6c1878533691460fadfd92d9f0af3e1109e90ddbc1d38e21b923fd258d5cf3ec # shrinks to ty0 = 0, c0 = 2980835472914125696, c1 = 0, steps = [(15, 59, 188, 0, 0, -477735840934897929, 0)]

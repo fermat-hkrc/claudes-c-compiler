@@ -1,36 +1,19 @@
-# PBT Coverage Status — round 06 (src/ir)
+# PBT Coverage Status — round 07 (src/passes)
 
 | Function | Source file | Test file | Test target | Notes |
 |----------|-------------|-----------|-------------|-------|
-| IrBinOp::eval_i64 | ops.rs | src/ir/ops.rs (pbt_tests P1-P3) | cargo test --lib ir::ops | pass (P1 div identity, P2 None⇔rhs=0) |
-| IrBinOp::eval_i128 | ops.rs | src/ir/ops.rs (pbt_tests P3) | cargo test --lib ir::ops | pass (width consistency) |
-| IrBinOp::can_trap / is_commutative | ops.rs | src/ir/ops.rs (pbt_tests P2) | cargo test --lib ir::ops | pass |
-| IrCmpOp::eval_i64 / eval_i128 / eval_f64 | ops.rs | src/ir/ops.rs (pbt_tests P4, P4b) | cargo test --lib ir::ops | pass |
-| IrConst::from_i64 | constants.rs | src/ir/constants.rs (pbt_tests P5, P8) | cargo test --lib ir::constants | pass (convention author, green side of differential) |
-| IrConst::cast_float_to_target | constants.rs | src/ir/constants.rs (pbt_tests P5) | cargo test --lib ir::constants | FAIL — bug b1 (unsigned repr convention) |
-| IrConst::cast_long_double_to_target | constants.rs | src/ir/constants.rs (pbt_tests P5) | cargo test --lib ir::constants | FAIL — bug b1 |
-| IrConst::coerce_to_with_src / coerce_to | constants.rs | src/ir/constants.rs (pbt_tests P6) | cargo test --lib ir::constants | FAIL — bug b2 (early return) |
-| f64_to_f128_bytes | constants.rs | src/ir/constants.rs (pbt_tests P7, pbt_regression) | cargo test --lib ir::constants | FAIL — bug b3 (subnormals) |
-| f64_to_x87_bytes | constants.rs | src/ir/constants.rs (pbt_tests P7) | cargo test --lib ir::constants | FAIL — bug b3 (subnormals) |
-| IrConst::bool_normalize / zero / one | constants.rs | src/ir/constants.rs (pbt_tests P8) | cargo test --lib ir::constants | pass (C11 6.3.1.2) |
-| build_cfg | analysis.rs | src/ir/analysis.rs (pbt_tests P9, pbt_regression) | cargo test --lib ir::analysis | FAIL — bug b4 (pred duplication) |
-| compute_dominators | analysis.rs | src/ir/analysis.rs (pbt_tests P10) | cargo test --lib ir::analysis | pass vs naive reference |
-| compute_reverse_postorder | analysis.rs | src/ir/analysis.rs (pbt_tests P10) | cargo test --lib ir::analysis | pass |
-| build_dom_tree_children | analysis.rs | src/ir/analysis.rs (pbt_tests P10) | cargo test --lib ir::analysis | pass |
-| compute_dominance_frontiers | analysis.rs | src/ir/analysis.rs (pbt_tests P11, P11b red) | cargo test --lib ir::analysis | FAIL — bug b5 (entry cycles; covered domain green) |
-| promote_allocas / promote_allocas_with_params | mem2reg/promote.rs | src/ir/mem2reg/promote.rs (pbt_tests P12) | cargo test --lib ir::mem2reg | pass (SSA validity + phi completeness) |
-| eliminate_phis | mem2reg/phi_eliminate.rs | src/ir/mem2reg/phi_eliminate.rs (pbt_tests P13) | cargo test --lib ir::mem2reg | pass (structural preservation) |
-| IntrinsicOp::is_pure | intrinsics.rs | (none) | — | skipped: static classification list, no independent oracle (see PLAN.md) |
-| main (pbt-out/rounds/05_sema/run/negu.c) | negu.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| main (pbt-out/rounds/05_sema/run/ovf.c) | ovf.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| main (pbt-out/rounds/05_sema/run/uackat.c) | uackat.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| main (pbt-out/rounds/05_sema/run/uackat2.c) | uackat2.c | round-05 test scratch data (not SUT code) | — | test data file from commit 8bf7a66c; not a Rust SUT function |
-| TShape::Leaf | src/frontend/parser/parse.rs | src/frontend/parser/parse.rs (round-05 P14 test helper) | cargo test --lib frontend::parser | covered by round 05 (outside this round's scope src/ir) |
-| is_line_marker | src/frontend/preprocessor/pbt_support.rs | src/frontend/preprocessor/pbt_support.rs (round-05 P15) | cargo test --lib frontend::preprocessor | covered by round 05 (outside this round's scope src/ir) |
-| sema_of | src/frontend/sema/analysis.rs | src/frontend/sema/analysis.rs (round-05 P3/P5 + red regressions) | cargo test --lib frontend::sema | covered by round 05 (bug witnesses re-executed in this round's probe baseline) |
-| normalize_atomic_size_suffix | src/frontend/sema/builtins.rs | src/frontend/sema/builtins.rs (round-05 properties) | cargo test --lib frontend::sema | covered by round 05 |
-| ctype_from_type_spec_with_derived | src/frontend/sema/const_eval.rs | src/frontend/sema/const_eval.rs (round-05 P7 + red regression) | cargo test --lib frontend::sema | covered by round 05 |
-| sema_of | src/frontend/sema/type_checker.rs | src/frontend/sema/type_checker.rs (round-05 P1 + red regression) | cargo test --lib frontend::sema | covered by round 05 |
-| layout | src/frontend/sema/type_context.rs | src/frontend/sema/type_context.rs (round-05 P4 state machine + red regression) | cargo test --lib frontend::sema | covered by round 05 |
-
-Source file column: plain file names relative to src/ir/ for round-06 rows.
+| div_by_const_function | div_by_const.rs | src/passes/div_by_const.rs (pbt_tests P1–P4) | cargo test --lib passes::div_by_const | pass (udiv32/sdiv32/rem magic differentials, native + in-I64 + genuine-64 forms; unsigned-pow2 and magic-fallback carve-outs per README/code docs) |
+| fold_function | constant_fold.rs | src/passes/constant_fold.rs (pbt_tests P5–P6) | cargo test --lib passes::constant_fold | P5 FAIL — bug b1 (sub-int logical-op sign extension); P6 pass (div-by-zero UB preserved) |
+| fold_binop (via fold_function) | constant_fold.rs | src/passes/constant_fold.rs (P5 + red regression) | cargo test --lib passes::constant_fold | FAIL — bug b1 (is_32bit LShr/UDiv/URem arms) |
+| simplify_function | simplify.rs | src/passes/simplify.rs (pbt_tests P7–P8) | cargo test --lib passes::simplify | pass (identity metamorphic, strength-reduction value preservation) |
+| run_gvn_function | gvn.rs | src/passes/gvn.rs (pbt_tests P9) | cargo test --lib passes::gvn | pass (CSE value preservation + inst-count monotonicity) |
+| propagate_copies | copy_prop.rs | src/passes/gvn.rs (P9) + constant_fold.rs (P5 interleave) | cargo test --lib passes:: | pass (used as the documented deployment interleave for P5; preservation via P9) |
+| eliminate_dead_code | dce.rs | src/passes/dce.rs (pbt_tests P10) | cargo test --lib passes::dce | pass (dead-chain preservation + actual removal) |
+| if_convert_function | if_convert.rs | src/passes/if_convert.rs (pbt_tests P11) | cargo test --lib passes::if_convert | pass (diamond→select preservation) |
+| simplify_cfg | cfg_simplify.rs | src/passes/cfg_simplify.rs (pbt_tests P12) | cargo test --lib passes::cfg_simplify | pass (value + reachability + targets-in-range on random CFGs; slow property — 700s serial, not hung) |
+| narrow_function | narrow.rs | src/passes/narrow.rs (pbt_tests P13) | cargo test --lib passes::narrow | FAIL — bug b2 (Phase 2 use-context check missing; pipeline-confirmed via run_passes) |
+| narrow_binops_without_cast (via narrow_function) | narrow.rs | src/passes/narrow.rs (P13 + red regression) | cargo test --lib passes::narrow | FAIL — bug b2 |
+| run_passes | mod.rs | src/passes/mod.rs (pbt_tests P14) | cargo test --lib passes:: | pass (end-to-end value preservation over linear/diamond/loop/CFG/div shapes; P14's own shapes do not include b2's widen-widen-bitwise pattern — that gap is covered by P13 + the red regression) |
+| inline/ipcp/dead_statics (module-level) | inline.rs, ipcp.rs, dead_statics.rs | src/passes/mod.rs (P14 two-function modules) | cargo test --lib passes:: | structural exercise only via P14 (2-function modules); no per-function properties (round budget; documented cutoffs are size heuristics, not value contracts) |
+| resolve_asm.rs | resolve_asm.rs | — | — | skipped: requires inline-asm symbol plumbing absent from generated fragments (recorded in PLAN.md) |
+| Change surface (round-06 test code in src/ir) | analysis.rs, constants.rs, phi_eliminate.rs, promote.rs, ops.rs | src/ir committed pbt_tests | cargo test --lib ir:: | re-executed verbatim, covered-by-round-06 (its p5 red witness for #575 fails as documented) |

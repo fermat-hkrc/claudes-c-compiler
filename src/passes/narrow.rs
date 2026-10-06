@@ -988,3 +988,138 @@ mod tests {
         }
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::narrow_function;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{Instruction, IrBinOp, IrCmpOp, IrFunction, Operand, Terminator};
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    /// shape 0: phase-1 widen-operate-narrow (op whitelisted by README).
+    /// shape 1: phase-2 bitwise at I64 without a narrowing cast.
+    /// shape 2: phase-3 comparison of two widened values.
+    fn build_narrow(shape: u8, op_idx: u8, k: i64, alt: i64) -> IrFunction {
+        let ops = [IrBinOp::Add, IrBinOp::Sub, IrBinOp::Mul, IrBinOp::And, IrBinOp::Or, IrBinOp::Xor, IrBinOp::Shl];
+        let op = ops[(op_idx as usize) % ops.len()];
+        match shape % 3 {
+            0 => {
+                let mut b = FnBuilder::new("f", IrType::I32, &[IrType::I32, IrType::I32]);
+                let p0 = b.v();
+                let p1 = b.v();
+                let w0 = b.v();
+                let w1 = b.v();
+                let r = b.v();
+                let n = b.v();
+                let rhs = if matches!(op, IrBinOp::Shl) { Operand::Const(crate::ir::reexports::IrConst::I64((k.unsigned_abs() % 31) as i64)) } else { Operand::Value(w1) };
+                let insts = vec![
+                    Instruction::ParamRef { dest: p0, param_idx: 0, ty: IrType::I32 },
+                    Instruction::ParamRef { dest: p1, param_idx: 1, ty: IrType::I32 },
+                    Instruction::Cast { dest: w0, src: Operand::Value(p0), from_ty: IrType::I32, to_ty: IrType::I64 },
+                    Instruction::Cast { dest: w1, src: Operand::Value(p1), from_ty: IrType::I32, to_ty: IrType::I64 },
+                    Instruction::BinOp { dest: r, op, lhs: Operand::Value(w0), rhs, ty: IrType::I64 },
+                    Instruction::Cast { dest: n, src: Operand::Value(r), from_ty: IrType::I64, to_ty: IrType::I32 },
+                ];
+                b.block(insts, Terminator::Return(Some(Operand::Value(n))));
+                b.seal()
+            }
+            1 => {
+                let mut b = FnBuilder::new("f", IrType::I64, &[IrType::I32, IrType::I32]);
+                let p0 = b.v();
+                let p1 = b.v();
+                let w0 = b.v();
+                let w1 = b.v();
+                let r = b.v();
+                let bit = [IrBinOp::And, IrBinOp::Or, IrBinOp::Xor][(op_idx as usize) % 3];
+                let insts = vec![
+                    Instruction::ParamRef { dest: p0, param_idx: 0, ty: IrType::I32 },
+                    Instruction::ParamRef { dest: p1, param_idx: 1, ty: IrType::I32 },
+                    Instruction::Cast { dest: w0, src: Operand::Value(p0), from_ty: IrType::I32, to_ty: IrType::I64 },
+                    Instruction::Cast { dest: w1, src: Operand::Value(p1), from_ty: IrType::I32, to_ty: IrType::I64 },
+                    Instruction::BinOp { dest: r, op: bit, lhs: Operand::Value(w0), rhs: Operand::Value(w1), ty: IrType::I64 },
+                ];
+                b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+                b.seal()
+            }
+            _ => {
+                let mut b = FnBuilder::new("f", IrType::I8, &[IrType::I32, IrType::I32]);
+                let p0 = b.v();
+                let p1 = b.v();
+                let w0 = b.v();
+                let w1 = b.v();
+                let c = b.v();
+                let cmps = [IrCmpOp::Eq, IrCmpOp::Ne, IrCmpOp::Slt, IrCmpOp::Sle, IrCmpOp::Sgt, IrCmpOp::Sge, IrCmpOp::Ult, IrCmpOp::Ule, IrCmpOp::Ugt, IrCmpOp::Uge];
+                let insts = vec![
+                    Instruction::ParamRef { dest: p0, param_idx: 0, ty: IrType::I32 },
+                    Instruction::ParamRef { dest: p1, param_idx: 1, ty: IrType::I32 },
+                    Instruction::Cast { dest: w0, src: Operand::Value(p0), from_ty: IrType::I32, to_ty: IrType::I64 },
+                    Instruction::Cast { dest: w1, src: Operand::Value(p1), from_ty: IrType::I32, to_ty: IrType::I64 },
+                    Instruction::Cmp { dest: c, op: cmps[(op_idx as usize) % 10], lhs: Operand::Value(w0), rhs: Operand::Value(w1), ty: IrType::I64 },
+                ];
+                let _ = alt;
+                b.block(insts, Terminator::Return(Some(Operand::Value(c))));
+                b.seal()
+            }
+        }
+    }
+
+    /// P13: narrow_function preserves the interpreted value for all three
+    /// documented rewrite phases.
+    /// Doc contract: narrow.rs:56 "Narrow operations in a single function."
+    /// (5c873894; operative contract = README "Integer Narrowing" table)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p13_narrow_preservation(
+            shape in 0u8..3, op_idx in any::<u8>(), k in any::<i64>(), alt in any::<i64>(),
+            a in any::<i32>(), b in any::<i32>()
+        ) {
+            let f = build_narrow(shape, op_idx, k, alt);
+            let mut g = build_narrow(shape, op_idx, k, alt);
+            let mut arg_sets: Vec<Vec<i128>> = Vec::new();
+            for (x, y) in [(0i32, 0), (1, -1), (a, b), (i32::MIN, i32::MAX), (-1, 1)] {
+                arg_sets.push(vec![x as i128, y as i128]);
+            }
+            let expected: Vec<RunOutcome> = arg_sets.iter().map(|s| interp(&f, s, 100_000)).collect();
+            let n = narrow_function(&mut g);
+            // README "Integer Narrowing" Phase 3: signed comparisons require a
+            // signed source; UNSIGNED comparisons (Ult/Ule/Ugt/Uge) require an
+            // unsigned source. Shape 2 widens from SIGNED I32, so unsigned
+            // cmps are documented NOT to narrow (assert the negative side too).
+            if shape == 2 {
+                let cmp_ops = [IrCmpOp::Eq, IrCmpOp::Ne, IrCmpOp::Slt, IrCmpOp::Sle, IrCmpOp::Sgt, IrCmpOp::Sge, IrCmpOp::Ult, IrCmpOp::Ule, IrCmpOp::Ugt, IrCmpOp::Uge];
+                let cop = cmp_ops[(op_idx as usize) % 10];
+                if matches!(cop, IrCmpOp::Ult | IrCmpOp::Ule | IrCmpOp::Ugt | IrCmpOp::Uge) {
+                    prop_assert_eq!(n, 0, "narrow rewrote unsigned cmp on signed source (op={:?})", cop);
+                } else {
+                    prop_assert!(n >= 1, "narrow made no changes for narrowable cmp op={:?}", cop);
+                }
+            } else {
+                prop_assert!(n >= 1, "narrow made no changes shape={}", shape);
+            }
+            for (args, exp) in arg_sets.iter().zip(expected.iter()) {
+                let after = interp(&g, args, 100_000);
+                prop_assert_eq!(&after, exp, "narrow changed value shape={}", shape);
+            }
+        }
+    }
+    /// RED WITNESS — round 07 bug (issue pending, see
+    /// pbt-out/rounds/07_passes/bug_reports/): narrow Phase 2 rewrites an I64
+    /// bitwise op with sign-extended operands down to I32 even when its single
+    /// use needs the full I64 value (here the function return) and inserts no
+    /// re-extension — run_passes(-O2, x86-64) then computes the zero-extended
+    /// 4294967295 for f(1, -1) instead of -1. Found by P13
+    /// (p13_narrow_preservation). The law is the pipeline's value-preservation
+    /// contract (README pipeline overview; p14's formal statement).
+    #[test]
+    fn test_narrow_regression_phase2_i64_bitwise_i64_use() {
+        let build = || build_narrow(1, 16, 0, 0); // Or(sext a, sext b) at I64, fn returns I64
+        let expected = interp(&build(), &[1, -1], 100_000);
+        let mut m = module_of(build());
+        crate::passes::run_passes(&mut m, 2, crate::backend::Target::X86_64);
+        let after = interp(&m.functions[0], &[1, -1], 100_000);
+        assert_eq!(after, expected, "pipeline miscompiles I64 Or of sext operands");
+    }
+}

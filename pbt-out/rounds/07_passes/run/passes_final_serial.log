@@ -1,0 +1,893 @@
+warning: unnecessary parentheses around block return value
+    --> src/frontend/preprocessor/pipeline.rs:1042:17
+     |
+1042 |                 ((sp >> 33) as usize)
+     |                 ^                   ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+1042 -                 ((sp >> 33) as usize)
+1042 +                 (sp >> 33) as usize
+     |
+
+warning: unused import: `super::*`
+    --> src/frontend/preprocessor/macro_defs.rs:1490:9
+     |
+1490 |     use super::*;
+     |         ^^^^^^^^
+     |
+     = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `Expr`
+   --> src/frontend/preprocessor/conditionals.rs:817:95
+    |
+817 |     use crate::frontend::preprocessor::pbt_support::{arb_expr, ref_eval, render_expr, tokens, Expr};
+    |                                                                                               ^^^^
+
+warning: unnecessary parentheses around block return value
+   --> src/frontend/preprocessor/conditionals.rs:825:13
+    |
+825 |             ((s >> 33) as usize)
+    |             ^                  ^
+    |
+help: remove these parentheses
+    |
+825 -             ((s >> 33) as usize)
+825 +             (s >> 33) as usize
+    |
+
+warning: unused import: `proptest::prelude::*`
+   --> src/frontend/preprocessor/pbt_support.rs:451:9
+    |
+451 |     use proptest::prelude::*;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proptest::prelude::*`
+   --> src/frontend/preprocessor/pbt_support.rs:490:9
+    |
+490 |     use proptest::prelude::*;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proptest::prelude::*`
+   --> src/frontend/preprocessor/pbt_support.rs:537:9
+    |
+537 |     use proptest::prelude::*;
+    |         ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `crate::common::types::CType`
+    --> src/frontend/sema/type_checker.rs:1170:9
+     |
+1170 |     use crate::common::types::CType;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `super::*`
+    --> src/frontend/sema/const_eval.rs:1237:9
+     |
+1237 |     use super::*;
+     |         ^^^^^^^^
+
+warning: unused import: `crate::ir::constants::IrConst`
+    --> src/frontend/sema/const_eval.rs:1242:9
+     |
+1242 |     use crate::ir::constants::IrConst;
+     |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+   --> src/ir/analysis.rs:419:5
+    |
+419 | /     /// P9: build_cfg's documented contract is ONE graph returned as a (preds, succs)
+420 | |     /// pair — the two CSR lists must be exact transposes with no duplicate entries.
+421 | |     /// CondBranch with equal targets and Switch with duplicate case labels are
+422 | |     /// representable IR and must not break the pairing.
+423 | |     /// Doc contract: "Build predecessor and successor lists from the function's CFG.
+424 | |     /// Returns (preds, succs) as flat adjacency lists (CSR format)." (767abe89)
+    | |_____---------------------------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+    = note: `#[warn(unused_doc_comments)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused doc comment
+   --> src/ir/analysis.rs:558:5
+    |
+558 | /     /// P10: Cooper-Harvey-Kennedy SUT vs the textbook dataflow reference; unreachable
+559 | |     /// blocks must carry the documented usize::MAX sentinel, entry idom is itself.
+560 | |     /// Doc contract: "Uses usize::MAX as sentinel for undefined/unreachable blocks." (ab794cba)
+    | |_____-------------------------------------------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/analysis.rs:605:5
+    |
+605 | /     /// P11: dominance frontiers vs the set definition
+606 | |     /// DF(b) = { d : b dominates some pred of d AND b does not strictly dominate d }
+607 | |     /// (Cytron et al. 1991), computed from the cross-validated naive idom.
+    | |_____----------------------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused import: `Value`
+   --> src/ir/analysis.rs:383:62
+    |
+383 |     use crate::ir::reexports::{BasicBlock, IrConst, Operand, Value};
+    |                                                              ^^^^^
+
+warning: unused doc comment
+   --> src/ir/constants.rs:653:5
+    |
+653 | /     /// P5: unsigned representation convention — a constant of unsigned sub-64-bit type
+654 | |     /// must be stored zero-extended so to_i64() reads back the unsigned value. All
+655 | |     /// three writers of "a U8/U16/U32 constant with value v" must agree.
+656 | |     /// Doc contract (from_i64): "Store unsigned sub-64-bit types (U8, U16, U32) as I64
+...   |
+659 | |     /// the unsigned type first to get correct wrapping behavior (e.g., 200.0 as u8 = 200,
+660 | |     /// not saturated to i8 max)." (a21e7eb9)
+    | |_____----------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/constants.rs:692:5
+    |
+692 | /     /// P6: coerce_to must normalize a signed-width constant to the zero-extended I64
+693 | |     /// representation when the target type is unsigned sub-64-bit (same convention).
+694 | |     /// The early-return `(I8(_), U8)` / `(I16(_), U16)` arms keep the forbidden
+695 | |     /// sign-extending native variant instead.
+696 | |     /// Doc contract: from_i64 convention comment (constants.rs, 86a284c8).
+    | |_____----------------------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/constants.rs:759:5
+    |
+759 | /     /// P7: the encoders' documented contract is a faithful IEEE 754 encoding of the
+760 | |     /// f64 value; an independent field-level decoder must reconstruct every finite f64,
+761 | |     /// including subnormals (all f64 subnormals are exactly representable in both
+762 | |     /// binary128 and x87 80-bit formats).
+...   |
+765 | |     /// Doc contract: "x87 format: 1 sign bit, 15 exponent bits (bias 16383), 64 mantissa
+766 | |     /// bits (explicit integer bit)." (3512a019)
+    | |_____-------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/ir/mem2reg/promote.rs:1436:5
+     |
+1436 | /     /// P12: after mem2reg promotion the function must be proper SSA:
+1437 | |     /// (a) no remaining use of any promoted alloca,
+1438 | |     /// (b) every phi in a reachable block has exactly one incoming per unique
+1439 | |     ///     REACHABLE predecessor edge (unreachable predecessors carry undef and are
+...    |
+1444 | |     /// Doc contract: "Insert phi nodes at iterated dominance frontiers of defining
+1445 | |     /// blocks" (module doc step 5, a615b058); README: "yielding proper SSA form".
+     | |_____-----------------------------------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/mem2reg/phi_eliminate.rs:686:5
+    |
+686 | /     /// P13: after promote + eliminate_phis the function must be phi-free and
+687 | |     /// structurally sound: every terminator label resolves, every appended trampoline
+688 | |     /// is a pure copy block branching to an original label and is referenced by its
+689 | |     /// predecessor, and every former phi destination is still defined by some Copy
+690 | |     /// instruction (the merged value is still produced).
+691 | |     /// Doc contract: "It converts each Phi instruction into Copy instructions placed at
+692 | |     /// the end of each predecessor block (before the terminator)." (a6a4eda7)
+    | |_____-------------------------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/ops.rs:228:5
+    |
+228 | /     /// P1: C11 6.5.5p6 division identity — (a/b)*b + a%b == a, |a%b| < |b|,
+229 | |     /// remainder sign follows the dividend (truncation). For the unsigned forms the
+230 | |     /// identity is checked over the u64 bit patterns.
+231 | |     /// Doc contract: "Evaluate this binary operation on two i64 operands using wrapping
+232 | |     /// arithmetic." (ops.rs eval_i64 doc, fingerprint 42c27343)
+    | |_____-----------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/ops.rs:256:5
+    |
+256 | /     /// P2: failure-path contract — eval is None exactly for division/remainder by zero,
+257 | |     /// and can_trap() is exactly the div/rem set.
+258 | |     /// Doc contract: "Returns None for division/remainder by zero." (ops.rs, 00520b4e)
+259 | |     /// Doc contract: "Returns true if this operation can trap at runtime (e.g., divide
+260 | |     /// by zero causes SIGFPE)." (ops.rs can_trap, e34c6594)
+    | |_____-------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/ops.rs:286:5
+    |
+286 | /     /// P3: width consistency — on non-negative operands with a mathematically exact
+287 | |     /// (non-wrapping-in-i64) result, eval_i128 must agree with eval_i64.
+288 | |     /// Doc contract: "same for i128 operands." (ops.rs eval_i128 doc, ba12e9a8)
+    | |_____---------------------------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/ir/ops.rs:342:5
+    |
+342 | /     /// P4: comparison coherence — IEEE 754 signed/unsigned equivalence for floats
+343 | |     /// (incl. NaN/±inf/±0), two's-complement signed-vs-unsigned order laws for i64,
+344 | |     /// and duality/reflection laws.
+345 | |     /// Doc contract: "For floats, signed and unsigned comparison variants are equivalent
+346 | |     /// since IEEE 754 defines a total ordering (NaN comparisons return false for ordered
+347 | |     /// ops, true for Ne)." (ops.rs eval_f64 doc, fb72c8f7)
+    | |_____------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/cfg_simplify.rs:1568:5
+     |
+1568 | /     /// P12: cfg_simplify preserves the interpreted value on random CFGs
+1569 | |     /// (param-conditioned branches, constant conditions, switches), leaves
+1570 | |     /// every block reachable from the entry with all targets in range, and
+1571 | |     /// reaches its documented fixpoint (a second call changes nothing).
+1572 | |     /// Doc contract: cfg_simplify.rs:50 "Simplify the CFG of a single function.
+1573 | |     /// Iterates until no more simplifications are possible (fixpoint)." (fc35b96d)
+     | |_____------------------------------------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/constant_fold.rs:1304:5
+     |
+1304 | /     /// P5: folded result equals the independent C11 interpreter over random
+1305 | |     /// all-constant expression DAGs at mixed widths (incl. the documented
+1306 | |     /// I8-sign-extend / U8-zero-extend promotion semantics); folding is
+1307 | |     /// idempotent (second run makes no changes).
+1308 | |     /// Doc contract: constant_fold.rs:3 "This pass evaluates operations on
+1309 | |     /// constant operands at compile time, replacing the instruction with the
+1310 | |     /// computed constant." (4c9bab3a)
+     | |_____---------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/constant_fold.rs:1401:5
+     |
+1401 | /     /// P6 (negative contract): division/remainder by a constant ZERO is never
+1402 | |     /// folded — the trapping instruction must survive (UB preservation).
+1403 | |     /// Doc contract: README:546 "Integer division/remainder by zero is not
+1404 | |     /// folded (preserving undefined behavior)." (f7c910fd)
+     | |_____------------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/passes/dce.rs:523:5
+    |
+523 | /     /// P10: DCE removes pure dead chains without changing the returned value.
+524 | |     /// Doc contract: dce.rs:3 "Removes instructions whose results are never
+525 | |     /// used by any other instruction or terminator." (465c2b5b)
+    | |_____-----------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused import: `crate::ir::reexports::IrBinOp`
+   --> src/passes/dce.rs:558:13
+    |
+558 |         use crate::ir::reexports::IrBinOp;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused doc comment
+    --> src/passes/div_by_const.rs:2122:5
+     |
+2122 | /     /// P1: unsigned division by constant — the rewritten IR must compute the
+2123 | |     /// exact C11 u32 quotient for edge-skewed (d, x), in both the native-U32
+2124 | |     /// and zero-extended-in-U64 shapes.
+2125 | |     /// Doc contract: div_by_const.rs:17 "All transformations produce correct
+2126 | |     /// results for the full range of inputs, including edge cases" (82cd7c63).
+     | |_____--------------------------------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/div_by_const.rs:2157:5
+     |
+2157 | /     /// P2: signed division by constant (incl. negative divisors, power-of-2
+2158 | |     /// biased shifts, magic + sign correction), native I32 and sign-extended
+2159 | |     /// in I64. INT_MIN dividend included.
+     | |_____-------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/div_by_const.rs:2188:5
+     |
+2188 | /     /// P3: SRem/URem by constant (incl. the negative-divisor identity
+2189 | |     /// `x % -C == x % C`, remainder sign follows the dividend).
+     | |_____-----------------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/div_by_const.rs:2244:5
+     |
+2244 | /     /// P4: genuine 64-bit division (divisors beyond the 32-bit forms) through
+2245 | |     /// the I128 magic-number paths.
+     | |_____-------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/gvn.rs:1769:5
+     |
+1769 | /     /// P9: GVN + copy propagation preserve the interpreted value and never
+1770 | |     /// increase the instruction count on duplicated-expression DAGs.
+1771 | |     /// Doc contract: gvn.rs:3 "This pass assigns \"value numbers\" to
+1772 | |     /// expressions and replaces redundant computations with references to
+1773 | |     /// previously computed values (CSE)." (ad3c0b2b)
+     | |_____------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+   --> src/passes/if_convert.rs:883:5
+    |
+883 | /     /// P11: if-conversion of param-conditioned diamonds preserves the value.
+884 | |     /// Doc contract: if_convert.rs:1 "If-conversion pass: converts simple
+885 | |     /// branch+phi diamonds to Select instructions." (b5c48930)
+    | |_____----------------------------------------------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/narrow.rs:1068:5
+     |
+1068 | /     /// P13: narrow_function preserves the interpreted value for all three
+1069 | |     /// documented rewrite phases.
+1070 | |     /// Doc contract: narrow.rs:56 "Narrow operations in a single function."
+1071 | |     /// (5c873894; operative contract = README "Integer Narrowing" table)
+     | |_____--------------------------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/simplify.rs:3081:5
+     |
+3081 | /     /// P7: identity-injected expressions must simplify back to the clean
+3082 | |     /// expression's value (README identity table; x/x and x%x excluded —
+3083 | |     /// C11-undefined when the operand is 0, per the UB-preservation contract).
+3084 | |     /// Doc contract: simplify.rs:3 "Applies algebraic identities to simplify
+3085 | |     /// instructions (integer types):" (d4552340)
+     | |_____--------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused doc comment
+    --> src/passes/simplify.rs:3139:5
+     |
+3139 | /     /// P8: strength reductions (x*2^k => x<<k / x+x, x*(-1) => neg(x),
+3140 | |     /// x /u 2^k => x >>l k, x %u 2^k => x & (2^k-1)) preserve the value.
+     | |_____--------------------------------------------------------------------^
+     |       |
+     |       rustdoc does not generate documentation for macro invocations
+     |
+     = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: unused import: `IrConst`
+    --> src/passes/simplify.rs:2967:54
+     |
+2967 |     use crate::ir::reexports::{Instruction, IrBinOp, IrConst, IrFunction, Operand, Terminator, Value};
+     |                                                      ^^^^^^^
+
+warning: unused doc comment
+   --> src/passes/mod.rs:578:5
+    |
+578 | /     /// P14: the full pipeline (inline -> cleanup -> main loop with every pass
+579 | |     /// incl. GVN/LICM/IVSR shared analysis, IPCP, dead statics) preserves the
+580 | |     /// interpreted value on every generated shape and never panics.
+581 | |     /// Doc contract: mod.rs:255 "1. Every test run exercises every optimization
+582 | |     /// pass." (e40383fa)
+    | |_____--------------------^
+    |       |
+    |       rustdoc does not generate documentation for macro invocations
+    |
+    = help: to document an item produced by a macro, the macro must produce the documentation as part of its expansion
+
+warning: variable `pending` is assigned to, but never used
+   --> src/frontend/preprocessor/text_processing.rs:339:13
+    |
+339 |         let mut pending = false;
+    |             ^^^^^^^^^^^
+    |
+    = note: consider using `_pending` instead
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `pending` is never read
+   --> src/frontend/preprocessor/text_processing.rs:348:17
+    |
+344 |                 pending = true;
+    |                 -------------- `pending` is overwritten here before the previous value is read
+...
+348 |                 pending = false;
+    |                 ^^^^^^^^^^^^^^^ this value is reassigned later and never used
+    |
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: value assigned to `pending` is never read
+   --> src/frontend/preprocessor/text_processing.rs:344:17
+    |
+344 |                 pending = true;
+    |                 ^^^^^^^^^^^^^^
+    |
+    = help: maybe it is overwritten before being read?
+
+warning: variable does not need to be mutable
+   --> src/frontend/sema/type_context.rs:669:29
+    |
+669 |                         let mut layers = &mut model.cache;
+    |                             ----^^^^^^
+    |                             |
+    |                             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `cnt`
+    --> src/frontend/sema/const_eval.rs:1410:29
+     |
+1410 |                         let cnt = if sg { xa } else { xa }; // count type is promoted rhs
+     |                             ^^^ help: if this is intentional, prefix it with an underscore: `_cnt`
+
+warning: unused variable: `want`
+    --> src/frontend/sema/const_eval.rs:1598:19
+     |
+1598 |         for (src, want) in kats {
+     |                   ^^^^ help: if this is intentional, prefix it with an underscore: `_want`
+
+warning: variable does not need to be mutable
+    --> src/ir/mem2reg/promote.rs:1488:21
+     |
+1488 | ...   let mut add_edge = |t: BlockId, preds_unique: &mut Vec<std::collections::BTreeSet<usize>>, succs: &mut Vec<Vec<usize>>| {
+     |           ----^^^^^^^^
+     |           |
+     |           help: remove this `mut`
+
+warning: unused variable: `reg`
+    --> src/backend/i686/codegen/peephole.rs:1607:33
+     |
+1607 |                 LineKind::Pop { reg } if depth > 0 => { depth -= 1; }
+     |                                 ^^^ help: try ignoring the field: `reg: _`
+
+warning: function `wrap_v` is never used
+    --> src/frontend/sema/const_eval.rs:1299:8
+     |
+1299 |     fn wrap_v(v: V) -> V {
+     |        ^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: call to `.clone()` on a reference in this situation does nothing
+    --> src/frontend/preprocessor/pipeline.rs:1079:24
+     |
+1079 |             3 => (ident.clone(), proptest::sample::select(vec!["u", "L", "1", ""]), )
+     |                        ^^^^^^^^ help: remove this redundant call
+     |
+     = note: the type `str` does not implement `Clone`, so calling `clone` on `&str` copies the reference, which does not do anything and can be removed
+     = note: `#[warn(noop_method_call)]` on by default
+
+warning: function `p9_line_count_and___line__` should have a snake case name
+    --> src/frontend/preprocessor/pipeline.rs:1149:8
+     |
+1149 |     fn p9_line_count_and___line__() {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^ help: convert the identifier to snake case: `p9_line_count_and_line`
+     |
+     = note: `#[warn(non_snake_case)]` (part of `#[warn(nonstandard_style)]`) on by default
+
+warning: `ccc` (lib test) generated 50 warnings (run `cargo fix --lib -p ccc --tests` to apply 19 suggestions)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/ccc-405c0348f94fe50d)
+
+running 285 tests
+test backend::x86::codegen::peephole::passes::regression_tests::test_dead_store_not_eliminated_when_cmp_reads_slot ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_frame_compact_dead_store_noped ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_frame_compact_overlapping_store_read ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_frame_compact_struct_suboffset_read ... ok
+test backend::x86::codegen::peephole::passes::regression_tests::test_store_forward_param_ref_gep ... Result:
+func:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $16, %rsp
+    movq %rdi, %rax
+    movq %rdi, -8(%rbp)
+    leaq 208(%rax), %rax
+    movq %rax, %r14
+    ret
+.size func, .-func
+
+ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_when_extra_call ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_when_rax_used ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_with_dyn_alloca ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_no_tail_call_with_lea_local ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_tail_call_direct ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_tail_call_indirect ... ok
+test backend::x86::codegen::peephole::passes::tail_call::tests::test_tail_call_plt ... ok
+test backend::x86::codegen::peephole::passes::tests::test_back_to_back_cltq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_classify_line ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_blocked_by_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_blocked_by_rax_write ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_over_non_rax_write ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cltq_backward_scan_with_store_rbp ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_je ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_no_fuse_cross_block_store ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_short ... ok
+test backend::x86::codegen::peephole::passes::tests::test_compare_branch_fusion_with_matched_store_load ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condbranch_inversion_fallthrough ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condbranch_inversion_je_to_jne ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condbranch_no_inversion_when_not_fallthrough ... ok
+test backend::x86::codegen::peephole::passes::tests::test_condition_codes ... ok
+test backend::x86::codegen::peephole::passes::tests::test_cpuid_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_dead_store_elimination ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_across_cond_branch ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_across_fallthrough_label ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_blocked_at_jump_target ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_callee_saved_across_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_invalidated_by_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_global_store_forward_invalidated_by_unrecognized_rbp_write ... ok
+test backend::x86::codegen::peephole::passes::tests::test_inline_asm_rdmsr_invalidates_store_forwarding ... ok
+test backend::x86::codegen::peephole::passes::tests::test_jmp_star_reg_classified_as_indirect ... ok
+test backend::x86::codegen::peephole::passes::tests::test_jmpq_star_reg_classified_as_indirect ... ok
+test backend::x86::codegen::peephole::passes::tests::test_loop_trampoline_simple_coalesce ... ignored
+test backend::x86::codegen::peephole::passes::tests::test_loop_trampoline_two_copies ... ignored
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_addq_rcx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_andq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_cmpq_rcx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_load_rax_into_add_with_reg_dest ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_no_fold_for_callee_saved ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_no_fold_when_dest_is_loaded_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_orq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_subl_ecx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_testq_rcx ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_with_empty_line_between ... ok
+test backend::x86::codegen::peephole::passes::tests::test_mem_fold_xorq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_non_adjacent_store_load_diff_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_non_adjacent_store_load_reg_modified ... ok
+test backend::x86::codegen::peephole::passes::tests::test_non_adjacent_store_load_same_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_parse_load_from_rbp ... ok
+test backend::x86::codegen::peephole::passes::tests::test_parse_rbp_offset ... ok
+test backend::x86::codegen::peephole::passes::tests::test_parse_store_to_rbp ... ok
+test backend::x86::codegen::peephole::passes::tests::test_push_pop_elimination ... ok
+test backend::x86::codegen::peephole::passes::tests::test_rdmsr_standalone_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_cltq ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_jump ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_store_load ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_xorl_after_zero_store ... ok
+test backend::x86::codegen::peephole::passes::tests::test_redundant_xorl_chain_of_four ... ok
+test backend::x86::codegen::peephole::passes::tests::test_self_move ... ok
+test backend::x86::codegen::peephole::passes::tests::test_semicolon_multi_instruction_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_setcc_al_still_invalidates_rax ... ok
+test backend::x86::codegen::peephole::passes::tests::test_setcc_non_al_invalidates_store_forwarding ... ok
+test backend::x86::codegen::peephole::passes::tests::test_store_load_different_reg ... ok
+test backend::x86::codegen::peephole::passes::tests::test_syscall_invalidates_mappings ... ok
+test backend::x86::codegen::peephole::passes::tests::test_xorl_not_eliminated_after_call ... ok
+test backend::x86::codegen::peephole::passes::tests::test_xorl_not_eliminated_after_label ... ok
+test backend::x86::codegen::peephole::passes::tests::test_xorl_not_eliminated_after_rax_write ... ok
+test passes::cfg_simplify::pbt_tests::p12_cfg_simplify_preservation_and_reachability ... ok
+test passes::cfg_simplify::tests::test_combined_simplifications ... ok
+test passes::cfg_simplify::tests::test_cond_branch_threading ... ok
+test passes::cfg_simplify::tests::test_dead_block_elimination ... ok
+test passes::cfg_simplify::tests::test_fold_constant_switch ... ok
+test passes::cfg_simplify::tests::test_fold_constant_switch_matching_case ... ok
+test passes::cfg_simplify::tests::test_fold_constant_switch_phi_cleanup ... ok
+test passes::cfg_simplify::tests::test_jump_chain_threading ... ok
+test passes::cfg_simplify::tests::test_no_thread_through_block_with_instructions ... ok
+test passes::cfg_simplify::tests::test_no_thread_when_phi_conflict ... ok
+test passes::cfg_simplify::tests::test_phi_update_on_thread ... ok
+test passes::cfg_simplify::tests::test_redundant_cond_branch ... ok
+test passes::cfg_simplify::tests::test_trivial_phi_simplification ... ok
+test passes::constant_fold::pbt_tests::p5_fold_matches_c11_model ... 
+thread 'passes::constant_fold::pbt_tests::p5_fold_matches_c11_model' (1936835) panicked at src/passes/constant_fold.rs:1311:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `Value(-64)`, 
+ right: `Value(64)`: fold mismatch ret_ty=I8 at src/passes/constant_fold.rs:1345.
+minimal failing input: ty0 = 0, c0 = 2980835472914125696, c1 = 0, steps = [
+    (
+        15,
+        59,
+        188,
+        0,
+        0,
+        -477735840934897929,
+        0,
+    ),
+]
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+test passes::constant_fold::pbt_tests::p6_fold_div_by_zero_not_folded ... ok
+test passes::constant_fold::pbt_tests::test_constant_fold_regression_subint_lshr_zero_extend ... 
+thread 'passes::constant_fold::pbt_tests::test_constant_fold_regression_subint_lshr_zero_extend' (1936837) panicked at src/passes/constant_fold.rs:1395:13:
+assertion `left == right` failed: constant_fold sub-int LShr mis-fold
+  left: Value(-36)
+ right: Value(92)
+FAILED
+test passes::constant_fold::tests::test_fold_binop_add ... ok
+test passes::constant_fold::tests::test_fold_binop_bitwise ... ok
+test passes::constant_fold::tests::test_fold_binop_div ... ok
+test passes::constant_fold::tests::test_fold_binop_div_by_zero ... ok
+test passes::constant_fold::tests::test_fold_binop_mul ... ok
+test passes::constant_fold::tests::test_fold_binop_shift ... ok
+test passes::constant_fold::tests::test_fold_binop_sub ... ok
+test passes::constant_fold::tests::test_fold_binop_udiv_32bit ... ok
+test passes::constant_fold::tests::test_fold_cast ... ok
+test passes::constant_fold::tests::test_fold_cast_unsigned_source ... ok
+test passes::constant_fold::tests::test_fold_cast_unsigned_target ... ok
+test passes::constant_fold::tests::test_fold_cast_unsigned_to_unsigned ... ok
+test passes::constant_fold::tests::test_fold_cmp ... ok
+test passes::constant_fold::tests::test_fold_float_binop_instruction ... ok
+test passes::constant_fold::tests::test_fold_float_cast_float_to_int ... ok
+test passes::constant_fold::tests::test_fold_float_cast_inf_to_int_no_fold ... ok
+test passes::constant_fold::tests::test_fold_float_cast_int_to_float ... ok
+test passes::constant_fold::tests::test_fold_float_cast_nan_to_int_no_fold ... ok
+test passes::constant_fold::tests::test_fold_float_cast_overflow_to_int_no_fold ... ok
+test passes::constant_fold::tests::test_fold_float_cmp_nan_ne ... ok
+test passes::constant_fold::tests::test_fold_float_cmp_neg_zero_eq ... ok
+test passes::constant_fold::tests::test_fold_float_div_by_zero ... ok
+test passes::constant_fold::tests::test_fold_float_nan_mul_zero ... ok
+test passes::constant_fold::tests::test_fold_float_neg_div_zero ... ok
+test passes::constant_fold::tests::test_fold_float_neg_mul_zero ... ok
+test passes::constant_fold::tests::test_fold_float_neg_zero_add ... ok
+test passes::constant_fold::tests::test_fold_float_neg_zero_add_self ... ok
+test passes::constant_fold::tests::test_fold_float_unary_neg ... ok
+test passes::constant_fold::tests::test_fold_unaryop ... ok
+test passes::constant_fold::tests::test_no_fold_with_value_operand ... ok
+test passes::constant_fold::tests::test_try_fold_binop ... ok
+test passes::copy_prop::tests::test_chain_copy_propagation ... ok
+test passes::copy_prop::tests::test_const_copy_propagation ... ok
+test passes::copy_prop::tests::test_no_propagation_when_no_copies ... ok
+test passes::copy_prop::tests::test_simple_copy_propagation ... ok
+test passes::copy_prop::tests::test_terminator_propagation ... ok
+test passes::dce::pbt_tests::p10_dce_preservation ... ok
+test passes::dce::tests::test_eliminate_dead_binop ... ok
+test passes::dce::tests::test_self_referencing_phi_removed ... ok
+test passes::dce::tests::test_side_effects_preserved ... ok
+test passes::dce::tests::test_transitive_dead_chain ... ok
+test passes::div_by_const::pbt_tests::p1_udiv32_magic_differential ... ok
+test passes::div_by_const::pbt_tests::p2_sdiv32_magic_differential ... ok
+test passes::div_by_const::pbt_tests::p3_rem_by_const_differential ... ok
+test passes::div_by_const::pbt_tests::p4_div64_genuine_i128_differential ... ok
+test passes::div_by_const::tests::test_negative_divisor_sdiv ... ok
+test passes::div_by_const::tests::test_negative_divisor_sdiv64 ... ok
+test passes::div_by_const::tests::test_negative_divisor_srem ... ok
+test passes::div_by_const::tests::test_signed_magic_10 ... ok
+test passes::div_by_const::tests::test_signed_magic_64_div10 ... ok
+test passes::div_by_const::tests::test_signed_magic_64_exhaustive_small_divisors ... ok
+test passes::div_by_const::tests::test_signed_magic_64_large_divisors ... ok
+test passes::div_by_const::tests::test_signed_magic_7 ... ok
+test passes::div_by_const::tests::test_signed_magic_exhaustive_small ... ok
+test passes::div_by_const::tests::test_unsigned_magic_10 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_3 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_64_div10 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_64_exhaustive_small_divisors ... ok
+test passes::div_by_const::tests::test_unsigned_magic_64_large_divisors ... ok
+test passes::div_by_const::tests::test_unsigned_magic_7 ... ok
+test passes::div_by_const::tests::test_unsigned_magic_exhaustive_small ... ok
+test passes::gvn::pbt_tests::p9_gvn_copy_prop_preservation ... ok
+test passes::gvn::tests::test_cast_cse ... ok
+test passes::gvn::tests::test_commutative_cse ... ok
+test passes::gvn::tests::test_constant_cse ... ok
+test passes::gvn::tests::test_cross_block_cse ... ok
+test passes::gvn::tests::test_diamond_no_cse_between_branches ... ok
+test passes::gvn::tests::test_gep_cse ... ok
+test passes::gvn::tests::test_is_commutative ... ok
+test passes::gvn::tests::test_load_cse_across_dominating_block ... ok
+test passes::gvn::tests::test_load_cse_invalidated_at_merge_point ... ok
+test passes::gvn::tests::test_load_cse_invalidated_by_call ... ok
+test passes::gvn::tests::test_load_cse_invalidated_by_store ... ok
+test passes::gvn::tests::test_load_cse_same_block ... ok
+test passes::gvn::tests::test_non_commutative_not_cse ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_different_store_invalidates ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_invalidated_by_call ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_same_block ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_same_ptr_overwrite ... ok
+test passes::gvn::tests::test_store_to_load_forwarding_value ... ok
+test passes::if_convert::pbt_tests::p11_if_convert_preservation ... ok
+test passes::if_convert::tests::test_diamond_with_arm_instructions ... ok
+test passes::if_convert::tests::test_no_conversion_with_side_effects ... ok
+test passes::if_convert::tests::test_simple_diamond_conversion ... ok
+test passes::iv_strength_reduce::tests::test_find_basic_iv ... ok
+test passes::iv_strength_reduce::tests::test_ivsr_sum_array ... ok
+test passes::licm::tests::test_find_natural_loops ... ok
+test passes::licm::tests::test_licm_does_not_hoist_load_from_inline_asm_output_alloca ... ok
+test passes::licm::tests::test_licm_does_not_hoist_load_from_modified_alloca ... ok
+test passes::licm::tests::test_licm_hoists_invariant ... ok
+test passes::licm::tests::test_licm_hoists_load_from_unmodified_alloca ... ok
+test passes::licm::tests::test_promoted_asm_output_not_hoisted ... ok
+test passes::licm::tests::test_topological_sort ... ok
+test passes::narrow::pbt_tests::p13_narrow_preservation ... 
+thread 'passes::narrow::pbt_tests::p13_narrow_preservation' (1936959) panicked at src/passes/narrow.rs:1072:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `Value(4294967295)`, 
+ right: `Value(-1)`: narrow changed value shape=1 at src/passes/narrow.rs:1104.
+minimal failing input: shape = 1, op_idx = 16, k = 0, alt = 0, a = 0, b = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+FAILED
+test passes::narrow::pbt_tests::test_narrow_regression_phase2_i64_bitwise_i64_use ... 
+thread 'passes::narrow::pbt_tests::test_narrow_regression_phase2_i64_bitwise_i64_use' (1936971) panicked at src/passes/narrow.rs:1123:9:
+assertion `left == right` failed: pipeline miscompiles I64 Or of sext operands
+  left: Value(4294967295)
+ right: Value(-1)
+FAILED
+test passes::narrow::tests::test_narrow_add_i32 ... ok
+test passes::narrow::tests::test_narrow_ashr_signed ... ok
+test passes::narrow::tests::test_narrow_cmp_sge ... ok
+test passes::narrow::tests::test_narrow_lshr_unsigned ... ok
+test passes::narrow::tests::test_no_narrow_and_all_ones_mask ... ok
+test passes::narrow::tests::test_no_narrow_ashr_unsigned_target ... ok
+test passes::narrow::tests::test_no_narrow_lshr_signed_target ... ok
+test passes::narrow::tests::test_no_narrow_when_multiple_uses ... ok
+test passes::pbt_tests::p14_pipeline_value_preservation ... ok
+test passes::simplify::pbt_tests::p7_simplify_identity_metamorphic ... ok
+test passes::simplify::pbt_tests::p8_simplify_strength_reduction_value ... ok
+test passes::simplify::tests::test_add_zero ... ok
+test passes::simplify::tests::test_and_all_ones_i32 ... ok
+test passes::simplify::tests::test_and_all_ones_i64 ... ok
+test passes::simplify::tests::test_and_self ... ok
+test passes::simplify::tests::test_binop_canonicalize_commutative_add ... ok
+test passes::simplify::tests::test_binop_canonicalize_commutative_and ... ok
+test passes::simplify::tests::test_binop_no_canonicalize_already_canonical ... ok
+test passes::simplify::tests::test_binop_no_canonicalize_non_commutative ... ok
+test passes::simplify::tests::test_cast_chain_widen_narrow ... ok
+test passes::simplify::tests::test_cast_const_fold ... ok
+test passes::simplify::tests::test_cast_different_type_no_change ... ok
+test passes::simplify::tests::test_cast_same_type ... ok
+test passes::simplify::tests::test_cmp_canonicalize_const_lhs_eq ... ok
+test passes::simplify::tests::test_cmp_canonicalize_const_lhs_slt ... ok
+test passes::simplify::tests::test_cmp_eq_cmp_result_one ... ok
+test passes::simplify::tests::test_cmp_eq_cmp_result_zero ... ok
+test passes::simplify::tests::test_cmp_ne_boolean_and_zero ... ok
+test passes::simplify::tests::test_cmp_ne_cmp_result_one ... ok
+test passes::simplify::tests::test_cmp_ne_cmp_result_zero ... ok
+test passes::simplify::tests::test_cmp_no_canonicalize_already_canonical ... ok
+test passes::simplify::tests::test_cmp_no_simplify_non_boolean ... ok
+test passes::simplify::tests::test_cmp_self_eq ... ok
+test passes::simplify::tests::test_cmp_self_ne ... ok
+test passes::simplify::tests::test_cmp_self_sle ... ok
+test passes::simplify::tests::test_cmp_self_slt ... ok
+test passes::simplify::tests::test_cmp_uge_zero_always_true ... ok
+test passes::simplify::tests::test_cmp_ugt_zero ... ok
+test passes::simplify::tests::test_cmp_ule_zero ... ok
+test passes::simplify::tests::test_cmp_ult_zero_always_false ... ok
+test passes::simplify::tests::test_fabs_to_intrinsic ... ok
+test passes::simplify::tests::test_fabsf_to_intrinsic ... ok
+test passes::simplify::tests::test_float_add_zero_lhs_not_simplified ... ok
+test passes::simplify::tests::test_float_add_zero_not_simplified ... ok
+test passes::simplify::tests::test_float_div_one_not_simplified ... ok
+test passes::simplify::tests::test_float_div_self_not_simplified ... ok
+test passes::simplify::tests::test_float_mul_one_not_simplified ... ok
+test passes::simplify::tests::test_float_mul_zero_not_simplified ... ok
+test passes::simplify::tests::test_float_sub_negative_zero_not_simplified ... ok
+test passes::simplify::tests::test_float_sub_positive_zero_ok ... ok
+test passes::simplify::tests::test_float_sub_self_not_simplified ... ok
+test passes::simplify::tests::test_gep_chain_fold ... ok
+test passes::simplify::tests::test_gep_chain_fold_to_zero ... ok
+test passes::simplify::tests::test_gep_nonzero_no_change ... ok
+test passes::simplify::tests::test_gep_zero_offset ... ok
+test passes::simplify::tests::test_is_all_ones_i32 ... ok
+test passes::simplify::tests::test_is_all_ones_i8 ... ok
+test passes::simplify::tests::test_is_all_ones_not_float ... ok
+test passes::simplify::tests::test_math_call_wrong_arg_count ... ok
+test passes::simplify::tests::test_mul_float_no_strength_reduction ... ok
+test passes::simplify::tests::test_mul_neg_one_float_not_simplified ... ok
+test passes::simplify::tests::test_mul_neg_one_lhs ... ok
+test passes::simplify::tests::test_mul_neg_one_rhs ... ok
+test passes::simplify::tests::test_mul_non_power_of_two_no_change ... ok
+test passes::simplify::tests::test_mul_one ... ok
+test passes::simplify::tests::test_mul_power_of_two_i32 ... ok
+test passes::simplify::tests::test_mul_power_of_two_to_shift ... ok
+test passes::simplify::tests::test_mul_two_to_add ... ok
+test passes::simplify::tests::test_mul_zero ... ok
+test passes::simplify::tests::test_no_simplify ... ok
+test passes::simplify::tests::test_or_all_ones_i32 ... ok
+test passes::simplify::tests::test_or_all_ones_i64 ... ok
+test passes::simplify::tests::test_pow_non_special_exponent ... ok
+test passes::simplify::tests::test_pow_variable_exponent_no_simplify ... ok
+test passes::simplify::tests::test_pow_x_half ... ok
+test passes::simplify::tests::test_pow_x_neg_one ... ok
+test passes::simplify::tests::test_pow_x_one ... ok
+test passes::simplify::tests::test_pow_x_two ... ok
+test passes::simplify::tests::test_pow_x_zero ... ok
+test passes::simplify::tests::test_powf_x_two_f32 ... ok
+test passes::simplify::tests::test_reassociate_add ... ok
+test passes::simplify::tests::test_reassociate_add_cancels ... ok
+test passes::simplify::tests::test_reassociate_and ... ok
+test passes::simplify::tests::test_reassociate_mul ... ok
+test passes::simplify::tests::test_reassociate_mul_commuted ... ok
+test passes::simplify::tests::test_reassociate_mul_to_zero ... ok
+test passes::simplify::tests::test_reassociate_shift ... ok
+test passes::simplify::tests::test_reassociate_shift_overflow_to_zero ... ok
+test passes::simplify::tests::test_reassociate_sub ... ok
+test passes::simplify::tests::test_reassociate_xor_cancels ... ok
+test passes::simplify::tests::test_select_const_false ... ok
+test passes::simplify::tests::test_select_const_nonzero ... ok
+test passes::simplify::tests::test_select_const_true ... ok
+test passes::simplify::tests::test_sqrt_to_intrinsic ... ok
+test passes::simplify::tests::test_sqrtf_to_intrinsic ... ok
+test passes::simplify::tests::test_sub_neg_float_not_simplified ... ok
+test passes::simplify::tests::test_sub_neg_to_add ... ok
+test passes::simplify::tests::test_sub_self ... ok
+test passes::simplify::tests::test_udiv_power_of_two ... ok
+test passes::simplify::tests::test_unknown_func_no_simplify ... ok
+test passes::simplify::tests::test_urem_power_of_two ... ok
+test passes::simplify::tests::test_xor_self ... ok
+
+failures:
+
+failures:
+    passes::constant_fold::pbt_tests::p5_fold_matches_c11_model
+    passes::constant_fold::pbt_tests::test_constant_fold_regression_subint_lshr_zero_extend
+    passes::narrow::pbt_tests::p13_narrow_preservation
+    passes::narrow::pbt_tests::test_narrow_regression_phase2_i64_bitwise_i64_use
+
+test result: FAILED. 279 passed; 4 failed; 2 ignored; 0 measured; 359 filtered out; finished in 631.91s
+
+error: test failed, to rerun pass `--lib`
+FINAL_EXIT=101

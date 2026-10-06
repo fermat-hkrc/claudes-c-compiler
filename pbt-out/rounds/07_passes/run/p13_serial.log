@@ -1,0 +1,18 @@
+thread 'passes::narrow::pbt_tests::p13_narrow_preservation' (1731211) panicked at src/passes/narrow.rs:1072:5:
+Test failed: narrow made no changes shape=2 at src/passes/narrow.rs:1087.
+minimal failing input: shape = 2, op_idx = 56, k = 0, alt = 0, a = 0, b = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    passes::narrow::pbt_tests::p13_narrow_preservation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 641 filtered out; finished in 0.02s
+
+error: test failed, to rerun pass `--lib`

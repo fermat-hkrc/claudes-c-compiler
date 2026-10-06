@@ -1,0 +1,25 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running unittests src/lib.rs (target/debug/deps/ccc-405c0348f94fe50d)
+
+running 1 test
+test passes::div_by_const::pbt_tests::p3_rem_by_const_differential ... 
+thread 'passes::div_by_const::pbt_tests::p3_rem_by_const_differential' (1730485) panicked at src/passes/div_by_const.rs:2184:5:
+Test failed: assertion failed: `(left == right)` 
+  left: `Value(2147483648)`, 
+ right: `Value(0)`: builder sanity d=-2147483648 x=-2147483648 at src/passes/div_by_const.rs:2211.
+minimal failing input: which = 3, d = -2147483648, x = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+FAILED
+
+failures:
+
+failures:
+    passes::div_by_const::pbt_tests::p3_rem_by_const_differential
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 641 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

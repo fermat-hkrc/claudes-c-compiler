@@ -115,3 +115,28 @@ Environment quirks (round 05):
   was promoted; unreachable blocks keep dead phis with empty incoming lists.
 - No in-tree producer creates CFG edges INTO the entry block (lower_label_stmt
   always terminates + starts a fresh block) — relevant to bug b5's reachability.
+
+## Round 07 — src/passes (2026-10-05)
+
+- IR value conventions confirmed by the independent C11 interpreter: unsigned
+  types store zero-extended patterns in I64 consts; widening goes through
+  explicit Cast instructions — a Value used at a different width without a
+  Cast is ill-formed (frontend promotes sub-int to I32/I64 before arithmetic).
+- Signed cmp ops at unsigned types (and AShr at unsigned sub-int types) are
+  not frontend-reachable combinations; the repo's own rule (narrow README
+  Phase 3): comparison signedness must match the operand type's signedness.
+- div_by_const: unsigned power-of-2 modulo belongs to simplify (`x & (C-1)`),
+  NOT div_by_const; compute_unsigned_magic_32 returns None for some divisors
+  near u32::MAX (documented native-division fallback) — must-rewrite
+  properties must exclude both classes.
+- constant_fold's const map is single-level Copy(Const) by design; the Select
+  constant-condition rule emits Copy(Value(arm)); the documented deployment
+  interleaves copy_prop (propagate_copies) — model that when testing fold in
+  isolation.
+- Known-broken (this round's bugs, red until fixed): fold_binop's is_32bit
+  logical arms sign-extend I8/I16 operands via `as u32` (bug b1); narrow
+  Phase 2 has no use-context check (bug b2, pipeline miscompile).
+- cfg_simplify PBT property is legitimately slow (~700s serial for 1024
+  cases) — do not mistake a 60s watchdog line for a hang.
+- Environment: RUST_TEST_THREADS=1 for serial reconfirmation; proptest seed
+  files live in proptest-regressions/passes/ and replay automatically.

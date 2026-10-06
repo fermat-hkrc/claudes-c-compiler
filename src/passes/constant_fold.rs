@@ -1116,3 +1116,318 @@ mod tests {
         }
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::ir::reexports::Terminator;
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    /// One step of a constant expression DAG in plain data:
+    /// kind 0=BinOp, 1=Cmp, 2=Cast, 3=Unary(Neg/Not), 4=Select.
+    type Step = (u8, u8, u8, u8, i64, i64, u8);
+
+    fn any_int_ty(i: u8) -> IrType {
+        match i % 6 {
+            0 => IrType::I8,
+            1 => IrType::U8,
+            2 => IrType::I32,
+            3 => IrType::U32,
+            4 => IrType::I64,
+            _ => IrType::U64,
+        }
+    }
+
+    fn binop_or_div(i: u8) -> IrBinOp {
+        const OPS: [IrBinOp; 13] = [
+            IrBinOp::Add, IrBinOp::Sub, IrBinOp::Mul, IrBinOp::And, IrBinOp::Or,
+            IrBinOp::Xor, IrBinOp::Shl, IrBinOp::LShr, IrBinOp::AShr,
+            IrBinOp::SDiv, IrBinOp::UDiv, IrBinOp::SRem, IrBinOp::URem,
+        ];
+        OPS[(i as usize) % OPS.len()]
+    }
+
+    /// Materialize a single-block all-constant expression function.
+    fn build_const_dag(ty0: u8, c0: i64, c1: i64, steps: &[Step]) -> IrFunction {
+        let mut b = FnBuilder::new("f", IrType::I64, &[]);
+        let mut ty = any_int_ty(ty0);
+        let mut vals: Vec<Operand> = vec![const_int(&ty, c0 as u64), const_int(&ty, c1 as u64)];
+        let mut val_tys: Vec<IrType> = vec![ty, ty];
+        let mut insts: Vec<Instruction> = Vec::new();
+        for &(kind, oi, ap, bp, ac, bc, tt) in steps {
+            let w = width(&ty) as u64;
+            // Well-formedness: this IR requires an explicit Cast to change a
+            // value's width, so a Value operand may only be used at an
+            // instruction of its defining type. Values defined at a stale
+            // width fall back to a fresh constant at the current type (found
+            // by P5: Neg's masked negative I32 pattern consumed by an I64 Or
+            // diverged from fold, which truncates operands to the BinOp type).
+            let pick = |p: u8, c: i64, vals: &Vec<Operand>, val_tys: &Vec<IrType>| -> Operand {
+                let konst = || const_int(&ty, (c % (w as i64).max(1) as i64) as u64);
+                if p % 3 == 0 || vals.is_empty() {
+                    konst()
+                } else {
+                    let i = (p as usize) % vals.len();
+                    if val_tys[i] == ty { vals[i] } else { konst() }
+                }
+            };
+            let d = b.v();
+            // Type at which d is defined. Cmp results are 0/1 raw patterns,
+            // which are extension-invariant, so they type as `ty` here.
+            let mut d_ty = ty;
+            match kind % 5 {
+                0 => {
+                    let mut op = binop_or_div(oi);
+                    let is_div = matches!(op, IrBinOp::SDiv | IrBinOp::UDiv | IrBinOp::SRem | IrBinOp::URem);
+                    // Normalize div/rem signedness to the current type's signedness
+                    // so the C11 semantics of the opcode and type agree.
+                    if is_div {
+                        let s = signed_ty(&ty);
+                        op = match (op, s) {
+                            (IrBinOp::SDiv, false) => IrBinOp::UDiv,
+                            (IrBinOp::SRem, false) => IrBinOp::URem,
+                            (IrBinOp::UDiv, true) => IrBinOp::SDiv,
+                            (IrBinOp::URem, true) => IrBinOp::SRem,
+                            (o, _) => o,
+                        };
+                    }
+                    // C11 promotion domain: the frontend promotes sub-int
+                    // operands to 32 bits before arithmetic (narrow README),
+                    // so a sign-propagating AShr at a sub-int UNSIGNED type is
+                    // not a frontend-reachable combination (fold models the
+                    // promotion — (int)255 >> 1 = 127; the width-local pattern
+                    // model does not). Emit LShr there instead.
+                    if op == IrBinOp::AShr && !signed_ty(&ty) && w < 32 {
+                        op = IrBinOp::LShr;
+                    }
+                    let is_shift = matches!(op, IrBinOp::Shl | IrBinOp::LShr | IrBinOp::AShr);
+                    // Div/rem: nonzero constant divisor (2..=998, sign from bc).
+                    // NOTE: masking to the type width must not zero the divisor
+                    // (m=256/512/768 at I8 would become 0 — div by zero, which
+                    // P5's domain excludes and fold correctly refuses).
+                    let rhs = if is_div {
+                        let mask = mask_u64(w);
+                        let mut m = bc.unsigned_abs() % 997 + 2;
+                        while (m & mask) == 0 { m += 1; }
+                        const_int(&ty, if bc < 0 { (0u64.wrapping_sub(m)) & mask } else { m & mask })
+                    } else if is_shift {
+                        const_int(&ty, bc.unsigned_abs() % w)
+                    } else if bp % 2 == 0 {
+                        const_int(&ty, bc as u64)
+                    } else {
+                        pick(bp, bc, &vals, &val_tys)
+                    };
+                    insts.push(Instruction::BinOp { dest: d, op, lhs: pick(ap, ac, &vals, &val_tys), rhs, ty });
+                }
+                1 => {
+                    // IR-level rule (narrow README Phase 3 states it): signed
+                    // cmp ops require a signed operand type, unsigned cmp ops
+                    // an unsigned one; Eq/Ne are neutral. Do not synthesize the
+                    // invalid mix (found by P5: Slt at U8 — fold compares
+                    // truncated i64s while the pattern model sign-extends at
+                    // the operand width; the frontend never emits that mix).
+                    let cop = {
+                        let signed = signed_ty(&ty);
+                        let all = [IrCmpOp::Eq, IrCmpOp::Ne, IrCmpOp::Slt, IrCmpOp::Sle, IrCmpOp::Sgt, IrCmpOp::Sge, IrCmpOp::Ult, IrCmpOp::Ule, IrCmpOp::Ugt, IrCmpOp::Uge];
+                        let allowed: Vec<IrCmpOp> = all.iter().copied().filter(|c| match c {
+                            IrCmpOp::Eq | IrCmpOp::Ne => true,
+                            c if matches!(c, IrCmpOp::Slt | IrCmpOp::Sle | IrCmpOp::Sgt | IrCmpOp::Sge) => signed,
+                            _ => !signed,
+                        }).collect();
+                        allowed[(oi as usize) % allowed.len()]
+                    };
+                    insts.push(Instruction::Cmp { dest: d, op: cop, lhs: pick(ap, ac, &vals, &val_tys), rhs: pick(bp, bc, &vals, &val_tys), ty });
+                }
+                2 => {
+                    let to = any_int_ty(tt);
+                    insts.push(Instruction::Cast { dest: d, src: pick(ap, ac, &vals, &val_tys), from_ty: ty, to_ty: to });
+                    ty = to;
+                    d_ty = to;
+                }
+                3 => {
+                    insts.push(Instruction::UnaryOp { dest: d, op: if oi % 2 == 0 { IrUnaryOp::Neg } else { IrUnaryOp::Not }, src: pick(ap, ac, &vals, &val_tys), ty });
+                }
+                _ => {
+                    insts.push(Instruction::Select { dest: d, cond: pick(ap, ac, &vals, &val_tys), true_val: pick(bp, bc, &vals, &val_tys), false_val: pick(oi, bc, &vals, &val_tys), ty });
+                }
+            }
+            vals.push(Operand::Value(d));
+            val_tys.push(d_ty);
+        }
+        b.func.return_type = ty;
+        let ret = vals.last().copied().unwrap_or(Operand::Const(IrConst::I64(0)));
+        b.block(insts, Terminator::Return(Some(ret)));
+        b.seal()
+    }
+
+    /// Resolve an operand through Copy-of-Const chains to a constant.
+    fn resolve_to_const(f: &IrFunction, op: &Operand) -> Option<IrConst> {
+        let mut cur = *op;
+        for _ in 0..64 {
+            cur = match cur {
+                Operand::Const(c) => return Some(c),
+                Operand::Value(v) => {
+                    let mut next: Option<Operand> = None;
+                    let mut folded_out = false;
+                    'blocks: for b in &f.blocks {
+                        for i in &b.instructions {
+                            match i {
+                                Instruction::Copy { dest, src } if *dest == v => { next = Some(*src); break 'blocks; }
+                                Instruction::BinOp { dest, .. } | Instruction::Cmp { dest, .. }
+                                | Instruction::Cast { dest, .. } | Instruction::UnaryOp { dest, .. }
+                                | Instruction::Select { dest, .. } if *dest == v => { folded_out = true; break 'blocks; }
+                                _ => {}
+                            }
+                        }
+                    }
+                    if folded_out { return None; }
+                    match next { Some(o) => o, None => return None }
+                }
+            };
+        }
+        None
+    }
+
+    fn mask_u64(w: u64) -> u64 {
+        if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
+    }
+
+    fn has_zero_bits(op: &Operand, ty: &IrType) -> bool {
+        match op {
+            Operand::Const(c) => low(crate::passes::pbt_common::const_bits_pub(c), width(ty)) == 0,
+            _ => false,
+        }
+    }
+
+    /// P5: folded result equals the independent C11 interpreter over random
+    /// all-constant expression DAGs at mixed widths (incl. the documented
+    /// I8-sign-extend / U8-zero-extend promotion semantics); folding is
+    /// idempotent (second run makes no changes).
+    /// Doc contract: constant_fold.rs:3 "This pass evaluates operations on
+    /// constant operands at compile time, replacing the instruction with the
+    /// computed constant." (4c9bab3a)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p5_fold_matches_c11_model(
+            ty0 in 0u8..6, c0 in any::<i64>(), c1 in any::<i64>(),
+            steps in prop::collection::vec(any::<(u8, u8, u8, u8, i64, i64, u8)>(), 1..12)
+        ) {
+            let f = build_const_dag(ty0, c0, c1, &steps);
+            let expected = interp(&f, &[], 100_000);
+            let mut g = build_const_dag(ty0, c0, c1, &steps);
+            let n = fold_function(&mut g);
+            prop_assert!(n >= 1, "fold made no changes");
+            // README (pipeline overview): "constant_fold depends on copy_prop" —
+            // the pass's documented deployment interleaves the two in the
+            // run_passes main loop. Model that here: fold + copy propagation
+            // to joint fixpoint before demanding full reduction. Select's
+            // constant-condition rule legitimately emits Copy(Value(arm)),
+            // which fold's single-level Copy(Const) const map cannot see
+            // through by design (fold_function doc comment).
+            loop {
+                let nf = fold_function(&mut g);
+                let nc = crate::passes::copy_prop::propagate_copies(&mut g);
+                if nf == 0 && nc == 0 { break; }
+            }
+            // fold replaces instruction defs with Copy(Const); the Return
+            // terminator operand stays a Value — resolve it through Copy defs.
+            let ret = match &g.blocks[0].terminator {
+                Terminator::Return(Some(o)) => *o,
+                t => panic!("unexpected terminator {:?}", t),
+            };
+            let resolved = resolve_to_const(&g, &ret);
+            match resolved {
+                Some(c) => {
+                    let got = canon(crate::passes::pbt_common::const_bits_pub(&c), &g.return_type);
+                    prop_assert_eq!(RunOutcome::Value(got), expected, "fold mismatch ret_ty={:?}", g.return_type);
+                }
+                None => panic!("fold did not reduce the const DAG (Return resolves to no constant, n={})", n),
+            }
+            // Idempotence: a second run must be a no-op.
+            let n2 = fold_function(&mut g);
+            prop_assert_eq!(n2, 0, "fold not idempotent");
+        }
+    }
+
+    /// RED WITNESS — round 07 bug (issue pending, see
+    /// pbt-out/rounds/07_passes/bug_reports/): constant_fold's `is_32bit`
+    /// fast path sign-extends sub-int operands to 32 bits before LOGICAL
+    /// operations (LShr/UDiv/URem), so negative I8/I16 constants fold wrong:
+    /// LShr((I8)0xB8, 1) must be 92 but folds to -36 (0xFFFFFFB8 >> 1 low
+    /// byte). Found by P5 (p5_fold_matches_c11_model). Do not "fix" by
+    /// changing the expectation: the law is the C11 semantics of the
+    /// typed instruction.
+    #[test]
+    fn test_constant_fold_regression_subint_lshr_zero_extend() {
+        use crate::ir::reexports::{Instruction, IrBinOp, Operand, Terminator};
+        let check = |op: IrBinOp, rhs: i8| {
+            let build = || {
+                let mut b = FnBuilder::new("f", IrType::I8, &[]);
+                let d = b.v();
+                b.block(
+                    vec![Instruction::BinOp {
+                        dest: d,
+                        op,
+                        lhs: Operand::Const(crate::ir::reexports::IrConst::I8(-72)),
+                        rhs: Operand::Const(crate::ir::reexports::IrConst::I8(rhs)),
+                        ty: IrType::I8,
+                    }],
+                    Terminator::Return(Some(Operand::Value(d))),
+                );
+                b.seal()
+            };
+            let expected = interp(&build(), &[], 10_000);
+            let mut g = build();
+            fold_function(&mut g);
+            crate::passes::copy_prop::propagate_copies(&mut g);
+            loop {
+                let nf = fold_function(&mut g);
+                let nc = crate::passes::copy_prop::propagate_copies(&mut g);
+                if nf == 0 && nc == 0 { break; }
+            }
+            let ret = match &g.blocks[0].terminator { Terminator::Return(Some(o)) => *o, _ => unreachable!() };
+            let got = resolve_to_const(&g, &ret)
+                .map(|c| RunOutcome::Value(canon(crate::passes::pbt_common::const_bits_pub(&c), &g.return_type)))
+                .expect("const DAG not fully folded");
+            assert_eq!(got, expected, "constant_fold sub-int {:?} mis-fold", op);
+        };
+        check(IrBinOp::LShr, 1);   // 0xB8 >>u 1 == 92 (bug: -36)
+        check(IrBinOp::UDiv, 2);   // 0xB8 /u 2 == 92 (bug: -36)
+    }
+
+    /// P6 (negative contract): division/remainder by a constant ZERO is never
+    /// folded — the trapping instruction must survive (UB preservation).
+    /// Doc contract: README:546 "Integer division/remainder by zero is not
+    /// folded (preserving undefined behavior)." (f7c910fd)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p6_fold_div_by_zero_not_folded(
+            op_idx in 0u8..4, ty64 in any::<bool>(), lhs_const in any::<bool>(), lhs in any::<i64>()
+        ) {
+            let op = [IrBinOp::SDiv, IrBinOp::UDiv, IrBinOp::SRem, IrBinOp::URem][(op_idx % 4) as usize];
+            let ty = if ty64 { IrType::I64 } else { IrType::I32 };
+            let mut b = FnBuilder::new("f", ty, &[ty]);
+            let p = b.v();
+            let d = b.v();
+            let lhs_op = if lhs_const { const_int(&ty, lhs as u64) } else { Operand::Value(p) };
+            let insts = vec![
+                Instruction::ParamRef { dest: p, param_idx: 0, ty },
+                Instruction::BinOp { dest: d, op, lhs: lhs_op, rhs: const_int(&ty, 0), ty },
+            ];
+            b.block(insts, Terminator::Return(Some(Operand::Value(d))));
+            let mut f = b.seal();
+            fold_function(&mut f);
+            let survived = f.blocks.iter().any(|blk| blk.instructions.iter().any(|i| match i {
+                Instruction::BinOp { op: o, rhs, dest, .. } =>
+                    *o == op && matches!(rhs, Operand::Const(c) if has_zero_bits(&Operand::Const(*c), &ty)) && *dest == d,
+                _ => false,
+            }));
+            prop_assert!(survived, "div/rem by zero was folded away op={:?}", op);
+        }
+    }
+
+}

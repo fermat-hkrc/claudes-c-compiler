@@ -1982,3 +1982,320 @@ mod tests {
         }
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::*;
+    use crate::ir::reexports::Terminator;
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+    use proptest::sample::select;
+
+    fn u32_divisor() -> impl Strategy<Value = u32> {
+        prop_oneof![
+            4 => select(vec![2u32, 3, 5, 7, 10, 11, 13, 0xFFFF, 0x1_0000, 0x7FFF_FFFF, 0x8000_0000, 0xFFFF_FFFE, 0xFFFF_FFFF]),
+            1 => any::<u32>().prop_filter("d >= 2", |d| *d >= 2),
+        ]
+    }
+
+    fn i32_divisor() -> impl Strategy<Value = i32> {
+        prop_oneof![
+            5 => select(vec![-2147483648i32, -2147483647, -65536, -10, -7, -3, -2, 2, 3, 7, 10, 65536, 0x4000_0000, -0x4000_0000, 2147483647]),
+            1 => any::<i32>().prop_filter("d not in -1,0,1", |d| *d < -1 || *d > 1),
+        ]
+    }
+
+    fn build_udiv(shape: u8, d: u32) -> IrFunction {
+        if shape % 2 == 0 {
+            // Native U32: param U32, UDiv at U32.
+            let mut b = FnBuilder::new("f", IrType::U32, &[IrType::U32]);
+            let p = b.v();
+            let r = b.v();
+            let insts = vec![
+                Instruction::ParamRef { dest: p, param_idx: 0, ty: IrType::U32 },
+                Instruction::BinOp { dest: r, op: IrBinOp::UDiv, lhs: Operand::Value(p), rhs: const_int(&IrType::U32, d as u64), ty: IrType::U32 },
+            ];
+            b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+            b.seal()
+        } else {
+            // Zero-extended into U64: Cast U32->U64 marks the lhs known-u32.
+            let mut b = FnBuilder::new("f", IrType::U64, &[IrType::U32]);
+            let p = b.v();
+            let w = b.v();
+            let r = b.v();
+            let insts = vec![
+                Instruction::ParamRef { dest: p, param_idx: 0, ty: IrType::U32 },
+                Instruction::Cast { dest: w, src: Operand::Value(p), from_ty: IrType::U32, to_ty: IrType::U64 },
+                Instruction::BinOp { dest: r, op: IrBinOp::UDiv, lhs: Operand::Value(w), rhs: const_int(&IrType::U64, d as u64), ty: IrType::U64 },
+            ];
+            b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+            b.seal()
+        }
+    }
+
+    fn build_sdiv(shape: u8, d: i32) -> IrFunction {
+        if shape % 2 == 0 {
+            let mut b = FnBuilder::new("f", IrType::I32, &[IrType::I32]);
+            let p = b.v();
+            let r = b.v();
+            let insts = vec![
+                Instruction::ParamRef { dest: p, param_idx: 0, ty: IrType::I32 },
+                Instruction::BinOp { dest: r, op: IrBinOp::SDiv, lhs: Operand::Value(p), rhs: const_int(&IrType::I32, d as u32 as u64), ty: IrType::I32 },
+            ];
+            b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+            b.seal()
+        } else {
+            let mut b = FnBuilder::new("f", IrType::I64, &[IrType::I32]);
+            let p = b.v();
+            let w = b.v();
+            let r = b.v();
+            let insts = vec![
+                Instruction::ParamRef { dest: p, param_idx: 0, ty: IrType::I32 },
+                Instruction::Cast { dest: w, src: Operand::Value(p), from_ty: IrType::I32, to_ty: IrType::I64 },
+                Instruction::BinOp { dest: r, op: IrBinOp::SDiv, lhs: Operand::Value(w), rhs: const_int(&IrType::I64, d as i64 as u64), ty: IrType::I64 },
+            ];
+            b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+            b.seal()
+        }
+    }
+
+    fn build_rem(op: IrBinOp, d: i32) -> IrFunction {
+        // Native I32/U32 rem; divisor passed as i32 bit pattern.
+        let (ty, sop) = if matches!(op, IrBinOp::SRem) { (IrType::I32, IrBinOp::SRem) } else { (IrType::U32, IrBinOp::URem) };
+        let pty = if matches!(op, IrBinOp::SRem) { IrType::I32 } else { IrType::U32 };
+        let mut b = FnBuilder::new("f", ty, &[pty]);
+        let p = b.v();
+        let r = b.v();
+        let insts = vec![
+            Instruction::ParamRef { dest: p, param_idx: 0, ty: pty },
+            Instruction::BinOp { dest: r, op: sop, lhs: Operand::Value(p), rhs: const_int(&ty, d as u32 as u64), ty },
+        ];
+        b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+        b.seal()
+    }
+
+    fn build_rem_in_i64(op: IrBinOp, d: i32) -> IrFunction {
+        let (from, sop) = if matches!(op, IrBinOp::SRem) { (IrType::I32, IrBinOp::SRem) } else { (IrType::U32, IrBinOp::URem) };
+        // The in-I64 URem shape models a u32 remainder whose operands were
+        // widened: the divisor must keep the U32 BIT PATTERN (zero-extend),
+        // while SRem sign-extends — otherwise the built function computes
+        // x u% sext(d) which disagrees with the u32-domain oracle for
+        // negative d (found by P3's builder sanity, d = i32::MIN).
+        let dpat = if matches!(op, IrBinOp::SRem) { d as i64 as u64 } else { d as u32 as u64 };
+        let mut b = FnBuilder::new("f", IrType::I64, &[from]);
+        let p = b.v();
+        let w = b.v();
+        let r = b.v();
+        let insts = vec![
+            Instruction::ParamRef { dest: p, param_idx: 0, ty: from },
+            Instruction::Cast { dest: w, src: Operand::Value(p), from_ty: from, to_ty: IrType::I64 },
+            Instruction::BinOp { dest: r, op: sop, lhs: Operand::Value(w), rhs: const_int(&IrType::I64, dpat), ty: IrType::I64 },
+        ];
+        b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+        b.seal()
+    }
+
+    fn build_div64(op: IrBinOp, d: i64) -> IrFunction {
+        // Genuine 64-bit: param of 64-bit type is not known-32-bit.
+        let ty = if matches!(op, IrBinOp::UDiv) { IrType::U64 } else { IrType::I64 };
+        let mut b = FnBuilder::new("f", ty, &[ty]);
+        let p = b.v();
+        let r = b.v();
+        let insts = vec![
+            Instruction::ParamRef { dest: p, param_idx: 0, ty },
+            Instruction::BinOp { dest: r, op, lhs: Operand::Value(p), rhs: Operand::Const(IrConst::I64(d)), ty },
+        ];
+        b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+        b.seal()
+    }
+
+    fn has_div_op(f: &IrFunction, op: IrBinOp) -> bool {
+        f.blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| match i {
+                Instruction::BinOp { op: o, .. } => *o == op,
+                _ => false,
+            })
+        })
+    }
+
+    /// P1: unsigned division by constant — the rewritten IR must compute the
+    /// exact C11 u32 quotient for edge-skewed (d, x), in both the native-U32
+    /// and zero-extended-in-U64 shapes.
+    /// Doc contract: div_by_const.rs:17 "All transformations produce correct
+    /// results for the full range of inputs, including edge cases" (82cd7c63).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p1_udiv32_magic_differential(d in u32_divisor(), x in any::<u32>(), shape in 0u8..2) {
+            let mut f = build_udiv(shape, d);
+            let mut xs: Vec<u32> = vec![x, 0, 1, 2, d - 1, d, d.wrapping_add(1), u32::MAX, u32::MAX - 1, 0x8000_0000, 0x7FFF_FFFF];
+            xs.sort();
+            xs.dedup();
+            for xu in xs.iter().copied() {
+                let arg = [xu as i128];
+                let before = interp(&f, &arg, 100_000);
+                prop_assert_eq!(before, RunOutcome::Value((xu / d) as i128), "builder sanity d={} x={}", d, xu);
+            }
+            // compute_unsigned_magic_32 documents fallback to native division for
+            // "large divisors near u32::MAX" (div_by_const.rs:436-438) — rewrite is
+            // only guaranteed for powers of two and d <= 2^31-1.
+            let must_rewrite = d.is_power_of_two() || d <= 0x7FFF_FFFF;
+            let n = div_by_const_function(&mut f);
+            if must_rewrite {
+                prop_assert!(n >= 1, "no rewrite for udiv d={} shape={}", d, shape);
+                prop_assert!(!has_div_op(&f, IrBinOp::UDiv), "udiv survived rewrite d={} shape={}", d, shape);
+            }
+            for xu in xs.iter().copied() {
+                let arg = [xu as i128];
+                let after = interp(&f, &arg, 100_000);
+                prop_assert_eq!(after, RunOutcome::Value((xu / d) as i128), "udiv d={} shape={} x={}", d, shape, xu);
+            }
+        }
+    }
+
+    /// P2: signed division by constant (incl. negative divisors, power-of-2
+    /// biased shifts, magic + sign correction), native I32 and sign-extended
+    /// in I64. INT_MIN dividend included.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p2_sdiv32_magic_differential(d in i32_divisor(), x in any::<i32>(), shape in 0u8..2) {
+            let mut f = build_sdiv(shape, d);
+            let mut xs: Vec<i32> = vec![x, 0, 1, -1, 2, -2, i32::MIN, i32::MAX, d, d.wrapping_neg(), d.wrapping_sub(1), d.wrapping_add(1)];
+            xs.sort();
+            xs.dedup();
+            for xu in &xs {
+                let arg = [*xu as i128];
+                let before = interp(&f, &arg, 100_000);
+                prop_assert_eq!(before, RunOutcome::Value(xu.wrapping_div(d) as i128), "builder sanity d={} x={}", d, xu);
+            }
+            let n = div_by_const_function(&mut f);
+            // d == i32::MIN on the native-I32 shape is documented 64-bit-only.
+            let should_rewrite = !(shape % 2 == 0 && d == i32::MIN);
+            if should_rewrite {
+                prop_assert!(n >= 1, "no rewrite for sdiv d={} shape={}", d, shape);
+                prop_assert!(!has_div_op(&f, IrBinOp::SDiv), "sdiv survived rewrite d={} shape={}", d, shape);
+            }
+            for xu in &xs {
+                let arg = [*xu as i128];
+                let after = interp(&f, &arg, 100_000);
+                prop_assert_eq!(after, RunOutcome::Value(xu.wrapping_div(d) as i128), "sdiv d={} shape={} x={}", d, shape, xu);
+            }
+        }
+    }
+
+    /// P3: SRem/URem by constant (incl. the negative-divisor identity
+    /// `x % -C == x % C`, remainder sign follows the dividend).
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p3_rem_by_const_differential(
+            which in 0u8..4, d in i32_divisor(), x in any::<i32>()
+        ) {
+            let (op, in_i64) = match which % 4 {
+                0 => (IrBinOp::SRem, false),
+                1 => (IrBinOp::SRem, true),
+                2 => (IrBinOp::URem, false),
+                _ => (IrBinOp::URem, true),
+            };
+            let mut f = if in_i64 { build_rem_in_i64(op, d) } else { build_rem(op, d) };
+            let expected_for = |xu: i128| -> i128 {
+                if matches!(op, IrBinOp::SRem) {
+                    canon((xu as i32).wrapping_rem(d) as i128, &IrType::I32)
+                } else {
+                    let du = d as u32;
+                    canon((xu as u32).wrapping_rem(du) as i128, &IrType::U32)
+                }
+            };
+            let mut xs: Vec<i32> = vec![x, 0, 1, -1, i32::MIN, i32::MAX, d, d.wrapping_neg(), d.wrapping_sub(1), d.wrapping_add(1)];
+            xs.sort();
+            xs.dedup();
+            for xu in &xs {
+                let arg = [*xu as i128];
+                let before = interp(&f, &arg, 100_000);
+                prop_assert_eq!(before, RunOutcome::Value(expected_for(*xu as i128)), "builder sanity d={} x={}", d, xu);
+            }
+            let n = div_by_const_function(&mut f);
+            // README div_by_const: "Modulo (x % C): rewritten as x - (x / C) * C
+            // using the optimized division from above. Power-of-2 unsigned
+            // modulo is handled separately by the simplify pass as x & (C-1)."
+            // Plus the code-documented carve-out in compute_unsigned_magic_32:
+            // large divisors near u32::MAX without a 32-bit magic fall back to
+            // native division ("Fall back to native division for these rare
+            // cases") — no rewrite is expected for them.
+            let unsigned_pow2 = matches!(op, IrBinOp::URem) && (d as u32).is_power_of_two();
+            let magic_missing = matches!(op, IrBinOp::URem)
+                && (d as u32) >= 2
+                && compute_unsigned_magic_32(d as u32).is_none();
+            let should_rewrite = d != i32::MIN && !unsigned_pow2 && !magic_missing;
+            if should_rewrite {
+                prop_assert!(n >= 1, "no rewrite for rem d={} which={}", d, which);
+                prop_assert!(!has_div_op(&f, op), "rem survived rewrite d={} which={}", d, which);
+            }
+            for xu in &xs {
+                let arg = [*xu as i128];
+                let after = interp(&f, &arg, 100_000);
+                prop_assert_eq!(after, RunOutcome::Value(expected_for(*xu as i128)), "rem d={} which={} x={}", d, which, xu);
+            }
+        }
+    }
+
+    /// P4: genuine 64-bit division (divisors beyond the 32-bit forms) through
+    /// the I128 magic-number paths.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p4_div64_genuine_i128_differential(
+            which in 0u8..2,
+            d in prop_oneof![
+                4 => select(vec![2i64, 3, 7, 10, 1 << 31, (1i64 << 31) + 1, (1i64 << 32) - 1, 1i64 << 32, (1i64 << 32) + 1, i64::MAX, i64::MAX - 1, -2, -3, -7, i64::MIN + 1, -(1i64 << 31), -((1i64 << 31) + 1)]),
+                1 => any::<i64>().prop_filter("d not in -1,0,1", |d| *d < -1 || *d > 1),
+            ],
+            x in any::<i64>()
+        ) {
+            let op = if which % 2 == 0 { IrBinOp::UDiv } else { IrBinOp::SDiv };
+            let d64 = d as u64;
+            let mut f = build_div64(op, d);
+            let mut xs: Vec<i64> = vec![x, 0, 1, -1, 2, i64::MIN, i64::MAX, d, d.wrapping_sub(1), d.wrapping_add(1), d.wrapping_neg()];
+            if op == IrBinOp::UDiv {
+                xs.extend(vec![(d64 as i64), (d64 - 1) as i64, u64::MAX as i64, u32::MAX as i64, (u32::MAX as i64) + 1]);
+            }
+            xs.sort();
+            xs.dedup();
+            for xu in &xs {
+                let arg = [*xu as i128];
+                let before = interp(&f, &arg, 100_000);
+                let expected = if op == IrBinOp::UDiv {
+                    RunOutcome::Value(canon(((*xu as u64) / d64) as i128, &IrType::U64))
+                } else {
+                    RunOutcome::Value(xu.wrapping_div(d) as i128)
+                };
+                prop_assert_eq!(before, expected, "builder sanity d={} x={}", d, xu);
+            }
+            let n = div_by_const_function(&mut f);
+            // Magic computation is documented to fall back to None for divisors
+            // near u64::MAX; rewrite asserted only where the algorithm must succeed.
+            let must_rewrite = if op == IrBinOp::SDiv {
+                d != i64::MIN
+            } else {
+                d64 >= 2 && d64 <= u32::MAX as u64
+            };
+            if must_rewrite {
+                prop_assert!(n >= 1, "no rewrite for div64 d={} op={:?}", d, op);
+                prop_assert!(!has_div_op(&f, op), "div64 survived rewrite d={} op={:?}", d, op);
+            }
+            for xu in &xs {
+                let arg = [*xu as i128];
+                let after = interp(&f, &arg, 100_000);
+                let expected = if op == IrBinOp::UDiv {
+                    RunOutcome::Value(canon(((*xu as u64) / d64) as i128, &IrType::U64))
+                } else {
+                    RunOutcome::Value(xu.wrapping_div(d) as i128)
+                };
+                prop_assert_eq!(after, expected, "div64 d={} op={:?} x={}", d, op, xu);
+            }
+        }
+    }
+}
+

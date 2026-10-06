@@ -3,27 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PBT Report Overview: src/ir</title>
+<title>PBT Report Overview: src/passes (round 07)</title>
 <style>
 body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
 h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
 th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
 code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
 .badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.ok { background: #e7f6ec; color: #14532d; }
 .muted { color: #56657a; }
 </style>
 </head>
-<body>
-<h1>PBT Report Overview: src/ir</h1>
-<p class="muted">Test date: 2026-10-05; Tested revision: <code>8bf7a66c5c633aead94effcb58f14ad08e3e915c</code>; Campaign tier: standard</p>
-<h2>Test Results</h2>
-<table><tr><th>Properties</th><th>Passing</th><th>Failing</th><th>Confirmed Defects</th></tr><tr><td>13</td><td>8</td><td>5</td><td>5</td></tr></table>
-<h2>Defect List</h2>
-<table><tr><th>ID</th><th>Summary</th><th>Severity</th><th>Details</th></tr><tr><td><code>b1</code></td><td>cast_float_to_target / cast_long_double_to_target store U8/U16 constants in sign-extending native variants, violating the documented zero-extension convention</td><td>high</td><td><a href="rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.html">View defect details</a></td></tr>
-<tr><td><code>b2</code></td><td>coerce_to_with_src early-return keeps the forbidden sign-extending I8/I16 variant for U8/U16 targets</td><td>high</td><td><a href="rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.html">View defect details</a></td></tr>
-<tr><td><code>b3</code></td><td>f64 subnormals misencoded by f64_to_f128_bytes and f64_to_x87_bytes (treated as normals of the source width)</td><td>medium</td><td><a href="rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.html">View defect details</a></td></tr>
-<tr><td><code>b4</code></td><td>build_cfg records duplicate predecessor entries for CondBranch with equal targets and Switch with duplicate case labels</td><td>medium</td><td><a href="rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.html">View defect details</a></td></tr>
-<tr><td><code>b5</code></td><td>compute_dominance_frontiers can never contain the entry block in its own frontier (entry cycles skipped by join gate and runner stop)</td><td>low</td><td><a href="rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.html">View defect details</a></td></tr></table>
-<p class="muted">For technical details, see REPORT.md and report.json in this directory.</p>
+<body data-template="pbt-report-overview-v1">
+<h1>PBT Report Overview: src/passes (round 07)</h1>
+<p><span class="badge">2 bugs</span> <span class="muted">2026-10-05 · claudes-c-compiler · tier: standard · 14 properties, 12 passing</span></p>
+<section data-section="verdict">
+<h2>Verdict</h2>
+<p>2 medium miscompiles to fix: (b1) constant_fold's 32-bit fast path sign-extends I8/I16 operands before logical ops — <code>LShr((I8)0xB8,1)</code> folds to −36 instead of 92 (latent silent-wrong-constant path); (b2) narrow Phase 2 rewrites an I64 <code>Or</code> of sign-extended operands down to I32 with no re-extension when the single use is the I64 return — <code>run_passes(-O2, x86-64)</code> computes <code>f(1,-1) = 4294967295</code> instead of <code>-1</code>, violating the pass README's own "restricted to I32/U32 output" restriction. Both carry deterministic red regression tests and reproduce serially.</p>
+</section>
+<section data-section="modules">
+<h2>Modules Tested</h2>
+<table><tr><th>Module</th><th>Tests</th><th>Bugs</th><th>Oracles</th></tr>
+<tr><td>div_by_const</td><td>4 (P1–P4)</td><td class="ok">0</td><td>reference (C11 division)</td></tr>
+<tr><td>constant_fold</td><td>2 + red regression</td><td>1 (b1)</td><td>differential, negative_error</td></tr>
+<tr><td>simplify</td><td>2 (P7–P8)</td><td class="ok">0</td><td>algebraic.metamorphic</td></tr>
+<tr><td>gvn + copy_prop</td><td>1 (P9)</td><td class="ok">0</td><td>algebraic.invariant</td></tr>
+<tr><td>dce</td><td>1 (P10)</td><td class="ok">0</td><td>algebraic.invariant</td></tr>
+<tr><td>if_convert</td><td>1 (P11)</td><td class="ok">0</td><td>algebraic.invariant</td></tr>
+<tr><td>cfg_simplify</td><td>1 (P12)</td><td class="ok">0</td><td>algebraic.invariant (reachability)</td></tr>
+<tr><td>narrow</td><td>1 + red regression</td><td>1 (b2)</td><td>algebraic.invariant</td></tr>
+<tr><td>run_passes (pipeline)</td><td>1 (P14)</td><td class="ok">0</td><td>algebraic.invariant (end-to-end)</td></tr></table>
+</section>
+<section data-section="bugs">
+<h2>Bugs Found</h2>
+<table><tr><th>ID</th><th>Severity</th><th>Summary</th><th>Property</th><th>Report</th></tr>
+<tr><td>b1</td><td>medium</td><td>constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)</td><td>p5_fold_matches_c11_model</td><td><a href="bug_reports/passes_constant_fold_subint_logical_fold.html">HTML</a> · <a href="bug_reports/passes_constant_fold_subint_logical_fold.md">MD</a></td></tr>
+<tr><td>b2</td><td>medium</td><td>narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</td><td>p13_narrow_preservation</td><td><a href="bug_reports/passes_narrow_phase2_i64_use_miscompile.html">HTML</a> · <a href="bug_reports/passes_narrow_phase2_i64_use_miscompile.md">MD</a></td></tr></table>
+</section>
+<section data-section="artifacts">
+<h2>Artifacts</h2>
+<p><a href="REPORT.md">REPORT.md</a> · <a href="PROPERTIES.md">PROPERTIES.md</a> · <a href="PLAN.md">PLAN.md</a> · <a href="COVERAGE.md">COVERAGE.md</a> · <a href="COVERAGE_STATUS.md">COVERAGE_STATUS.md</a> · <a href="rounds/07_passes/report.json">report.json</a></p>
+<p class="muted">Round 07 of the whole-repo loop (rounds 01–06: common, lexer, ledger, preprocessor, parser, sema, ir — see bug_reports/FILED_ISSUES.md for the 21 issues filed so far).</p>
+</section>
 </body>
 </html>

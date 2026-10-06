@@ -1,209 +1,115 @@
-# PBT Campaign Report: src/ir (round 06)
+# PBT Campaign Report: src/passes (round 07)
 
 ## Summary
 
-**Verdict:** 5 confirmed SUT bugs to fix — 2 high (IrConst unsigned-constant writers
-`cast_float_to_target`/`cast_long_double_to_target` and `coerce_to_with_src` violate
-the documented zero-extension storage convention, so any constant fold reading a U8/U16
-constant above its signed range through `to_i64()` silently gets a negative value),
-1 medium (`f64_to_f128_bytes`/`f64_to_x87_bytes` misencode every f64 subnormal by ~2^51),
-1 medium (`build_cfg` records duplicate predecessor entries, corrupting the preds/succs
-transpose invariant six passes build on), 1 low (dominance frontiers can never contain
-the entry block for itself; unreachable from today's C lowering but a definitional
-violation and future-pass hazard). 11 properties passing, 5 failing (each failing
-property serial-reconfirmed and backed by a red regression test).
+**Verdict:** 2 medium miscompiles to fix: (b1) constant_fold's 32-bit fast path sign-extends I8/I16 operands before logical ops, so `LShr((I8)0xB8,1)` folds to -36 instead of 92 (latent silent-wrong-constant path — narrow Phase 1 creates exactly those sub-int-typed instructions and the pipeline re-runs constant_fold); (b2) narrow Phase 2 rewrites an I64 `Or` of sign-extended operands down to I32 with no re-extension when the single use is the I64 return — `run_passes(-O2, x86-64)` then computes `f(1,-1) = 4294967295` instead of `-1`, violating the pass README's own "restricted to I32/U32 output" restriction. Both carry deterministic red regression tests and reproduce serially.
 **Date:** 2026-10-05
-**Repository:** /home/shuhao/fermat-users/leo/github/claudes-c-compiler
-**Modules tested:** src/ir (ops.rs, constants.rs, analysis.rs, mem2reg/promote.rs, mem2reg/phi_eliminate.rs)
-**Tests:** 16 PBT properties (+4 KAT/red-regression deterministics) this round; full lib suite 578 passed / 35 failed / 11 ignored (baseline before this round: 567/30/11 — all 30 pre-existing failures are prior rounds' documented red witnesses; the 5 new failures are this round's bugs)
-**Result:** 11 passing, 5 failing → 5 bugs (b1–b5)
-**Change surface:** 11 changed functions, 0 with a property here — every one is a
-round-05 test artifact or frontend/sema function OUTSIDE this round's scope
-contract (src/ir), already covered and closed by round 05 (see
-pbt-out/rounds/06_ir/PLAN.md "Change surface" and COVERAGE.md); the 4
-error-handling changes among them carried round-05 failure-path properties
-(P14/P15 + round-05 bugs b1–b5).
-**Coverage evidence:** file-level (symbol presence) — no line-level coverage on this
-machine (no gcovr/lcov; build tree predates the campaign; no flags injected by hand).
-`coverage_gaps` returned only change-surface symbols: 7 NOT LINKED (known false
-negative of the symbol probe for #[cfg(test)]-nested Rust fns, documented in
-round-05 PLAN.md) and 4 "linked main (...)" scratch C files; no src/ir gap surfaced.
+**Repository:** claudes-c-compiler (/home/shuhao/fermat-users/leo/github/claudes-c-compiler)
+**Modules tested:** src/passes (div_by_const, constant_fold, simplify, gvn+copy_prop, dce, if_convert, cfg_simplify, narrow, pipeline integration)
+**Tests:** 14 PBT properties (+2 red-regression deterministics) this round
+**Result:** 12 passing, 2 failing → 2 bugs (b1, b2)
+**Change surface:** 5 changed functions — all round-06 committed PBT test code inside `src/ir` (pure addition; no production code), outside this round's scope; re-executed verbatim via `cargo test --lib ir::` (p5 round-06 red witness for #575 fails as documented, 8 ir tests pass).
+**Coverage evidence:** none (native) — `coverage_gaps` answered "Not in a PBT campaign" (this round was resumed in a manual session; no instrumented coverage data exists). File-level evidence instead: every pass entry point in scope was executed by ≥1 property (see COVERAGE.md rows). The contract-surface sweep (standard tier, 1 round) was performed as a ledger review against the README contract table — every documented per-pass behavior in `src/passes/README.md` (rewrite tables, UB preservation, fixpoints, skip graph, narrowing restrictions) has a property; the two failures are exactly where code and README disagree.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|--------------|
-| ir::ops | 5 (P1–P4, P4b) | 0 | algebraic (C11 division identity), negative_error, metamorphic (width), reference (IEEE 754 / two's complement) |
-| ir::constants | 5 (P5–P8) + 3 red regressions | 3 (b1, b2, b3) | differential (same-job writers), reference (IEEE 754 field decoder), reference (C11 6.3.1.2) |
-| ir::analysis | 4 (P9–P11, P11b) + 1 red regression | 2 (b4, b5) | invariant (transpose), reference (naive dominators dataflow, Cytron DF definition) |
-| ir::mem2reg | 2 (P12, P13) | 0 | structural invariants (SSA validity / phi completeness / elimination preservation) |
+| passes::div_by_const | 4 (P1–P4) | 0 | reference (C11 division semantics, native/widened/64-bit forms) |
+| passes::constant_fold | 2 (P5–P6) + 1 red regression | 1 (b1) | differential (independent C11 interpreter), negative_error (div-by-zero UB preservation) |
+| passes::simplify | 2 (P7–P8) | 0 | algebraic.metamorphic (identity injection, strength reduction) |
+| passes::gvn + copy_prop | 1 (P9) | 0 | algebraic.invariant (CSE value preservation) |
+| passes::dce | 1 (P10) | 0 | algebraic.invariant (dead-chain preservation) |
+| passes::if_convert | 1 (P11) | 0 | algebraic.invariant (diamond→select preservation) |
+| passes::cfg_simplify | 1 (P12) | 0 | algebraic.invariant (value + reachability + targets-in-range on random CFGs) |
+| passes::narrow | 1 (P13) + 1 red regression | 1 (b2) | algebraic.invariant (three-phase narrowing preservation; negative side for unsigned cmps on signed source) |
+| passes::run_passes (pipeline) | 1 (P14) | 0 | algebraic.invariant (end-to-end value preservation, loop shapes reaching licm/ivsr) |
+
+Final serial run (RUST_TEST_THREADS=1, filter passes::, log run/passes_final_serial.log): 279 passed / 4 failed / 2 ignored in 631.91s — the 4 failures are exactly this round's two documented bug witnesses (p5, p13) and their two deterministic red regressions; no other passes:: test regressed. Baseline before this round (whole lib): 578/39/11 with all 39 = prior rounds' documented red witnesses, none touching src/passes.
 
 ## Bugs Found
 
-### B1: cast_float_to_target / cast_long_double_to_target break the U8/U16/U32 zero-extension storage convention
-**Formal:** ∀ ty ∈ {U8,U16,U32}, v ∈ [0, 2^bits(ty)): cast_float_to_target(v as f64, ty).to_i64() = v ∧ cast_long_double_to_target(v,bytes,ty).to_i64() = v (same as from_i64(v,ty).to_i64()).
-**Contract evidence:** documented — src/ir/constants.rs:437 "Store unsigned sub-64-bit types (U8, U16, U32) as I64 with zero-extended values to preserve unsigned semantics. Storing them in their native IrConst variants (I8, I16, I32) would cause to_i64() to sign-extend, turning e.g. U8(255) into -1 instead of 255." The function's own doc claims the correct outcome ("200.0 as u8 = 200").
-**Documentation conflict:** the author documents the convention the function then violates: the wrap `fv as u8` is bit-correct but the result is stored in the native variant the convention forbids. It does not declare the input invalid; the comment states the behavior IS handled ("= 200, not saturated"), which the code contradicts on read-back.
-**Severity:** high
-**Counterexample:** cast_float_to_target(200.0, IrType::U8) → IrConst::I8(-56) → to_i64() = -56
-**Expected / Actual:** Some(200) / Some(-56)
-**Impact:** constant folding / GVN / algebraic simplification read unsigned constants above the signed range (U8 > 127, U16 > 32767) as negative after any float→int constant cast — silent wrong folded values.
-**Root cause:** src/ir/constants.rs:277 `IrType::U8 => IrConst::I8(fv as u8 as i8)` (and U16/I16, in both cast functions) instead of the I64 zero-extended form used by from_i64 and narrowed_to.
-**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.md
-**Repro seed:** proptest persisted seed in proptest-regressions/src/ir/constants.rs (shrunk: ty_idx=0, raw=272865408)
-**Raw output:** `left: Some(-128), right: Some(128): cast_float_to_target(U8, 128) = I8(-128) reads back Some(-128)`
-
-### B2: coerce_to_with_src early-return keeps the forbidden sign-extending variant for U8/U16 targets
-**Formal:** ∀ ty ∈ {U8,U16}, v ∈ (2^(bits-1), 2^bits): from_i64(v, signed(ty)).coerce_to(ty).to_i64() = v.
-**Contract evidence:** documented — same from_i64 convention comment (src/ir/constants.rs:437); narrowed_to (src/ir/constants.rs:579) implements the correct behavior, proving the two same-job writers disagree.
-**Documentation conflict:** (none beyond b1's convention comment; the early-return arm carries no comment claiming intent)
-**Severity:** high
-**Counterexample:** IrConst::from_i64(200, IrType::I8).coerce_to(IrType::U8) → I8(-56) → to_i64() = -56
-**Expected / Actual:** Some(200) / Some(-56)
-**Impact:** the universal constant-to-instruction-type coercion step produces constants that read back negative for U8/U16 values above their signed range — same corruption class as b1 through the coercion path.
-**Root cause:** src/ir/constants.rs:384 `(IrConst::I8(_), IrType::I8 | IrType::U8) => return *self` (same for I16/U16) — the unsigned target must fall through to from_i64 normalization.
-**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.md
-**Repro seed:** proptest-regressions/src/ir/constants.rs (shrunk: kind=0, raw=0)
-**Raw output:** `left: Some(-128), right: Some(128): I8(-128).coerce_to(U8) = I8(-128) reads back -128`
-
-### B3: f64 subnormals are misencoded by f64_to_f128_bytes and f64_to_x87_bytes
-**Formal:** ∀ v ∈ finite f64 (incl. subnormals): ieee_decode_f128(f64_to_f128_bytes(v)) = v ∧ ieee_decode_x87(f64_to_x87_bytes(v)) = v.
-**Contract evidence:** documented — src/ir/constants.rs:50 "Convert an f64 value to IEEE 754 binary128 (quad-precision) encoding" — a faithful encoding preserves the value; both target formats represent every f64 exactly.
-**Documentation conflict:** (none — no comment addresses subnormals; the code's "Normal number" arm simply receives them)
+### B1: constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)
+**Formal:** ∀ E ∈ all-constant expression DAGs over I8..U64: fold∘copy_prop to fixpoint leaves Return = Const(interp(E)) — the independent C11 interpreter is the reference. Falsified at E = `LShr(Const(I8(-72)), Const(I8(1)), I8)`.
+**Contract evidence:** inferred (the IrType-typed BinOp semantics: the pass itself truncates operands to `ty` first, so the logical arms must zero-extend within `ty`'s width too; the `as u32` cast models the 32-bit types, not I8/I16)
+**Documentation conflict:** (none — no comment speaks to the sub-int logical-op widening)
 **Severity:** medium
-**Counterexample:** f64_to_f128_bytes(5e-324) decodes to 1.1125369292536e-308 (≈2^-1023) instead of 5e-324 (2^-1074)
-**Expected / Actual:** 5e-324 / 1.1125369292536e-308
-**Impact:** subnormal constants flowing into long-double data emission produce wrong bytes on ARM64/RISC-V (f128 emitted verbatim) and wrong x87 constants on x86.
-**Root cause:** src/ir/constants.rs:50/:82 — `exp11 == 0 && mantissa52 != 0` (subnormals) falls through to the normal path, which assumes an implicit integer bit the subnormal does not have.
-**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.md
-**Repro seed:** proptest-regressions/src/ir/constants.rs (shrunk: v=5e-324)
-**Raw output:** `Test failed: f128: v=0.0000…005 decoded=0.0000…011125369292536007`
+**Counterexample:** one-instruction function `d = LShr(Const(I8(-72)), Const(I8(1)), I8)`, return d
+**Expected / Actual:** 92 / -36 (UDiv form: 92 / -36)
+**Impact:** latent silent miscompile — narrow Phase 1 moves I64 ops down to the narrowing cast's type (including I8/I16), and the pipeline re-runs constant_fold on the next iteration; any negative sub-int constant feeding a logical op folds wrong. No C-level repro found (the frontend promotes sub-int ops before emitting shifts).
+**Root cause:** `fold_binop` (src/passes/constant_fold.rs:684) `is_32bit` arms: `(lhs as u32)` sign-extends the truncated sub-int value (0xB8 → 0xFFFFFFB8) before LShr/UDiv/URem.
+**Bug report:** bug_reports/passes_constant_fold_subint_logical_fold.md
+**Repro seed:** deterministic red witness (no seed needed): test_constant_fold_regression_subint_lshr_zero_extend
+**Raw output:**
+```
+left: `Value(-36)`
+right: `Value(92)`
+test result: FAILED. 0 passed; 1 failed
+```
 
-### B4: build_cfg records duplicate predecessor entries for multi-target terminators with equal labels
-**Formal:** ∀ CFG F: ∀ i,b: multiplicity of edge (i→b) in succs equals its multiplicity in preds ∧ neither list contains duplicates.
-**Contract evidence:** documented — src/ir/analysis.rs:106 "Build predecessor and successor lists from the function's CFG. Returns (preds, succs) as flat adjacency lists (CSR format)." — one graph as a transpose pair; consumers named below count predecessors.
-**Documentation conflict:** (none — no comment claims duplicate preds are intended; the succs `contains` guards show dedup intent)
+### B2: narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value
+**Formal:** ∀ pat ∈ documented narrowing patterns, ∀ args: interp(narrow_function(f[pat]), args) = interp(f[pat], args). Falsified at f(a,b) = `Or(Cast a I32→I64, Cast b I32→I64, I64)`, args (1,-1); pipeline-confirmed via run_passes(-O2, X86_64).
+**Contract evidence:** documented — src/passes/README.md "Integer Narrowing" Phase 2: "restricted to I32/U32 output to avoid sub-int register complications" (the restriction is not enforced — the code checks only the rewrite TARGET type, never the output USE); plus the pipeline's value-preservation contract
+**Documentation conflict:** the README states the output restriction; the code (narrow.rs:264, rewrite at :346-356) never checks the use's type — the shipped document contradicts the shipped code.
 **Severity:** medium
-**Counterexample:** block0: CondBranch{cond:1, true:L1, false:L1}; block1: Return → preds[1] = [0,0], succs[0] = [1]
-**Expected / Actual:** preds[1] = [0] / [0,0]
-**Impact:** six passes consume preds counts (if_convert.rs:305/386 diamond/merge gates, gvn.rs:439 join detection, mem2reg's DF join gate and phi-cost estimate); today's effects are masked but the invariant they build on is violated — latent correctness trap. C-level `case 1: case 2:` naturally produces duplicate switch labels reaching this path.
-**Root cause:** src/ir/analysis.rs:131-146 — `preds[f].push(i32)` runs unconditionally in the CondBranch/Switch/IndirectBranch arms while the succs push is `contains`-guarded.
-**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.md
-**Repro seed:** proptest-regressions/src/ir/analysis.rs
-**Raw output:** `Test failed: duplicate predecessor 2 in row 2`
-
-### B5: dominance frontiers can never contain the entry block for itself (entry cycles)
-**Formal:** ∀ CFG F where entry participates in a cycle: entry ∈ DF(entry) (Cytron DF_local: y ∈ succ(n) ∧ n does not strictly dominate y).
-**Contract evidence:** documented — src/ir/analysis.rs:302 "DF(b) = set of blocks where b's dominance ends (join points)"; Cytron et al. TOPLAS 1991 §2.
-**Documentation conflict:** (none — no comment addresses the entry case; the ≥2-preds gate and runner-stop-at-idom[entry] are both silent on it)
-**Severity:** low (not reachable from today's C lowering: no in-tree producer creates edges into the entry block — lower_label_stmt always starts a fresh block; filed for the definitional violation and future-pass hazard, e.g. block merging redirecting a back edge into entry)
-**Counterexample:** single block, terminator Branch(entry) → DF(0) = {} but must contain 0 (witness p11b, both self-edge and 0→1→{0,1} cycle forms)
-**Expected / Actual:** DF(0) ∋ 0 / DF(0) = {}
-**Impact:** if a future pass creates an entry cycle, mem2reg would omit the entry phi for loop-carried variables → silent miscompile of the carried value.
-**Root cause:** src/ir/analysis.rs:307 `if preds.len(b) < 2 { continue; }` plus the runner walk stopping at idom[entry]==entry.
-**Bug report:** pbt-out/rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.md
-**Repro seed:** deterministic witness (no seed needed)
-**Raw output:** `Test failed: DF(0) mismatch (n=1, succs=[[0]]) left: {} right: {0}`
+**Counterexample:** `fn f(a: i32, b: i32) -> i64 { %w0=Cast a; %w1=Cast b; %r=Or %w0,%w1,I64; Return %r }`, call f(1, -1)
+**Expected / Actual:** -1 / 4294967295 (post-pipeline IR: `Or@I32` feeding the I64 Return with no Cast)
+**Impact:** pipeline-level silent miscompile for any IR producer emitting the widen-widen-bitwise@I64 shape (And/Xor share the code path). No C-level repro found with straightforward sources (the frontend emits Or-at-I32 + single cast), but the pipeline contract is violated on well-formed input.
+**Root cause:** `narrow_binops_without_cast` checks use_counts == 1, operand narrowability and target width — never the USE's required type; inserts no re-extension.
+**Bug report:** bug_reports/passes_narrow_phase2_i64_use_miscompile.md
+**Repro seed:** deterministic red witness (no seed needed): test_narrow_regression_phase2_i64_bitwise_i64_use
+**Raw output:**
+```
+left: `Value(4294967295)`
+right: `Value(-1)`
+test result: FAILED. 0 passed; 1 failed
+```
 
 ## Design Caveats (if any)
 
-(none)
+- **div_by_const unsigned power-of-2 modulo** is documented as the simplify pass's job, not div_by_const's (README: "Power-of-2 unsigned modulo is handled separately by the simplify pass as `x & (C-1)`"). P3 asserts the negative side (no rewrite by div_by_const) — documented behavior, not a bug. Doc evidence: src/passes/README.md div_by_const section.
+- **compute_unsigned_magic_32 fallback**: "Some large divisors near u32::MAX cannot be handled with 32-bit magic numbers. Fall back to native division for these rare cases." (src/passes/div_by_const.rs, compute_unsigned_magic_32) — documented limitation on an accepted input; P3 excludes these divisors from the must-rewrite domain via the pass's own predicate (the value-preservation check still covers them when a rewrite does occur). Doc evidence: src/passes/div_by_const.rs (fn compute_unsigned_magic_32).
+- **constant_fold's Select constant-condition rule** emits `Copy(Value(arm))` rather than the arm's resolved constant, and the const map is single-level `Copy(Const)` by design (fold_function doc comment); the documented deployment interleaves copy_prop (README: "constant_fold depends on copy_prop"). P5 models the interleaving with the real `propagate_copies`. Not a bug — pipeline resolves it.
+- **fold's sub-int AShr promotion semantics** (`(int)255 >> 1 = 127`) matches C11's integer promotion; the test-side C11 interpreter models width-local sign-extension instead. The combination (AShr at unsigned sub-int type) is not frontend-reachable (frontend promotes before arithmetic) and is excluded from P5's generator domain on that ground. No SUT defect claimed.
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/ir/ops.rs (`mod pbt_tests`) | 5 (P1, P2, P3, P4, P4b) |
-| src/ir/constants.rs (`mod pbt_tests` + `mod pbt_regression`) | 5 + 3 red regressions |
-| src/ir/analysis.rs (`mod pbt_tests` + `mod pbt_regression`) | 4 (incl. red witness P11b) + 1 red regression |
-| src/ir/mem2reg/promote.rs (`mod pbt_tests`) | 1 (P12) |
-| src/ir/mem2reg/phi_eliminate.rs (`mod pbt_tests`) | 1 (P13) |
+| src/passes/div_by_const.rs (`pbt_tests`) | P1–P4 |
+| src/passes/constant_fold.rs (`pbt_tests`) | P5–P6 + red regression (b1) |
+| src/passes/simplify.rs (`pbt_tests`) | P7–P8 |
+| src/passes/gvn.rs (`pbt_tests`) | P9 |
+| src/passes/dce.rs (`pbt_tests`) | P10 |
+| src/passes/if_convert.rs (`pbt_tests`) | P11 |
+| src/passes/cfg_simplify.rs (`pbt_tests`) | P12 |
+| src/passes/narrow.rs (`pbt_tests`) | P13 + red regression (b2) |
+| src/passes/mod.rs (`pbt_tests`) | P14 |
+| src/passes/pbt_common.rs | shared C11 interpreter + builders (registered by one `#[cfg(test)]` line in mod.rs) |
 
 ## Reproduction
 
-Whole suite (from the campaign scratch dir):
+Whole suite (serial, as run for the final ledger):
 ```bash
-cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::
-PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib ir::
+cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib -- passes:: --nocapture
 ```
-Build (user contract, unchanged): `PATH="$HOME/.cargo/bin:$PATH" cargo check --lib` in
-/home/shuhao/fermat-users/leo/github/claudes-c-compiler (prebuilt SUT log:
-pbt-out/rounds/06_ir/build.log; this round's test compile:
-`cargo test --lib ir:: --no-run` → clean).
-
-Per bug (narrowed):
+B1 (fails, red witness):
 ```bash
-cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::constants::pbt_tests::p5_unsigned_repr_writer_differential          # b1
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::constants::pbt_tests::p6_coerce_to_unsigned_normalization          # b2
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::constants::pbt_tests::p7_f128_x87_encoding_roundtrip               # b3
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::analysis::pbt_tests::p9_build_cfg_transpose_consistency            # b4
-PATH="$HOME/.cargo/bin:$PATH" cargo test --lib ir::analysis::pbt_tests::p11b_entry_selfloop_df                        # b5
+cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib passes::constant_fold::pbt_tests::test_constant_fold_regression_subint_lshr_zero_extend --exact --nocapture
 ```
-Deterministic red regressions: `cargo test --lib ir::constants::pbt_regression` and
-`cargo test --lib ir::analysis::pbt_regression` (same workdir).
+B2 (fails, red witness):
+```bash
+cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib passes::narrow::pbt_tests::test_narrow_regression_phase2_i64_bitwise_i64_use --exact --nocapture
+```
+PBT properties replay persisted seeds automatically (proptest-regressions/passes/).
 
 ## Output Directories
 
-All artifacts under pbt-out/rounds/06_ir/ (this round's campaign output); this
-summary is the top-level close-out ledger pbt-out/REPORT.md:
-- pbt-out/rounds/06_ir/PLAN.md, PROPERTIES.md, FUNCTION_INDEX.md, CHANGE_SURFACE.md (harness-provided)
-- pbt-out/REPORT.md (this file) + pbt-out/REPORT.html (auto-rendered from report.json)
-- pbt-out/rounds/06_ir/COVERAGE.md, COVERAGE_STATUS.md, INVARIANTS.md
-- pbt-out/report.json (machine-readable; source of truth for REPORT.html)
-- pbt-out/rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.md (+ .html)
-- pbt-out/rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.md (+ .html)
-- pbt-out/rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.md (+ .html)
-- pbt-out/rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.md (+ .html)
-- pbt-out/rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.md (+ .html)
-- pbt-out/rounds/06_ir/run/probe.log (buildability probe), run/ (scratch CWD for all test runs)
-- Tests live in the repo tree (rung 1, inline modules) — see Test Files Created.
-
-## Coverage Report
-
-# PBT Coverage Status
-
-> Last updated: 2026-10-05 10:55 (campaign: coverage)
-> Files: 8/53 scanned (15%) | Functions: 22/834 total | PBT candidates: 22 | Tested: 22 (100%) | 12 pass, 7 fail, 3 other
-
-## Summary
-
-| Metric | Value |
-|--------|-------|
-| Total source files | 53 |
-| Files scanned | 8 / 53 (15%) |
-| Total functions (all files) | 834 |
-| PBT candidates (from FUNCTION_INDEX) | 22 |
-| **Tested (of PBT candidates)** | **22 / 22 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 12 / 7 / 3 |
-| **Overall (tested / all functions)** | **22 / 834 (3%)** |
-| Untested | 0 |
-| Skipped | 0 |
-
-## Module Breakdown
-
-| Module | Scanned | Tested | Skipped | Coverage |
-|--------|---------|--------|---------|----------|
-|  | 22 | 22 | 0 | 100% |
-
-## Oracle Type Distribution
-
-| Oracle Type | Total | Covered | Skipped | Coverage |
-|-------------|-------|---------|---------|----------|
-| unknown | 22 | 22 | 0 | 100% |
-
-## Recommended Focus
-
-> **Priority 1 — Fix failing tests**
-> These functions have failing PBT properties — fix before adding new tests.
-
-| Function | Source |
-|----------|--------|
-| IrConst::cast_float_to_target | constants.rs |
-| IrConst::cast_long_double_to_target | constants.rs |
-| IrConst::coerce_to_with_src / coerce_to | constants.rs |
-| f64_to_f128_bytes | constants.rs |
-| f64_to_x87_bytes | constants.rs |
-| build_cfg | analysis.rs |
-| compute_dominance_frontiers | analysis.rs |
+- pbt-out/rounds/07_passes/ — this round: PLAN.md, PROPERTIES.md, REPORT.md (this file), report.json, COVERAGE.md, CHANGE_SURFACE.md, FUNCTION_INDEX.md, bug_reports/passes_constant_fold_subint_logical_fold.{md,html}, bug_reports/passes_narrow_phase2_i64_use_miscompile.{md,html}, run/ (probe, run1, run2, per-property serial logs, final serial suite log), build.log
+- proptest-regressions/passes/ — persisted failing/replayed seeds (cfg_simplify.txt, constant_fold.txt, div_by_const.txt, narrow.txt)
+- src/passes/*.rs — inline `pbt_tests` modules (repo convention) + src/passes/pbt_common.rs
+- Customer-facing HTML: pbt-out/rounds/07_passes/bug_reports/passes_constant_fold_subint_logical_fold.html, pbt-out/rounds/07_passes/bug_reports/passes_narrow_phase2_i64_use_miscompile.html

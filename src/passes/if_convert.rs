@@ -872,3 +872,39 @@ mod tests {
         assert_eq!(converted, 0); // Should NOT convert due to side effects
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::if_convert_function;
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    /// P11: if-conversion of param-conditioned diamonds preserves the value.
+    /// Doc contract: if_convert.rs:1 "If-conversion pass: converts simple
+    /// branch+phi diamonds to Select instructions." (b5c48930)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p11_if_convert_preservation(
+            cmp_idx in any::<u8>(), k in any::<i64>(),
+            op1 in any::<u8>(), c1 in any::<i64>(),
+            op2 in any::<u8>(), c2 in any::<i64>(),
+            a in any::<i32>(), b in any::<i32>()
+        ) {
+            let f = build_diamond(cmp_idx, k, op1, c1, op2, c2);
+            let mut g = build_diamond(cmp_idx, k, op1, c1, op2, c2);
+            let mut arg_sets: Vec<Vec<i128>> = Vec::new();
+            for (x, y) in [(0i32, 0), (1, -1), (a, b), (i32::MIN, i32::MAX), (-1, 0)] {
+                arg_sets.push(vec![x as i128, y as i128]);
+            }
+            let expected: Vec<RunOutcome> = arg_sets.iter().map(|s| interp(&f, s, 100_000)).collect();
+            let n = if_convert_function(&mut g);
+            prop_assert!(n >= 1, "if_convert made no changes");
+            for (args, exp) in arg_sets.iter().zip(expected.iter()) {
+                let after = interp(&g, args, 100_000);
+                prop_assert_eq!(&after, exp, "if_convert changed value");
+            }
+        }
+    }
+}

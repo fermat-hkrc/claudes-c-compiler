@@ -1721,3 +1721,80 @@ mod tests {
         }
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::{run_gvn_function};
+    use crate::passes::copy_prop::propagate_copies;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{Instruction, IrBinOp, IrFunction, Operand, Terminator};
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    /// Linear safe-op DAG plus an exact duplicate of one step (same op, same
+    /// resolved operands, fresh dest); the return uses the duplicate.
+    fn build_dup(ty: IrType, s0: i64, steps: &[(u8, u8, u8, i64)]) -> IrFunction {
+        let mut b = FnBuilder::new("f", ty, &[ty, ty]);
+        let p0 = b.v();
+        let p1 = b.v();
+        let mut vals: Vec<Operand> = vec![Operand::Value(p0), Operand::Value(p1)];
+        let mut resolved: Vec<(IrBinOp, Operand, Operand)> = Vec::new();
+        let mut insts = vec![
+            Instruction::ParamRef { dest: p0, param_idx: 0, ty },
+            Instruction::ParamRef { dest: p1, param_idx: 1, ty },
+        ];
+        let w = width(&ty);
+        let pick = |p: u8, c: i64, vals: &Vec<Operand>| -> Operand {
+            if p % 2 == 0 && !vals.is_empty() { vals[(p as usize / 2) % vals.len()] } else { const_int(&ty, (c % 1000) as u64) }
+        };
+        for &(oi, ap, bp, bc) in steps {
+            let op = op_by_index(oi);
+            let is_shift = matches!(op, IrBinOp::Shl | IrBinOp::LShr | IrBinOp::AShr);
+            let d = b.v();
+            let lhs = pick(ap, s0, &vals);
+            let rhs = if is_shift { const_int(&ty, (bc.unsigned_abs() % w as u64) as u64) } else { pick(bp, bc, &vals) };
+            insts.push(Instruction::BinOp { dest: d, op, lhs, rhs, ty });
+            resolved.push((op, lhs, rhs));
+            vals.push(Operand::Value(d));
+        }
+        // Duplicate the first resolvable step exactly.
+        let (op, lhs, rhs) = resolved[0];
+        let dup = b.v();
+        insts.push(Instruction::BinOp { dest: dup, op, lhs, rhs, ty });
+        b.block(insts, Terminator::Return(Some(Operand::Value(dup))));
+        b.seal()
+    }
+
+    /// P9: GVN + copy propagation preserve the interpreted value and never
+    /// increase the instruction count on duplicated-expression DAGs.
+    /// Doc contract: gvn.rs:3 "This pass assigns \"value numbers\" to
+    /// expressions and replaces redundant computations with references to
+    /// previously computed values (CSE)." (ad3c0b2b)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p9_gvn_copy_prop_preservation(
+            tyi in 0u8..4, s0 in any::<i64>(), r1 in any::<i64>(),
+            steps in prop::collection::vec(any::<(u8, u8, u8, i64)>(), 1..8)
+        ) {
+            let ty = int_ty_by_index(tyi);
+            let f = build_dup(ty, s0, &steps);
+            let mut g = build_dup(ty, s0, &steps);
+            let before_count = count_insts(&g);
+            let mut arg_sets: Vec<Vec<i128>> = Vec::new();
+            for a in [0i64, 1, -1, r1, i64::MIN, i64::MAX] {
+                arg_sets.push(vec![canon(a as i128, &ty), canon(r1 as i128, &ty)]);
+            }
+            let expected: Vec<RunOutcome> = arg_sets.iter().map(|a| interp(&f, a, 100_000)).collect();
+            let n1 = run_gvn_function(&mut g);
+            let n2 = to_fixpoint(&mut g, propagate_copies, 8);
+            prop_assert!(n1 + n2 >= 1, "gvn/copy_prop made no changes");
+            for (args, exp) in arg_sets.iter().zip(expected.iter()) {
+                let after = interp(&g, args, 100_000);
+                prop_assert_eq!(&after, exp, "gvn+copy_prop changed value ty={:?}", ty);
+            }
+            prop_assert!(count_insts(&g) <= before_count, "gvn increased instruction count");
+        }
+    }
+}

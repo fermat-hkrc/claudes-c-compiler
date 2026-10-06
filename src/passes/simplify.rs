@@ -2958,3 +2958,216 @@ mod tests {
         assert!(simplify_default(&inst).is_none());
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::simplify_function;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{Instruction, IrBinOp, IrConst, IrFunction, Operand, Terminator, Value};
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    fn any_ty(i: u8) -> IrType { int_ty_by_index(i) }
+
+    fn args_for(ty: &IrType, r1: i64, r2: i64) -> Vec<Vec<i128>> {
+        let raw = [0i64, 1, -1, 5, r1, r2, i64::MIN, i64::MAX];
+        let mut out: Vec<Vec<i128>> = Vec::new();
+        for &a in &raw[..6] {
+            for &b in &[0i64, 1, -1, r1] {
+                out.push(vec![canon(a as i128, ty), canon(b as i128, ty)]);
+            }
+        }
+        out.push(vec![canon(i64::MIN as i128, ty), canon(i64::MAX as i128, ty)]);
+        out
+    }
+
+    /// Build (clean, injected): the clean function ends in `Add(x, V)` where V is
+    /// a prior value; the injected function replaces V with an algebraic form
+    /// that the documented identity table reduces back to V (A-family) or to
+    /// the constant 0 when the clean side uses Const 0 (B-family).
+    fn build_identity_pair(
+        ty: IrType,
+        s0: i64,
+        steps: &[LinStep],
+        family: u8,
+        inj: u8,
+    ) -> (IrFunction, IrFunction) {
+        let build = |injected: bool| -> IrFunction {
+            let mut b = FnBuilder::new("f", ty, &[ty, ty]);
+            let p0 = b.v();
+            let p1 = b.v();
+            let mut vals: Vec<Operand> = vec![Operand::Value(p0), Operand::Value(p1)];
+            let mut insts = vec![
+                Instruction::ParamRef { dest: p0, param_idx: 0, ty },
+                Instruction::ParamRef { dest: p1, param_idx: 1, ty },
+            ];
+            let w = width(&ty);
+            let pick = |p: u8, c: i64, vals: &Vec<Operand>| -> Operand {
+                if p % 2 == 0 && !vals.is_empty() { vals[(p as usize / 2) % vals.len()] } else { const_int(&ty, (c % 1000) as u64) }
+            };
+            for &(oi, ap, bp, bc) in steps {
+                let op = op_by_index(oi);
+                let is_shift = matches!(op, IrBinOp::Shl | IrBinOp::LShr | IrBinOp::AShr);
+                let d = b.v();
+                let rhs = if is_shift { const_int(&ty, (bc.unsigned_abs() % w as u64) as u64) } else { pick(bp, bc, &vals) };
+                insts.push(Instruction::BinOp { dest: d, op, lhs: pick(ap, s0, &vals), rhs, ty });
+                vals.push(Operand::Value(d));
+            }
+            // v: a prior value the identity wraps.
+            let v = vals[(inj as usize / 7) % vals.len()];
+            let allones = const_int(&ty, u64::MAX);
+            let one = const_int(&ty, 1);
+            let zero = const_int(&ty, 0);
+            let signed = signed_ty(&ty);
+            let id_inst = if !injected {
+                Instruction::Copy { dest: b.v(), src: v }
+            } else if family % 2 == 0 {
+                match inj % 16 {
+                    0 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Add, lhs: v, rhs: zero, ty },
+                    1 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Add, lhs: zero, rhs: v, ty },
+                    2 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Sub, lhs: v, rhs: zero, ty },
+                    3 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Mul, lhs: v, rhs: one, ty },
+                    4 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Mul, lhs: one, rhs: v, ty },
+                    5 => Instruction::BinOp { dest: b.v(), op: if signed { IrBinOp::SDiv } else { IrBinOp::UDiv }, lhs: v, rhs: one, ty },
+                    6 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Xor, lhs: zero, rhs: v, ty },
+                    7 => Instruction::BinOp { dest: b.v(), op: IrBinOp::And, lhs: v, rhs: allones, ty },
+                    8 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Or, lhs: v, rhs: zero, ty },
+                    9 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Or, lhs: zero, rhs: v, ty },
+                    10 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Xor, lhs: v, rhs: zero, ty },
+                    11 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Shl, lhs: v, rhs: zero, ty },
+                    12 => Instruction::BinOp { dest: b.v(), op: if signed { IrBinOp::AShr } else { IrBinOp::LShr }, lhs: v, rhs: zero, ty },
+                    13 => Instruction::BinOp { dest: b.v(), op: IrBinOp::And, lhs: v, rhs: v, ty },
+                    14 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Or, lhs: v, rhs: v, ty },
+                    _ => Instruction::BinOp { dest: b.v(), op: IrBinOp::Sub, lhs: v, rhs: zero, ty },
+                }
+            } else {
+                match inj % 8 {
+                    0 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Sub, lhs: v, rhs: v, ty },
+                    1 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Xor, lhs: v, rhs: v, ty },
+                    2 => Instruction::BinOp { dest: b.v(), op: IrBinOp::And, lhs: v, rhs: zero, ty },
+                    3 => Instruction::BinOp { dest: b.v(), op: IrBinOp::And, lhs: zero, rhs: v, ty },
+                    4 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Mul, lhs: v, rhs: zero, ty },
+                    5 => Instruction::BinOp { dest: b.v(), op: IrBinOp::Shl, lhs: zero, rhs: v, ty },
+                    6 => Instruction::BinOp { dest: b.v(), op: if signed { IrBinOp::SRem } else { IrBinOp::URem }, lhs: v, rhs: one, ty },
+                    _ => Instruction::BinOp { dest: b.v(), op: IrBinOp::LShr, lhs: zero, rhs: v, ty },
+                }
+            };
+            let wrapped = last_dest(&id_inst);
+            insts.push(id_inst);
+            // Final op: Add(x, V) — V is the value (A) or Const 0 (B) on the clean side.
+            let operand = if !injected {
+                if family % 2 == 0 { v } else { zero }
+            } else {
+                Operand::Value(wrapped)
+            };
+            let x = vals[(inj as usize / 5 + 1) % vals.len()];
+            let r = b.v();
+            insts.push(Instruction::BinOp { dest: r, op: IrBinOp::Add, lhs: x, rhs: operand, ty });
+            b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+            b.seal()
+        };
+        (build(false), build(true))
+    }
+
+    fn last_dest(i: &Instruction) -> Value {
+        match i {
+            Instruction::BinOp { dest, .. } => *dest,
+            Instruction::Copy { dest, .. } => *dest,
+            _ => panic!("no dest"),
+        }
+    }
+
+    /// P7: identity-injected expressions must simplify back to the clean
+    /// expression's value (README identity table; x/x and x%x excluded —
+    /// C11-undefined when the operand is 0, per the UB-preservation contract).
+    /// Doc contract: simplify.rs:3 "Applies algebraic identities to simplify
+    /// instructions (integer types):" (d4552340)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p7_simplify_identity_metamorphic(
+            tyi in 0u8..4, s0 in any::<i64>(), r1 in any::<i64>(), r2 in any::<i64>(),
+            steps in prop::collection::vec(any::<(u8, u8, u8, i64)>(), 1..6),
+            family in 0u8..2, inj in any::<u8>()
+        ) {
+            let ty = any_ty(tyi);
+            let steps: Vec<LinStep> = steps;
+            let (clean, mut injected) = build_identity_pair(ty, s0, &steps, family, inj);
+            for args in args_for(&ty, r1, r2) {
+                let expected = interp(&clean, &args, 100_000);
+                let before = interp(&injected, &args, 100_000);
+                // The injected form must already mean the same thing per C11
+                // (identities are semantic equalities) — modulo family B, where
+                // clean uses Const 0 and injected computes it from v.
+                if family % 2 == 0 {
+                    prop_assert_eq!(before, expected, "identity not a semantic equality ty={:?} inj={}", ty, inj);
+                }
+            }
+            let n = to_fixpoint(&mut injected, simplify_function, 16);
+            prop_assert!(n >= 1, "simplify made no changes (identity left in place)");
+            for args in args_for(&ty, r1, r2) {
+                let expected = interp(&clean, &args, 100_000);
+                let after = interp(&injected, &args, 100_000);
+                prop_assert_eq!(after, expected, "identity simplification changed value ty={:?} family={} inj={}", ty, family, inj);
+            }
+        }
+    }
+
+    /// Build a function containing one strength-reduction target form.
+    fn build_sr(ty: IrType, sr: u8, k: u8, c0: i64) -> IrFunction {
+        let mut b = FnBuilder::new("f", ty, &[ty]);
+        let p = b.v();
+        let v = b.v();
+        let r = b.v();
+        let insts = vec![
+            Instruction::ParamRef { dest: p, param_idx: 0, ty },
+            Instruction::BinOp { dest: v, op: IrBinOp::Add, lhs: Operand::Value(p), rhs: const_int(&ty, (c0 % 97) as u64), ty },
+        ];
+        let kpow = 1u64 << (k % 63);
+        let target = match sr % 4 {
+            0 | 1 => Instruction::BinOp { dest: r, op: IrBinOp::Mul, lhs: Operand::Value(v), rhs: const_int(&ty, kpow), ty },
+            2 => Instruction::BinOp { dest: r, op: IrBinOp::UDiv, lhs: Operand::Value(v), rhs: const_int(&ty, kpow), ty },
+            _ => Instruction::BinOp { dest: r, op: IrBinOp::URem, lhs: Operand::Value(v), rhs: const_int(&ty, kpow), ty },
+        };
+        let mut all = insts;
+        all.push(target);
+        b.block(all, Terminator::Return(Some(Operand::Value(r))));
+        b.seal()
+    }
+
+    /// P8: strength reductions (x*2^k => x<<k / x+x, x*(-1) => neg(x),
+    /// x /u 2^k => x >>l k, x %u 2^k => x & (2^k-1)) preserve the value.
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p8_simplify_strength_reduction_value(
+            sr in 0u8..4, k in 0u8..32, tyi in any::<u8>(), r1 in any::<i64>(), c0 in any::<i64>()
+        ) {
+            // Unsigned reductions need an unsigned type.
+            let ty = if sr % 4 >= 2 {
+                if tyi % 2 == 0 { IrType::U32 } else { IrType::U64 }
+            } else {
+                int_ty_by_index(tyi)
+            };
+            let w = width(&ty);
+            let k = (k as u32 % (w - 1).max(1)) as u8;
+            let f = build_sr(ty, sr, k, c0);
+            let mut g = build_sr(ty, sr, k, c0);
+            let mut arg_sets: Vec<Vec<i128>> = Vec::new();
+            for a in [0i64, 1, -1, r1, i64::MIN, i64::MAX] {
+                arg_sets.push(vec![canon(a as i128, &ty)]);
+            }
+            for args in &arg_sets {
+                let _ = interp(&f, args, 100_000); // before-value sanity (no trap expected)
+            }
+            let n = to_fixpoint(&mut g, simplify_function, 16);
+            prop_assert!(n >= 1, "no simplification for sr={} k={} ty={:?}", sr, k, ty);
+            for args in &arg_sets {
+                let before = interp(&f, args, 100_000);
+                let after = interp(&g, args, 100_000);
+                prop_assert_eq!(before, after, "strength reduction changed value sr={} k={} ty={:?}", sr, k, ty);
+            }
+        }
+    }
+}

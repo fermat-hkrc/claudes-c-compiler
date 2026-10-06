@@ -1513,3 +1513,92 @@ mod tests {
             "After full simplification, should return 42");
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::simplify_cfg;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{BlockId, IrFunction, Terminator};
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    fn successors(t: &Terminator) -> Vec<BlockId> {
+        match t {
+            Terminator::Branch(a) => vec![*a],
+            Terminator::CondBranch { true_label, false_label, .. } => vec![*true_label, *false_label],
+            Terminator::Switch { cases, default, .. } => {
+                let mut v: Vec<BlockId> = cases.iter().map(|(_, b)| *b).collect();
+                v.push(*default);
+                v
+            }
+            _ => vec![],
+        }
+    }
+
+    fn label_index(f: &IrFunction, id: BlockId) -> Option<usize> {
+        f.blocks.iter().position(|b| b.label == id)
+    }
+
+    /// Reachability over LABELS (labels stay sparse after dead-block removal —
+    /// block index != label, so BFS must go through the label->index map).
+    fn all_reachable_from_entry(f: &IrFunction) -> bool {
+        let n = f.blocks.len();
+        let mut seen = vec![false; n];
+        let entry = f.blocks[0].label;
+        let mut stack = vec![entry];
+        seen[0] = true;
+        while let Some(l) = stack.pop() {
+            let i = match label_index(f, l) { Some(i) => i, None => return false };
+            for s in successors(&f.blocks[i].terminator) {
+                if let Some(j) = label_index(f, s) {
+                    if !seen[j] { seen[j] = true; stack.push(s); }
+                } else {
+                    return false;
+                }
+            }
+        }
+        seen.iter().all(|&s| s)
+    }
+
+    fn targets_in_range(f: &IrFunction) -> bool {
+        f.blocks.iter().all(|b| successors(&b.terminator).iter().all(|s| label_index(f, *s).is_some()))
+    }
+
+    /// P12: cfg_simplify preserves the interpreted value on random CFGs
+    /// (param-conditioned branches, constant conditions, switches), leaves
+    /// every block reachable from the entry with all targets in range, and
+    /// reaches its documented fixpoint (a second call changes nothing).
+    /// Doc contract: cfg_simplify.rs:50 "Simplify the CFG of a single function.
+    /// Iterates until no more simplifications are possible (fixpoint)." (fc35b96d)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p12_cfg_simplify_preservation_and_reachability(
+            terms in prop::collection::vec(any::<(u8, u32, u32, i64, i64)>(), 2..=6),
+            steps in prop::collection::vec(prop::collection::vec(any::<(u8, u8, i64)>(), 0..=2), 0..=6),
+            ret_pick in any::<u8>(), cmp_idx in any::<u8>(),
+            a in any::<i32>(), b in any::<i32>()
+        ) {
+            let spec = CfgSpec { terms, steps, ret_pick, cmp_idx };
+            let f = build_random_cfg(&spec);
+            let mut g = build_random_cfg(&spec);
+            let mut arg_sets: Vec<Vec<i128>> = Vec::new();
+            for (x, y) in [(0i32, 0), (1, 0), (-1, i32::MAX), (a, b)] {
+                arg_sets.push(vec![x as i128, y as i128]);
+            }
+            let expected: Vec<RunOutcome> = arg_sets.iter().map(|s| interp(&f, s, 200_000)).collect();
+            simplify_cfg(&mut g);
+            for (args, exp) in arg_sets.iter().zip(expected.iter()) {
+                let after = interp(&g, args, 200_000);
+                prop_assert_eq!(&after, exp, "cfg_simplify changed value");
+            }
+            prop_assert!(all_reachable_from_entry(&g), "unreachable block survived");
+            prop_assert!(targets_in_range(&g), "branch target out of range");
+            let n2 = simplify_cfg(&mut g);
+            prop_assert_eq!(n2, 0, "cfg_simplify not at fixpoint after one call");
+            let _ = IrType::I32;
+        }
+    }
+}
+

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Defect Report: constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16)</title>
+<style>
+body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
+h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
+th, td { padding: .65rem; border-bottom: 1px solid #d7deea; text-align: left; vertical-align: top; }
+code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3rem; } pre { padding: 1rem; overflow-x: auto; white-space: pre-wrap; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 99px; background: #fce7e7; color: #8a1c1c; font-weight: 600; }
+.muted { color: #56657a; }
+</style>
+</head>
+<body data-template="pbt-bug-report-v1">
+<p><a href="../../REPORT.html">Return to report overview</a></p>
+<h1>Defect Report: constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16)</h1>
+<p><span class="badge">medium</span> <code>b1</code> <span class="muted">round 07 — src/passes</span></p>
+<section data-section="issue-synopsis">
+<h2>Issue Synopsis</h2>
+<p>fold_binop's <code>is_32bit</code> fast path widens sub-int operands with <code>as u32</code> (sign-extending a negative i8/i16 to 32 bits) before LOGICAL operations, so LShr/UDiv/URem at I8/I16 with negative constants fold to wrong values.</p>
+<table><tr><th>Expected behavior</th><td>LShr((I8)0xB8, 1) folds to 92 (logical shift of the 8-bit pattern)</td></tr><tr><th>Observed behavior</th><td>folds to -36 (0xDC) — 0xFFFFFFB8 &gt;&gt; 1 low byte</td></tr><tr><th>Impact assessment</th><td>latent silent miscompile: any I8/I16-typed logical shift / unsigned div / unsigned rem that reaches constant_fold folds wrong; narrow Phase 1 can create exactly those instruction shapes and the pipeline re-runs constant_fold afterwards</td></tr><tr><th>Minimal counterexample</th><td><code>d = LShr(Const(I8(-72)), Const(I8(1)), I8)</code> → fold gives -36, C11 requires 92</td></tr></table>
+<p><strong>Contract basis:</strong> inferred — the IrType-typed BinOp semantics (the pass itself truncates operands to <code>ty</code> first, so the logical arms must zero-extend within <code>ty</code>'s width too).</p>
+</section>
+<section data-section="detection-methodology">
+<h2>Detection and Validation Methodology</h2>
+<table><tr><th>Property test</th><td>p5_fold_matches_c11_model (<code>p5</code>)</td></tr><tr><th>Formal property</th><td>∀ E ∈ const-expr DAGs over mixed integer types: fold_function(E) leaves Return = Const(interp(E)) (independent C11 interpreter oracle)</td></tr><tr><th>Oracle</th><td>differential (fold vs independent C11-semantics interpreter in pbt_common.rs)</td></tr><tr><th>System under test</th><td>passes::constant_fold::fold_function</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/constant_fold.rs:684</code> (fold_binop; LShr arm at :729, UDiv/URem same pattern)</td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/constant_fold.rs</code></td></tr><tr><th>Serial reconfirmation</th><td>yes — RUST_TEST_THREADS=1, deterministic red witness fails serially</td></tr></table>
+</section>
+<section data-section="reproduction-protocol">
+<h2>Reproduction Protocol</h2>
+<pre>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib passes::constant_fold::pbt_tests::test_constant_fold_regression_subint_lshr_zero_extend --exact --nocapture</pre>
+<pre>left: `Value(-36)`
+right: `Value(92)`
+test result: FAILED. 0 passed; 1 failed</pre>
+</section>
+<section data-section="remediation-strategy">
+<h2>Remediation Strategy</h2>
+<p>In fold_binop's <code>is_32bit</code> logical arms, zero-extend the sub-int operand pattern to 32 bits (mask to the operand type's width before <code>as u32</code>); AShr's <code>as i32</code> sign-extension is promotion-correct and can stay. Same fix for UDiv and URem arms. Red witness: <code>src/passes/constant_fold.rs</code> <code>test_constant_fold_regression_subint_lshr_zero_extend</code> (also covers UDiv).</p>
+</section>
+</body>
+</html>

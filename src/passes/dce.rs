@@ -472,3 +472,97 @@ mod tests {
                 "Phi should be removed from loop header");
     }
 }
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::eliminate_dead_code;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{Instruction, IrFunction, Operand, Terminator, Value};
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    /// Linear DAG whose result is returned, followed by a pure dead tail
+    /// (dests never used).
+    fn build_dead_tail(ty: IrType, s0: i64, steps: &[(u8, u8, u8, i64)], dead: &[(u8, i64)]) -> (IrFunction, Vec<u32>) {
+        let mut b = FnBuilder::new("f", ty, &[ty, ty]);
+        let p0 = b.v();
+        let p1 = b.v();
+        let mut vals: Vec<Operand> = vec![Operand::Value(p0), Operand::Value(p1)];
+        let mut insts = vec![
+            Instruction::ParamRef { dest: p0, param_idx: 0, ty },
+            Instruction::ParamRef { dest: p1, param_idx: 1, ty },
+        ];
+        let w = width(&ty);
+        let pick = |p: u8, c: i64, vals: &Vec<Operand>| -> Operand {
+            if p % 2 == 0 && !vals.is_empty() { vals[(p as usize / 2) % vals.len()] } else { const_int(&ty, (c % 1000) as u64) }
+        };
+        for &(oi, ap, bp, bc) in steps {
+            let d = b.v();
+            let is_shift = matches!(op_by_index(oi), crate::ir::reexports::IrBinOp::Shl | crate::ir::reexports::IrBinOp::LShr | crate::ir::reexports::IrBinOp::AShr);
+            let rhs = if is_shift { const_int(&ty, (bc.unsigned_abs() % w as u64) as u64) } else { pick(bp, bc, &vals) };
+            insts.push(Instruction::BinOp { dest: d, op: op_by_index(oi), lhs: pick(ap, s0, &vals), rhs, ty });
+            vals.push(Operand::Value(d));
+        }
+        let ret = vals.last().copied().unwrap_or(Operand::Value(p0));
+        let mut dead_ids = Vec::new();
+        let mut prev: Operand = Operand::Value(p0);
+        for &(oi, c) in dead {
+            let d = b.v();
+            dead_ids.push(d.0);
+            let op = op_by_index(oi);
+            let is_shift = matches!(op, crate::ir::reexports::IrBinOp::Shl | crate::ir::reexports::IrBinOp::LShr | crate::ir::reexports::IrBinOp::AShr);
+            let rhs = if is_shift { const_int(&ty, (c.unsigned_abs() % w as u64) as u64) } else { const_int(&ty, (c % 1000) as u64) };
+            insts.push(Instruction::BinOp { dest: d, op, lhs: prev, rhs, ty });
+            prev = Operand::Value(d);
+        }
+        b.block(insts, Terminator::Return(Some(ret)));
+        (b.seal(), dead_ids)
+    }
+
+    /// P10: DCE removes pure dead chains without changing the returned value.
+    /// Doc contract: dce.rs:3 "Removes instructions whose results are never
+    /// used by any other instruction or terminator." (465c2b5b)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1024))]
+        #[test]
+        fn p10_dce_preservation(
+            tyi in 0u8..4, s0 in any::<i64>(), r1 in any::<i64>(),
+            steps in prop::collection::vec(any::<(u8, u8, u8, i64)>(), 1..6),
+            dead in prop::collection::vec(any::<(u8, i64)>(), 1..4)
+        ) {
+            let ty = int_ty_by_index(tyi);
+            let (f, dead_ids) = build_dead_tail(ty, s0, &steps, &dead);
+            let (mut g, _) = build_dead_tail(ty, s0, &steps, &dead);
+            let before_count = count_insts(&g);
+            let mut arg_sets: Vec<Vec<i128>> = Vec::new();
+            for a in [0i64, 1, -1, r1, i64::MIN, i64::MAX] {
+                arg_sets.push(vec![canon(a as i128, &ty), canon(r1 as i128, &ty)]);
+            }
+            let expected: Vec<RunOutcome> = arg_sets.iter().map(|a| interp(&f, a, 100_000)).collect();
+            let n = eliminate_dead_code(&mut g);
+            prop_assert!(n >= 1, "dce removed nothing");
+            for (args, exp) in arg_sets.iter().zip(expected.iter()) {
+                let after = interp(&g, args, 100_000);
+                prop_assert_eq!(&after, exp, "dce changed value ty={:?}", ty);
+            }
+            prop_assert!(count_insts(&g) < before_count, "dce removed no instructions");
+            for id in &dead_ids {
+                let still_defined = g.blocks.iter().any(|blk| blk.instructions.iter().any(|i| inst_dest(i) == Some(Value(*id))));
+                prop_assert!(!still_defined, "dead instruction {} survived dce", id);
+            }
+        }
+    }
+
+    fn inst_dest(i: &Instruction) -> Option<Value> {
+        use crate::ir::reexports::IrBinOp;
+        match i {
+            Instruction::BinOp { dest, .. } => Some(*dest),
+            Instruction::Copy { dest, .. } => Some(*dest),
+            Instruction::Cmp { dest, .. } => Some(*dest),
+            Instruction::Cast { dest, .. } => Some(*dest),
+            Instruction::UnaryOp { dest, .. } => Some(*dest),
+            _ => None,
+        }
+    }
+}

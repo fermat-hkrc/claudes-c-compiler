@@ -1,0 +1,77 @@
+{
+  "source": "commit:HEAD",
+  "files": [
+    "src/ir/analysis.rs",
+    "src/ir/constants.rs",
+    "src/ir/mem2reg/phi_eliminate.rs",
+    "src/ir/mem2reg/promote.rs",
+    "src/ir/ops.rs"
+  ],
+  "functions": [
+    {
+      "name": "func_from_descriptors",
+      "file": "src/ir/analysis.rs",
+      "line": 374,
+      "errorHandling": true,
+      "hunks": [
+        [
+          374,
+          735
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "p5_unsigned_repr_writer_differential",
+      "file": "src/ir/constants.rs",
+      "line": 642,
+      "errorHandling": true,
+      "hunks": [
+        [
+          642,
+          896
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "build_random_func",
+      "file": "src/ir/mem2reg/phi_eliminate.rs",
+      "line": 583,
+      "errorHandling": false,
+      "hunks": [
+        [
+          583,
+          814
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "build_random_func",
+      "file": "src/ir/mem2reg/promote.rs",
+      "line": 1348,
+      "errorHandling": true,
+      "hunks": [
+        [
+          1348,
+          1606
+        ]
+      ],
+      "role": "changed"
+    },
+    {
+      "name": "p1_div_rem_c11_identity",
+      "file": "src/ir/ops.rs",
+      "line": 218,
+      "errorHandling": true,
+      "hunks": [
+        [
+          218,
+          412
+        ]
+      ],
+      "role": "changed"
+    }
+  ]
+}

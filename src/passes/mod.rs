@@ -26,6 +26,9 @@ pub(crate) mod narrow;
 mod resolve_asm;
 pub(crate) mod simplify;
 
+#[cfg(test)]
+pub(crate) mod pbt_common;
+
 use crate::ir::analysis::CfgAnalysis;
 use crate::ir::reexports::{IrFunction, IrModule};
 
@@ -548,4 +551,102 @@ pub(crate) fn run_passes(module: &mut IrModule, _opt_level: u32, target: crate::
     // (e.g., kernel's `___siphash_aligned` calling `__siphash_aligned` which doesn't
     // exist on x86 where CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS is set).
     dead_statics::eliminate_dead_static_functions(module);
+}
+
+// ── PBT properties (round 07) ─────────────────────────────────────────────────
+#[cfg(test)]
+mod pbt_tests {
+    use super::run_passes;
+    use crate::backend::Target;
+    use crate::common::types::IrType;
+    use crate::ir::reexports::{Instruction, IrBinOp, IrFunction, Operand, Terminator};
+    use crate::passes::pbt_common::*;
+    use proptest::prelude::*;
+
+    fn build_udiv32(d: u32) -> IrFunction {
+        let mut b = FnBuilder::new("f", IrType::U32, &[IrType::U32]);
+        let p = b.v();
+        let r = b.v();
+        let insts = vec![
+            Instruction::ParamRef { dest: p, param_idx: 0, ty: IrType::U32 },
+            Instruction::BinOp { dest: r, op: IrBinOp::UDiv, lhs: Operand::Value(p), rhs: const_int(&IrType::U32, d as u64), ty: IrType::U32 },
+        ];
+        b.block(insts, Terminator::Return(Some(Operand::Value(r))));
+        b.seal()
+    }
+
+    /// P14: the full pipeline (inline -> cleanup -> main loop with every pass
+    /// incl. GVN/LICM/IVSR shared analysis, IPCP, dead statics) preserves the
+    /// interpreted value on every generated shape and never panics.
+    /// Doc contract: mod.rs:255 "1. Every test run exercises every optimization
+    /// pass." (e40383fa)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p14_pipeline_value_preservation(
+            shape in 0u8..5,
+            s0 in any::<i64>(), r1 in any::<i64>(), r2 in any::<i64>(),
+            steps in prop::collection::vec(any::<(u8, u8, u8, i64)>(), 1..6),
+            cmp_idx in any::<u8>(), k in any::<i64>(),
+            op1 in any::<u8>(), c1 in any::<i64>(), op2 in any::<u8>(), c2 in any::<i64>(),
+            terms in prop::collection::vec(any::<(u8, u32, u32, i64, i64)>(), 2..=6),
+            csteps in prop::collection::vec(prop::collection::vec(any::<(u8, u8, i64)>(), 0..=2), 0..=6),
+            ret_pick in any::<u8>(),
+            trip in any::<u8>(), mul_k in any::<i64>(),
+            du32 in any::<u32>(), a in any::<i32>(), b in any::<i32>()
+        ) {
+            let ty = int_ty_by_index(r1 as u8);
+            let (f, arg_sets): (IrFunction, Vec<Vec<i128>>) = match shape % 5 {
+                0 => {
+                    let t = int_ty_by_index((s0 as u8) % 4);
+                    let mut sets = Vec::new();
+                    for x in [0i64, 1, -1, r2, i64::MIN, i64::MAX] {
+                        sets.push(vec![canon(x as i128, &t), canon(r2 as i128, &t)]);
+                    }
+                    (build_linear(t, s0, &steps), sets)
+                }
+                1 => {
+                    let mut sets = Vec::new();
+                    for (x, y) in [(0i32, 0), (1, -1), (a, b), (i32::MIN, i32::MAX)] {
+                        sets.push(vec![x as i128, y as i128]);
+                    }
+                    (build_diamond(cmp_idx, k, op1, c1, op2, c2), sets)
+                }
+                2 => (build_loop(trip, mul_k), vec![vec![a as i128]]),
+                3 => {
+                    let spec = CfgSpec { terms: terms.clone(), steps: csteps.clone(), ret_pick, cmp_idx: cmp_idx };
+                    let mut sets = Vec::new();
+                    for (x, y) in [(0i32, 0), (1, 0), (-1, i32::MAX), (a, b)] {
+                        sets.push(vec![x as i128, y as i128]);
+                    }
+                    (build_random_cfg(&spec), sets)
+                }
+                _ => {
+                    let d = du32 % u32::MAX + 1; // 1..=u32::MAX (d==1 unrewritten, still valid)
+                    let mut sets = Vec::new();
+                    for x in [0u32, 1, 7, u32::MAX, du32] {
+                        sets.push(vec![x as i128]);
+                    }
+                    (build_udiv32(d), sets)
+                }
+            };
+            let expected: Vec<RunOutcome> = arg_sets.iter().map(|s| interp(&f, s, 200_000)).collect();
+            // Rebuild deterministically, then run the whole pipeline.
+            let g = match shape % 5 {
+                0 => build_linear(int_ty_by_index((s0 as u8) % 4), s0, &steps),
+                1 => build_diamond(cmp_idx, k, op1, c1, op2, c2),
+                2 => build_loop(trip, mul_k),
+                3 => build_random_cfg(&CfgSpec { terms, steps: csteps, ret_pick, cmp_idx }),
+                _ => build_udiv32(du32 % u32::MAX + 1),
+            };
+            let mut m = module_of(g);
+            run_passes(&mut m, 2, Target::X86_64);
+            let out = &m.functions[0];
+            for (args, exp) in arg_sets.iter().zip(expected.iter()) {
+                let after = interp(out, args, 200_000);
+                prop_assert_eq!(&after, exp, "pipeline changed value shape={}", shape % 5);
+            }
+            let _ = ty;
+        }
+    }
 }
