@@ -62,6 +62,8 @@ mod encode_fp_arith_pbt;
 mod encode_fp_arith_d_pbt;
 #[cfg(test)]
 mod encode_fp_unary_pbt;
+#[cfg(test)]
+mod encode_fp_sgnj_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;
