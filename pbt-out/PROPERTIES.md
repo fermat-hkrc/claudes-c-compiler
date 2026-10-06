@@ -1,398 +1,344 @@
-# Properties: encode_tst
+# Properties: encode_tbz
 
-## encode_tst_diff_valid_reg
+## encode_tbz_diff_imm_llvm_mc
 - Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc on the valid TST shifted-register domain. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree TST decoder). encode_logical rejected as same-job sibling (3-operand ANDS mnemonic/arity). encode_cmp/encode_cmn rejected (SUBS/ADDS aliases). Weaker: ARM field invariant, field metamorphic, negative_error.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: compare_branch.rs encode_cmp_diff_reg_llvm_mc
-- Formal: ∀ rn,rm ∈ GPR_W ∪ GPR_X (same width, n∈0..31 including ZR/LR), shift ∈ {ε} ∪ {lsl,lsr,asr,ror}×{0..max}, spellings ∈ {lower,UPPER,x31≡xzr}. encode_tst([Rn,Rm{,Shift}]) = llvm-mc("tst Rn, Rm{, shift #amt}") as u32 LE word
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc on the valid TBZ/TBNZ immediate-offset domain. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree TBZ decoder). encode_cbz rejected as same-job sibling (CondBr19, no bit operand). encode_cond_branch rejected (B.cond). Weaker: ARM field invariant, TBZ/TBNZ metamorphic, negative_error.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_diff_imm_llvm_mc
+- Formal: ∀ rt ∈ GPR_W ∪ GPR_X (n∈0..31 including ZR/LR), bit ∈ 0..31 (W) / 0..63 (X), imm ∈ {k·4 | k∈ℤ, −32768 ≤ k·4 ≤ 32764}, is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Imm(imm)], is_nz) = Word(llvm-mc("tbz/tbnz rt, #bit, #imm"))
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: failing
+- Counterexample: encode_tbz([Reg("x0"), Imm(0), Imm(-32768)], false) — tbz x0, #0, #-32768
+- Bug report: pbt-out/bug_reports/encode_tbz_imm_offset.md
 
 ```property
-function: encoder.compare_branch.encode_tst
+function: encoder.compare_branch.encode_tbz
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rn, rm, is_64]
-  domain: { rn: "0..31", rm: "0..31", is_64: bool }
+  vars: [rt, bit, imm, is_nz]
+  domain: { rt: "GPR W/X 0..31 incl ZR/LR", bit: "0..31 W / 0..63 X", imm: "aligned -32768..32764", is_nz: bool }
   relation:
     op: eq
-    lhs: encode_tst([Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm)), Shift?])
-    rhs: llvm_mc_word("tst rn, rm{, shift}")
+    lhs: encode_tbz([Reg(rt), Imm(bit), Imm(imm)], is_nz)
+    rhs: llvm_mc_word("tbz|tbnz rt, #bit, #imm")
 generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: compare_branch.rs:38 asserted TST/ANDS alias; encoder/mod.rs:433 dispatch
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  bit: { gen: int, min: 0, max: 63, type: i64 }
+  imm: { gen: int, min: -32768, max: 32764, type: i64 }
+  is_nz: { gen: bool }
+evidence: README.md:12 gas-compat; README.md:220 tbz/tbnz; encoder/mod.rs:455-456 dispatch; ARM ARM Test and branch (immediate)
 ```
 
-## encode_tst_diff_valid_imm
-- Tier: 5
-- Rationale: Same llvm-mc differential on the bitmask-immediate form. Independent bitmask_from_fields constructor (ARM ARM, not encode_bitmask_imm).
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: data_processing.rs encode_logical_pbt bitmask_from_fields
-- Formal: ∀ rn ∈ GPR_W ∪ GPR_X, (esize,ones,rot) a valid ARM bitmask. encode_tst([Rn, Imm(bitmask)]) = llvm-mc("tst Rn, #imm")
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rn, is_64, imm]
-  domain: { rn: "0..31", is_64: bool, imm: "valid ARM bitmask" }
-  relation:
-    op: eq
-    lhs: encode_tst([Reg(gpr(is_64,rn)), Imm(imm)])
-    rhs: llvm_mc_word("tst rn, #imm")
-generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  imm: { gen: int, min: 1, max: 255, type: i64 }
-evidence: compare_branch.rs:38; ARM ARM Logical (immediate) ANDS Rd=31
-```
-
-## encode_tst_arm_fields
+## encode_tbz_symbol_reloc
 - Tier: 4
-- Rationale: ARM ARM Logical (shifted register) ANDS field layout with Rd=31, opc=11 is an exact structural invariant of every successful register-form encoding.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: compare_branch.rs encode_cmp_word_layout_imm
-- Formal: ∀ rn,rm ∈ 0..31, is_64 ∈ {false,true}, (st,amt) valid shift. let w = encode_tst(...). bits[4:0]=31 ∧ bits[30:29]=11 ∧ bits[28:24]=01010 ∧ bit21=0 ∧ bits[31]=sf ∧ bits[9:5]=rn ∧ bits[20:16]=rm ∧ bits[23:22]=st ∧ bits[15:10]=amt
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
+- Rationale: README.md:267 TstBr14 ELF 279 and README.md:458 say TBZ/TBNZ emit a 14-bit test-and-branch relocation with imm14 left 0 for the linker/assembler. Exact structural invariant of the symbol/label form.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_symbol_reloc
+- Formal: ∀ n ∈ 0..31, bit ∈ 0..63, is_nz ∈ {false,true}, s a symbol, a ∈ ℤ. encode_tbz([Reg(xn|wn), Imm(bit), Symbol(s)|Label(s)|SymbolOffset(s,a)], is_nz) = WordWithReloc { word: (b5<<31)|(0b011011<<25)|(op<<24)|(b40<<19)|n with imm14=0, reloc_type=TstBr14, elf_type=279, symbol=s, addend=0|a }
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tst
+function: encoder.compare_branch.encode_tbz
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rn, rm, is_64]
-  domain: { rn: "0..31", rm: "0..31", is_64: bool }
+  vars: [n, bit, is_nz, addend]
+  domain: { n: "0..31", bit: "0..63", is_nz: bool, addend: i64 }
   relation:
     op: holds
-    expr: word_fields_match_arm_ands_rd31(encode_tst(ops))
+    expr: word_imm14_zero_and_reloc_tstbr14_elf279
 generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: compare_branch.rs:38 ARM ANDS XZR alias
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  bit: { gen: int, min: 0, max: 63, type: i64 }
+  is_nz: { gen: bool }
+  addend: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: README.md:267 TstBr14 ELF 279; README.md:458 TBZ/TBNZ deferred reloc; compare_branch.rs:261-271
 ```
 
-## encode_tst_meta_vs_ands
+## encode_tbz_word_layout
 - Tier: 4
-- Rationale: Documented alias TST Rn, op = ANDS XZR/WZR, Rn, op. encode_logical is not a same-job primary differential; used only as a metamorphic alias transform.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: compare_branch.rs encode_cmp_meta_vs_subs
-- Formal: ∀ ops a valid TST operand list. encode_tst(ops) = encode_logical([ZR]++ops, 0b11) where ZR is wzr iff Rn is 32-bit else xzr
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
+- Rationale: ARM ARM Test and branch (immediate) field layout is an exact structural invariant of every successful encoding. Documented bounds b5/b40/op/Rt sampled at 0, 31, 32, 63.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_word_layout
+- Formal: ∀ n ∈ 0..31, bit ∈ 0..63, is_nz ∈ {false,true}. let w = encode_tbz([Reg(xn), Imm(bit), Symbol("L")], is_nz).word. bits[30:25]=011011 ∧ bit[31]=b5 ∧ bit[24]=op ∧ bits[23:19]=b40 ∧ bits[18:5]=0 ∧ bits[4:0]=n
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tst
+function: encoder.compare_branch.encode_tbz
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [n, bit, is_nz]
+  domain: { n: "0..31", bit: "0..63", is_nz: bool }
+  relation:
+    op: holds
+    expr: arm_tbz_fields(w, n, bit, is_nz)
+generators:
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  bit: { gen: int, min: 0, max: 63, type: i64 }
+  is_nz: { gen: bool }
+evidence: compare_branch.rs:261 ARM TBZ/TBNZ layout
+```
+
+## encode_tbz_meta_tbz_vs_tbnz
+- Tier: 4
+- Rationale: ARM ARM op bit is the sole TBZ/TBNZ distinction (bit 24). Metamorphic: same operands, is_nz true vs false, encodings differ only at bit 24 and share TstBr14 reloc.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_meta_cbz_vs_cbnz
+- Formal: ∀ n ∈ 0..31, bit ∈ 0..63, s a symbol, a ∈ ℤ. encode_tbz(ops, true).word XOR encode_tbz(ops, false).word = 1<<24 ∧ both reloc_type=TstBr14 ∧ same symbol ∧ same addend
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_tbz
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rn, rm, is_64]
-  domain: { rn: "0..31", rm: "0..31", is_64: bool }
+  vars: [n, bit, addend]
+  domain: { n: "0..31", bit: "0..63", addend: i64 }
   relation:
     op: eq
-    lhs: encode_tst([Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm))])
-    rhs: encode_logical([Reg(zr), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm))], 0b11)
+    lhs: encode_tbz(ops, true).word XOR encode_tbz(ops, false).word
+    rhs: 1u32 << 24
 generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: compare_branch.rs:38 alias comment
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  bit: { gen: int, min: 0, max: 63, type: i64 }
+  addend: { gen: int, min: -4096, max: 4096, type: i64 }
+evidence: compare_branch.rs:259 op = is_nz; ARM ARM TBZ op=0 TBNZ op=1
 ```
 
-## encode_tst_metamorphic_fields
-- Tier: 4
-- Rationale: A single-field increment of Rn/Rm/shift-amount or W↔X must flip only the corresponding ARM bit.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: encode_fnmadd_fnmsub_metamorphic_fields
-- Formal: ∀ rn,rm ∈ 0..30, is_64, amt ∈ 0..max-1. let w = TST(rn,rm,lsl#amt). TST(rn+1)=w+(1<<5) ∧ TST(rm+1)=w+(1<<16) ∧ TST(amt+1)=w+(1<<10) ∧ (TST(¬is_64) XOR w)=1<<31
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
+## encode_tbz_neg_arity
+- Tier: 3
+- Rationale: llvm-mc rejects too-few-operands (`tbz x0`, `tbz x0, #0`). get_reg/get_imm/get_symbol fail on missing slots. Negative/error contract with documented exact Err.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_neg_arity
+- Formal: ∀ is_nz ∈ {false,true}. encode_tbz([], is_nz) is Err ∧ encode_tbz([Reg("x0")], is_nz) is Err ∧ encode_tbz([Reg("x0"), Imm(0)], is_nz) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.compare_branch.encode_tst
+function: encoder.compare_branch.encode_tbz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [is_nz]
+  domain: { is_nz: bool }
+  relation:
+    op: holds
+    expr: encode_tbz([], is_nz).is_err() && encode_tbz([Reg("x0")], is_nz).is_err() && encode_tbz([Reg("x0"), Imm(0)], is_nz).is_err()
+generators:
+  is_nz: { gen: bool }
+expected_error: String
+evidence: llvm-mc "too few operands for instruction"; get_reg/get_imm/get_symbol at 0/1/2
+```
+
+## encode_tbz_neg_extra_operand
+- Tier: 3
+- Rationale: llvm-mc rejects a fourth operand (`tbz x0, #0, label, x1`). Body has no operands.len() upper bound. Negative/error contract; extra operands stay in the generator (not declared invalid by this function).
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_neg_extra_operand
+- Formal: ∀ n ∈ 0..30, bit ∈ 0..63, is_nz ∈ {false,true}, extra ∈ Operand. encode_tbz([Reg(xn), Imm(bit), Symbol(s), extra], is_nz) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: failing
+- Counterexample: encode_tbz([Reg("x0"), Imm(0), Symbol("labl0"), Reg("x1")], false)
+- Bug report: pbt-out/bug_reports/encode_tbz_extra_operand.md
+
+```property
+function: encoder.compare_branch.encode_tbz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n, bit, is_nz, extra]
+  domain: { n: "0..30", bit: "0..63", is_nz: bool, extra: Operand }
+  relation:
+    op: holds
+    expr: encode_tbz([Reg(xn), Imm(bit), Symbol(s), extra], is_nz).is_err()
+generators:
+  n: { gen: int, min: 0, max: 30, type: u32 }
+  bit: { gen: int, min: 0, max: 63, type: i64 }
+  is_nz: { gen: bool }
+  extra: { gen: int, min: 0, max: 3, type: u32 }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on fourth operand
+```
+
+## encode_tbz_neg_wrong_reg
+- Tier: 3
+- Rationale: llvm-mc rejects SP/WSP as Rt. parse_reg_num maps SP to 31; those inputs stay in the generator (not declared invalid by this function).
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_neg_wrong_reg
+- Formal: ∀ name ∈ {sp,wsp}, is_nz ∈ {false,true}. encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: failing
+- Counterexample: encode_tbz([Reg("sp"), Imm(0), Symbol("L")], false)
+- Bug report: pbt-out/bug_reports/encode_tbz_sp_as_zr.md
+
+```property
+function: encoder.compare_branch.encode_tbz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [name, is_nz]
+  domain: { name: "sp|wsp", is_nz: bool }
+  relation:
+    op: holds
+    expr: encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz).is_err()
+generators:
+  name: { gen: string }
+  is_nz: { gen: bool }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on sp
+```
+
+## encode_tbz_neg_fp_reg
+- Tier: 3
+- Rationale: llvm-mc rejects FP/SIMD Rt (d/s/q/v/h/b). parse_reg_num accepts those prefixes; inputs stay in the generator.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_neg_wrong_reg
+- Formal: ∀ prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31, is_nz ∈ {false,true}. encode_tbz([Reg(prefix+n), Imm(0), Symbol("L")], is_nz) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: failing
+- Counterexample: encode_tbz([Reg("d0"), Imm(0), Symbol("L")], false)
+- Bug report: pbt-out/bug_reports/encode_tbz_fp_reg.md
+
+```property
+function: encoder.compare_branch.encode_tbz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [name, is_nz]
+  domain: { name: "d/s/q/v/h/b N", is_nz: bool }
+  relation:
+    op: holds
+    expr: encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz).is_err()
+generators:
+  name: { gen: string }
+  is_nz: { gen: bool }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" on d0
+```
+
+## encode_tbz_neg_bit_oor
+- Tier: 3
+- Rationale: ARM ARM and llvm-mc require bit ∈ [0,31] for W and [0,63] for X. Documented bounds sampled at −1, 32 (W), 64 (X), i64::MIN/MAX. Body masks to 6 bits and does not declare OOR bits invalid.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: compare_branch.rs encode_cbz_neg_imm_unaligned_oor
+- Formal: ∀ rt ∈ GPR_W ∪ GPR_X, bit ∉ valid range (W: [0,31], X: [0,63]), is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Symbol("L")], is_nz) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: failing
+- Counterexample: encode_tbz([Reg("w0"), Imm(-1), Symbol("L")], false)
+- Bug report: pbt-out/bug_reports/encode_tbz_bit_oor.md
+
+```property
+function: encoder.compare_branch.encode_tbz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rt, bit, is_nz]
+  domain: { rt: "GPR W/X", bit: "outside 0..31 W / 0..63 X", is_nz: bool }
+  relation:
+    op: holds
+    expr: encode_tbz([Reg(rt), Imm(bit), Symbol("L")], is_nz).is_err()
+generators:
+  rt: { gen: int, min: 0, max: 31, type: u32 }
+  bit: { gen: int, min: -8, max: 72, type: i64 }
+  is_nz: { gen: bool }
+expected_error: String
+evidence: llvm-mc "immediate must be an integer in range [0, 31]" / "[0, 63]"
+```
+
+## encode_tbz_neg_invalid_name
+- Tier: 3
+- Rationale: Sweep: unparsable names (x32, foo, empty, r0) must Err via parse_reg_num. Documented get_reg failure path.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: encode_tst_neg_invalid_name
+- Formal: ∀ name ∈ {x32,w32,foo,"",r0,x,x-1,x99}, is_nz ∈ {false,true}. encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_tbz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [name, is_nz]
+  domain: { name: "unparsable", is_nz: bool }
+  relation:
+    op: holds
+    expr: encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz).is_err()
+generators:
+  name: { gen: string }
+  is_nz: { gen: bool }
+expected_error: String
+evidence: parse_reg_num rejects x32/foo; llvm-mc invalid operand
+```
+
+## encode_tbz_meta_rt_isolation
+- Tier: 4
+- Rationale: Sweep metamorphic: incrementing Rt by 1 flips only bits[4:0]. Strengthens the ARM field invariant.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: encode_cbz_word_layout
+- Formal: ∀ n ∈ 0..30, bit ∈ 0..63, is_nz ∈ {false,true}. encode_tbz(x{n}, bit, L).word XOR encode_tbz(x{n+1}, bit, L).word = n XOR (n+1)
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_tbz
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rn, rm, is_64, amt]
-  domain: { rn: "0..30", rm: "0..30", is_64: bool, amt: "0..30" }
+  vars: [n, bit, is_nz]
+  domain: { n: "0..30", bit: "0..63", is_nz: bool }
+  relation:
+    op: eq
+    lhs: encode_tbz(xn).word XOR encode_tbz(x{n+1}).word
+    rhs: n XOR (n+1)
+generators:
+  n: { gen: int, min: 0, max: 30, type: u32 }
+  bit: { gen: int, min: 0, max: 63, type: i64 }
+  is_nz: { gen: bool }
+evidence: compare_branch.rs:261 Rt in bits[4:0]
+```
+
+## encode_tbz_neg_bad_label_kind
+- Tier: 3
+- Rationale: Sweep: get_symbol other-kind arm (Mem/Shift/Extend/RegArrangement/Expr/RegList) must Err.
+- Doc contract: compare_branch.rs:261 "TBZ/TBNZ: b5 011011 op b40 imm14 Rt" — asserted fingerprint 49c8712c
+- Seed: encode_cbz_neg_bad_label_kind
+- Formal: ∀ kind ∈ {Mem,Shift,Extend,RegArrangement,Expr,RegList}, is_nz ∈ {false,true}. encode_tbz([Reg("x0"), Imm(0), kind], is_nz) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_tbz_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.compare_branch.encode_tbz
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [which, is_nz]
+  domain: { which: "0..5", is_nz: bool }
   relation:
     op: holds
-    expr: field_increments_isolate(encode_tst)
+    expr: encode_tbz([Reg("x0"), Imm(0), bad_kind], is_nz).is_err()
 generators:
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-  rm: { gen: int, min: 0, max: 30, type: u32 }
-  is_64: { gen: bool }
-  amt: { gen: int, min: 0, max: 30, type: u32 }
-evidence: ARM ARM Logical (shifted register) disjoint Rn/Rm/imm6/sf
-```
-
-## encode_tst_neg_arity
-- Tier: 3
-- Rationale: llvm-mc/gas reject TST with fewer than 2 operands. encode_logical requires 3 operands after the ZR prepend, so arity 0 and 1 must Err.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: compare_branch.rs encode_cmp_neg_arity
-- Formal: ∀ arity ∈ {0,1}, n ∈ 0..30. encode_tst(ops with arity operands) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [arity, n]
-  domain: { arity: "0..1", n: "0..30" }
-  relation:
-    op: throws
-    expr: encode_tst(ops_of_len(arity))
+  which: { gen: int, min: 0, max: 5, type: u32 }
+  is_nz: { gen: bool }
 expected_error: String
-generators:
-  arity: { gen: int, min: 0, max: 1, type: u32 }
-  n: { gen: int, min: 0, max: 30, type: u32 }
-evidence: compare_branch.rs:38 alias requires Rn and op
-```
-
-## encode_tst_neg_extra_operand
-- Tier: 3
-- Rationale: llvm-mc rejects a third non-shift operand. Body does not check operands.len() after the ZR prepend; extra non-Shift is ignored. The input is accepted by the API and not documented invalid.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: compare_branch.rs encode_cmp_neg_extra_operand
-- Formal: ∀ rn,rm same-width GPR, extra ∉ {valid Shift}. encode_tst([Rn,Rm,extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: failing
-- Counterexample: encode_tst([Reg("w0"), Reg("w0"), Reg("x0")])
-- Bug report: pbt-out/bug_reports/encode_tst_extra_operand.md
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rn, rm, is_64]
-  domain: { rn: "0..31", rm: "0..31", is_64: bool }
-  relation:
-    op: throws
-    expr: encode_tst([Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm)), extra])
-expected_error: String
-generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-evidence: compare_branch.rs:38 two-operand alias
-```
-
-## encode_tst_neg_wrong_reg
-- Tier: 3
-- Rationale: Split during Test into encode_tst_neg_sp / encode_tst_neg_mixed_width / encode_tst_neg_fp_reg so each bug class has its own shrinking witness.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: compare_branch.rs encode_cmp_neg_wrong_reg
-- Formal: (retired — split)
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: retired
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [kind, n]
-  domain: { kind: "0..8", n: "0..31" }
-  relation:
-    op: throws
-    expr: encode_tst(wrong_reg_ops(kind, n))
-expected_error: String
-generators:
-  kind: { gen: int, min: 0, max: 8, type: u32 }
-  n: { gen: int, min: 0, max: 31, type: u32 }
-evidence: compare_branch.rs:38 Rn/op are GPRs
-```
-
-## encode_tst_neg_sp
-- Tier: 3
-- Rationale: llvm-mc rejects SP/WSP as Rn or Rm. parse_reg_num maps both to 31 (same as ZR). Not documented invalid on encode_tst.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: encode_tst_neg_wrong_reg kind=0
-- Formal: ∀ which ∈ {SP-Rn, SP-Rm, WSP-Rn, WSP-Rm}, n ∈ 0..30. encode_tst(sp_ops(which,n)) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: failing
-- Counterexample: encode_tst([Reg("sp"), Reg("x0")])
-- Bug report: pbt-out/bug_reports/encode_tst_sp_as_zr.md
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which, n]
-  domain: { which: "0..3", n: "0..30" }
-  relation:
-    op: throws
-    expr: encode_tst(wrong_reg_ops(which, n))
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 3, type: u32 }
-  n: { gen: int, min: 0, max: 30, type: u32 }
-evidence: compare_branch.rs:38 Rn/op are GPRs not SP
-```
-
-## encode_tst_neg_mixed_width
-- Tier: 3
-- Rationale: llvm-mc rejects mixed W/X. encode_logical takes Rm's number only. Not documented invalid.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: encode_tst_neg_wrong_reg mixed
-- Formal: ∀ n ∈ 0..30. encode_tst([Reg("xN"), Reg("wN")]) is Err ∧ encode_tst([Reg("wN"), Reg("xN")]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: failing
-- Counterexample: encode_tst([Reg("w0"), Reg("x0")])
-- Bug report: pbt-out/bug_reports/encode_tst_mixed_width.md
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n]
-  domain: { n: "0..30" }
-  relation:
-    op: throws
-    expr: encode_tst([Reg("w"+n), Reg("x"+n)])
-expected_error: String
-generators:
-  n: { gen: int, min: 0, max: 30, type: u32 }
-evidence: compare_branch.rs:38 matching-width GPR pair
-```
-
-## encode_tst_neg_fp_reg
-- Tier: 3
-- Rationale: llvm-mc rejects FP/SIMD registers. parse_reg_num accepts d/s/q/v/h/b prefixes. Not documented invalid.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: encode_tst_neg_wrong_reg FP
-- Formal: ∀ n,m ∈ 0..31, p ∈ {d,s,q,v,h,b}. encode_tst([Reg(pN), Reg(pM)]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: failing
-- Counterexample: encode_tst([Reg("d0"), Reg("d0")])
-- Bug report: pbt-out/bug_reports/encode_tst_fp_as_gpr.md
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n, m]
-  domain: { n: "0..31", m: "0..31" }
-  relation:
-    op: throws
-    expr: encode_tst([Reg("d"+n), Reg("d"+m)])
-expected_error: String
-generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-evidence: compare_branch.rs:38 Rn/op are GPRs
-```
-
-## encode_tst_neg_invalid_name
-- Tier: 3
-- Rationale: Sweep: unparsable names (x32, foo, empty, r0) must Err. parse_reg_num returns None; encode_logical get_reg fails.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: (none) — coverage sweep
-- Formal: ∀ name ∈ {x32,w32,foo,"",r0,x,x-1,x99}. encode_tst([Reg(name), Reg("x0")]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [which]
-  domain: { which: "0..7" }
-  relation:
-    op: throws
-    expr: encode_tst([Reg(invalid_name(which)), Reg("x0")])
-expected_error: String
-generators:
-  which: { gen: int, min: 0, max: 7, type: u32 }
-evidence: compare_branch.rs:38; parse_reg_num rejects x32
-```
-
-## encode_tst_neg_shift_oor
-- Tier: 3
-- Rationale: llvm-mc rejects shift amounts outside 0..31 (W) / 0..63 (X). encode_logical masks with `& 0x3F`. Not documented invalid.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: (none) — strengthening / sweep
-- Formal: ∀ rn,rm ∈ 0..31, is_64, amt > max(is_64). encode_tst([Rn,Rm,Shift(lsl,amt)]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: failing
-- Counterexample: encode_tst([Reg("w0"), Reg("w0"), Shift { kind: "lsl", amount: 32 }])
-- Bug report: pbt-out/bug_reports/encode_tst_shift_oor.md
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rn, rm, amt]
-  domain: { rn: "0..31", rm: "0..31", amt: "32..128" }
-  relation:
-    op: throws
-    expr: encode_tst([Reg("w"+rn), Reg("w"+rm), Shift("lsl", amt)])
-expected_error: String
-generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  amt: { gen: int, min: 32, max: 128, type: u32 }
-evidence: ARM ARM 32-bit imm6 < 32; llvm-mc range
-```
-
-## encode_tst_neg_invalid_imm
-- Tier: 3
-- Rationale: Sweep: non-bitmask immediates llvm-mc rejects (#0, #-1, …) must Err. encode_bitmask_imm already returns None for 0 and all-ones.
-- Doc contract: compare_branch.rs:38 "TST Rn, op -> ANDS XZR, Rn, op" — asserted fingerprint 73596118
-- Seed: (none) — coverage sweep
-- Formal: ∀ rn ∈ 0..31, imm such that llvm-mc("tst Rn, #imm") errors. encode_tst([Rn, Imm(imm)]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_tst_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.compare_branch.encode_tst
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rn, is_64, imm]
-  domain: { rn: "0..31", is_64: bool, imm: "non-bitmask" }
-  relation:
-    op: throws
-    expr: encode_tst([Reg(gpr(is_64,rn)), Imm(imm)])
-expected_error: String
-generators:
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  is_64: { gen: bool }
-  imm: { gen: int, min: -1, max: 0, type: i64 }
-evidence: ARM ARM logical immediate excludes 0 and all-ones
+evidence: get_symbol other-kind arm encoder/mod.rs:1114
 ```

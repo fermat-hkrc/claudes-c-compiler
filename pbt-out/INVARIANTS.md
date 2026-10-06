@@ -1,3 +1,37 @@
+# Confirmed invariants (encode_tbz)
+
+- Symbol/label/SymbolOffset form of TBZ/TBNZ emits WordWithReloc TstBr14 (ELF 279) with imm14=0 (1000 cases). KAT pins tbz x0, #0, foo = word 0x36000000, reloc TstBr14 symbol=foo addend=0.
+- ARM Test-and-branch layout holds: bits[30:25]=011011; bit31=b5; bit24=op; bits[23:19]=b40; bits[18:5]=0; bits[4:0]=Rt (1000 cases).
+- TBNZ XOR TBZ = 1<<24 with identical reloc (1000 cases).
+- Rt n vs n+1 differs only in bits[4:0] (1000 cases).
+- Arity 0, 1, and 2 return Err (1000 cases).
+- Unparsable names (x32, foo, empty, r0) return Err (sweep, 1000 cases).
+- Non-symbol label kinds (Mem/Shift/Extend/RegArrangement/Expr/RegList) return Err (sweep, 1000 cases).
+- Immediate PC-offset form, extra operands, SP/WSP, FP/SIMD Rt, and out-of-range bits currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_tbz)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Test and branch (immediate): b5 011011 op b40 imm14 Rt. Bit = b5:b40 in 0..63 (W requires b5=0 so 0..31). Offset/4 in ±32 KiB.
+- Dispatch: encoder/mod.rs:455-456 `"tbz" => encode_tbz(operands, false)` / `"tbnz" => encode_tbz(operands, true)`.
+- Sibling encode_cbz is not a same-job differential (CondBr19, no bit operand).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 16-line body plus encode_tbz_neg_invalid_name / encode_tbz_meta_rt_isolation / encode_tbz_neg_bad_label_kind. Closed: every documented behavior has a property; tier round spent.
+- Five failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_tbz_*.md.
+
+## Quirks (encode_tbz)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_tbz does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- Bit number is masked to 6 bits with no range check; get_reg width is discarded (see bugs).
+- Operand 2 is get_symbol only; Imm PC offsets are rejected (see bugs).
+- llvm-mc aliases `tbz x0, #0, #0` to `tbz w0, #0, #0` when bit < 32 (b5=0); encodings still compare.
+- llvm-mc accepts `x31` as XZR/WZR.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 16-line body.
+
 # Confirmed invariants (encode_tst)
 
 - Valid TST shifted-register with matching W/X GPRs 0..31 (ZR, LR, x31, uppercase) and optional lsl/lsr/asr/ror in range match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins tst x0,x1=0xea01001f, tst w0,w1=0x6a01001f, tst x0,x1,ror #7=0xeac11c1f, ands xzr,x0,x1 aliases tst x0,x1.

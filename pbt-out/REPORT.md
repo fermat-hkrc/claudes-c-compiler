@@ -1,171 +1,178 @@
-# PBT Campaign Report: encode_tst
+# PBT Campaign Report: encode_tbz
 
 ## Summary
 
-**Verdict:** 5 medium: encode_tst silently accepts extra operands, SP/WSP, mixed W/X, FP/SIMD registers, and out-of-range shifts that llvm-mc/gas reject, encoding them as a different well-formed TST/ANDS word.
+**Verdict:** 5 medium: encode_tbz rejects gas-legal immediate PC offsets, ignores extra operands, and silently accepts SP, FP/SIMD Rt, and out-of-range bit numbers, so GNU-style TBZ/TBNZ that llvm-mc accepts is either refused or encoded as the wrong instruction.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_tst
-**Tests:** 13
-**Result:** 8 passing, 5 bugs
-**Change surface:** 1 changed function (encode_tst), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_tst (6 KATs matched llvm-mc). Manual arm audit of the 12-line body completed the tier's 1 sweep round.
+**Modules tested:** encode_tbz
+**Tests:** 12
+**Result:** 7 passing, 5 bugs
+**Change surface:** 1 changed function (encode_tbz), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter listed unrelated binaries and claimed encode_tbz NOT LINKED). Sweep was a manual arm audit of the 16-line body.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_tst | 13 | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_tbz | 12 | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_tst ignores extra operands
+### B1: encode_tbz rejects immediate PC-offset form
 
-**Formal:** ∀ rn,rm same-width GPR, extra ∉ {valid Shift}. encode_tst([Rn,Rm,extra]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `tst w0, w0, x0`; compare_branch.rs:38 names a two-operand alias, not a varargs form)
+**Formal:** ∀ rt ∈ GPR_W ∪ GPR_X (n∈0..31 including ZR/LR), bit ∈ 0..31 (W) / 0..63 (X), imm ∈ {k·4 | k∈ℤ, −32768 ≤ k·4 ≤ 32764}, is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Imm(imm)], is_nz) = Word(llvm-mc("tbz/tbnz rt, #bit, #imm"))
+**Contract evidence:** inferred (README.md:12 gas-compat; ARM ARM Test and branch (immediate) encodes imm14; llvm-mc accepts `tbz x0, #0, #0`)
+**Documentation conflict:** (none) — compare_branch.rs:261 states the encoding layout including imm14 but does not declare #imm invalid. README.md:458 describes deferred symbol relocations, not an exclusion of immediate offsets.
+**Severity:** medium
+**Counterexample:** encode_tbz([Reg("x0"), Imm(0), Imm(-32768)], false) (`tbz x0, #0, #-32768`)
+**Expected / Actual:** Word(0x36040000) matching llvm-mc / Err("expected symbol at operand 2, got Some(Imm(-32768))")
+**Impact:** Hand-written `.s` files that use an explicit PC offset fail to assemble; compiler output currently uses labels so the hole is latent for codegen.
+**Root cause:** compare_branch.rs:257 calls get_symbol for the branch target and never matches Operand::Imm, so imm14 is never packed.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:257`
+```rust
+    let (sym, addend) = get_symbol(operands, 2)?;
+```
+**Suggested fix:** When operand 2 is Imm, range-check a 4-byte-aligned offset in [-32768, 32764], pack imm14, and return Word.
+```rust
+    if let Some(Operand::Imm(imm)) = operands.get(2) {
+        if *imm % 4 != 0 || *imm < -32768 || *imm > 32764 {
+            return Err(format!("tbz offset out of range: {}", imm));
+        }
+        let imm14 = ((*imm as i32) >> 2) as u32 & 0x3fff;
+        let word = (b5 << 31) | (0b011011 << 25) | (op << 24) | (b40 << 19) | (imm14 << 5) | rt;
+        return Ok(EncodeResult::Word(word));
+    }
+    let (sym, addend) = get_symbol(operands, 2)?;
+```
+**Bug report:** bug_reports/encode_tbz_imm_offset.md
+**Repro seed:** cc f6e95b6455706c1bda3d8eb1af12fddb3a8ce6b18bdc43c82d8a14c4cd42c27c
+**Raw output:**
+```text
+Test failed: SUT rejected valid tbz x0, #0, #-32768: Err("expected symbol at operand 2, got Some(Imm(-32768))").
+minimal failing input: (rt, bit) = ("x0", 0), is_nz = false, imm = -32768
+```
+
+### B2: encode_tbz ignores extra operands
+
+**Formal:** ∀ n ∈ 0..30, bit ∈ 0..63, is_nz ∈ {false,true}, extra ∈ Operand. encode_tbz([Reg(xn), Imm(bit), Symbol(s), extra], is_nz) is Err
+**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on a fourth operand; gas-compat README.md:12)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tst([Reg("w0"), Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x6a00001f))
-**Impact:** Invalid GNU-style assembly with a trailing register is silently encoded as the two-operand form.
-**Root cause:** compare_branch.rs:40 clones every operand into the ANDS alias list with no upper-bound arity check; encode_logical only requires len>=3 after the ZR prepend.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:40`
+**Counterexample:** encode_tbz([Reg("x0"), Imm(0), Symbol("labl0"), Reg("x1")], false)
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x36000000, reloc: TstBr14 symbol=labl0 addend=0 })
+**Impact:** Invalid GNU-style assembly silently encodes as a three-operand TBZ.
+**Root cause:** compare_branch.rs:254-257 reads only operands 0..2 and has no operands.len() upper bound.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:257`
 ```rust
-    new_ops.extend(operands.iter().cloned());
+    let (sym, addend) = get_symbol(operands, 2)?;
 ```
 **Suggested fix:** Reject extra operands before encoding.
 ```rust
-    if operands.len() > 3
-        || (operands.len() == 3 && !matches!(operands.get(2), Some(Operand::Shift { .. })))
-    {
-        return Err("tst: unexpected extra operand".to_string());
+    if operands.len() != 3 {
+        return Err(format!("tbz: expected 3 operands, got {}", operands.len()));
     }
 ```
-**Bug report:** bug_reports/encode_tst_extra_operand.md
-**Repro seed:** cc daac17e3532e5b052a7c558b67fc9ad1d605caf9c4632c872697dee66db66029
+**Bug report:** bug_reports/encode_tbz_extra_operand.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: tst Rn, Rm, extra must Err (llvm-mc: invalid operand)
-minimal failing input: rn = 0, rm = 0, is_64 = false, extra = Reg("x0")
+Test failed: tbz x0, #0, label, extra (which=0) must Err (llvm-mc: invalid operand)
+minimal failing input: n = 0, bit = 0, is_nz = false, suffix = 0, which = 0
 ```
 
-### B2: encode_tst encodes SP/WSP as XZR/WZR
+### B3: encode_tbz accepts SP/WSP as Rt and encodes it as ZR
 
-**Formal:** ∀ which ∈ {SP-Rn, SP-Rm, WSP-Rn, WSP-Rm}, n ∈ 0..30. encode_tst(sp_ops(which,n)) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `tst sp, x0`; ARM TST Rn is a GPR not SP)
+**Formal:** ∀ name ∈ {sp,wsp}, is_nz ∈ {false,true}. encode_tbz([Reg(name), Imm(0), Symbol("L")], is_nz) is Err
+**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on sp; ARM ARM Rt is a GPR not SP)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tst([Reg("sp"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0xea0003ff)) (same as tst xzr, x0)
-**Impact:** A stack-pointer operand is turned into ZR, so invalid assembly becomes a different well-formed instruction.
-**Root cause:** parse_reg_num maps "sp"|"wsp" and "xzr"|"wzr" both to 31; encode_tst does not reject SP.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/mod.rs:266`
+**Counterexample:** encode_tbz([Reg("sp"), Imm(0), Symbol("L")], false)
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x3600001f, reloc: TstBr14 symbol=L addend=0 })
+**Impact:** A stack-pointer test-and-branch is silently retargeted at ZR.
+**Root cause:** compare_branch.rs:255 calls get_reg, which maps SP and XZR both to 31; encode_tbz never distinguishes them.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:255`
 ```rust
-        "sp" | "wsp" => Some(31),
-        "xzr" | "wzr" => Some(31),
+    let (rt, _) = get_reg(operands, 0)?;
 ```
-**Suggested fix:** Reject SP/WSP in encode_tst before the ANDS alias.
+**Suggested fix:** Reject SP/WSP as Rt.
 ```rust
-    if operands.iter().any(|o| matches!(o, Operand::Reg(r) if is_sp(r))) {
-        return Err("tst: SP/WSP is not a valid GPR".to_string());
-    }
-```
-**Bug report:** bug_reports/encode_tst_sp_as_zr.md
-**Repro seed:** which = 0, n = 0
-**Raw output:**
-```text
-Test failed: tst SP/WSP kind=0 must Err (llvm-mc: invalid operand)
-minimal failing input: which = 0, n = 0
-```
-
-### B3: encode_tst accepts mixed W/X register pairs
-
-**Formal:** ∀ n ∈ 0..30. encode_tst([Reg("xN"), Reg("wN")]) is Err ∧ encode_tst([Reg("wN"), Reg("xN")]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc “expected compatible register”)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_tst([Reg("w0"), Reg("x0")])
-**Expected / Actual:** Err / Ok(Word(0x6a00001f)) (encoded as tst w0, w0)
-**Impact:** Mixed-width assembly is silently reinterpreted as same-width using Rm's number only.
-**Root cause:** encode_tst derives sf only from the first operand; encode_logical takes Rm as a 5-bit number with no width check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:480`
-```rust
-        let rm = parse_reg_num(rm_name).ok_or("invalid rm")?;
-```
-**Suggested fix:** Reject mixed widths in encode_tst.
-```rust
-    if let (Some(Operand::Reg(rn)), Some(Operand::Reg(rm))) = (operands.get(0), operands.get(1)) {
-        if is_32bit_reg(rn) != is_32bit_reg(rm) {
-            return Err("tst: mixed register widths".to_string());
+    let (rt, _) = get_reg(operands, 0)?;
+    if let Some(Operand::Reg(name)) = operands.get(0) {
+        let l = name.to_ascii_lowercase();
+        if l == "sp" || l == "wsp" {
+            return Err(format!("tbz: SP is not a valid Rt: {}", name));
         }
     }
 ```
-**Bug report:** bug_reports/encode_tst_mixed_width.md
-**Repro seed:** n = 0, x_first = false
+**Bug report:** bug_reports/encode_tbz_sp_as_zr.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: tst mixed W/X must Err (llvm-mc: expected compatible register)
-minimal failing input: n = 0, x_first = false
+Test failed: tbz sp , #0, L must Err (llvm-mc rejects SP/WSP)
+minimal failing input: which = 0, is_nz = false
 ```
 
-### B4: encode_tst accepts FP/SIMD registers as GPRs
+### B4: encode_tbz accepts FP/SIMD registers as Rt
 
-**Formal:** ∀ n,m ∈ 0..31, p ∈ {d,s,q,v,h,b}. encode_tst([Reg(pN), Reg(pM)]) is Err
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects `tst d0, d0`)
+**Formal:** ∀ prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31, is_nz ∈ {false,true}. encode_tbz([Reg(prefix+n), Imm(0), Symbol("L")], is_nz) is Err
+**Contract evidence:** inferred (llvm-mc "invalid operand for instruction" on d0; ARM ARM Rt is a GPR)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tst([Reg("d0"), Reg("d0")])
-**Expected / Actual:** Err / Ok(Word(0xea00001f)) (encoded as tst x0, x0)
-**Impact:** FP/SIMD names are parsed as GPR numbers, producing a well-formed integer TST.
-**Root cause:** encode_tst never calls is_fp_reg; parse_reg_num accepts prefixes d/s/q/v/h/b.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/mod.rs:272`
+**Counterexample:** encode_tbz([Reg("d0"), Imm(0), Symbol("L")], false)
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x36000000, reloc: TstBr14 symbol=L addend=0 })
+**Impact:** A floating-point test-and-branch is silently retargeted at the same-numbered GPR.
+**Root cause:** compare_branch.rs:255 calls get_reg, which accepts prefixes d/s/q/v/h/b; encode_tbz never checks is_fp_reg.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:255`
 ```rust
-                'x' | 'w' | 'd' | 's' | 'q' | 'v' | 'h' | 'b' => {
-                    let num: u32 = name[1..].parse().ok()?;
-                    if num <= 31 { Some(num) } else { None }
+    let (rt, _) = get_reg(operands, 0)?;
 ```
-**Suggested fix:** Reject FP/SIMD names in encode_tst.
+**Suggested fix:** Reject FP/SIMD Rt.
 ```rust
-    if operands.iter().any(|o| matches!(o, Operand::Reg(r) if is_fp_reg(r))) {
-        return Err("tst: FP/SIMD register is not a GPR".to_string());
+    if let Some(Operand::Reg(name)) = operands.get(0) {
+        if is_fp_reg(name) {
+            return Err(format!("tbz: FP/SIMD register not valid Rt: {}", name));
+        }
     }
 ```
-**Bug report:** bug_reports/encode_tst_fp_as_gpr.md
-**Repro seed:** n = 0, m = 0, pref = 0, as_rm = false
+**Bug report:** bug_reports/encode_tbz_fp_reg.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: tst FP/SIMD register must Err (llvm-mc: invalid operand)
-minimal failing input: n = 0, m = 0, pref = 0, as_rm = false
+Test failed: tbz d0 , #0, L must Err (llvm-mc rejects FP/SIMD Rt)
+minimal failing input: which = 2, n = 0, is_nz = false
 ```
 
-### B5: encode_tst wraps out-of-range shift amounts
+### B5: encode_tbz masks out-of-range bit numbers instead of rejecting them
 
-**Formal:** ∀ rn,rm ∈ 0..31, is_64, amt > max(is_64). encode_tst([Rn,Rm,Shift(lsl,amt)]) is Err
-**Contract evidence:** inferred (ARM ARM 32-bit imm6 < 32; llvm-mc rejects `tst w0, w0, lsl #32`)
+**Formal:** ∀ rt ∈ GPR_W ∪ GPR_X, bit ∉ valid range (W: [0,31], X: [0,63]), is_nz ∈ {false,true}. encode_tbz([Reg(rt), Imm(bit), Symbol("L")], is_nz) is Err
+**Contract evidence:** inferred (llvm-mc "immediate must be an integer in range [0, 31]" / "[0, 63]"; ARM ARM bit = b5:b40)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tst([Reg("w0"), Reg("w0"), Shift { kind: "lsl", amount: 32 }])
-**Expected / Actual:** Err / Ok(Word(0x6a00801f))
-**Impact:** An illegal W-form lsl #32 is packed into imm6, producing an UNALLOCATED encoding instead of an assembler error.
-**Root cause:** encode_logical packs `shift_amount & 0x3F` with no 32-bit max-31 / 64-bit max-63 check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/data_processing.rs:496`
+**Counterexample:** encode_tbz([Reg("w0"), Imm(-1), Symbol("L")], false)
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0xb6f80000, reloc: TstBr14 symbol=L addend=0 })
+**Impact:** `tbz w0, #-1, L` encodes as `tbz x0, #63, L`; `tbz w0, #32, L` encodes as `tbz x0, #32, L`. A 32-bit test-and-branch can silently become a 64-bit one.
+**Root cause:** compare_branch.rs:258-259 casts bit to u32 and masks to 6 bits with no range check; get_reg width is discarded.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/compare_branch.rs:258`
 ```rust
-            | (rm << 16) | ((shift_amount & 0x3F) << 10) | (rn << 5) | rd;
+    let b5 = ((bit as u32) >> 5) & 1;
 ```
-**Suggested fix:** Reject out-of-range shift amounts.
+**Suggested fix:** Reject out-of-range bits using the register width.
 ```rust
-    let max = if is_64 { 63u32 } else { 31u32 };
-    if shift_amount > max {
-        return Err(format!("shift amount {shift_amount} out of range 0..{max}"));
+    let (rt, is_64) = get_reg(operands, 0)?;
+    let bit = get_imm(operands, 1)?;
+    let max_bit = if is_64 { 63 } else { 31 };
+    if bit < 0 || bit > max_bit {
+        return Err(format!("tbz bit {} out of range 0..{}", bit, max_bit));
     }
 ```
-**Bug report:** bug_reports/encode_tst_shift_oor.md
-**Repro seed:** rn = 0, rm = 0, is_64 = false, sk = 0, amt = 32
+**Bug report:** bug_reports/encode_tbz_bit_oor.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: tst shift lsl #32 on W must Err (llvm-mc range 0..31)
-minimal failing input: rn = 0, rm = 0, is_64 = false, sk = 0, amt = 32
+Test failed: tbz w0, #-1, L is out of bit range and must Err
+minimal failing input: n = 0, is_64 = false, is_nz = false, which = 0
 ```
 
 ## Design Caveats
@@ -176,24 +183,45 @@ minimal failing input: rn = 0, rm = 0, is_64 = false, sk = 0, amt = 32
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_tst_pbt.rs | 13 properties + 6 KAT + 6 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_tbz_pbt.rs | 12 properties + 4 KAT + 5 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `mod encode_tbz_pbt` registration |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_tst -- --test-threads=1
+cargo test --lib encode_tbz -- --test-threads=1
 ```
 
-Per-bug:
-
+B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tst_regression_extra_operand -- --test-threads=1
-cargo test --lib test_encode_tst_regression_sp_rn -- --test-threads=1
-cargo test --lib test_encode_tst_regression_mixed_width -- --test-threads=1
-cargo test --lib test_encode_tst_regression_fp_reg -- --test-threads=1
-cargo test --lib test_encode_tst_regression_shift_oor -- --test-threads=1
+cargo test --lib test_encode_tbz_regression_imm_offset -- --test-threads=1
+```
+
+B2:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_tbz_regression_extra_operand -- --test-threads=1
+```
+
+B3:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_tbz_regression_sp_as_zr -- --test-threads=1
+```
+
+B4:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_tbz_regression_fp_reg -- --test-threads=1
+```
+
+B5:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_tbz_regression_bit_oor -- --test-threads=1
 ```
 
 ## Output Directories
@@ -204,29 +232,28 @@ cargo test --lib test_encode_tst_regression_shift_oor -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/run/encode_tst.log
-- pbt-out/run/encode_tst_round2.log
-- pbt-out/bug_reports/encode_tst_extra_operand.md
-- pbt-out/bug_reports/encode_tst_extra_operand.html
-- pbt-out/bug_reports/encode_tst_sp_as_zr.md
-- pbt-out/bug_reports/encode_tst_sp_as_zr.html
-- pbt-out/bug_reports/encode_tst_mixed_width.md
-- pbt-out/bug_reports/encode_tst_mixed_width.html
-- pbt-out/bug_reports/encode_tst_fp_as_gpr.md
-- pbt-out/bug_reports/encode_tst_fp_as_gpr.html
-- pbt-out/bug_reports/encode_tst_shift_oor.md
-- pbt-out/bug_reports/encode_tst_shift_oor.html
+- pbt-out/report.json
+- pbt-out/run/encode_tbz_round1.log
+- pbt-out/run/encode_tbz_round2.log
+- pbt-out/bug_reports/encode_tbz_imm_offset.md
+- pbt-out/bug_reports/encode_tbz_imm_offset.html
+- pbt-out/bug_reports/encode_tbz_extra_operand.md
+- pbt-out/bug_reports/encode_tbz_extra_operand.html
+- pbt-out/bug_reports/encode_tbz_sp_as_zr.md
+- pbt-out/bug_reports/encode_tbz_sp_as_zr.html
+- pbt-out/bug_reports/encode_tbz_fp_reg.md
+- pbt-out/bug_reports/encode_tbz_fp_reg.html
+- pbt-out/bug_reports/encode_tbz_bit_oor.md
+- pbt-out/bug_reports/encode_tbz_bit_oor.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 06:04 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 167/307 total | PBT candidates: 167 | Tested: 167 (100%) | 1 pass, 167 fail
+> Last updated: 2026-10-06 06:34 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 168/307 total | PBT candidates: 168 | Tested: 168 (100%) | 1 pass, 168 fail
 
 ## Summary
 
@@ -235,10 +262,10 @@ cargo test --lib test_encode_tst_regression_shift_oor -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 167 |
-| **Tested (of PBT candidates)** | **167 / 167 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 167 / -1 |
-| **Overall (tested / all functions)** | **167 / 307 (54%)** |
+| PBT candidates (from FUNCTION_INDEX) | 168 |
+| **Tested (of PBT candidates)** | **168 / 168 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 168 / -1 |
+| **Overall (tested / all functions)** | **168 / 307 (55%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -246,20 +273,20 @@ cargo test --lib test_encode_tst_regression_shift_oor -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 167 | 167 | 0 | 100% |
+|  | 168 | 168 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 167 | 167 | 0 | 100% |
+| unknown | 168 | 168 | 0 | 100% |
 
 ## File Coverage
 
 | Source File | Funcs | Candidates | Tested | Coverage | Status |
 |-------------|-------|------------|--------|----------|--------|
 | cast.rs | 6 | 1 | 1 | 100% | covered |
-| compare_branch.rs | 21 | 19 | 19 | 100% | covered |
+| compare_branch.rs | 21 | 20 | 20 | 100% | covered |
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
@@ -442,3 +469,4 @@ cargo test --lib test_encode_tst_regression_shift_oor -- --test-threads=1
 | encode_ldop | load_store.rs |
 | encode_stop | load_store.rs |
 | encode_tst | compare_branch.rs |
+| encode_tbz | compare_branch.rs |
