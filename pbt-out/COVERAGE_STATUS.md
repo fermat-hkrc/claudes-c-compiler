@@ -1,22 +1,30 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_branch_instr)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries). Execution evidence is `cargo test --lib encode_branch_instr` (KAT + 1000-case proptest).
-> This campaign: encode_branch_instr (base.rs) — 1/1 in-scope candidate tested.
+> Last updated: 2026-10-06 (campaign: encode_load, English, standard)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter claimed NOT LINKED). SUT is Rust `cargo test --lib encode_load`; encode_load ran in that target (13 passed / 8 failed including 4 property failures).
 
-## Summary
+## This campaign
 
 | Metric | Value |
 |--------|-------|
-| Scope | src/backend/riscv/assembler/encoder/base.rs#encode_branch_instr |
-| Requested symbol | encode_branch (unresolved; tested encode_branch_instr) |
-| PBT properties | 9 |
-| Passing / Failing | 6 / 3 |
-| Bugs | 3 |
-| Tier | standard |
+| Target | encode_load (base.rs:147) |
+| Properties | 10 |
+| Passing | 6 |
+| Failing | 4 |
+| Bugs | 4 |
+| Sweep | 1/1 (manual arm audit + hi-modifier / SymbolOffset properties) |
 
-## File Coverage
+## File Coverage (this campaign)
 
-| Source File | Funcs | Candidates this campaign | Tested | Status |
-|-------------|-------|--------------------------|--------|--------|
-| base.rs | 17 | 1 (encode_branch_instr) | 1 | covered |
+| Source File | Funcs in scope | Candidates | Tested | Coverage | Status |
+|-------------|---------------|------------|--------|----------|--------|
+| base.rs | 1 (encode_load only) | 1 | 1 | 100% | covered |
+
+## Oracle Type Distribution (this campaign)
+
+| Oracle Type | Total | Covered |
+|-------------|-------|---------|
+| differential | 3 | 3 |
+| algebraic.invariant | 1 | 1 |
+| algebraic.metamorphic | 2 | 2 |
+| negative_error | 4 | 4 |

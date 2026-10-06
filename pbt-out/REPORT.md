@@ -1,118 +1,149 @@
-# PBT Campaign Report: encode_branch_instr
+# PBT Campaign Report: encode_load
 
 ## Summary
 
-**Verdict:** 2 high: encode_branch_instr silently truncates odd/out-of-range offsets (`beq x0, x0, 1` encodes as `beq x0, x0, 0`) and ignores a fourth operand; plus 1 medium: `beq rs1, rs2, foo+N` is rejected instead of emitting R_RISCV_BRANCH with that addend.
+**Verdict:** 2 high, 2 medium: encode_load silently wraps out-of-range offsets and drops extra operands (wrong machine code), treats %hi as %lo, and rejects `ld rd, symbol+addend` that llvm-mc accepts.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_branch_instr
-**Tests:** 9
-**Result:** 6 passing, 3 bugs
-**Change surface:** requested encode_branch was unresolved in base.rs; tested encode_branch_instr (1 function, 1 with a property, 0 error-handling changes)
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Execution evidence is `cargo test --lib encode_branch_instr` (KAT + 1000-case proptest). Tier: standard.
+**Modules tested:** encode_load
+**Tests:** 10
+**Result:** 6 passing, 4 bugs
+**Change surface:** 1 changed function (encode_load), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter, NOT LINKED on unrelated binaries). Manual arm audit of encode_load plus two sweep properties. Recorded as file-level because the SUT is Rust cargo-test, not a C++ binary.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_branch_instr | 9 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_load | 10 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_branch_instr silently truncates odd and out-of-range immediates
+### B1: encode_load ignores extra operands
 
-**Formal:** ∀ rs1,rs2 ∈ GPR, imm ∈ ℤ. (imm odd ∨ imm ∉ [-4096,4094]) ∧ llvm-mc rejects "beq rs1, rs2, imm" ⇒ encode_branch_instr([Reg(rs1),Reg(rs2),Imm(imm)], 0) = Err
-**Contract evidence:** documented src/backend/riscv/assembler/README.md:355 "B-type:  [imm[12|10:5] | rs2 | rs1 | funct3 | imm[4:1|11] | opcode]" — 13-bit even signed field (bit 0 implicit 0); llvm-mc rejects values that are not a multiple of 2 in [-4096, 4094]
-**Documentation conflict:** (none) — the B-type layout states a 13-bit even immediate; the code does not admit a limitation, it silently masks
+**Formal:** ∀ mn, rd, rs1, off∈[-2048,2047], extra. encode_load([Reg(rd), Mem{rs1,off}, extra], f3) = Err
+**Contract evidence:** inferred (llvm-mc rejects extra operands; encode_instruction passes the operand slice through unchanged)
+**Documentation conflict:** (none) — no comment declares extra operands valid or ignored
 **Severity:** high
-**Counterexample:** encode_branch_instr([Reg("x0"), Reg("x0"), Imm(1)], 0)
-**Expected / Actual:** Err / Ok(Word(0x00000063)) encoding of beq x0, x0, 0
-**Impact:** An odd or out-of-range branch offset assembles to a different target instead of being rejected, so callers get silent wrong machine code.
-**Root cause:** base.rs:131 casts the i64 immediate to i32 with no range or alignment check; encode_b then drops bit 0 via `(imm >> 1) & 0xF`, so odd 1 becomes 0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:131`
+**Counterexample:** encode_load([Reg("x0"), Mem { base: "x0", offset: 0 }, Imm(0)], funct3=0)  // lb x0, 0(x0), 0
+**Expected / Actual:** Err / Ok(Word(0x00000003))
+**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed load instead of diagnosing the line.
+**Root cause:** base.rs:149 matches only `operands.get(1)` and never checks `operands.len()`, so trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:149`
 ```rust
-            Ok(EncodeResult::Word(encode_b(OP_BRANCH, funct3, rs1, rs2, *imm as i32)))
+    match &operands.get(1) {
 ```
-**Suggested fix:** Reject immediates that are odd or outside the 13-bit even signed range before packing.
+**Suggested fix:** Reject a slice whose length is not 2 before matching.
 ```rust
-            let imm = *imm;
-            if imm % 2 != 0 || !(-4096..=4094).contains(&imm) {
-                return Err(format!(
-                    "branch: immediate {imm} must be a multiple of 2 in [-4096, 4094]"
-                ));
-            }
-            Ok(EncodeResult::Word(encode_b(OP_BRANCH, funct3, rs1, rs2, imm as i32)))
-```
-**Bug report:** bug_reports/encode_branch_instr_imm_oob_odd.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-thread 'backend::riscv::assembler::encoder::encode_branch_instr_pbt::test_encode_branch_instr_regression_imm_oob' (2737315) panicked at src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs:368:5:
-beq x0, x1, 1 must Err (odd offset); got Ok(Word(1048675))
-```
-
-### B2: encode_branch_instr ignores a fourth operand
-
-**Formal:** ∀ rs1,rs2 ∈ GPR, off ∈ even[-4096,4094], extra ∈ Operand. encode_branch_instr([Reg(rs1),Reg(rs2),Imm(off), extra], 0) = Err
-**Contract evidence:** inferred (B-type is three-operand rs1, rs2, offset; llvm-mc rejects `beq x1, x2, 4, x3` as invalid operand; encode_instruction passes operands through)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** encode_branch_instr([Reg("x0"), Reg("x0"), Imm(0), Imm(0)], 0)
-**Expected / Actual:** Err / Ok(Word(0x00000063)) encoding of beq x0, x0, 0
-**Impact:** Extra tokens in a branch instruction are silently dropped, so typos assemble to a valid branch without an error.
-**Root cause:** base.rs:129 uses operands.get(2) and never checks operands.len() == 3, so a fourth operand is ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:129`
-```rust
-    match &operands.get(2) {
-```
-**Suggested fix:** Reject arity other than 3 before matching the offset operand.
-```rust
-    if operands.len() != 3 {
-        return Err("branch: wrong number of operands".to_string());
+    if operands.len() != 2 {
+        return Err("load: expected rd, offset(rs1)".to_string());
     }
-    match &operands[2] {
+    match &operands.get(1) {
 ```
-**Bug report:** bug_reports/encode_branch_instr_extra_operand.md
-**Repro seed:** cc c8367c59bdfac9d62538e8ff3bc78142a27a713d363a3581270ff38c02fb4de6
+**Bug report:** bug_reports/encode_load_extra_operand.md
+**Repro seed:** cc bda355ef8e7a7edc4c74e201a4a2cd946c69ecdaaf4af8a98662136648037d94
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_branch_instr_pbt::test_encode_branch_instr_regression_extra_operand' (2737314) panicked at src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs:379:5:
-beq x0, x1, 0 with a fourth operand must Err; got Ok(Word(1048675))
+Test failed: extra operand must Err for lb x0, 0(x0) (llvm-mc rejects extra operands); got Ok(Word(3))
+minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", rs1 = "x0", off = 0, extra = Imm(0)
 ```
 
-### B3: encode_branch_instr rejects SymbolOffset (symbol+addend) as a branch target
+### B2: encode_load wraps out-of-range I-type offsets
 
-**Formal:** ∀ rs1,rs2 ∈ GPR, s ∈ ident, addend ∈ ℤ\{0}. encode_branch_instr([Reg(rs1),Reg(rs2),SymbolOffset(s,addend)], 0) = WordWithReloc{word=llvm-mc("beq rs1, rs2, 0"), reloc_type=Branch, symbol=s, addend=addend}
-**Contract evidence:** inferred (parser.rs:29 SymbolOffset is the parsed form of symbol+offset; llvm-mc accepts `beq x1, x2, foo+4` as a branch fixup with value foo+4; Reloc.addend is i64)
-**Documentation conflict:** (none) — base.rs:143 says "expected offset or label as 3rd operand" and does not declare symbol+addend invalid
-**Severity:** medium
-**Counterexample:** encode_branch_instr([Reg("x0"), Reg("x0"), SymbolOffset("foo", 1)], 0)
-**Expected / Actual:** Ok(WordWithReloc { word: 0x00000063, reloc_type: Branch, symbol: "foo", addend: 1 }) / Err("branch: expected offset or label as 3rd operand")
-**Impact:** Valid textual assembly `beq rs1, rs2, foo+N` cannot be encoded.
-**Root cause:** base.rs:133 matches only Symbol, Label, and Reg; SymbolOffset falls through to the error arm at base.rs:143.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:133`
+**Formal:** ∀ mn, rd, rs1, off ∉ [-2048,2047]. llvm-mc rejects `mn rd, off(rs1)` ⇒ encode_load([Reg(rd), Mem{rs1,off}], f3) = Err
+**Contract evidence:** documented README.md:353 "I-type:  [    imm[11:0]  | rs1 | funct3 |  rd  | opcode]" plus llvm-mc "integer in the range [-2048, 2047]"
+**Documentation conflict:** (none) — no comment declares out-of-range offsets valid
+**Severity:** high
+**Counterexample:** encode_load([Reg("x0"), Mem { base: "x0", offset: 2048 }], funct3=0)  // lb x0, 2048(x0)
+**Expected / Actual:** Err / Ok(Word(0x80000003))  // lb x0, -2048(x0)
+**Impact:** A too-large offset wraps through the 12-bit field and becomes a large negative address with no diagnostic.
+**Root cause:** base.rs:152 casts `*offset as i32` with no range check; encode_i then masks with 0xFFF, wrapping 2048 to -2048.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:152`
 ```rust
-        Some(Operand::Symbol(s)) | Some(Operand::Label(s)) | Some(Operand::Reg(s)) => {
+            Ok(EncodeResult::Word(encode_i(OP_LOAD, rd, funct3, rs1, *offset as i32)))
 ```
-**Suggested fix:** Accept SymbolOffset as a reloc target and preserve the addend.
+**Suggested fix:** Reject offsets outside the documented I-type range before packing.
+```rust
+            if !(-2048..=2047).contains(offset) {
+                return Err("load: offset out of signed-12 range".to_string());
+            }
+            Ok(EncodeResult::Word(encode_i(OP_LOAD, rd, funct3, rs1, *offset as i32)))
+```
+**Bug report:** bug_reports/encode_load_imm_oob.md
+**Repro seed:** (none saved; deterministic regression test_encode_load_regression_imm_oob)
+**Raw output:**
+```text
+Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147483651))
+minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", rs1 = "x0", imm = 2048
+```
+
+### B3: encode_load accepts %hi/%pcrel_hi/%tprel_hi as Lo12I
+
+**Formal:** ∀ mn, rd, rs1, s, hi ∈ {%hi,%pcrel_hi,%tprel_hi}. llvm-mc rejects `mn rd, %hi(s)(rs1)` ⇒ encode_load([Reg(rd), MemSymbol{rs1, "%hi(s)"}], f3) = Err
+**Contract evidence:** inferred (llvm-mc: "operand must be a symbol with %lo/%pcrel_lo/%tprel_lo modifier or an integer in the range [-2048, 2047]")
+**Documentation conflict:** base.rs:157 "Use Lo12I for load-type relocations" — purpose comment on the Hi20→Lo12I remap; it does not declare %hi a valid load operand. The comment is context, not an input-domain restriction.
+**Severity:** medium
+**Counterexample:** encode_load([Reg("x0"), MemSymbol { base: "x0", symbol: "%hi(foo)", modifier: "" }], funct3=0)
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00000003, reloc_type: Lo12I, symbol: "foo", addend: 0 })
+**Impact:** `%hi(sym)` on a load is silently treated as `%lo(sym)`, so the linker patches the low 12 bits of a symbol the source asked to take the high 20 bits of.
+**Root cause:** base.rs:161 remaps RelocType::Hi20 to Lo12I instead of rejecting hi-type modifiers on I-type loads.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:161`
+```rust
+                RelocType::Hi20 => RelocType::Lo12I,
+```
+**Suggested fix:** Accept only lo-type modifiers on loads.
+```rust
+            let reloc_type = match reloc_type {
+                RelocType::PcrelLo12I | RelocType::Lo12I | RelocType::TprelLo12I => reloc_type,
+                _ => return Err("load: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
+            };
+```
+**Bug report:** bug_reports/encode_load_hi_modifier.md
+**Repro seed:** (none saved; deterministic regression test_encode_load_regression_hi_modifier)
+**Raw output:**
+```text
+Test failed: hi-type modifier %hi(foo) must Err on load (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 3, reloc: Relocation { reloc_type: Lo12I, symbol: "foo", addend: 0 } })
+minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", rs1 = "x0", s = "foo", hi = "%hi"
+```
+
+### B4: encode_load rejects ld rd, symbol+addend
+
+**Formal:** ∀ mn, rd, s, addend≠0. encode_load([Reg(rd), SymbolOffset(s, addend)], f3) = WordsWithRelocs[(auipc, PcrelHi20, s, addend), (load, PcrelLo12I, s, _)]
+**Contract evidence:** inferred (llvm-mc accepts `ld x1, foo+4` as auipc+%pcrel_hi(foo+4) plus ld; parser.rs:29 documents Operand::SymbolOffset; base.rs:173 documents the bare-symbol expansion)
+**Documentation conflict:** (none) — base.rs:173-175 describes Symbol/Label only and does not declare SymbolOffset invalid
+**Severity:** medium
+**Counterexample:** encode_load([Reg("x0"), SymbolOffset("foo", 1)], funct3=0)  // lb x0, foo+1
+**Expected / Actual:** Ok(WordsWithRelocs) of auipc+lb with PcrelHi20 addend=1 / Err("load: expected memory operand")
+**Impact:** Valid `ld rd, foo+4` fails to assemble, so objects llvm-mc would produce are rejected.
+**Root cause:** base.rs:176 matches only Symbol and Label; SymbolOffset falls through to the default error at base.rs:190.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:190`
+```rust
+        _ => Err("load: expected memory operand".to_string()),
+```
+**Suggested fix:** Handle SymbolOffset like Symbol, copying the addend onto the AUIPC reloc.
 ```rust
         Some(Operand::SymbolOffset(s, addend)) => {
-            Ok(EncodeResult::WordWithReloc {
-                word: encode_b(OP_BRANCH, funct3, rs1, rs2, 0),
-                reloc: Relocation {
-                    reloc_type: RelocType::Branch,
+            Ok(EncodeResult::WordsWithRelocs(vec![
+                (encode_u(OP_AUIPC, rd, 0), Some(Relocation {
+                    reloc_type: RelocType::PcrelHi20,
                     symbol: s.clone(),
                     addend: *addend,
-                },
-            })
+                })),
+                (encode_i(OP_LOAD, rd, funct3, rd, 0), Some(Relocation {
+                    reloc_type: RelocType::PcrelLo12I,
+                    symbol: s.clone(),
+                    addend: 0,
+                })),
+            ]))
         }
 ```
-**Bug report:** bug_reports/encode_branch_instr_symbol_offset.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_load_symbol_offset.md
+**Repro seed:** (none saved; deterministic regression test_encode_load_regression_symbol_offset)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_branch_instr_pbt::test_encode_branch_instr_regression_symbol_offset' (2737316) panicked at src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs:403:18:
-expected WordWithReloc for foo+4, got Err("branch: expected offset or label as 3rd operand")
+Test failed: expected WordsWithRelocs for lb x0, foo+1, got Err("load: expected memory operand").
+minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", s = "foo", addend = 1
 ```
 
 ## Design Caveats
@@ -123,32 +154,38 @@ expected WordWithReloc for foo+4, got Err("branch: expected offset or label as 3
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs | 9 properties + 8 KAT + 3 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_load_pbt.rs | 10 properties + 7 KAT + 4 regression witnesses |
 
 ## Reproduction
 
-Whole suite (expect 6 property failures plus 3 regression failures; 6 properties and 8 KAT pass):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_branch_instr -- --test-threads=1
+cargo test --lib encode_load -- --test-threads=1
 ```
 
-B1 odd/out-of-range immediate:
+B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_branch_instr_regression_imm_oob -- --test-threads=1
+cargo test --lib encode_load_neg_extra -- --test-threads=1
 ```
 
-B2 extra operand:
+B2 imm oob:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_branch_instr_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_load_neg_imm_oob -- --test-threads=1
 ```
 
-B3 SymbolOffset:
+B3 hi modifier:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_branch_instr_regression_symbol_offset -- --test-threads=1
+cargo test --lib encode_load_neg_hi_modifier -- --test-threads=1
+```
+
+B4 symbol offset:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_load_symbol_offset_addend -- --test-threads=1
 ```
 
 ## Output Directories
@@ -159,25 +196,25 @@ cargo test --lib test_encode_branch_instr_regression_symbol_offset -- --test-thr
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_branch_instr_imm_oob_odd.md
-- pbt-out/bug_reports/encode_branch_instr_imm_oob_odd.html
-- pbt-out/bug_reports/encode_branch_instr_extra_operand.md
-- pbt-out/bug_reports/encode_branch_instr_extra_operand.html
-- pbt-out/bug_reports/encode_branch_instr_symbol_offset.md
-- pbt-out/bug_reports/encode_branch_instr_symbol_offset.html
-- pbt-out/run/encode_branch_instr.log
-- src/backend/riscv/assembler/encoder/encode_branch_instr_pbt.rs
-- proptest-regressions/backend/riscv/assembler/encoder/encode_branch_instr_pbt.txt
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_load_extra_operand.md
+- pbt-out/bug_reports/encode_load_extra_operand.html
+- pbt-out/bug_reports/encode_load_imm_oob.md
+- pbt-out/bug_reports/encode_load_imm_oob.html
+- pbt-out/bug_reports/encode_load_hi_modifier.md
+- pbt-out/bug_reports/encode_load_hi_modifier.html
+- pbt-out/bug_reports/encode_load_symbol_offset.md
+- pbt-out/bug_reports/encode_load_symbol_offset.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 13:43 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 186/324 total | PBT candidates: 186 | Tested: 186 (100%) | 1 pass, 186 fail
+> Last updated: 2026-10-06 14:06 (campaign: coverage)
+> Files: 12/12 scanned (100%) | Functions: 187/324 total | PBT candidates: 187 | Tested: 187 (100%) | 1 pass, 187 fail
 
 ## Summary
 
@@ -186,10 +223,10 @@ cargo test --lib test_encode_branch_instr_regression_symbol_offset -- --test-thr
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 186 |
-| **Tested (of PBT candidates)** | **186 / 186 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 186 / -1 |
-| **Overall (tested / all functions)** | **186 / 324 (57%)** |
+| PBT candidates (from FUNCTION_INDEX) | 187 |
+| **Tested (of PBT candidates)** | **187 / 187 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 187 / -1 |
+| **Overall (tested / all functions)** | **187 / 324 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -197,13 +234,13 @@ cargo test --lib test_encode_branch_instr_regression_symbol_offset -- --test-thr
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 186 | 186 | 0 | 100% |
+|  | 187 | 187 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 186 | 186 | 0 | 100% |
+| unknown | 187 | 187 | 0 | 100% |
 
 ## File Coverage
 
@@ -412,3 +449,4 @@ cargo test --lib test_encode_branch_instr_regression_symbol_offset -- --test-thr
 | encode_jal | base.rs |
 | encode_jalr | base.rs |
 | encode_branch_instr | base.rs |
+| encode_load | base.rs |
