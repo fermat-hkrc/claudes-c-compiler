@@ -1,101 +1,129 @@
-# PBT Campaign Report: encode_c_jalr
+# PBT Campaign Report: encode_vsetvli
 
 ## Summary
 
-**Verdict:** 2 medium: encode_c_jalr silently encodes `c.jalr x0` as C.EBREAK halfword 0x9002, and extra operands are ignored instead of rejected.
+**Verdict:** 3 medium: encode_vsetvli rejects RVV 1.0 SEW e128/e256/e512/e1024 (`unknown vtypei field`), encodes two-operand `vsetvli rd, rs1` as vtypei=0 instead of Err, and last-wins or skips extra operands — all disagree with llvm-mc `-mattr=+v`.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_c_jalr
-**Tests:** 7 properties (plus 6 KAT + 2 regression witnesses)
-**Result:** 5 passing, 2 bugs
-**Change surface:** 1 changed function (encode_c_jalr), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries) and listed encode_c_jalr as NOT LINKED in those binaries. Manual audit of the documented C.JALR surface (1-op CR-type / ABI / isolation / arity-FP / extra / rs1=x0) drove every contract; remaining gaps are the two filed bugs.
+**Modules tested:** encode_vsetvli (src/backend/riscv/assembler/encoder/vector.rs)
+**Tests:** 9
+**Result:** 6 passing, 3 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries) and encode_vsetvli NOT LINKED in those binaries. Manual audit of the documented vsetvli surface.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_c_jalr | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_vsetvli | 9 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_c_jalr encodes rs1=x0 as C.EBREAK
+### B1: encode_vsetvli rejects RVV 1.0 SEW e128/e256/e512/e1024
 
-**Formal:** ∀ name ∈ {x0, zero}. llvm-mc rejects `c.jalr name` ∧ encode_c_jalr([Reg(name)])=Err
-**Contract evidence:** inferred (RISC-V Unprivileged ISA: C.JALR is only valid when rs1≠x0; the code point with rs1=x0 and rs2=0 is C.EBREAK 0x9002; llvm-mc rejects `c.jalr x0`; one-operand mnemonic `c.jalr rs1`; compress.rs:571 requires rs1 != 0)
-**Documentation conflict:** (none) — compressed.rs:55 only states the mnemonic `c.jalr rs1`; it does not declare rs1=x0 invalid on this function, nor admit a limitation
+**Formal:** ∀ rd,rs1 ∈ GPR, sew ∈ {e128,e256,e512,e1024}, lmul ∈ named LMUL, ta,ma. encode_vsetvli(named) = Word(w) ∧ w = llvm-mc(...)
+**Contract evidence:** inferred (RISC-V V 1.0 vsew enumerators; llvm-mc `-mattr=+v` accepts e128/e256/e512/e1024; README.md:14 V standard extension; no comment declares those SEW values invalid)
+**Documentation conflict:** (none) — parse_vtypei lists only e8/e16/e32/e64 with no “only these SEW” restriction
 **Severity:** medium
-**Counterexample:** encode_c_jalr([Reg("x0")])
-**Expected / Actual:** Err / Ok(Half(0x9002)) — C.EBREAK (funct4=1001, rs1=0, rs2=0)
-**Impact:** Handwritten or generated `c.jalr x0` / `c.jalr zero` becomes a breakpoint rather than an assembler error.
-**Root cause:** compressed.rs:56-59 packs CR-type bits with no rs1≠0 check, so rs1=x0 falls into the C.EBREAK pattern (funct4=1001, rs1=0, rs2=0).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:57`
+**Counterexample:** encode_vsetvli([Reg("x0"), Reg("x0"), Symbol("e128"), Symbol("m1"), Symbol("tu"), Symbol("mu")])
+**Expected / Actual:** Ok(Word(0x02007057)) / Err("unknown vtypei field: e128")
+**Impact:** Valid RVV 1.0 vsetvli with SEW wider than 64 cannot be assembled.
+**Root cause:** vector.rs:22-38 parse_vtypei match omits e128/e256/e512/e1024, so those names hit `unknown vtypei field`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:22`
 ```rust
-    let rs1 = get_reg(operands, 0)?;
-    Ok(EncodeResult::Half(0b10 | ((rs1 as u16) << 7) | (1 << 12) | (0b100 << 13)))
+            "e8" => sew = 0b000,
+            "e16" => sew = 0b001,
+            "e32" => sew = 0b010,
+            "e64" => sew = 0b011,
+            "m1" => lmul = 0b000,
 ```
-**Suggested fix:** Reject rs1 == 0 before packing.
+**Suggested fix:** Accept the remaining RVV 1.0 SEW names (vsew=100/101/110/111).
 ```rust
-if rs1 == 0 {
-    return Err("c.jalr: rs1 cannot be x0 (that encoding is c.ebreak)".into());
-}
+            "e8" => sew = 0b000,
+            "e16" => sew = 0b001,
+            "e32" => sew = 0b010,
+            "e64" => sew = 0b011,
+            "e128" => sew = 0b100,
+            "e256" => sew = 0b101,
+            "e512" => sew = 0b110,
+            "e1024" => sew = 0b111,
+            "m1" => lmul = 0b000,
 ```
-**Bug report:** bug_reports/encode_c_jalr_rs1_x0.md
-**Repro seed:** (deterministic regression; PBT shrunk to name="x0")
+**Bug report:** bug_reports/encode_vsetvli_wide_sew.md
+**Repro seed:** cc 5441f6f005d09dbc412f22162cefdd2e01c6f953117320761ac0bd0f7464e299
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::encode_c_jalr_neg_rs1_x0' (2854339) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:253:1:
-Test failed: rs1=x0 must Err (llvm-mc rejects; encoding is C.EBREAK); got Ok(Half(36866)) at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:313.
-minimal failing input: name = "x0"
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-
-thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::test_encode_c_jalr_regression_rs1_x0' (2854343) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:246:5:
-c.jalr x0 must Err (rs1=x0 is C.EBREAK); got Ok(Half(36866))
+Test failed: SUT rejected valid vsetvli x0, x0, e128, m1, tu, mu: unknown vtypei field: e128.
+minimal failing input: rd = "x0", rs1 = "x0", sew = "e128", lmul = "m1", ta = "tu", ma = "mu"
 ```
 
-### B2: encode_c_jalr ignores extra operands
+### B2: encode_vsetvli accepts two-operand form (missing vtypei)
 
-**Formal:** ∀ rs1 ∈ GPR-names\{x0}, extra ∈ Operand. encode_c_jalr([Reg(rs1), extra]) = Err
-**Contract evidence:** inferred (one-operand mnemonic `c.jalr rs1` at compressed.rs:55; llvm-mc rejects a second operand)
-**Documentation conflict:** (none) — the comment names the one-operand form and does not declare extra operands invalid in so many words, nor admit a limitation
+**Formal:** ∀ ops with len≤2 ∨ rd/rs1 ∈ FP ∪ {v0..v31}. encode_vsetvli(ops) = Err(_)
+**Contract evidence:** inferred (rustdoc `Encode vsetvli rd, rs1, vtypei`; llvm-mc `too few operands for instruction` on `vsetvli x0, x0`)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_c_jalr([Reg("x1"), Imm(0)])
-**Expected / Actual:** Err / Ok(Half(0x9082)) — encoding of `c.jalr x1` / `jalr ra`
-**Impact:** Accidental extra tokens are dropped, so a malformed instruction still assembles as a valid 16-bit linked jump.
-**Root cause:** compressed.rs:56-59 reads only operands[0] via get_reg and never checks operands.len().
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:57`
+**Counterexample:** encode_vsetvli([Reg("x0"), Reg("x0")])
+**Expected / Actual:** Err / Ok(Word(0x7057))
+**Impact:** Omitting vtypei silently encodes e8,m1,tu,mu instead of failing the assemble.
+**Root cause:** vector.rs:49-51 parse_vtypei(operands, 2) on a 2-operand list returns Ok(0).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:49`
 ```rust
-    let rs1 = get_reg(operands, 0)?;
-    Ok(EncodeResult::Half(0b10 | ((rs1 as u16) << 7) | (1 << 12) | (0b100 << 13)))
+    let rd = get_reg(operands, 0)?;
+    let rs1 = get_reg(operands, 1)?;
+    let vtypei = parse_vtypei(operands, 2)?;
 ```
-**Suggested fix:** Reject any operand list whose length is not exactly 1 before packing.
+**Suggested fix:** Require a vtypei operand before packing.
 ```rust
-if operands.len() != 1 {
-    return Err(format!("c.jalr: expected 1 operand, got {}", operands.len()));
-}
+    let rd = get_reg(operands, 0)?;
+    let rs1 = get_reg(operands, 1)?;
+    if operands.len() < 3 {
+        return Err(format!("vsetvli: expected rd, rs1, vtypei, got {} operands", operands.len()));
+    }
+    let vtypei = parse_vtypei(operands, 2)?;
 ```
-**Bug report:** bug_reports/encode_c_jalr_extra_operand.md
-**Repro seed:** cc e3d16e17f40f453d0c80bfd3ae37b5bcb03515a09b54d73108935401b3ef5c12
+**Bug report:** bug_reports/encode_vsetvli_arity_two.md
+**Repro seed:** cc ca42d77b11c2470f607688495b82301ff3d663fb97c224ad04bc0a8308f56462
 **Raw output:**
 ```text
-proptest: Saving this and future failures in /home/toan/github/claudes-c-compiler/proptest-regressions/backend/riscv/assembler/encoder/encode_c_jalr_pbt.txt
-proptest: If this test was run on a CI system, you may wish to add the following line to your copy of the file. (You may need to create it.)
-cc e3d16e17f40f453d0c80bfd3ae37b5bcb03515a09b54d73108935401b3ef5c12
+Test failed: arity 2 must Err (llvm-mc too few operands); got Ok(Word(28759))
+minimal failing input: ops = [Reg("x0"), Reg("x0")], fp = "f0"
+```
 
-thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::encode_c_jalr_neg_extra' (2854338) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:253:1:
-Test failed: extra operand must Err for c.jalr x1 (llvm-mc rejects extra operands); got Ok(Half(36994)) at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:325.
-minimal failing input: rs1 = "x1", extra = Imm(
-    0,
-)
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+### B3: encode_vsetvli ignores or last-wins extra operands
 
-thread 'backend::riscv::assembler::encoder::encode_c_jalr_pbt::test_encode_c_jalr_regression_extra_operand' (2854342) panicked at src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs:235:5:
-c.jalr x1 with a second operand must Err; got Ok(Half(36994))
+**Formal:** ∀ rd,rs1,sew,lmul,ta,ma, extra. encode_vsetvli([rd,rs1,sew,lmul,ta,ma,extra]) = Err(_)
+**Contract evidence:** inferred (llvm-mc rejects extra tokens; encode_instruction passes extras through at mod.rs:941)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** encode_vsetvli([Reg("x0"), Reg("x0"), Symbol("e8"), Symbol("m1"), Symbol("tu"), Symbol("mu"), Symbol("e8")])
+**Expected / Actual:** Err / Ok(Word(0x7057))
+**Impact:** A seventh operand is not rejected; repeated named fields last-win, Imm hijacks vtypei, Mem/Csr/Label are skipped.
+**Root cause:** encode_vsetvli does not check arity; parse_vtypei walks remaining operands, overwriting known names, returning on Imm, and skipping other kinds.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:14`
+```rust
+    for i in start_idx..operands.len() {
+        let name = match &operands[i] {
+            Operand::Symbol(s) => s.to_lowercase(),
+            Operand::Reg(s) => s.to_lowercase(),
+            // Raw immediate: treat as pre-encoded vtypei value
+            Operand::Imm(v) => return Ok(*v as u32 & 0x7FF),
+            _ => continue,
+        };
+```
+**Suggested fix:** Reject operand lists longer than a complete vsetvli.
+```rust
+    if operands.len() > 6 {
+        return Err(format!("vsetvli: extra operand, got {}", operands.len()));
+    }
+```
+**Bug report:** bug_reports/encode_vsetvli_extra_operand.md
+**Repro seed:** (proptest shrunk extra = Symbol("e8"); no cc line emitted for this case in the first run beyond the extra property fail)
+**Raw output:**
+```text
+Test failed: extra operand Symbol("e8") must Err for vsetvli (llvm-mc rejects extra); got Ok(Word(28759))
+minimal failing input: rd = "x0", rs1 = "x0", sew = "e8", lmul = "m1", ta = "tu", ma = "mu", extra = Symbol("e8")
 ```
 
 ## Design Caveats
@@ -106,64 +134,78 @@ c.jalr x1 with a second operand must Err; got Ok(Half(36994))
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs | 7 properties + 6 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs | 9 properties + 6 KAT + 3 regression witnesses |
+| src/backend/riscv/assembler/encoder/mod.rs | #[cfg(test)] mod encode_vsetvli_pbt |
 
 ## Reproduction
+
+Named-vtype differential (passing):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_vsetvli_diff_llvm_mc_named -- --test-threads=1
+```
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_c_jalr -- --test-threads=1
+cargo test --lib encode_vsetvli -- --test-threads=1
 ```
 
-B1 rs1=x0:
+B1 wide SEW:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_c_jalr_regression_rs1_x0 -- --test-threads=1
+cargo test --lib test_encode_vsetvli_regression_wide_sew_e128 -- --test-threads=1
 ```
 
-B2 extra operand:
+B2 arity:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_c_jalr_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_vsetvli_regression_arity_two -- --test-threads=1
+```
+
+B3 extra operand:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_vsetvli_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md — this report
-- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — coverage ledger (append encode_c_jalr row)
-- pbt-out/COVERAGE_STATUS.md — this-campaign coverage summary
-- pbt-out/INVARIANTS.md — confirmed invariants for later campaigns
-- pbt-out/report.json — machine-readable report
-- pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/bug_reports/encode_c_jalr_rs1_x0.md — B1
-- pbt-out/bug_reports/encode_c_jalr_rs1_x0.html — B1 HTML
-- pbt-out/bug_reports/encode_c_jalr_extra_operand.md — B2
-- pbt-out/bug_reports/encode_c_jalr_extra_operand.html — B2 HTML
-- pbt-out/run/ — scratch dir for test CWD
-- proptest-regressions/backend/riscv/assembler/encoder/encode_c_jalr_pbt.txt — proptest failure cache
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_vsetvli_wide_sew.md
+- pbt-out/bug_reports/encode_vsetvli_wide_sew.html
+- pbt-out/bug_reports/encode_vsetvli_arity_two.md
+- pbt-out/bug_reports/encode_vsetvli_arity_two.html
+- pbt-out/bug_reports/encode_vsetvli_extra_operand.md
+- pbt-out/bug_reports/encode_vsetvli_extra_operand.html
+- src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 22:31 (campaign: coverage)
-> Files: 15/15 scanned (100%) | Functions: 220/367 total | PBT candidates: 220 | Tested: 220 (100%) | 1 pass, 220 fail
+> Last updated: 2026-10-06 22:52 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 221/383 total | PBT candidates: 221 | Tested: 221 (100%) | 1 pass, 221 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 15 |
-| Files scanned | 15 / 15 (100%) |
-| Total functions (all files) | 367 |
-| PBT candidates (from FUNCTION_INDEX) | 220 |
-| **Tested (of PBT candidates)** | **220 / 220 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 220 / -1 |
-| **Overall (tested / all functions)** | **220 / 367 (60%)** |
+| Total source files | 16 |
+| Files scanned | 16 / 16 (100%) |
+| Total functions (all files) | 383 |
+| PBT candidates (from FUNCTION_INDEX) | 221 |
+| **Tested (of PBT candidates)** | **221 / 221 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 221 / -1 |
+| **Overall (tested / all functions)** | **221 / 383 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -171,13 +213,13 @@ cargo test --lib test_encode_c_jalr_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 220 | 220 | 0 | 100% |
+|  | 221 | 221 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 220 | 220 | 0 | 100% |
+| unknown | 221 | 221 | 0 | 100% |
 
 ## File Coverage
 
@@ -420,3 +462,4 @@ cargo test --lib test_encode_c_jalr_regression_extra_operand -- --test-threads=1
 | encode_c_add | compressed.rs |
 | encode_c_jr | compressed.rs |
 | encode_c_jalr | compressed.rs |
+| encode_vsetvli | vector.rs |

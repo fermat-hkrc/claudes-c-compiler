@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_vsetvli)
+
+- Valid 6-operand named vsetvli with SEW ∈ {e8,e16,e32,e64}, LMUL ∈ {m1,m2,m4,m8,mf2,mf4,mf8}, ta/tu, ma/mu matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vsetvli a0, a1, e32, m1, ta, ma = 0x0d05f557; vsetvli zero, ra, e8, m8, tu, mu = 0x0030f057; vsetvli a0, a1, e64, mf2, ta, ma = 0x0df5f557; vsetvli a0, a1, e16, mf4, tu, ma = 0x08e5f557; vsetvli x10, x11, e32, m1, ta, ma = 0x0d05f557.
+- Valid raw 11-bit vtypei immediate 0..=2047 matches llvm-mc (1000 cases). KAT pins vsetvli a0, a1, 0 = 0x0005f557.
+- Format layout holds: opcode=1010111, funct3=111, bit31=0, rd in [11:7], rs1 in [19:15], vtypei in [30:20] packed [ma][ta][sew][lmul] (1000 cases).
+- ABI names (zero/ra/sp/a0/…/fp) encode the same word as xN (1000 cases).
+- Field isolation: rd/rs1/vtypei bits independent of the other fields (1000 cases).
+- FP and vector registers as rd/rs1 return Err (1000 cases).
+- Extra operand, two-operand (missing vtypei), and SEW e128/e256/e512/e1024 currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_vsetvli)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6). Default riscv64 without +v rejects vsetvli.
+- Harness: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs, cargo test --lib encode_vsetvli, proptest cases=1000.
+- Dispatch: encoder/mod.rs:941 "vsetvli" => encode_vsetvli(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vsetvli NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of named/imm/format/ABI/isolation/arity/extra/wide-SEW/FP. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+
+## Quirks (encode_vsetvli)
+
+- llvm-mc requires all four named vtype fields in order e, m, ta|tu, ma|mu. It also accepts a raw immediate 0..=2047 and prints the decoded named form.
+- llvm-mc rejects uppercase field names and out-of-range immediates (2048, -1).
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number. llvm-mc rejects numeric rd.
+- parse_vtypei lowercases field names; llvm-mc is case-sensitive.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_c_jalr)
 
 - Valid 1-operand C.JALR with rs1 ∈ {x1..x31} matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.jalr ra = 0x9082, c.jalr x1 = 0x9082, c.jalr sp = 0x9102, c.jalr a0 = 0x9502, c.jalr x31 = 0x9f82, c.jalr t0 = 0x9282.

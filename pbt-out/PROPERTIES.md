@@ -1,182 +1,269 @@
-# Properties: encode_c_jalr
+# Properties: encode_vsetvli
 
-## encode_c_jalr_diff_llvm_mc
-- Tier: 5
-- Rationale: Strongest evidenced oracle is differential against llvm-mc assembling the same `c.jalr` mnemonic. State machine rejected: encode_c_jalr is a pure function with no lifecycle. Algebraic round-trip rejected: no in-tree C.JALR decoder. try_compress_rv64 rejected by same-job gate (post-encode compress of 32-bit JALR, not the `c.jalr` mnemonic). llvm-mc is an independent assembler; mapping is `[Reg(rs1)]` <-> `c.jalr rs1` with rs1 ≠ x0.
-- Doc contract: compressed.rs:55 "c.jalr rs1" — asserted fingerprint 45541b91
-- Seed: compress.rs:572 C.JALR packing comment; pattern generalized from encode_c_jr_pbt.rs llvm-mc differential
-- Formal: ∀ rs1 ∈ GPR-names\{x0,zero}. encode_c_jalr([Reg(rs1)]) = Half(llvm-mc("c.jalr rs1") LE u16)
-- Test file: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs
+## encode_vsetvli_diff_llvm_mc_named
+- Tier: 4
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent RISC-V assembler, same job: assemble `vsetvli` to a 32-bit word). State machine rejected — pure function, no lifecycle. Algebraic round-trip rejected — no in-tree vsetvli decoder. encode_vsetivli / encode_vsetvl rejected as siblings — same-job gate fails (different instruction, different bit31/rs1-vs-uimm layout). Wrapper encode_instruction passes operands through (mod.rs:941).
+- Doc contract: vector.rs:46-47 "Encode vsetvli rd, rs1, vtypei" / "Format: [0][vtypei[10:0]][rs1][111][rd][1010111]" — asserted fingerprint 98424e07
+- Seed: (none) — no project-owned vsetvli unit test
+- Formal: ∀ rd, rs1 ∈ {x0..x31} ∪ ABI ∪ {fp}, sew ∈ {e8,e16,e32,e64}, lmul ∈ {m1,m2,m4,m8,mf2,mf4,mf8}, ta ∈ {ta,tu}, ma ∈ {ma,mu}. encode_vsetvli([Reg(rd),Reg(rs1),Symbol(sew),Symbol(lmul),Symbol(ta),Symbol(ma)]) = Word(w) ∧ w = llvm-mc("vsetvli rd, rs1, sew, lmul, ta, ma", triple=riscv64, mattr=+v)
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_jalr
+function: encoder.encode_vsetvli
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rs1]
-  domain: { rs1: gpr_nz_name }
+  vars: [rd, rs1, sew, lmul, ta, ma]
+  domain: { rd: gpr_name, rs1: gpr_name, sew: {e8,e16,e32,e64}, lmul: {m1,m2,m4,m8,mf2,mf4,mf8}, ta: {ta,tu}, ma: {ma,mu} }
   relation:
     op: eq
-    lhs: sut_half([Reg(rs1)])
-    rhs: llvm_mc_half("c.jalr {rs1}")
+    lhs: sut_word([Reg(rd), Reg(rs1), Symbol(sew), Symbol(lmul), Symbol(ta), Symbol(ma)])
+    rhs: llvm_mc_word("vsetvli {rd}, {rs1}, {sew}, {lmul}, {ta}, {ma}")
 generators:
+  rd: { gen: string }
   rs1: { gen: string }
-evidence: "encoder/mod.rs:933 c.jalr => encode_c_jalr; llvm-mc -triple=riscv64 -mattr=+c"
+  sew: { gen: string }
+  lmul: { gen: string }
+  ta: { gen: string }
+  ma: { gen: string }
+evidence: vector.rs:46-47; encoder/mod.rs:941; README.md:14; llvm-mc -triple=riscv64 -mattr=+v
 ```
 
-## encode_c_jalr_cr_type_fields
+## encode_vsetvli_diff_llvm_mc_imm
 - Tier: 4
-- Rationale: RISC-V Unprivileged ISA CR-type layout for C.JALR is an independent structural invariant (not copied from the SUT body). Stronger differential already covers value agreement; this pins field placement so a zero bit12 (C.JR) or non-zero rs2 still fails. Round-trip rejected (no decoder).
-- Doc contract: compressed.rs:55 "c.jalr rs1" — asserted fingerprint 45541b91
-- Seed: compress.rs:572 C.JALR packing comment
-- Formal: ∀ rs1 ∈ {1..31}. let h = encode_c_jalr([Reg(x{rs1})]).h in (h&0b11)=0b10 ∧ ((h>>12)&0b1111)=0b1001 ∧ ((h>>7)&0x1f)=rs1 ∧ ((h>>2)&0x1f)=0
-- Test file: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs
+- Rationale: llvm-mc accepts a raw 11-bit vtypei immediate 0..=2047 as the third operand (prints the decoded named form). parse_vtypei vector.rs:17-18 "Raw immediate: treat as pre-encoded vtypei value". Same differential reference as p1. Domain pinned to the documented 11-bit field (vtypei[10:0] in the rustdoc format line) including bounds 0 and 2047.
+- Doc contract: vector.rs:46-47 "Format: [0][vtypei[10:0]][rs1][111][rd][1010111]" — asserted fingerprint 98424e07
+- Seed: (none)
+- Formal: ∀ rd, rs1 ∈ GPR names, v ∈ 0..=2047. encode_vsetvli([Reg(rd),Reg(rs1),Imm(v)]) = Word(w) ∧ w = llvm-mc("vsetvli rd, rs1, v")
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_jalr
+function: encoder.encode_vsetvli
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rs1, v]
+  domain: { rd: gpr_name, rs1: gpr_name, v: 0..=2047 }
+  relation:
+    op: eq
+    lhs: sut_word([Reg(rd), Reg(rs1), Imm(v)])
+    rhs: llvm_mc_word("vsetvli {rd}, {rs1}, {v}")
+generators:
+  rd: { gen: string }
+  rs1: { gen: string }
+  v: { gen: int, min: 0, max: 2047, type: u32 }
+evidence: vector.rs:17-18; vector.rs:46-47; llvm-mc accepts 0..=2047
+```
+
+## encode_vsetvli_format_fields
+- Tier: 3
+- Rationale: Algebraic invariant from the rustdoc format line and RISC-V V 1.0: opcode=1010111, funct3=111, bit31=0, rd in [11:7], rs1 in [19:15], vtypei in [30:20] packed as [ma][ta][sew][lmul]. Weaker than differential; kept as an llvm-mc-independent structural check. Round-trip rejected (no decoder).
+- Doc contract: vector.rs:46-47 "Format: [0][vtypei[10:0]][rs1][111][rd][1010111]" — asserted fingerprint 98424e07
+- Seed: (none)
+- Formal: ∀ rd,rs1 ∈ 0..31, sew ∈ {0,1,2,3}, lmul ∈ {0,1,2,3,5,6,7}, ta,ma ∈ {0,1}. let w = encode_vsetvli(named). w[6:0]=1010111 ∧ w[14:12]=111 ∧ w[31]=0 ∧ w[11:7]=rd ∧ w[19:15]=rs1 ∧ w[30:20]=(ma<<7)|(ta<<6)|(sew<<3)|lmul
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_vsetvli
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rs1]
-  domain: { rs1: 1..31 }
-  body: "unpack_c_jalr(sut_half([Reg(x{rs1})])) == (op=0b10, funct4=0b1001, rs1, rs2=0)"
+  vars: [rd, rs1, sew, lmul, ta, ma]
+  domain: { rd: 0..31, rs1: 0..31, sew: {0,1,2,3}, lmul: {0,1,2,3,5,6,7}, ta: 0..1, ma: 0..1 }
+  relation:
+    op: holds
+    lhs: unpack_vsetvli(sut_word(named(rd,rs1,sew,lmul,ta,ma)))
+    rhs: opcode==0b1010111 && funct3==0b111 && bit31==0 && rd_f==rd && rs1_f==rs1 && vtypei==(ma<<7)|(ta<<6)|(sew<<3)|lmul
 generators:
-  rs1: { gen: int, min: 1, max: 31, type: u32 }
-evidence: "RISC-V Unprivileged ISA C.JALR CR-type; compress.rs:572 C.JALR jalr x1, 0(rs1)"
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rs1: { gen: int, min: 0, max: 31, type: u32 }
+  sew: { gen: int, min: 0, max: 3, type: u32 }
+  lmul: { gen: int, min: 0, max: 7, type: u32 }
+  ta: { gen: int, min: 0, max: 1, type: u32 }
+  ma: { gen: int, min: 0, max: 1, type: u32 }
+evidence: vector.rs:46-47; vector.rs:42; RISC-V V 1.0 vsetvli
 ```
 
-## encode_c_jalr_abi_xn_alias
-- Tier: 4
-- Rationale: ABI names (ra/sp/a0/…) and the xN spelling are the same GPR. Metamorphic: encoding is invariant under the ABI↔xN rename. Stronger differential already uses mixed names; this isolates the alias law. Round-trip rejected (no decoder). Domain excludes x0 (reserved / C.EBREAK collision).
-- Doc contract: compressed.rs:55 "c.jalr rs1" — asserted fingerprint 45541b91
+## encode_vsetvli_abi_xn_alias
+- Tier: 3
+- Rationale: Algebraic metamorphic: ABI names (zero/ra/sp/…/fp) must encode the same word as xN. Evidence: encoder/mod.rs:224-270 reg_num maps ABI and xN to the same 5-bit encoding; llvm-mc prints ABI names for xN. Not a differential (both sides are SUT).
+- Doc contract: vector.rs:46 "Encode vsetvli rd, rs1, vtypei" — asserted fingerprint 41263020
 - Seed: (none)
-- Formal: ∀ n ∈ {1..31}. encode_c_jalr([Reg(ABI[n])]) = encode_c_jalr([Reg(x{n})]); additionally n=8 ⇒ fp aliases x8
-- Test file: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs
+- Formal: ∀ n,m ∈ 0..31, vtype named. encode_vsetvli(ABI(n), ABI(m), vtype) = encode_vsetvli(xN(n), xN(m), vtype); n=8 also via fp
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_jalr
+function: encoder.encode_vsetvli
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n]
-  domain: { n: 1..31 }
+  vars: [n, m, sew, lmul, ta, ma]
+  domain: { n: 0..31, m: 0..31, sew: named_sew, lmul: named_lmul, ta: {ta,tu}, ma: {ma,mu} }
   relation:
     op: eq
-    lhs: sut_half([Reg(ABI[n])])
-    rhs: sut_half([Reg(x{n})])
+    lhs: sut_word(abi_ops(n, m, sew, lmul, ta, ma))
+    rhs: sut_word(xn_ops(n, m, sew, lmul, ta, ma))
 generators:
-  n: { gen: int, min: 1, max: 31, type: u32 }
-evidence: "encoder/mod.rs:423 get_reg via reg_num; RISC-V ABI GPR names"
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  m: { gen: int, min: 0, max: 31, type: u32 }
+  sew: { gen: string }
+  lmul: { gen: string }
+  ta: { gen: string }
+  ma: { gen: string }
+evidence: encoder/mod.rs:224-270 reg_num ABI/xN/fp
 ```
 
-## encode_c_jalr_field_isolation
-- Tier: 4
-- Rationale: CR-type fields are independent: changing rs1 must not alter bits outside [11:7] (op, funct4=1001, rs2=0 stay fixed). Metamorphic on a behavior-preserving field split. Stronger differential does not pin isolation. Documented bound: rs1 occupies bits[11:7] exactly.
-- Doc contract: compressed.rs:55 "c.jalr rs1" — asserted fingerprint 45541b91
+## encode_vsetvli_field_isolation
+- Tier: 3
+- Rationale: Algebraic metamorphic / isolation: changing rd must not alter opcode/funct3/rs1/vtypei/bit31; changing rs1 must not alter rd/opcode/vtypei; changing vtypei must not alter rd/rs1/opcode. Documented field layout vector.rs:47.
+- Doc contract: vector.rs:47 "Format: [0][vtypei[10:0]][rs1][111][rd][1010111]" — asserted fingerprint 98424e07
 - Seed: (none)
-- Formal: ∀ rs1_a, rs1_b ∈ {1..31}. encode(rs1_a) & ~0x0f80 = encode(rs1_b) & ~0x0f80; ∀ rs1 ∈ {1..31}. ((encode(rs1)>>7)&0x1f) = rs1
-- Test file: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs
+- Formal: ∀ rd_a, rd_b, rs1, vtype. (encode(rd_a,rs1,vtype) & ~rd_mask) = (encode(rd_b,rs1,vtype) & ~rd_mask) ∧ rd field equals rd. Symmetric for rs1 and vtypei.
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_c_jalr
+function: encoder.encode_vsetvli
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rs1_a, rs1_b, rs1]
-  domain: { rs1_a: 1..31, rs1_b: 1..31, rs1: 1..31 }
-  body: "(h(rs1_a)&~0x0f80)==(h(rs1_b)&~0x0f80) && ((h(rs1)>>7)&0x1f)==rs1"
+  vars: [rd_a, rd_b, rs1_a, rs1_b, v_a, v_b]
+  domain: { rd_a: 0..31, rd_b: 0..31, rs1_a: 0..31, rs1_b: 0..31, v_a: named_vtype, v_b: named_vtype }
+  relation:
+    op: holds
+    lhs: isolation(encode(rd_a,...), encode(rd_b,...))
+    rhs: bits outside the varied field are equal
 generators:
-  rs1_a: { gen: int, min: 1, max: 31, type: u32 }
-  rs1_b: { gen: int, min: 1, max: 31, type: u32 }
-  rs1: { gen: int, min: 1, max: 31, type: u32 }
-evidence: "RISC-V Unprivileged ISA C.JALR CR-type field split"
+  rd_a: { gen: int, min: 0, max: 31, type: u32 }
+  rd_b: { gen: int, min: 0, max: 31, type: u32 }
+  rs1_a: { gen: int, min: 0, max: 31, type: u32 }
+  rs1_b: { gen: int, min: 0, max: 31, type: u32 }
+evidence: vector.rs:47 field layout
 ```
 
-## encode_c_jalr_neg_arity_fp
+## encode_vsetvli_neg_arity_fp
 - Tier: 3
-- Rationale: llvm-mc rejects too-few operands and FP registers as invalid operands for `c.jalr`. Negative/error contract: SUT must Err. Stronger oracles do not apply on the invalid domain.
-- Doc contract: compressed.rs:55 "c.jalr rs1" — asserted fingerprint 45541b91
+- Rationale: Negative/error contract. llvm-mc rejects too few operands (`vsetvli a0` / `vsetvli a0, a1`) and FP/vector registers as rd/rs1. rustdoc names rd, rs1 as the first two operands (integer GPRs via get_reg). get_reg returns Err for missing/FP names. Documented error: Result Err(String).
+- Doc contract: vector.rs:46 "Encode vsetvli rd, rs1, vtypei" — asserted fingerprint 41263020
 - Seed: (none)
-- Formal: ∀ ops. |ops|<1 ⇒ encode_c_jalr(ops)=Err; ∀ fp ∈ FP-names. encode_c_jalr([Reg(fp)])=Err
-- Test file: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+- Formal: ∀ ops with len≤2 ∨ rd/rs1 ∈ FP ∪ {v0..v31}. encode_vsetvli(ops) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
+- Status: failing
+- Counterexample: encode_vsetvli([Reg("x0"), Reg("x0")]) = Ok(Word(0x7057)); llvm-mc rejects `vsetvli x0, x0` as too few operands
+- Bug report: pbt-out/bug_reports/encode_vsetvli_arity_two.md
 
 ```property
-function: encoder.encode_c_jalr
+function: encoder.encode_vsetvli
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops, fp]
-  domain: { ops: empty_ops, fp: fp_name }
-  body: "encode_c_jalr(ops).is_err() && encode_c_jalr([Reg(fp)]).is_err()"
+  domain: { ops: empty_or_one_gpr, fp: fp_or_vreg }
+  relation:
+    op: throws
+    lhs: encode_vsetvli(ops)
+    rhs: String
 generators:
-  ops: { gen: list, maxLen: 0 }
+  ops: { gen: list, elem: { gen: string }, maxLen: 1 }
   fp: { gen: string }
 expected_error: String
-evidence: "llvm-mc too few operands / invalid operand; encoder/mod.rs:423 get_reg"
+evidence: vector.rs:49 get_reg; llvm-mc too few operands / invalid operand
 ```
 
-## encode_c_jalr_neg_extra
+## encode_vsetvli_neg_extra
 - Tier: 3
-- Rationale: C.JALR is one-operand. llvm-mc rejects a second operand (`invalid operand for instruction`). Public dispatcher passes the operand slice through unchanged (mod.rs:933). SUT must Err on extra operands. Documented bound: exactly one operand (`c.jalr rs1`).
-- Doc contract: compressed.rs:55 "c.jalr rs1" — asserted fingerprint 45541b91
-- Seed: encode_c_jr_pbt.rs extra-operand negative (same CR-type arity contract)
-- Formal: ∀ rs1 ∈ GPR-names\{x0}, extra ∈ Operand. encode_c_jalr([Reg(rs1), extra]) = Err
-- Test file: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs
+- Rationale: Negative/error contract. llvm-mc rejects a seventh (or later) operand after a complete named vtype. encode_instruction passes extras through. SUT must Err rather than ignore or retokenize extras (Mem/Imm/Csr skipped or Imm-as-vtypei in parse_vtypei).
+- Doc contract: vector.rs:46 "Encode vsetvli rd, rs1, vtypei" — asserted fingerprint 41263020
+- Seed: (none)
+- Formal: ∀ rd,rs1,sew,lmul,ta,ma, extra. encode_vsetvli([rd,rs1,sew,lmul,ta,ma,extra]) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
 - Status: failing
-- Counterexample: encode_c_jalr([Reg("x1"), Imm(0)]) → Ok(Half(0x9082))
-- Bug report: bug_reports/encode_c_jalr_extra_operand.md
+- Counterexample: encode_vsetvli([Reg("x0"), Reg("x0"), Symbol("e8"), Symbol("m1"), Symbol("tu"), Symbol("mu"), Symbol("e8")]) = Ok(Word(0x7057))
+- Bug report: pbt-out/bug_reports/encode_vsetvli_extra_operand.md
 
 ```property
-function: encoder.encode_c_jalr
+function: encoder.encode_vsetvli
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rs1, extra]
-  domain: { rs1: gpr_nz_name, extra: extra_operand }
-  body: "encode_c_jalr([Reg(rs1), extra]).is_err()"
+  vars: [rd, rs1, sew, lmul, ta, ma, extra]
+  domain: { extra: Operand \ {valid vtype continuation} }
+  relation:
+    op: throws
+    lhs: encode_vsetvli(named ++ [extra])
+    rhs: String
 generators:
-  rs1: { gen: string }
   extra: { gen: string }
 expected_error: String
-evidence: "llvm-mc rejects c.jalr ra, x2; compressed.rs:55 one-operand form"
+evidence: llvm-mc rejects extra operands; encoder/mod.rs:941 pass-through
 ```
 
-## encode_c_jalr_neg_rs1_x0
-- Tier: 3
-- Rationale: ISA: C.JALR is only valid when rs1≠x0; the code point with rs1=x0 (halfword 0x9002) is C.EBREAK, not C.JALR. llvm-mc rejects `c.jalr x0` and `c.jalr zero`. compress.rs:571 requires rs1 != 0 for C.JALR. SUT must Err. Domain is the documented reserved input, not a silent-narrowing of the generator.
-- Doc contract: compressed.rs:55 "c.jalr rs1" — asserted fingerprint 45541b91
-- Seed: encode_c_jr_pbt.rs rs1=x0 negative (CR-type x0 collision with C.EBREAK)
-- Formal: ∀ name ∈ {x0, zero}. llvm-mc rejects `c.jalr name` ∧ encode_c_jalr([Reg(name)])=Err
-- Test file: src/backend/riscv/assembler/encoder/encode_c_jalr_pbt.rs
+## encode_vsetvli_diff_llvm_mc_wide_sew
+- Tier: 4
+- Rationale: Differential covering RVV 1.0 SEW values llvm-mc accepts beyond e8..e64: e128, e256, e512, e1024 (vsew=100/101/110/111). README.md:14 claims V (vector) standard extension. parse_vtypei match lists only e8/e16/e32/e64 — no comment declaring wider SEW invalid (not a domain restriction). Keep the full ISA enumerator set in the generator.
+- Doc contract: vector.rs:46 "Encode vsetvli rd, rs1, vtypei" — asserted fingerprint 41263020
+- Seed: (none)
+- Formal: ∀ rd,rs1 ∈ GPR, sew ∈ {e128,e256,e512,e1024}, lmul ∈ named LMUL, ta,ma. encode_vsetvli(named) = Word(w) ∧ w = llvm-mc(...)
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
 - Status: failing
-- Counterexample: encode_c_jalr([Reg("x0")]) → Ok(Half(0x9002))
-- Bug report: bug_reports/encode_c_jalr_rs1_x0.md
+- Counterexample: encode_vsetvli([Reg("x0"), Reg("x0"), Symbol("e128"), Symbol("m1"), Symbol("tu"), Symbol("mu")]) = Err("unknown vtypei field: e128"); llvm-mc encodes 0x02007057
+- Bug report: pbt-out/bug_reports/encode_vsetvli_wide_sew.md
 
 ```property
-function: encoder.encode_c_jalr
+function: encoder.encode_vsetvli
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rs1, sew, lmul, ta, ma]
+  domain: { sew: {e128,e256,e512,e1024}, lmul: named_lmul, ta: {ta,tu}, ma: {ma,mu} }
+  relation:
+    op: eq
+    lhs: sut_word(named)
+    rhs: llvm_mc_word("vsetvli ...")
+generators:
+  sew: { gen: string }
+  lmul: { gen: string }
+evidence: vector.rs:46; llvm-mc e128/e256/e512/e1024; RISC-V V 1.0 vsew
+```
+
+## encode_vsetvli_neg_fp
+- Tier: 3
+- Rationale: Sweep — FP/vector rd/rs1 error path was bundled with arity and short-circuited by the arity-2 fail. get_reg (mod.rs:425-431) returns Err for non-integer register names; llvm-mc rejects fa0/v0 as rd/rs1. Negative/error contract.
+- Doc contract: vector.rs:46 "Encode vsetvli rd, rs1, vtypei" — asserted fingerprint 41263020
+- Seed: (none)
+- Formal: ∀ fp ∈ FP ∪ {v0..v31}. encode_vsetvli([Reg(fp), Reg(a1), e32, m1, ta, ma]) = Err(_) ∧ encode_vsetvli([Reg(a0), Reg(fp), e32, m1, ta, ma]) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_vsetvli_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_vsetvli
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [name]
-  domain: { name: {x0, zero} }
-  body: "encode_c_jalr([Reg(name)]).is_err()"
+  vars: [fp]
+  domain: { fp: fp_or_vreg }
+  relation:
+    op: throws
+    lhs: encode_vsetvli(fp_as_rd_or_rs1)
+    rhs: String
 generators:
-  name: { gen: string }
+  fp: { gen: string }
 expected_error: String
-evidence: "RISC-V Unprivileged ISA C.JALR rs1≠x0 (rs1=x0 is C.EBREAK); llvm-mc rejects c.jalr x0; compress.rs:571 rs1 != 0"
+evidence: encoder/mod.rs:425-431 get_reg; llvm-mc invalid operand for ft0/v0
 ```
