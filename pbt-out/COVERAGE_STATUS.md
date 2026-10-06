@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 00:58 (campaign: encode_hvc)
-> Files: 11/11 scanned (100%) | Functions: 154/307 total | PBT candidates: 154 | Tested: 154 (100%) | 0 pass, 154 fail
+> Last updated: 2026-10-06 (campaign: encode_smc)
+> Files: 11/11 scanned (100%) | Functions: 155/307 total | PBT candidates: 155 | Tested: 155 (100%) | 0 pass, 155 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 154 |
-| **Tested (of PBT candidates)** | **154 / 154 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 154 / 0 |
-| **Overall (tested / all functions)** | **154 / 307 (50%)** |
+| PBT candidates (from FUNCTION_INDEX) | 155 |
+| **Tested (of PBT candidates)** | **155 / 155 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 155 / 0 |
+| **Overall (tested / all functions)** | **155 / 307 (50%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,7 +21,7 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 154 | 154 | 0 | 100% |
+|  | 155 | 155 | 0 | 100% |
 
 ## Oracle Type Distribution
 
@@ -42,7 +42,6 @@
 | load_store.rs | 20 | 11 | 11 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
-| system.rs | 18 | 6 | 6 | 100% | covered |
 
 ## Recommended Focus
 
@@ -205,3 +204,4 @@
 | encode_msr | system.rs |
 | encode_svc | system.rs |
 | encode_hvc | system.rs |
+| encode_smc | system.rs |

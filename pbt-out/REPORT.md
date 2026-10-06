@@ -1,52 +1,52 @@
-# PBT Campaign Report: encode_hvc
+# PBT Campaign Report: encode_smc
 
 ## Summary
 
-**Verdict:** 2 medium: encode_hvc ignores extra operands (`hvc #0, x0` encodes as `hvc #0`) and masks out-of-range immediates (`hvc #-1` encodes as `hvc #65535`, `hvc #65536` as `hvc #0`), so a mistyped HVC number or trailing operand is assembled instead of rejected.
+**Verdict:** 2 medium: encode_smc ignores extra operands (`smc #0, x0` encodes as `smc #0`) and masks out-of-range immediates (`smc #-1` encodes as `smc #65535`, `smc #65536` as `smc #0`), so a mistyped SMC number or trailing operand is assembled instead of rejected.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_hvc
+**Modules tested:** encode_smc
 **Tests:** 7 properties (plus 3 KAT + 3 regression witnesses)
-**Result:** 5 passing, 2 failing properties, 2 bugs
+**Result:** 2 failing properties (2 bugs), 5 passing
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_hvc. Sweep was a manual arm audit of valid-imm/layout/isolation/empty/wrong-kind/extra/oob. Closed: tier round spent.
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_smc. Sweep was a manual arm audit of valid-imm/layout/isolation/empty/wrong-kind/extra/oob. Closed: tier round spent.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_hvc | 7 properties | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_smc | 7 properties | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_hvc ignores extra operands
+### B1: encode_smc ignores extra operands
 
-**Formal:** ∀ imm ∈ 0..=65535. ∀ extra ∈ Operand. llvm-mc("hvc #"+imm+", "+extra) is Err ∧ encode_hvc([Imm(imm), extra]) is Err
-**Contract evidence:** inferred (ARM ARM HVC is one immediate; llvm-mc rejects extra; gas "unexpected characters following instruction"; README.md:12 gas-compatible assembly; encoder/mod.rs:980 passes operands through)
+**Formal:** ∀ imm ∈ 0..=65535. ∀ extra ∈ Operand. llvm-mc("smc #imm, extra") is Err ⇒ encode_smc([Imm(imm), extra]) is Err
+**Contract evidence:** inferred (ARM ARM SMC is one immediate; llvm-mc rejects extra; gas "unexpected characters following instruction"; README.md:12 gas-compatible assembly; encoder/mod.rs:985 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_hvc([Imm(0), Reg("x0")])  (`hvc #0, x0`)
-**Expected / Actual:** Err / Ok(Word(0xd4000002))
-**Impact:** Typos such as `hvc #0, x0` assemble as a silent `hvc #0`. An extra operand that should have been an encode error is dropped.
-**Root cause:** system.rs:396 reads only operand 0 via get_imm; `operands.len()` is never checked, so trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:396`
+**Counterexample:** encode_smc([Imm(0), Reg("x0")])  (`smc #0, x0`)
+**Expected / Actual:** Err / Ok(Word(0xd4000003))
+**Impact:** Typos such as `smc #0, x0` assemble as a silent `smc #0`. An extra operand that should have been an encode error is dropped.
+**Root cause:** system.rs:421 reads only operand 0 via get_imm; `operands.len()` is never checked, so trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:421`
 ```rust
     let imm = get_imm(operands, 0)?;
 ```
 **Suggested fix:** Reject a slice longer than one operand before encoding.
 ```rust
     if operands.len() != 1 {
-        return Err("hvc: expected a single immediate".to_string());
+        return Err("smc: expected a single immediate".to_string());
     }
     let imm = get_imm(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_hvc_extra_operand.md
-**Repro seed:** cc 32d7cdeea2cc42cb18aa92b173671be614633f9124c6592aebdf7d5e9bb70ec2
+**Bug report:** bug_reports/encode_smc_extra_operand.md
+**Repro seed:** cc 16f9dd12b139188f542811015e41b550bffb4281e24d0e180fcc2533787d4c4d
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_hvc_pbt::encode_hvc_neg_extra' (2538386) panicked at src/backend/arm/assembler/encoder/encode_hvc_pbt.rs:217:1:
-Test failed: extra operand must Err (llvm-mc rejects hvc #0, x0) at src/backend/arm/assembler/encoder/encode_hvc_pbt.rs:269.
+thread 'backend::arm::assembler::encoder::encode_smc_pbt::encode_smc_neg_extra' (2542879) panicked at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:217:1:
+Test failed: extra operand must Err (llvm-mc rejects smc #0, x0) at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:269.
 minimal failing input: imm = 0, extra = Reg(
     "x0",
 )
@@ -55,34 +55,34 @@ minimal failing input: imm = 0, extra = Reg(
 	global rejects: 0
 ```
 
-### B2: encode_hvc masks immediates outside 0..=65535 instead of rejecting
+### B2: encode_smc masks immediates outside 0..=65535 instead of rejecting
 
-**Formal:** ∀ imm ∈ i64 \ 0..=65535. llvm-mc("hvc #"+imm) is Err ∧ encode_hvc([Imm(imm)]) is Err
-**Contract evidence:** inferred (ARM ARM HVC imm16 ∈ 0..=65535; llvm-mc "immediate must be an integer in range [0, 65535]"; gas "immediate value out of range 0 to 65535"; README.md:12 gas-compatible assembly)
+**Formal:** ∀ imm ∈ i64 excluding 0..=65535. llvm-mc("smc #imm") is Err ⇒ encode_smc([Imm(imm)]) is Err
+**Contract evidence:** inferred (ARM ARM SMC imm16 ∈ 0..=65535; llvm-mc "immediate must be an integer in range [0, 65535]"; gas "immediate value out of range 0 to 65535"; README.md:12 gas-compatible assembly)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_hvc([Imm(-1)])  (`hvc #-1`)
-**Expected / Actual:** Err / Ok(Word(0xd41fffe2))
-**Impact:** `hvc #-1` encodes as `hvc #65535`; `hvc #65536` encodes as `hvc #0`. An out-of-range hypervisor-call immediate silently wraps, so the assembled instruction invokes the wrong HVC number.
-**Root cause:** system.rs:397 `let word = 0xd4000002 | ((imm as u32 & 0xFFFF) << 5);` truncates instead of range-checking.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:397`
+**Counterexample:** encode_smc([Imm(-1)])  (`smc #-1`)
+**Expected / Actual:** Err / Ok(Word(0xd41fffe3))
+**Impact:** `smc #-1` encodes as `smc #65535`; `smc #65536` encodes as `smc #0`. An out-of-range Secure Monitor Call immediate silently wraps, so the assembled instruction invokes the wrong SMC number.
+**Root cause:** system.rs:422 `let word = 0xd4000003 | ((imm as u32 & 0xFFFF) << 5);` truncates instead of range-checking.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:422`
 ```rust
-    let word = 0xd4000002 | ((imm as u32 & 0xFFFF) << 5);
+    let word = 0xd4000003 | ((imm as u32 & 0xFFFF) << 5);
 ```
 **Suggested fix:** Reject immediates outside 0..=65535.
 ```rust
     let imm = get_imm(operands, 0)?;
     if !(0..=65535).contains(&imm) {
-        return Err("hvc: immediate must be in 0..=65535".to_string());
+        return Err("smc: immediate must be in 0..=65535".to_string());
     }
-    let word = 0xd4000002 | ((imm as u32) << 5);
+    let word = 0xd4000003 | ((imm as u32) << 5);
 ```
-**Bug report:** bug_reports/encode_hvc_oob_imm.md
-**Repro seed:** (none — first generated oob value `-1` is already minimal)
+**Bug report:** bug_reports/encode_smc_oob_imm.md
+**Repro seed:** (deterministic; no proptest seed for oob after extra's regression file)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_hvc_pbt::encode_hvc_neg_oob_imm' (2538416) panicked at src/backend/arm/assembler/encoder/encode_hvc_pbt.rs:217:1:
-Test failed: imm -1 outside 0..=65535 must Err (llvm-mc rejects hvc #-1) at src/backend/arm/assembler/encoder/encode_hvc_pbt.rs:285.
+thread 'backend::arm::assembler::encoder::encode_smc_pbt::encode_smc_neg_oob_imm' (2542909) panicked at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:217:1:
+Test failed: imm -1 outside 0..=65535 must Err (llvm-mc rejects smc #-1) at src/backend/arm/assembler/encoder/encode_smc_pbt.rs:285.
 minimal failing input: imm = -1
 	successes: 0
 	local rejects: 0
@@ -97,59 +97,50 @@ minimal failing input: imm = -1
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_hvc_pbt.rs | 7 properties + 3 KAT + 3 regression witnesses |
-| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_hvc_pbt;` registration |
+| src/backend/arm/assembler/encoder/encode_smc_pbt.rs | 7 properties + 3 KAT + 3 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_hvc -- --test-threads=1
+cargo test --lib encode_smc -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_hvc_regression_extra_x0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_smc_regression_extra_x0 -- --test-threads=1 --nocapture
 ```
 
-B2 oob imm `-1`:
+B2 oob imm:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_hvc_regression_imm_neg1 -- --test-threads=1 --nocapture
-```
-
-B2 oob imm `65536`:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_hvc_regression_imm_65536 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_smc_regression_imm_neg1 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/run/encode_hvc_pbt.log
-- pbt-out/bug_reports/encode_hvc_extra_operand.md
-- pbt-out/bug_reports/encode_hvc_extra_operand.html
-- pbt-out/bug_reports/encode_hvc_oob_imm.md
-- pbt-out/bug_reports/encode_hvc_oob_imm.html
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/report.json — machine-readable report
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/bug_reports/encode_smc_extra_operand.md
+- pbt-out/bug_reports/encode_smc_extra_operand.html
+- pbt-out/bug_reports/encode_smc_oob_imm.md
+- pbt-out/bug_reports/encode_smc_oob_imm.html
+- pbt-out/run/encode_smc.log, encode_smc_kat.log, encode_smc_regression.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 01:02 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 154/307 total | PBT candidates: 154 | Tested: 154 (100%) | 0 pass, 154 fail
+> Last updated: 2026-10-06 01:17 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 155/307 total | PBT candidates: 155 | Tested: 155 (100%) | 0 pass, 155 fail
 
 ## Summary
 
@@ -158,10 +149,10 @@ cargo test --lib test_encode_hvc_regression_imm_65536 -- --test-threads=1 --noca
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 154 |
-| **Tested (of PBT candidates)** | **154 / 154 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 154 / 0 |
-| **Overall (tested / all functions)** | **154 / 307 (50%)** |
+| PBT candidates (from FUNCTION_INDEX) | 155 |
+| **Tested (of PBT candidates)** | **155 / 155 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 155 / 0 |
+| **Overall (tested / all functions)** | **155 / 307 (50%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -169,13 +160,13 @@ cargo test --lib test_encode_hvc_regression_imm_65536 -- --test-threads=1 --noca
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 154 | 154 | 0 | 100% |
+|  | 155 | 155 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 154 | 154 | 0 | 100% |
+| unknown | 155 | 155 | 0 | 100% |
 
 ## File Coverage
 
@@ -352,3 +343,4 @@ cargo test --lib test_encode_hvc_regression_imm_65536 -- --test-threads=1 --noca
 | encode_msr | system.rs |
 | encode_svc | system.rs |
 | encode_hvc | system.rs |
+| encode_smc | system.rs |
