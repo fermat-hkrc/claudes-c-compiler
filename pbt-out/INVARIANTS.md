@@ -1,3 +1,24 @@
+# Confirmed invariants (encode_lr)
+
+- Unsuffixed lr.{w,d} with GPR rd and Mem offset 0 matches llvm-mc `-triple=riscv64 -mattr=+a -show-encoding` (1000 cases). KAT pins lr.w a0, (a1) = 0x1005a52f, lr.d x1, (x2) = 0x100130af, lr.d x31, (zero) = 0x10003faf. llvm-mc `0(rs1)` equals `(rs1)`.
+- R-type LR layout holds: opcode=0b0101111, rd/rs1 as given, rs2=0, funct5=00010, aq=0, rl=0 (atomics.rs:8-9) (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs1 (1000 cases).
+- Empty, missing mem, FP GPR slots, and non-Mem slot 1 return Err (1000 cases).
+- Extra operands and nonzero Mem offset currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_lr)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+a -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_lr_pbt.rs, cargo test --lib encode_lr, proptest cases=1000.
+- Dispatch: encoder/mod.rs:655-656 unsuffixed lr.w/d => encode_lr; suffixed .aq/.rl/.aqrl go to encode_lr_suffixed (out of scope).
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries). Sweep was a manual audit of valid 2-operand / extra / nonzero offset / arity / FP / non-Mem. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_lr)
+
+- get_reg accepts Imm 0..=31 as a register number (encoder/mod.rs:376 GCC inline-asm comment); not encode_lr's own contract.
+- Codegen always emits offset-less `(a2)` / `(t1)` / `(t0)` forms (codegen/atomics.rs:127,468).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_amo)
 
 - Unsuffixed amo{swap,add,xor,and,or,min,max,minu,maxu}.{w,d} with GPR rd, rs2 and Mem offset 0 matches llvm-mc `-triple=riscv64 -mattr=+a -show-encoding` (1000 cases). KAT pins amoswap.w a0, a1, (a2) = 0x08b6252f, amoadd.d x1, x2, (x3) = 0x0021b0af, amomaxu.d x31, x0, (sp) = 0xe0013faf. llvm-mc `0(rs1)` equals `(rs1)`.

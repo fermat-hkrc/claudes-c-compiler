@@ -44,6 +44,8 @@ mod encode_csr_pbt;
 mod encode_fence_pbt;
 #[cfg(test)]
 mod encode_amo_pbt;
+#[cfg(test)]
+mod encode_lr_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

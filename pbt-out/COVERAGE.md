@@ -198,3 +198,4 @@
 | encode_csr | system.rs | encode_csr_pbt.rs | cargo test --lib encode_csr | 7 passing / 3 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 3 bugs; sweep Reg-as-CSR and decimal CSR name passing) |
 | encode_fence | system.rs | encode_fence_pbt.rs | cargo test --lib encode_fence | 3 passing / 5 failing properties (plus 2 passing KAT + 1 failing KAT + 5 failing regression witnesses; 5 bugs; sweep empty/FenceArg/non-FenceArg/len-1 arms exercised) |
 | encode_amo | atomics.rs | encode_amo_pbt.rs | cargo test --lib encode_amo | 5 passing / 2 failing properties (plus 3 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/FP/non-Mem passing, extra/nonzero-offset failing) |
+| encode_lr | atomics.rs | encode_lr_pbt.rs | cargo test --lib encode_lr | 5 passing / 2 failing properties (plus 3 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/FP/non-Mem passing, extra/nonzero-offset failing) |

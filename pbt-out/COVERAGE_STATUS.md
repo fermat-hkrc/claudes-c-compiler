@@ -1,32 +1,36 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_amo, English, standard)
-> Files: 14 scanned in FUNCTION_INDEX | Functions: 337 total | PBT candidates: 196 | This campaign tested: encode_amo
+> Last updated: 2026-10-06 (campaign: encode_lr)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; Rust cargo test --lib encode_lr executed the production symbol.
+> Files: 13/13 scanned | Functions: 337 total | PBT candidates: 197 | This campaign tested: encode_lr
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files (FUNCTION_INDEX) | 14 |
+| Total source files | 13 |
+| Files scanned | 13 / 13 |
 | Total functions (all files) | 337 |
-| PBT candidates (from FUNCTION_INDEX) | 196 |
-| **This campaign target** | encode_amo (atomics.rs:21) |
-| **This campaign properties** | 7 (5 passing, 2 failing) |
+| PBT candidates (from FUNCTION_INDEX) | 197 |
+| This campaign target | encode_lr |
+| This campaign properties | 7 (5 passing, 2 failing) |
 | Coverage evidence | file-level (symbol presence) |
 
 ## This campaign
 
 | Function | Source | Tested | Result |
 |----------|--------|--------|--------|
-| encode_amo | atomics.rs | yes | 5 pass / 2 fail (2 bugs) |
+| encode_lr | atomics.rs | yes | 5 passing / 2 failing |
 
-coverage_gaps: no .gcda/.profraw (C++ reporter; unrelated binaries; claimed NOT LINKED). Rust `cargo test --lib encode_amo` executed the production symbol. Sweep round 1/1 spent on a manual audit of all six body statements.
+## Oracle Type Distribution (encode_lr)
 
-## Oracle Type Distribution (this campaign)
+| Oracle Type | Count | Result |
+|-------------|-------|--------|
+| differential | 1 | passing |
+| algebraic.invariant | 1 | passing |
+| algebraic.metamorphic | 1 | passing |
+| negative_error | 4 | 2 passing, 2 failing |
 
-| Oracle Type | Total | Passing | Failing |
-|-------------|-------|---------|---------|
-| differential | 1 | 1 | 0 |
-| algebraic.invariant | 1 | 1 | 0 |
-| algebraic.metamorphic | 1 | 1 | 0 |
-| negative_error | 4 | 2 | 2 |
+## Sweep
+
+Round 1/1: coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED for encode_lr). Manual audit: valid 2-operand path, R-type unpack, ABI alias, extra operand, nonzero offset, arity/FP, and non-Mem slot 1 all exercised. Closed: tier round spent; remaining documented gaps are the two filed bugs.
