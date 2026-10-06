@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_mov)
+
+- Valid integer register MOV (x/w 0..30, xzr/wzr, sp — not wsp) matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases; WSP is a bug). KAT pins mov x0,x1=0xaa0103e0, mov sp,x1=0x9100003f.
+- Width-appropriate MOV immediates materialize the same value as llvm-mc, allowing MOVZ/MOVN/ORR-bitmask aliases and README.md:287 movz+movk Words (1000 cases). KAT pins mov x0,#0=0xd2800000.
+- NEON MOV 8b/16b, INS-from-GPR, UMOV .s/.d, and element INS match llvm-mc (1000 cases). KAT pins 16b=0x4ea11c20, INS d[1]=0x4e181c20, UMOV x0 v0.d[1]=0x4e183c00, elem s[3]<-s[0]=0x6e1c0420.
+- X vs W register MOV at equal rd/rm in 0..30 differ only in sf bit 31 (1000 cases).
+- Arity 0 and 1 return Err (1000 cases).
+- lr / uppercase Xn aliases match llvm-mc (sweep, 1000 cases).
+- WSP, extra operands, mixed X/W, FP scalar, mov sp #imm, lane OOB, 16b-vs-8b, 4s vector, and 64-bit imm on W currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_mov)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). GNU as 2.38 agrees on GPR/NEON 8b-16b/INS/UMOV and rejects extra/mixed/FP/sp-imm/4s/64-bit-on-W.
+- Harness: src/backend/arm/assembler/encoder/encode_mov_pbt.rs, cargo test --lib encode_mov_, proptest cases=1000.
+- Dispatch: encoder/mod.rs:373 `"mov" => encode_mov(operands)`.
+- Sibling encode_movz/movk/movn and encode_neon_ins/umov are not same-job independent differentials.
+- README.md:287 asserts movz+movk expansion for multi-instruction immediates (gas/llvm-mc reject those as a single `mov`) — value reconstruct, not encoding match.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_mov_diff_alt_spellings (passing). Closed: tier round spent; remaining documented gaps are the failing WSP/extra/mixed/FP/sp-imm/lane/arr/4s/W-imm64 paths already filed as bugs.
+- Nine failing properties are SUT bugs. See pbt-out/bug_reports/encode_mov_*.md.
+
+## Quirks (encode_mov)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_mov distinguishes only the exact name `sp`, not `wsp` (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- MOVZ/MOVN vs ORR-bitmask alias choice for the same immediate follows README.md:287 search order (unshifted MOVZ, unshifted MOVN, then bitmask) rather than llvm-mc preferred shifted MOVZ — user-visible value agrees.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of encode_mov match arms.
+
 # Confirmed invariants (encode_adrp)
 
 - Reloc-form ADRP word (immhi=immlo=0) matches llvm-mc `adrp Xd, #0` for Rd in 0..31 including xzr (1000 cases). KAT pins adrp x0, foo word=0x90000000 AdrpPage21; adrp xzr, foo word=0x9000001f; adrp x0, :got:foo word=0x90000000 AdrGotPage21.

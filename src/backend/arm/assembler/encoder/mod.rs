@@ -172,6 +172,8 @@ mod encode_ldp_stp_pbt;
 mod encode_ldnp_stnp_pbt;
 #[cfg(test)]
 mod encode_adrp_pbt;
+#[cfg(test)]
+mod encode_mov_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
