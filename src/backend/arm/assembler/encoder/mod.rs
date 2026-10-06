@@ -140,6 +140,8 @@ mod encode_sys_pbt;
 mod encode_at_pbt;
 #[cfg(test)]
 mod encode_tlbi_pbt;
+#[cfg(test)]
+mod encode_swp_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_swp)
+
+- Valid SWP variants {swp,swpa,swpal,swpl,swpb,swpab,swpalb,swplb,swph,swpah,swpalh,swplh} with Rs/Rt in {w/x 0..30, wzr/xzr} (W-only for byte/half) and base Xn|SP match llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). KAT pins swp x0,x1,[x2]=0xF8208041, swp w0,w1,[x2]=0xB8208041, swpa w0,w1,[x2]=0xB8A08041, swpl w0,w1,[x2]=0xB8608041, swpal w0,w1,[x2]=0xB8E08041, swpb w0,w1,[x2]=0x38208041, swph w0,w1,[x2]=0x78208041, swp xzr,xzr,[sp]=0xF83F83FF.
+- ARM SWP layout holds: bits[29:24]=0b111000; bit21=1; bit15=1; bits[14:10]=0; size/A/R/Rs/Rn/Rt match the generated fields (1000 cases).
+- Encodings of the same (size,A,R) differ only in the mutated register field; SWPA XOR SWP = 1<<23; SWPL XOR SWP = 1<<22; SWPAL XOR SWP = (1<<23)|(1<<22); uppercase SWP matches lowercase (1000 cases).
+- Arity < 3 and non-Mem third operand return Err (1000 cases).
+- Unparsable register/base names (foo, x32, empty, r0) return Err (sweep, 1000 cases).
+- ASCII case-fold of the mnemonic matches llvm-mc (sweep, 1000 cases).
+- Extra operands, SP/WSP as Rs/Rt, XZR/W as base, mixed W/X, FP Rs/Rt, SWPB with X, and nonzero Mem offset currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_swp)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+lse -show-encoding (LLVM 15.0.6).
+- ARM ARM SWP: size 111000 A R 1 Rs 1 000 00 Rn Rt. A=acquire, R=release. Rs/Rt are ZR not SP; Rn is Xn|SP not ZR. SWPB/SWPH require W registers. Optional offset only #0.
+- Dispatch: encoder/mod.rs:1045-1047 swp* => encode_swp(mnemonic, operands).
+- Sibling encode_cas / encode_ldop / encode_stop are not same-job differentials (different LSE class / operand grammar).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_swp_neg_invalid_name and encode_swp_diff_alt_spellings. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_swp_*.md.
+
+## Quirks (encode_swp)
+
+- ASCII case of the mnemonic is accepted (to_lowercase).
+- parse_reg_num maps SP and XZR both to 31; encode_swp does not distinguish them (see bugs).
+- get_reg accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- operands.len() < 3 does not reject extra operands (see bugs).
+- Operand::Mem { base, .. } ignores offset (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 30-line body.
+
 # Confirmed invariants (encode_tlbi)
 
 - Valid implemented TLBI ops (no-Xt: vmalle1is/vmalle1/alle1is/alle1/alle2is/vmalls12e1is/vmalls12e1; Xt-required v8.0 plus FEAT_TLBIRANGE with Xt in {x0..x30, xzr, x31, lr}; ASCII case and surrounding space/tab) match llvm-mc `-triple=aarch64 -show-encoding` (`-mattr=+tlb-rmi` for range ops) and the ARM SYS formula 0xD5080000 | (op1<<16) | (CRn<<12) | (CRm<<8) | (op2<<5) | Rt with CRn=8 (1000 cases). KAT pins vmalle1is=0xd508831f, vae1is x0=0xd5088320, vale1is x0=0xd50883a0, alle2is=0xd50c831f, rvae1is x0=0xd5088220, vae1is xzr=0xd508833f.

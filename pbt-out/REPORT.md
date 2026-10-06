@@ -1,128 +1,141 @@
-# PBT Campaign Report: encode_tlbi
+# PBT Campaign Report: encode_swp
 
 ## Summary
 
-**Verdict:** 3 medium, 1 low: encode_tlbi silently encodes missing Xt as XZR, extra Xt on no-Xt ops, and W/SP/SIMD as X registers; it also rejects ARM default-CPU ops (alle2/alle3/vae3/vale3) that llvm-mc/gas assemble.
+**Verdict:** 4 medium: encode_swp silently encodes assembler input that llvm-mc/gas reject — extra operands, SP as Rs/Rt, mixed W/X data registers, and nonzero memory offsets — so the built-in assembler emits the wrong word instead of an error.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_tlbi
-**Tests:** 10
-**Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function (encode_tlbi), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_tlbi_neg_invalid_reg and encode_tlbi_neg_unknown_op. Closed: every documented behavior has a property; tier round spent.
+**Modules tested:** encode_swp
+**Tests:** 10 properties (plus 8 KAT + 8 failing regression witnesses)
+**Result:** 6 passing, 4 failing properties, 4 bugs
+**Change surface:** 1 changed function (encode_swp), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of the 30-line body: every documented branch has a property. Sweep round 1/1 spent (invalid-name / alt-spellings passing).
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_tlbi | 10 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_swp | 10 properties (8 KAT, 8 regression) | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_tlbi defaults a missing Xt to XZR
+### B1: encode_swp ignores a fourth operand
 
-**Formal:** ∀ op ∈ XtRequired. llvm_mc("tlbi " + op) = Err ⇒ encode_tlbi([], op) = Err
-**Contract evidence:** inferred (ARM ARM / llvm-mc require Xt for VA*/VALE*/VAAE*/VAALE*/ASIDE*/IPAS2*/R*; README.md:12 gas-compat)
-**Documentation conflict:** (none) — system.rs:485 `31 // xzr` is a producing-statement default, not a domain restriction declaring missing Xt valid
-**Severity:** medium
-**Counterexample:** encode_tlbi([], "vale1is")
-**Expected / Actual:** Err / Ok(Word(0xd50883bf))
-**Impact:** Dropping the register still assembles; the invalidate uses XZR instead of being rejected as GNU gas / llvm-mc would
-**Root cause:** system.rs:483-485 sets Rt=31 whenever no comma is present, without checking that the matched op requires Xt
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:483`
-```rust
-    } else {
-        31 // xzr
-    };
-```
-**Suggested fix:** Return Err on Xt-required ops with no register operand
-```rust
-    } else if needs_xt(op_name) {
-        return Err(format!("tlbi: {} requires a register", op_name));
-    } else {
-        31 // xzr
-    };
-```
-**Bug report:** bug_reports/encode_tlbi_missing_xt.md
-**Repro seed:** (deterministic regression)
-**Raw output:** `Test failed: Xt-required TLBI without register must Err (llvm-mc rejects tlbi vale1is); SUT raw "vale1is": Word(3574105023). minimal failing input: raw = "vale1is"`
-
-### B2: encode_tlbi accepts a register on no-Xt ops
-
-**Formal:** ∀ op ∈ NoXt, xt ∈ ValidXt. llvm_mc("tlbi " + op + ", " + xt) = Err ⇒ encode_tlbi([], op + ", " + xt) = Err
-**Contract evidence:** inferred (ARM ARM / llvm-mc: "specified tlbi op does not use a register"; README.md:12 gas-compat)
+**Formal:** ∀ v,rs,rt,rn,is_64 in the valid domain, ∀ extra ∈ Operand. encode_swp(v, valid_ops(v,rs,rt,rn,is_64) ++ [extra]) = Err(_)
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects a 4th SWP operand)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tlbi([], "vmalle1is, x0")
-**Expected / Actual:** Err / Ok(Word(0xd5088300))
-**Impact:** `tlbi vmalle1is, x0` is assembled with Rt=x0 instead of rejected; the word is not the architectural VMALLE1IS encoding
-**Root cause:** system.rs:480-485 parse optional Rt for every op; system.rs:537 patches bits[4:0] even when Rt must stay XZR
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:537`
+**Counterexample:** v=0, rs=0, rt=0, rn=0, is_64=false, extra=Reg("x2")
+**Expected / Actual:** Err / Ok(Word) — extra operand ignored
+**Impact:** Trailing operands are dropped; gas/llvm-mc reject the same line
+**Root cause:** load_store.rs:850 checks `operands.len() < 3` and never rejects `len() > 3`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:850`
 ```rust
-    let word = (base & !0x1F) | rt;
-```
-**Suggested fix:** Reject a second operand on no-Xt ops
-```rust
-    if !needs_xt(op_name) && parts.len() > 1 {
-        return Err(format!("tlbi: {} does not use a register", op_name));
+    if operands.len() < 3 {
+        return Err(format!("{} requires 3 operands", mnemonic));
     }
 ```
-**Bug report:** bug_reports/encode_tlbi_extra_xt.md
-**Repro seed:** (deterministic regression)
-**Raw output:** `Test failed: no-Xt TLBI with register must Err (llvm-mc rejects tlbi vmalle1is, x0); SUT raw "vmalle1is, x0": Word(3574104832). minimal failing input: op = "vmalle1is", xt = "x0"`
+**Suggested fix:** Require exactly three operands
+```rust
+    if operands.len() != 3 {
+        return Err(format!("{} requires 3 operands", mnemonic));
+    }
+```
+**Bug report:** bug_reports/encode_swp_extra_operand.md
+**Repro seed:** v=0, rs=0, rt=0, rn=0, is_64=false, extra=Reg("x2")
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:751:5:
+swp w0, w0, [x0], x2 must Err; llvm-mc/gas reject a 4th operand
+```
 
-### B3: encode_tlbi accepts W/SP/SIMD as Xt
+### B2: encode_swp accepts SP/WSP as Rs or Rt
 
-**Formal:** ∀ op ∈ XtRequired, bad ∈ WrongRegClass. llvm_mc("tlbi " + op + ", " + bad) = Err ⇒ encode_tlbi([], op + ", " + bad) = Err
-**Contract evidence:** inferred (ARM ARM TLBI Xt is a 64-bit GPR / XZR / LR; llvm-mc "invalid operand for instruction")
+**Formal:** ∀ v in variants, ∀ n ∈ [0,30]. encode_swp(v, ops with SP/WSP as Rs or Rt, or W/WSP/XZR/x31/WZR as base) = Err(_)
+**Contract evidence:** inferred (ARM SWP Rs/Rt are ZR not SP; llvm-mc "invalid operand for instruction")
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_tlbi([], "vale1is, w0")
-**Expected / Actual:** Err / Ok(Word(0xd50883a0)) (same as x0)
-**Impact:** A W or SIMD operand is encoded as the corresponding X register; gas / llvm-mc refuse the same text
-**Root cause:** system.rs:482 uses parse_reg_num, which accepts w/sp/simd prefixes, with no is_64bit_reg check
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:482`
+**Counterexample:** v=0, n=0, kind=0, is_64=false
+**Expected / Actual:** Err / Ok(Word) — SP encoded as register 31 (ZR)
+**Impact:** The stack pointer is silently rewritten as the zero register. The same property also accepts XZR/x31/W as base (regression witnesses test_encode_swp_regression_xzr_as_base and test_encode_swp_regression_w_base).
+**Root cause:** load_store.rs:853-854 call get_reg; parse_reg_num maps "sp"/"wsp" to 31
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:853`
 ```rust
-        parse_reg_num(reg_str).ok_or_else(|| format!("tlbi: invalid register '{}'", reg_str))?
+    let (rs, is_64) = get_reg(operands, 0)?;
+    let (rt, _) = get_reg(operands, 1)?;
 ```
-**Suggested fix:** Require a 64-bit GPR name after parsing
+**Suggested fix:** Reject SP/WSP as Rs and Rt
 ```rust
-        if !is_64bit_gpr(reg_str) {
-            return Err(format!("tlbi: Xt must be a 64-bit GPR, got '{}'", reg_str));
+    if is_sp_name(operands, 0) || is_sp_name(operands, 1) {
+        return Err("swp: Rs/Rt cannot be SP".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_swp_sp_as_rs.md
+**Repro seed:** v=0, n=0, kind=0, is_64=false
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_sp_as_rs' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:767:5:
+swp sp, w1, [x2] must Err; llvm-mc/gas reject SP as Rs
+```
+
+### B3: encode_swp accepts mixed W/X data registers
+
+**Formal:** ∀ n ∈ [0,30]. encode_swp on mixed W/X, FP/SIMD Rs/Rt, or swpb/swph/swpab/swpalh with X registers = Err(_)
+**Contract evidence:** inferred (llvm-mc rejects mixed W/X on SWP)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** n=0, kind=0, fp='b'
+**Expected / Actual:** Err / Ok(Word) — Rt width discarded; size follows Rs
+**Impact:** Mixed-width assembly is silently coerced to the Rs width. The same property also accepts FP/SIMD Rs/Rt and SWPB with X registers (regression witnesses test_encode_swp_regression_fp_reg and test_encode_swp_regression_swpb_x_reg).
+**Root cause:** load_store.rs:854 `let (rt, _) = get_reg(operands, 1)?` ignores Rt width
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:854`
+```rust
+    let (rt, _) = get_reg(operands, 1)?;
+```
+**Suggested fix:** Require Rs and Rt to share the same GPR width
+```rust
+    let (rt, rt_64) = get_reg(operands, 1)?;
+    if is_64 != rt_64 {
+        return Err("swp: Rs and Rt must be the same width".to_string());
+    }
+```
+**Bug report:** bug_reports/encode_swp_mixed_width.md
+**Repro seed:** n=0, kind=0, fp='b'
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_mixed_width' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:815:5:
+swp x0, w0, [x1] must Err; llvm-mc/gas reject mixed W/X
+```
+
+### B4: encode_swp ignores a nonzero memory offset
+
+**Formal:** ∀ v,rs,rt,rn,is_64 in the valid domain, ∀ off ∈ ℤ\{0}. encode_swp(v, [Reg(Rs), Reg(Rt), Mem{base(rn), off}]) = Err(_)
+**Contract evidence:** inferred (ARM optional offset only #0; llvm-mc rejects [x2, #8])
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** v=0, rs=0, rt=0, rn=0, is_64=false, off=-1
+**Expected / Actual:** Err / Ok(Word) — offset ignored; encodes as [x0]
+**Impact:** The encoded address is not the one written
+**Root cause:** load_store.rs:856 matches `Operand::Mem { base, .. }` and discards offset
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:856`
+```rust
+        Some(Operand::Mem { base, .. }) => parse_reg_num(base).ok_or("swp: invalid base")?,
+```
+**Suggested fix:** Require offset == 0
+```rust
+        Some(Operand::Mem { base, offset }) if *offset == 0 => {
+            parse_reg_num(base).ok_or("swp: invalid base")?
         }
+        Some(Operand::Mem { .. }) => return Err("swp: optional offset can only be 0".to_string()),
 ```
-**Bug report:** bug_reports/encode_tlbi_wrong_reg_class.md
-**Repro seed:** (deterministic regression)
-**Raw output:** `Test failed: TLBI with non-X register must Err (llvm-mc rejects tlbi vale1is, w0); SUT raw "vale1is, w0": Word(3574104992). minimal failing input: op = "vale1is", bad = "w0"`
-
-### B4: encode_tlbi rejects ARM default-CPU TLBI ops
-
-**Formal:** ∀ op ∈ ArmDefaultTlbi, xt ∈ ValidXt∪{ε}. well_formed(op, xt) ⇒ encode_tlbi([], asm(op, xt)) = Word(llvm_mc("tlbi " + asm(op, xt)))
-**Contract evidence:** documented limitation encoder/mod.rs:4 "This covers the subset of instructions emitted by our codegen."
-**Documentation conflict:** encoder/mod.rs:4 admits a codegen subset on an input the assembler API accepts (README.md:12 gas-compat; README.md:239 lists tlbi). Limitation on accepted input, not a domain restriction — filed one step down
-**Severity:** low (documented by the author)
-**Counterexample:** encode_tlbi([], "vae3is, x0"); also alle2, alle3, alle3is, vae3, vale3, vale3is
-**Expected / Actual:** Ok(Word(0xd50e8320)) / Err("unsupported tlbi operation: vae3is")
-**Impact:** Valid GNU `tlbi alle2` / `tlbi vae3is, x0` fails to assemble
-**Root cause:** system.rs:534 — the match table omits alle2 and all EL3 variants llvm-mc accepts on the default CPU
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:534`
-```rust
-        _ => return Err(format!("unsupported tlbi operation: {}", op_name)),
+**Bug report:** bug_reports/encode_swp_nonzero_offset.md
+**Repro seed:** v=0, rs=0, rt=0, rn=0, is_64=false, off=-1
+**Raw output:**
+```text
+thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_nonzero_offset' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:863:5:
+swp w0, w0, [x0, #-1] must Err; gas: optional immediate offset can only be 0
 ```
-**Suggested fix:** Add the missing ARMv8.0 encodings
-```rust
-        "alle2"     => 0xd50c871f,
-        "alle3is"   => 0xd50e831f,
-        "alle3"     => 0xd50e871f,
-        "vae3is"    => 0xd50e8320,
-        "vae3"      => 0xd50e8720,
-        "vale3is"   => 0xd50e83a0,
-        "vale3"     => 0xd50e87a0,
-```
-**Bug report:** bug_reports/encode_tlbi_unimplemented_arm_ops.md
-**Repro seed:** cc 75f53c0582588bfe0a9e8730a8931d2fba4e14c7fe82d9d69dde0e947fc900e1
-**Raw output:** `Test failed: ARM TLBI op "vae3is" must encode (llvm-mc accepts tlbi vae3is, x0): "unsupported tlbi operation: vae3is". minimal failing input: kind = 1, i = 12, t = 0`
 
 ## Design Caveats
 
@@ -132,65 +145,54 @@
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_tlbi_pbt.rs | 10 properties + 6 KAT + 4 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_swp_pbt.rs | 10 properties, 8 KAT, 8 regression witnesses |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_tlbi -- --test-threads=1
+cargo test --lib encode_swp -- --test-threads=1
 ```
 
-B1:
+Per-bug regression (each fails while the bug is unfixed):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tlbi_regression_missing_xt -- --test-threads=1
-```
-
-B2:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tlbi_regression_extra_xt -- --test-threads=1
-```
-
-B3:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tlbi_regression_w0 -- --test-threads=1
-```
-
-B4:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_tlbi_regression_alle2 -- --test-threads=1
+cargo test --lib test_encode_swp_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_swp_regression_sp_as_rs -- --test-threads=1
+cargo test --lib test_encode_swp_regression_mixed_width -- --test-threads=1
+cargo test --lib test_encode_swp_regression_nonzero_offset -- --test-threads=1
 ```
 
 ## Output Directories
 
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
-- pbt-out/report.json
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_tlbi_missing_xt.md
-- pbt-out/bug_reports/encode_tlbi_missing_xt.html
-- pbt-out/bug_reports/encode_tlbi_extra_xt.md
-- pbt-out/bug_reports/encode_tlbi_extra_xt.html
-- pbt-out/bug_reports/encode_tlbi_wrong_reg_class.md
-- pbt-out/bug_reports/encode_tlbi_wrong_reg_class.html
-- pbt-out/bug_reports/encode_tlbi_unimplemented_arm_ops.md
-- pbt-out/bug_reports/encode_tlbi_unimplemented_arm_ops.html
+- pbt-out/INVARIANTS.md
+- pbt-out/run/encode_swp_test.log
+- pbt-out/run/encode_swp_test2.log
+- pbt-out/run/encode_swp_test3.log
+- pbt-out/bug_reports/encode_swp_extra_operand.md
+- pbt-out/bug_reports/encode_swp_extra_operand.html
+- pbt-out/bug_reports/encode_swp_sp_as_rs.md
+- pbt-out/bug_reports/encode_swp_sp_as_rs.html
+- pbt-out/bug_reports/encode_swp_mixed_width.md
+- pbt-out/bug_reports/encode_swp_mixed_width.html
+- pbt-out/bug_reports/encode_swp_nonzero_offset.md
+- pbt-out/bug_reports/encode_swp_nonzero_offset.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 03:58 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 162/307 total | PBT candidates: 162 | Tested: 162 (100%) | 1 pass, 162 fail
+> Last updated: 2026-10-06 04:32 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 163/307 total | PBT candidates: 163 | Tested: 163 (100%) | 1 pass, 163 fail
 
 ## Summary
 
@@ -199,10 +201,10 @@ cargo test --lib test_encode_tlbi_regression_alle2 -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 162 |
-| **Tested (of PBT candidates)** | **162 / 162 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 162 / -1 |
-| **Overall (tested / all functions)** | **162 / 307 (53%)** |
+| PBT candidates (from FUNCTION_INDEX) | 163 |
+| **Tested (of PBT candidates)** | **163 / 163 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 163 / -1 |
+| **Overall (tested / all functions)** | **163 / 307 (53%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -210,13 +212,13 @@ cargo test --lib test_encode_tlbi_regression_alle2 -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 162 | 162 | 0 | 100% |
+|  | 163 | 163 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 162 | 162 | 0 | 100% |
+| unknown | 163 | 163 | 0 | 100% |
 
 ## File Coverage
 
@@ -228,7 +230,7 @@ cargo test --lib test_encode_tlbi_regression_alle2 -- --test-threads=1
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 11 | 11 | 100% | covered |
+| load_store.rs | 20 | 12 | 12 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -401,3 +403,4 @@ cargo test --lib test_encode_tlbi_regression_alle2 -- --test-threads=1
 | encode_sys | system.rs |
 | encode_at | system.rs |
 | encode_tlbi | system.rs |
+| encode_swp | load_store.rs |
