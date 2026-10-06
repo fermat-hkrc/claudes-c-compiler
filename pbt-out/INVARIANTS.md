@@ -1,3 +1,38 @@
+# Confirmed invariants (encode_uxtb)
+
+- Valid UXTB Wd, Wn with Wd, Wn in {w0..w30, wzr, w31} (and w31/WZR/uppercase aliases) match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins uxtb w0,w1=0x53001c20, uxtb wzr,wzr=0x53001fff, ubfm w0,w1,#0,#7 aliases to the same word.
+- ARM UXTB/UBFM-#0,#7 32-bit layout holds: sf=0; opc=10; bits[28:23]=100110; N=0; immr=0; imms=7; Rn/Rd match (1000 cases).
+- UXTB equals UBFM with #0,#7 of the same W registers and llvm-mc (1000 cases).
+- Rd/Rn n vs n+1 differ only in that 5-bit field (1000 cases).
+- Arity 0 and 1 return Err (1000 cases).
+- Unparsable names (x32, foo, empty, r0) return Err (sweep, 1000 cases).
+- Non-register operand kinds (Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement) return Err (sweep, 1000 cases).
+- ASCII case-fold / w31 / WZR aliases match llvm-mc (sweep, 1000 cases).
+- X destination, extra operands, SP/WSP, X-register source, and FP/SIMD registers currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_uxtb)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6). GNU as 2.38 agrees.
+- ARM ARM C6 UXTB is the 32-bit-only alias of UBFM Wd, Wn, #0, #7: sf=0 opc=10 100110 N=0 immr=0 imms=7 Rn Rd. llvm-mc/gas accept UXTB Xd, Wn and canonicalize it to UXTB Wd, Wn (same 32-bit encoding). Register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:442 `"uxtb" => encode_uxtb(operands)`.
+- Sibling encode_sxth / encode_sxtb / encode_uxth / encode_uxtw are not same-job independent differentials (SBFM / imms=15 / UXTW-ORR; shared get_reg / same crate). encode_ubfm is the UBFM alias (shared get_reg / same crate); used only as algebraic.metamorphic #0,#7.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 7-line body plus encode_uxtb_neg_fp / encode_uxtb_neg_invalid_name / encode_uxtb_neg_nonreg / encode_uxtb_diff_alt_spellings / encode_uxtb_meta_rd_rn. Closed: every documented behavior has a property; tier round spent.
+- Five failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_uxtb_*.md.
+
+## Quirks (encode_uxtb)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_uxtb does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- get_reg width of Rn is discarded; sf comes only from Rd, so an X destination encodes 64-bit UBFM (see bugs).
+- llvm-mc aliases `ubfm w0, w1, #0, #7` to `uxtb w0, w1`; encodings still compare.
+- llvm-mc/gas accept `uxtb x0, w0` and rewrite it as `uxtb w0, w0` (32-bit). They reject `uxtb x0, x1`.
+- llvm-mc accepts `w31` as WZR.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 7-line body.
+
 # Confirmed invariants (encode_uxth)
 
 - Valid UXTH Wd, Wn with Wd, Wn in {w0..w30, wzr, w31} (and w31/WZR/uppercase aliases) match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins uxth w0,w1=0x53003c20, uxth wzr,wzr=0x53003fff, ubfm w0,w1,#0,#15 aliases to the same word.

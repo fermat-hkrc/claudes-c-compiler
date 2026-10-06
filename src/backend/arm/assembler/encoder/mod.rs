@@ -162,6 +162,8 @@ mod encode_mneg_pbt;
 mod encode_sxtb_pbt;
 #[cfg(test)]
 mod encode_uxth_pbt;
+#[cfg(test)]
+mod encode_uxtb_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;
