@@ -200,3 +200,9 @@ Environment quirks (round 05):
   width-mix gap (#800; own code path, sibling of #774). i686 imm handling is
   GNU-compatible (addl $2^31 accepted by all three refs — imm32 bit pattern
   fits; NOT a bug, unlike the x86-64 imm64→imm32 truncation #776).
+
+- Round-20: linker surface SOLID (multi-file/weak/common/.so+PIC/TLS/copy-
+  reloc all == gcc). Numeric labels correct on all 3 ISAs — RISC-V resolves
+  jal targets at LINK time (assembly-time relocations): a correct design
+  difference; round-11-style byte diffs are only valid for label-free forms.
+  Inline asm constraints work (incl. "+r", "=&r", "0" matching).
