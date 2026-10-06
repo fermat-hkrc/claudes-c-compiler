@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_hint)
+
+- Valid imm 0..=127 matches llvm-mc `-triple=aarch64 -show-encoding` and the ARM HINT formula 0xD503201F | (imm << 5) (1000 cases). Bounds 0 and 127 pinned by the generator and KAT (hint #0/#1/#7/#127).
+- ARM HINT layout holds: bits[31:12]=0xD5032, bits[11:5]=imm[6:0], bits[4:0]=11111 (1000 cases).
+- Two valid encodings differ only in bits[11:5]; encode(imm) XOR encode(0) = imm << 5 (1000 cases).
+- Empty operand slice and non-Imm first operand return Err, matching llvm-mc/gas (1000 cases).
+- Known-answer: `hint #0` = 0xd503201f; `hint #1` = 0xd503203f; `hint #7` = 0xd50320ff; `hint #127` = 0xd5032fff.
+- Extra operands and Imm outside 0..=127 currently disagree with llvm-mc/gas (see bugs): extras ignored; oob Imm wrapped via CRm=((imm as u32)>>3)&0xF and op2=(imm as u32)&0x7 (`#-1` → `#127`, `#128` → `#0`).
+
+## Environment (encode_hint)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM HINT: 1101 0101 0000 0011 0010 CRm op2 11111 = 0xD503201F | (CRm << 8) | (op2 << 5); imm ∈ 0..=127.
+- Dispatch: encoder/mod.rs:967 `"hint" => encode_hint(operands)`. Operands passed through unchanged.
+- Sibling NOP/YIELD/WFE/WFI/SEV/SEVL/BTI are not same-job differentials (HINT aliases without a free imm).
+- encode_hint uses get_imm on operand 0; extra operands ignored; out-of-range Imm truncated via `as u32` CRm/op2 masks.
+- No ARM codegen caller currently emits `hint`; encode() still routes the mnemonic.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of valid-imm/layout/isolation/empty/wrong-kind/extra/oob. Closed: tier round spent.
+- Two failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_hint_*.md.
+
+## Quirks (encode_hint)
+
+- Extra operands beyond index 0 are ignored (see bugs).
+- Imm outside 0..=127 is masked into CRm:op2 (see bugs).
+- get_imm rejects missing and non-Imm operand 0 (passing negative properties).
+- llvm-mc prints aliases for some HINT immediates (hint #0 as nop, #1 as yield, …); encoding bytes still match.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 8-line body.
+
 # Confirmed invariants (encode_brk)
 
 - Valid imm16 0..=65535 matches llvm-mc `-triple=aarch64 -show-encoding` and the ARM BRK formula 0xD4200000 | (imm << 5) (1000 cases). Bounds 0 and 65535 pinned by the generator.

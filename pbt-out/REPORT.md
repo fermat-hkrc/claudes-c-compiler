@@ -1,52 +1,52 @@
-# PBT Campaign Report: encode_brk
+# PBT Campaign Report: encode_hint
 
 ## Summary
 
-**Verdict:** 2 medium: encode_brk ignores extra operands (`brk #0, x0` encodes as `brk #0`) and masks out-of-range immediates (`brk #-1` encodes as `brk #65535`, `brk #65536` as `brk #0`), so a mistyped BRK number or trailing operand is assembled instead of rejected.
+**Verdict:** 2 medium: encode_hint ignores extra operands (`hint #0, x0` encodes as NOP) and wraps immediates outside 0..=127 (`hint #-1` encodes as `hint #127`, `hint #128` as NOP), so gas-incompatible assembly is accepted with the wrong hint.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_brk
-**Tests:** 7 properties (plus 3 KAT + 3 regression witnesses)
-**Result:** 2 failing properties (2 bugs), 5 passing
+**Modules tested:** encode_hint
+**Tests:** 7 properties (plus 4 KAT + 3 regression witnesses)
+**Result:** 5 passing, 2 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Cargo tests executed encode_brk. Sweep was a manual arm audit of valid-imm/layout/isolation/empty/wrong-kind/extra/oob. Closed: tier round spent.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed NOT LINKED against unrelated C++ binaries; `cargo test --lib encode_hint` executed the production symbol. Sweep: 1/1, closed because every documented behavior has a property.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_brk | 7 properties | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_hint | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_brk ignores extra operands
+### B1: encode_hint ignores extra operands
 
-**Formal:** ∀ imm ∈ 0..=65535. ∀ extra ∈ Operand. llvm-mc("brk #imm, extra") is Err ⇒ encode_brk([Imm(imm), extra]) is Err
-**Contract evidence:** inferred (ARM ARM BRK is one immediate; llvm-mc rejects extra; gas "unexpected characters following instruction"; README.md:12 gas-compatible assembly; encoder/mod.rs:988 passes operands through)
+**Formal:** ∀ imm ∈ 0..=127. ∀ extra ∈ Operand. llvm-mc("hint #imm, extra") is Err ⇒ encode_hint([Imm(imm), extra]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; encoder/mod.rs:967 passes operands through; llvm-mc/gas reject arity > 1)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_brk([Imm(0), Reg("x0")])  (`brk #0, x0`)
-**Expected / Actual:** Err / Ok(Word(0xd4200000))
-**Impact:** Typos such as `brk #0, x0` assemble as a silent `brk #0`. An extra operand that should have been an encode error is dropped.
-**Root cause:** system.rs:472 reads only operand 0 via get_imm; `operands.len()` is never checked, so trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:472`
+**Counterexample:** encode_hint(&[Imm(0), Reg("x0")])  (assembly: `hint #0, x0`)
+**Expected / Actual:** Err / Ok(Word(0xd503201f))
+**Impact:** Typos such as `hint #0, x0` assemble as a silent `hint #0` (NOP) instead of being rejected.
+**Root cause:** system.rs:555 reads only operand 0 via get_imm; operands.len() is never checked, so trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:555`
 ```rust
     let imm = get_imm(operands, 0)?;
 ```
 **Suggested fix:** Reject a slice longer than one operand before encoding.
 ```rust
     if operands.len() != 1 {
-        return Err("brk: expected a single immediate".to_string());
+        return Err("hint: expected a single immediate".to_string());
     }
     let imm = get_imm(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_brk_extra_operand.md
-**Repro seed:** cc 93b76dd439211132a30a4760f9c11f967c79e41cf7b3e1020c178d149beb6460
+**Bug report:** bug_reports/encode_hint_extra_operand.md
+**Repro seed:** cc 443272f3e66ab3c88753c0b5a9ab09bf593d64803dd9253f3c1df79343bdee0c
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_brk_pbt::encode_brk_neg_extra' (2547057) panicked at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:218:1:
-Test failed: extra operand must Err (llvm-mc rejects brk #0, x0) at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:270.
+thread 'backend::arm::assembler::encoder::encode_hint_pbt::encode_hint_neg_extra' (2551428) panicked at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:227:1:
+Test failed: extra operand must Err (llvm-mc rejects hint #0, x0) at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:279.
 minimal failing input: imm = 0, extra = Reg(
     "x0",
 )
@@ -55,34 +55,36 @@ minimal failing input: imm = 0, extra = Reg(
 	global rejects: 0
 ```
 
-### B2: encode_brk masks immediates outside 0..=65535 instead of rejecting
+### B2: encode_hint masks immediates outside 0..=127 instead of rejecting
 
-**Formal:** ∀ imm ∈ i64 excluding 0..=65535. llvm-mc("brk #imm") is Err ⇒ encode_brk([Imm(imm)]) is Err
-**Contract evidence:** inferred (ARM ARM BRK imm16 ∈ 0..=65535; llvm-mc "immediate must be an integer in range [0, 65535]"; gas "immediate value out of range 0 to 65535"; README.md:12 gas-compatible assembly)
-**Documentation conflict:** (none)
+**Formal:** ∀ imm ∉ 0..=127. llvm-mc("hint #imm") is Err ⇒ encode_hint([Imm(imm)]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compatible assembly; ARM ARM HINT 7-bit imm; llvm-mc "immediate must be an integer in range [0, 127]"; gas "immediate value out of range 0 to 127")
+**Documentation conflict:** (none) — system.rs:556-557 describe the CRm/op2 split, not an input-domain exclusion
 **Severity:** medium
-**Counterexample:** encode_brk([Imm(-1)])  (`brk #-1`)
-**Expected / Actual:** Err / Ok(Word(0xd43fffe0))
-**Impact:** `brk #-1` encodes as `brk #65535`; `brk #65536` encodes as `brk #0`. An out-of-range breakpoint immediate silently wraps, so the assembled instruction carries the wrong imm16.
-**Root cause:** system.rs:473 `let word = 0xd4200000 | ((imm as u32 & 0xFFFF) << 5);` truncates instead of range-checking.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:473`
+**Counterexample:** encode_hint(&[Imm(-1)])  (assembly: `hint #-1`)
+**Expected / Actual:** Err / Ok(Word(0xd5032fff))  // hint #127
+**Impact:** `hint #-1` encodes as `hint #127`; `hint #128` encodes as `hint #0` (NOP). An out-of-range immediate silently wraps into CRm:op2.
+**Root cause:** system.rs:558-560 pack `((imm as u32) >> 3) & 0xF` and `(imm as u32) & 0x7` with no range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/system.rs:558`
 ```rust
-    let word = 0xd4200000 | ((imm as u32 & 0xFFFF) << 5);
+    let crm = ((imm as u32) >> 3) & 0xF;
 ```
-**Suggested fix:** Reject immediates outside 0..=65535.
+**Suggested fix:** Reject immediates outside 0..=127.
 ```rust
     let imm = get_imm(operands, 0)?;
-    if !(0..=65535).contains(&imm) {
-        return Err("brk: immediate must be in 0..=65535".to_string());
+    if !(0..=127).contains(&imm) {
+        return Err("hint: immediate must be in 0..=127".to_string());
     }
-    let word = 0xd4200000 | ((imm as u32) << 5);
+    let crm = (imm as u32) >> 3;
+    let op2 = (imm as u32) & 0x7;
+    let word = 0xd503201f | (crm << 8) | (op2 << 5);
 ```
-**Bug report:** bug_reports/encode_brk_oob_imm.md
-**Repro seed:** (none — deterministic `Imm(-1)`)
+**Bug report:** bug_reports/encode_hint_oob_imm.md
+**Repro seed:** (deterministic regression; oob generator shrunk to -1)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_brk_pbt::encode_brk_neg_oob_imm' (2547093) panicked at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:218:1:
-Test failed: imm -1 outside 0..=65535 must Err (llvm-mc rejects brk #-1) at src/backend/arm/assembler/encoder/encode_brk_pbt.rs:286.
+thread 'backend::arm::assembler::encoder::encode_hint_pbt::encode_hint_neg_oob_imm' (2551453) panicked at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:227:1:
+Test failed: imm -1 outside 0..=127 must Err (llvm-mc rejects hint #-1) at src/backend/arm/assembler/encoder/encode_hint_pbt.rs:295.
 minimal failing input: imm = -1
 	successes: 0
 	local rejects: 0
@@ -97,26 +99,26 @@ minimal failing input: imm = -1
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_brk_pbt.rs | 7 properties + 3 KAT + 3 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_hint_pbt.rs | 7 properties + 4 KAT + 3 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_brk -- --test-threads=1
+cargo test --lib encode_hint -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_brk_regression_extra_x0 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_hint_regression_extra_x0 -- --test-threads=1 --nocapture
 ```
 
-B2 oob immediate:
+B2 oob imm:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_brk_regression_imm_neg1 -- --test-threads=1 --nocapture
+cargo test --lib test_encode_hint_regression_imm_neg1 -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
@@ -128,22 +130,21 @@ cargo test --lib test_encode_brk_regression_imm_neg1 -- --test-threads=1 --nocap
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_brk_extra_operand.md
-- pbt-out/bug_reports/encode_brk_extra_operand.html
-- pbt-out/bug_reports/encode_brk_oob_imm.md
-- pbt-out/bug_reports/encode_brk_oob_imm.html
-- pbt-out/run/kat.log
-- pbt-out/run/encode_brk_pbt.log
-- pbt-out/run/encode_brk_regression.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_hint_extra_operand.md
+- pbt-out/bug_reports/encode_hint_extra_operand.html
+- pbt-out/bug_reports/encode_hint_oob_imm.md
+- pbt-out/bug_reports/encode_hint_oob_imm.html
+- pbt-out/run/encode_hint_pbt.log
+- proptest-regressions/backend/arm/assembler/encoder/encode_hint_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 01:30 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 155/307 total | PBT candidates: 155 | Tested: 155 (100%) | 0 pass, 155 fail
+> Last updated: 2026-10-06 01:41 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 156/307 total | PBT candidates: 156 | Tested: 156 (100%) | 0 pass, 156 fail
 
 ## Summary
 
@@ -152,10 +153,10 @@ cargo test --lib test_encode_brk_regression_imm_neg1 -- --test-threads=1 --nocap
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 155 |
-| **Tested (of PBT candidates)** | **155 / 155 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 155 / 0 |
-| **Overall (tested / all functions)** | **155 / 307 (50%)** |
+| PBT candidates (from FUNCTION_INDEX) | 156 |
+| **Tested (of PBT candidates)** | **156 / 156 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 0 / 156 / 0 |
+| **Overall (tested / all functions)** | **156 / 307 (51%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -163,13 +164,13 @@ cargo test --lib test_encode_brk_regression_imm_neg1 -- --test-threads=1 --nocap
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 155 | 155 | 0 | 100% |
+|  | 156 | 156 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 155 | 155 | 0 | 100% |
+| unknown | 156 | 156 | 0 | 100% |
 
 ## File Coverage
 
@@ -347,3 +348,4 @@ cargo test --lib test_encode_brk_regression_imm_neg1 -- --test-threads=1 --nocap
 | encode_svc | system.rs |
 | encode_hvc | system.rs |
 | encode_brk | system.rs |
+| encode_hint | system.rs |

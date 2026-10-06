@@ -158,3 +158,4 @@
 | encode_hvc | system.rs | encode_hvc_pbt.rs | cargo test --lib encode_hvc | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |
 | encode_smc | system.rs | encode_smc_pbt.rs | cargo test --lib encode_smc | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing)
 | encode_brk | system.rs | encode_brk_pbt.rs | cargo test --lib encode_brk | 5 passing / 2 failing properties (plus 3 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |
+| encode_hint | system.rs | encode_hint_pbt.rs | cargo test --lib encode_hint | 5 passing / 2 failing properties (plus 4 passing KAT + 3 failing regression witnesses; 2 bugs; sweep extra/oob-imm failing) |

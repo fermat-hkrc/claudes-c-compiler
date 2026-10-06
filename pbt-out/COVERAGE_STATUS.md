@@ -1,7 +1,8 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_brk, English)
-> Files: 11/11 scanned (100%) | Functions: 156/307 total PBT candidates | Tested this campaign: encode_brk | Coverage evidence: file-level (symbol presence)
+> Last updated: 2026-10-06 (campaign: encode_hint, English)
+> Files: 11/11 scanned (100%) | Functions: 307 total | PBT candidates: 157 | This campaign tested: encode_hint
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and claimed NOT LINKED against unrelated C++ binaries; cargo test --lib encode_hint executed the production symbol.
 
 ## Summary
 
@@ -10,21 +11,17 @@
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 156 |
-| This campaign target | encode_brk |
-| This campaign properties | 7 (5 passing, 2 failing) |
-| Coverage evidence | file-level (symbol presence) — coverage_gaps had no LLVM profraw; C++ reporter listed unrelated binaries and claimed NOT LINKED. Cargo tests executed encode_brk. |
+| PBT candidates (from FUNCTION_INDEX) | 157 |
+| This campaign target | encode_hint |
+| encode_hint properties | 5 passing / 2 failing |
+| Coverage evidence | file-level (symbol presence) |
 
-## This campaign (encode_brk)
+## This campaign
 
-| Function | Source | Test file | Result |
-|----------|--------|-----------|--------|
-| encode_brk | system.rs | encode_brk_pbt.rs | 5 passing / 2 failing (extra operand, oob imm) |
+| Function | Source | Tested | Result |
+|----------|--------|--------|--------|
+| encode_hint | system.rs | yes | 5 passing / 2 failing (2 bugs) |
 
-Manual arm audit (sweep round 1/1): valid imm16, ARM layout bits[31:21]/[20:5]/[4:0], imm isolation, empty operands, wrong kind, extra operands, oob imm. All documented behaviors have a property. Closed: tier round spent.
+## Sweep
 
-## File Coverage (this campaign)
-
-| Source File | Target | Tested | Status |
-|-------------|--------|--------|--------|
-| system.rs | encode_brk | yes | covered (cargo test --lib encode_brk) |
+Round 1/1: coverage_gaps had no LLVM profraw. Manual arm audit of encode_hint (valid imm7, ARM layout, imm isolation, empty, wrong-kind, extra, oob). Closed: every documented behavior has a property; tier round spent.
