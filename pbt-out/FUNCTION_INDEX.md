@@ -1,4 +1,4 @@
-> Total files: 14 | Total functions: 351 | PBT candidates: 208 | Excluded: 143
+> Total files: 14 | Total functions: 351 | PBT candidates: 209 | Excluded: 142
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -347,7 +347,7 @@
 | encode_fp_sgnj | float.rs | 95 | function | yes | - |
 | encode_fp_cmp | float.rs | 102 | function | yes | - |
 | encode_fclass | float.rs | 110 | function | yes | - |
-| encode_fcvt_int | float.rs | 116 | function | no | HARD: test only encode_fclass |
+| encode_fcvt_int | float.rs | 116 | function | yes | - |
 | encode_fcvt_from_int | float.rs | 131 | function | no | HARD: test only encode_fclass |
 | encode_fcvt_fp | float.rs | 146 | function | no | HARD: test only encode_fclass |
 | encode_fmv_x_f | float.rs | 161 | function | no | HARD: test only encode_fclass |
