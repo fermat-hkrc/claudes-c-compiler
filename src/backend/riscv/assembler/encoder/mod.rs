@@ -28,6 +28,8 @@ mod encode_jalr_pbt;
 mod encode_branch_instr_pbt;
 #[cfg(test)]
 mod encode_load_pbt;
+#[cfg(test)]
+mod encode_store_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

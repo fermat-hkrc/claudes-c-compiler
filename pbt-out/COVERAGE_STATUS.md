@@ -1,30 +1,28 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_load, English, standard)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter claimed NOT LINKED). SUT is Rust `cargo test --lib encode_load`; encode_load ran in that target (13 passed / 8 failed including 4 property failures).
+> Last updated: 2026-10-06 (campaign: encode_store, English, standard)
+> Files: 12/12 scanned | Functions: 324 total | PBT candidates: 189 | This campaign tested: encode_store
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no .gcda/.profraw
 
-## This campaign
+## Summary
 
 | Metric | Value |
 |--------|-------|
-| Target | encode_load (base.rs:147) |
-| Properties | 10 |
-| Passing | 6 |
-| Failing | 4 |
-| Bugs | 4 |
-| Sweep | 1/1 (manual arm audit + hi-modifier / SymbolOffset properties) |
+| Total source files | 12 |
+| Files scanned | 12 / 12 |
+| Total functions (all files) | 324 |
+| PBT candidates (from FUNCTION_INDEX) | 189 |
+| This campaign target | encode_store (base.rs:194) |
+| Properties this campaign | 9 (4 passing, 5 failing) |
+| Bugs this campaign | 5 |
+| Coverage evidence | file-level (symbol presence); no LLVM profraw |
 
-## File Coverage (this campaign)
+## This campaign
 
-| Source File | Funcs in scope | Candidates | Tested | Coverage | Status |
-|-------------|---------------|------------|--------|----------|--------|
-| base.rs | 1 (encode_load only) | 1 | 1 | 100% | covered |
+| Function | Source | Tested | Notes |
+|----------|--------|--------|-------|
+| encode_store | base.rs | yes | 4 passing / 5 failing; Mem, MemSymbol, Err arms executed |
 
-## Oracle Type Distribution (this campaign)
+## Sweep
 
-| Oracle Type | Total | Covered |
-|-------------|-------|---------|
-| differential | 3 | 3 |
-| algebraic.invariant | 1 | 1 |
-| algebraic.metamorphic | 2 | 2 |
-| negative_error | 4 | 4 |
+coverage_gaps: no line-level data (C++ reporter, unrelated binaries, claimed NOT LINKED). Manual arm audit plus encode_store_neg_other_modifier. Closed: standard tier 1/1 round spent.

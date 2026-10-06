@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_store)
+
+- Valid `mn rs2, off(rs1)` for mn in {sb,sh,sw,sd}, off in [-2048, 2047], rs2/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins sd x1,0(x2)=0x00113023, sb x0,0(x1)=0x00008023, sw x1,8(x2)=0x00112423, sd x1,-8(x2)=0xfe113c23, sd x1,2047(x2)=0x7e113fa3, sd x1,-2048(x2)=0x80113023, sh x1,-1(x2)=0xfe111fa3.
+- S-type layout holds: opcode=0b0100011, funct3 in bits[14:12], rs1 in bits[19:15], rs2 in bits[24:20], reconstructed signed imm12 matches (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rs2/rs1 (1000 cases).
+- Empty operand list, missing 2nd operand, FP source/base, and Imm/Csr/Fence/RoundingMode/Symbol/Label/SymbolOffset as 2nd operand return Err (1000 cases).
+- Extra operands, out-of-range immediates, %hi/%pcrel_hi/%tprel_hi, %got_pcrel_hi and other non-lo MemSymbol modifiers, and %lo emitting I-type relocs currently disagree with llvm-mc / documented Lo12S (see bugs).
+
+## Environment (encode_store)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_store_pbt.rs, cargo test --lib encode_store, proptest cases=1000.
+- Dispatch: encoder/mod.rs:488-492 sb/sh/sw/sd => encode_store.
+- Sibling encode_s / encode_float_store / C.SW / encode_load are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_store_neg_other_modifier. Closed: tier round spent; remaining documented gaps are the four filed bugs.
+- Four failing property groups are SUT bugs. See pbt-out/bug_reports/encode_store_*.md.
+
+## Quirks (encode_store)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:357 GCC inline asm).
+- No operands.len() == 2 check; extra operands are ignored (see bugs).
+- Immediate is `*offset as i32` then encode_s keeps 12 bits; values outside [-2048, 2047] wrap (see bugs).
+- MemSymbol %hi/%pcrel_hi/%tprel_hi is remapped to Lo12S/PcrelLo12S/TprelLo12S instead of rejected (see bugs).
+- parse_reloc_modifier returns I-type lo variants; encode_store does not remap Lo12I/PcrelLo12I/TprelLo12I to the S-type twins (see bugs).
+- GotHi20/Tls*/TprelAdd/plain-symbol MemSymbol fall through `other => other` and are accepted (see bugs).
+- Unlike encode_load, there is no bare-symbol auipc+store expansion; llvm-mc also rejects `sd rs, symbol` as too few operands.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 26-line body.
+
 # Confirmed invariants (encode_load)
 
 - Valid `mn rd, off(rs1)` for mn in {lb,lh,lw,ld,lbu,lhu,lwu}, off in [-2048, 2047], rd/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins ld x1,0(x2)=0x00013083, lb x0,0(x1)=0x00008003, lw x1,8(x2)=0x00812083, ld x1,-8(x2)=0xff813083, ld x1,2047(x2)=0x7ff13083, ld x1,-2048(x2)=0x80013083, lbu x1,1(x2)=0x00114083, lhu x1,2(x2)=0x00215083, lwu x1,4(x2)=0x00416083, lh x1,-1(x2)=0xfff11083.

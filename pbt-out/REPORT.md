@@ -1,149 +1,200 @@
-# PBT Campaign Report: encode_load
+# PBT Campaign Report: encode_store
 
 ## Summary
 
-**Verdict:** 2 high, 2 medium: encode_load silently wraps out-of-range offsets and drops extra operands (wrong machine code), treats %hi as %lo, and rejects `ld rd, symbol+addend` that llvm-mc accepts.
+**Verdict:** 5 high: encode_store silently ignores extra operands, wraps out-of-range offsets (2048 → −2048), remaps %hi to Lo12S, accepts GOT/TLS MemSymbol modifiers as GotHi20, and emits I-type lo relocs (Lo12I/PcrelLo12I/TprelLo12I) on S-type stores that the ELF writer will patch with the wrong bit layout.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_load
-**Tests:** 10
-**Result:** 6 passing, 4 bugs
-**Change surface:** 1 changed function (encode_load), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter, NOT LINKED on unrelated binaries). Manual arm audit of encode_load plus two sweep properties. Recorded as file-level because the SUT is Rust cargo-test, not a C++ binary.
+**Modules tested:** encode_store
+**Tests:** 9
+**Result:** 4 passing, 5 bugs
+**Change surface:** 1 changed function (encode_store), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter, unrelated binaries, claimed encode_store NOT LINKED). Manual arm audit of the 26-line body plus one sweep property.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_load | 10 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_store | 9 | 5 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_load ignores extra operands
+### B1: encode_store ignores extra operands
 
-**Formal:** ∀ mn, rd, rs1, off∈[-2048,2047], extra. encode_load([Reg(rd), Mem{rs1,off}, extra], f3) = Err
-**Contract evidence:** inferred (llvm-mc rejects extra operands; encode_instruction passes the operand slice through unchanged)
-**Documentation conflict:** (none) — no comment declares extra operands valid or ignored
+**Formal:** ∀ mn ∈ {sb,sh,sw,sd}, rs2, rs1 ∈ GPR, off ∈ [-2048, 2047], extra ∈ Operand. llvm-mc rejects "mn rs2, off(rs1)" with a trailing operand ⇒ encode_store([Reg(rs2), Mem{rs1, off}, extra], f3) is Err
+**Contract evidence:** inferred (llvm-mc rejects extra operands on sb/sh/sw/sd; encode_instruction passes the operand slice through)
+**Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_load([Reg("x0"), Mem { base: "x0", offset: 0 }, Imm(0)], funct3=0)  // lb x0, 0(x0), 0
-**Expected / Actual:** Err / Ok(Word(0x00000003))
-**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed load instead of diagnosing the line.
-**Root cause:** base.rs:149 matches only `operands.get(1)` and never checks `operands.len()`, so trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:149`
+**Counterexample:** encode_store([Reg("x0"), Mem { base: "x0", offset: 0 }, Imm(0)], funct3=0)  // sb x0, 0(x0), 0
+**Expected / Actual:** Err / Ok(Word(0x00000023))
+**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed store instead of diagnosing the line.
+**Root cause:** base.rs:196 matches only `operands.get(1)` and never checks `operands.len()`, so any trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:196`
 ```rust
     match &operands.get(1) {
 ```
-**Suggested fix:** Reject a slice whose length is not 2 before matching.
+**Suggested fix:** Reject a slice longer than two operands before matching.
 ```rust
     if operands.len() != 2 {
-        return Err("load: expected rd, offset(rs1)".to_string());
+        return Err("store: expected rs2, offset(rs1)".to_string());
     }
     match &operands.get(1) {
 ```
-**Bug report:** bug_reports/encode_load_extra_operand.md
-**Repro seed:** cc bda355ef8e7a7edc4c74e201a4a2cd946c69ecdaaf4af8a98662136648037d94
+**Bug report:** bug_reports/encode_store_extra_operand.md
+**Repro seed:** cc 070aab56176ae6228c105ce28d882d5fa274aac125d844095d39134820f11bbb
 **Raw output:**
 ```text
-Test failed: extra operand must Err for lb x0, 0(x0) (llvm-mc rejects extra operands); got Ok(Word(3))
-minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", rs1 = "x0", off = 0, extra = Imm(0)
+Test failed: extra operand must Err for sb x0, 0(x0) (llvm-mc rejects extra operands); got Ok(Word(35)) at src/backend/riscv/assembler/encoder/encode_store_pbt.rs:535.
+minimal failing input: (mn, f3) = (
+    "sb",
+    0,
+), rs2 = "x0", rs1 = "x0", off = 0, extra = Imm(
+    0,
+)
 ```
 
-### B2: encode_load wraps out-of-range I-type offsets
+### B2: encode_store wraps out-of-range store offsets
 
-**Formal:** ∀ mn, rd, rs1, off ∉ [-2048,2047]. llvm-mc rejects `mn rd, off(rs1)` ⇒ encode_load([Reg(rd), Mem{rs1,off}], f3) = Err
-**Contract evidence:** documented README.md:353 "I-type:  [    imm[11:0]  | rs1 | funct3 |  rd  | opcode]" plus llvm-mc "integer in the range [-2048, 2047]"
-**Documentation conflict:** (none) — no comment declares out-of-range offsets valid
+**Formal:** ∀ mn ∈ {sb,sh,sw,sd}, rs2, rs1 ∈ GPR, imm ∉ [-2048, 2047]. llvm-mc rejects "mn rs2, imm(rs1)" ⇒ encode_store([Reg(rs2), Mem{rs1, imm}], f3) is Err
+**Contract evidence:** inferred (llvm-mc: store offset must be an integer in [-2048, 2047]; README.md:354 S-type 12-bit immediate)
+**Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_load([Reg("x0"), Mem { base: "x0", offset: 2048 }], funct3=0)  // lb x0, 2048(x0)
-**Expected / Actual:** Err / Ok(Word(0x80000003))  // lb x0, -2048(x0)
-**Impact:** A too-large offset wraps through the 12-bit field and becomes a large negative address with no diagnostic.
-**Root cause:** base.rs:152 casts `*offset as i32` with no range check; encode_i then masks with 0xFFF, wrapping 2048 to -2048.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:152`
+**Counterexample:** encode_store([Reg("x0"), Mem { base: "x0", offset: 2048 }], funct3=0)  // sb x0, 2048(x0)
+**Expected / Actual:** Err / Ok(Word(0x80000023)) encoding of sb x0, -2048(x0)
+**Impact:** Offsets such as 2048 are encoded as the wrapped 12-bit pattern, so a store that the source wrote as a large displacement silently hits the wrong address.
+**Root cause:** base.rs:199 casts `*offset as i32` into encode_s, which keeps only imm[11:5]|imm[4:0] and never range-checks the 12-bit signed field.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:199`
 ```rust
-            Ok(EncodeResult::Word(encode_i(OP_LOAD, rd, funct3, rs1, *offset as i32)))
+            Ok(EncodeResult::Word(encode_s(OP_STORE, funct3, rs1, rs2, *offset as i32)))
 ```
-**Suggested fix:** Reject offsets outside the documented I-type range before packing.
+**Suggested fix:** Reject immediates outside [-2048, 2047] before packing.
 ```rust
-            if !(-2048..=2047).contains(offset) {
-                return Err("load: offset out of signed-12 range".to_string());
+            if !(-2048..=2047).contains(&offset) {
+                return Err("store: immediate out of range [-2048, 2047]".to_string());
             }
-            Ok(EncodeResult::Word(encode_i(OP_LOAD, rd, funct3, rs1, *offset as i32)))
+            Ok(EncodeResult::Word(encode_s(OP_STORE, funct3, rs1, rs2, *offset as i32)))
 ```
-**Bug report:** bug_reports/encode_load_imm_oob.md
-**Repro seed:** (none saved; deterministic regression test_encode_load_regression_imm_oob)
+**Bug report:** bug_reports/encode_store_imm_oob.md
+**Repro seed:** (deterministic regression: offset=2048)
 **Raw output:**
 ```text
-Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147483651))
-minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", rs1 = "x0", imm = 2048
+Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147483683)) at src/backend/riscv/assembler/encoder/encode_store_pbt.rs:517.
+minimal failing input: (mn, f3) = (
+    "sb",
+    0,
+), rs2 = "x0", rs1 = "x0", imm = 2048
 ```
 
-### B3: encode_load accepts %hi/%pcrel_hi/%tprel_hi as Lo12I
+### B3: encode_store accepts non-lo MemSymbol modifiers
 
-**Formal:** ∀ mn, rd, rs1, s, hi ∈ {%hi,%pcrel_hi,%tprel_hi}. llvm-mc rejects `mn rd, %hi(s)(rs1)` ⇒ encode_load([Reg(rd), MemSymbol{rs1, "%hi(s)"}], f3) = Err
-**Contract evidence:** inferred (llvm-mc: "operand must be a symbol with %lo/%pcrel_lo/%tprel_lo modifier or an integer in the range [-2048, 2047]")
-**Documentation conflict:** base.rs:157 "Use Lo12I for load-type relocations" — purpose comment on the Hi20→Lo12I remap; it does not declare %hi a valid load operand. The comment is context, not an input-domain restriction.
-**Severity:** medium
-**Counterexample:** encode_load([Reg("x0"), MemSymbol { base: "x0", symbol: "%hi(foo)", modifier: "" }], funct3=0)
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00000003, reloc_type: Lo12I, symbol: "foo", addend: 0 })
-**Impact:** `%hi(sym)` on a load is silently treated as `%lo(sym)`, so the linker patches the low 12 bits of a symbol the source asked to take the high 20 bits of.
-**Root cause:** base.rs:161 remaps RelocType::Hi20 to Lo12I instead of rejecting hi-type modifiers on I-type loads.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:161`
-```rust
-                RelocType::Hi20 => RelocType::Lo12I,
-```
-**Suggested fix:** Accept only lo-type modifiers on loads.
+**Formal:** ∀ mn ∈ {sb,sh,sw,sd}, rs2, rs1 ∈ GPR, s ∈ ident, hi ∈ {%hi, %pcrel_hi, %tprel_hi}. llvm-mc rejects "mn rs2, hi(s)(rs1)" ⇒ encode_store([Reg(rs2), MemSymbol{rs1, "hi(s)"}], f3) is Err
+**Contract evidence:** inferred (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on S-type store offsets)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_store([Reg("x0"), MemSymbol { base: "x0", symbol: "%hi(foo)" }], funct3=0); also %got_pcrel_hi(foo) → GotHi20
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00000023, reloc_type: Lo12S, symbol: "foo" }) for %hi; GotHi20 for %got_pcrel_hi
+**Impact:** A hi-type or GOT/TLS modifier is accepted and a store with imm=0 is emitted. The linker then patches the wrong reloc class, producing a wrong address.
+**Root cause:** base.rs:204-209 remaps PcrelHi20/Hi20/TprelHi20 onto S-type lo reloc kinds and passes every other kind through, instead of rejecting modifiers llvm-mc does not accept on stores.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:204`
 ```rust
             let reloc_type = match reloc_type {
-                RelocType::PcrelLo12I | RelocType::Lo12I | RelocType::TprelLo12I => reloc_type,
-                _ => return Err("load: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
+                RelocType::PcrelHi20 => RelocType::PcrelLo12S,
+                RelocType::Hi20 => RelocType::Lo12S,
+                RelocType::TprelHi20 => RelocType::TprelLo12S,
+                other => other,
             };
 ```
-**Bug report:** bug_reports/encode_load_hi_modifier.md
-**Repro seed:** (none saved; deterministic regression test_encode_load_regression_hi_modifier)
+**Suggested fix:** Return Err for non-lo modifiers; remap only I-type lo variants to S-type.
+```rust
+            let reloc_type = match reloc_type {
+                RelocType::PcrelLo12I | RelocType::PcrelHi20 => RelocType::PcrelLo12S,
+                RelocType::Lo12I | RelocType::Hi20 => RelocType::Lo12S,
+                RelocType::TprelLo12I | RelocType::TprelHi20 => RelocType::TprelLo12S,
+                RelocType::PcrelLo12S | RelocType::Lo12S | RelocType::TprelLo12S => reloc_type,
+                _ => return Err("store: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
+            };
+```
+**Bug report:** bug_reports/encode_store_hi_modifier.md
+**Repro seed:** (deterministic regression: %hi(foo) and %got_pcrel_hi(foo))
 **Raw output:**
 ```text
-Test failed: hi-type modifier %hi(foo) must Err on load (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 3, reloc: Relocation { reloc_type: Lo12I, symbol: "foo", addend: 0 } })
-minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", rs1 = "x0", s = "foo", hi = "%hi"
+Test failed: hi-type modifier %hi(foo) must Err on store (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo); got Ok(WordWithReloc { word: 35, reloc: Relocation { reloc_type: Lo12S, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_store_pbt.rs:604.
+minimal failing input: (mn, f3) = (
+    "sb",
+    0,
+), rs2 = "x0", rs1 = "x0", s = "foo", hi = "%hi"
 ```
 
-### B4: encode_load rejects ld rd, symbol+addend
+### B4: encode_store emits I-type lo relocs on S-type stores
 
-**Formal:** ∀ mn, rd, s, addend≠0. encode_load([Reg(rd), SymbolOffset(s, addend)], f3) = WordsWithRelocs[(auipc, PcrelHi20, s, addend), (load, PcrelLo12I, s, _)]
-**Contract evidence:** inferred (llvm-mc accepts `ld x1, foo+4` as auipc+%pcrel_hi(foo+4) plus ld; parser.rs:29 documents Operand::SymbolOffset; base.rs:173 documents the bare-symbol expansion)
-**Documentation conflict:** (none) — base.rs:173-175 describes Symbol/Label only and does not declare SymbolOffset invalid
-**Severity:** medium
-**Counterexample:** encode_load([Reg("x0"), SymbolOffset("foo", 1)], funct3=0)  // lb x0, foo+1
-**Expected / Actual:** Ok(WordsWithRelocs) of auipc+lb with PcrelHi20 addend=1 / Err("load: expected memory operand")
-**Impact:** Valid `ld rd, foo+4` fails to assemble, so objects llvm-mc would produce are rejected.
-**Root cause:** base.rs:176 matches only Symbol and Label; SymbolOffset falls through to the default error at base.rs:190.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:190`
+**Formal:** ∀ mn ∈ {sb,sh,sw,sd}, rs2, rs1 ∈ GPR, s ∈ ident. encode_store([Reg(rs2), MemSymbol{rs1, "%lo(s)"}]) = WordWithReloc{word = encode_store([Reg(rs2), Mem{rs1, 0}]), reloc_type = Lo12S, symbol = s, addend = 0} ∧ same with %pcrel_lo → PcrelLo12S ∧ %tprel_lo → TprelLo12S
+**Contract evidence:** documented encoder/mod.rs:77 "R_RISCV_LO12_S - for SW/SD (absolute low 12 bits, S-type)" and encoder/mod.rs:71 "R_RISCV_PCREL_LO12_S - for SW/SD (low 12 bits of PC-relative, S-type)"
+**Documentation conflict:** encoder/mod.rs:77 states Lo12S is for SW/SD; the code emits Lo12I/PcrelLo12I/TprelLo12I. The comment states the behavior IS handled (S-type lo reloc) — documented-and-violated.
+**Severity:** high
+**Counterexample:** encode_store([Reg("x0"), MemSymbol { base: "x0", symbol: "%pcrel_lo(foo)" }], funct3=0)  // sb x0, %pcrel_lo(foo)(x0)
+**Expected / Actual:** PcrelLo12S / PcrelLo12I (and Lo12I for %lo, TprelLo12I for %tprel_lo)
+**Impact:** The ELF writer applies I-type imm[31:20] patching to an S-type instruction, overwriting rs2 and the scattered imm field. Every relocatable sb/sh/sw/sd rs, %lo(sym)(base) links to a corrupted store.
+**Root cause:** parse_reloc_modifier returns I-type lo variants. base.rs:204-209 only remaps Hi20 kinds onto S-type lo relocs and passes `other => other`, so the valid lo modifiers keep the I-type reloc.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:204`
 ```rust
-        _ => Err("load: expected memory operand".to_string()),
+            let reloc_type = match reloc_type {
+                RelocType::PcrelHi20 => RelocType::PcrelLo12S,
+                RelocType::Hi20 => RelocType::Lo12S,
+                RelocType::TprelHi20 => RelocType::TprelLo12S,
+                other => other,
+            };
 ```
-**Suggested fix:** Handle SymbolOffset like Symbol, copying the addend onto the AUIPC reloc.
+**Suggested fix:** Remap the I-type lo variants that parse_reloc_modifier actually returns for %lo/%pcrel_lo/%tprel_lo.
 ```rust
-        Some(Operand::SymbolOffset(s, addend)) => {
-            Ok(EncodeResult::WordsWithRelocs(vec![
-                (encode_u(OP_AUIPC, rd, 0), Some(Relocation {
-                    reloc_type: RelocType::PcrelHi20,
-                    symbol: s.clone(),
-                    addend: *addend,
-                })),
-                (encode_i(OP_LOAD, rd, funct3, rd, 0), Some(Relocation {
-                    reloc_type: RelocType::PcrelLo12I,
-                    symbol: s.clone(),
-                    addend: 0,
-                })),
-            ]))
-        }
+            let reloc_type = match reloc_type {
+                RelocType::PcrelLo12I | RelocType::PcrelHi20 => RelocType::PcrelLo12S,
+                RelocType::Lo12I | RelocType::Hi20 => RelocType::Lo12S,
+                RelocType::TprelLo12I | RelocType::TprelHi20 => RelocType::TprelLo12S,
+                RelocType::PcrelLo12S | RelocType::Lo12S | RelocType::TprelLo12S => reloc_type,
+                _ => return Err("store: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
+            };
 ```
-**Bug report:** bug_reports/encode_load_symbol_offset.md
-**Repro seed:** (none saved; deterministic regression test_encode_load_regression_symbol_offset)
+**Bug report:** bug_reports/encode_store_lo_reloc_i_type.md
+**Repro seed:** (deterministic regression: %lo(foo) must be Lo12S)
 **Raw output:**
 ```text
-Test failed: expected WordsWithRelocs for lb x0, foo+1, got Err("load: expected memory operand").
-minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", s = "foo", addend = 1
+Test failed: assertion failed: `(left == right)`
+  left: `"PcrelLo12I"`,
+ right: `"PcrelLo12S"` at src/backend/riscv/assembler/encoder/encode_store_pbt.rs:473.
+minimal failing input: (_mn, f3) = (
+    "sb",
+    0,
+), rs2 = "x0", rs1 = "x0", s = "foo"
+```
+
+### B5: encode_store accepts GOT/TLS/plain MemSymbol modifiers
+
+**Formal:** ∀ mn ∈ {sb,sh,sw,sd}, rs2, rs1 ∈ GPR, s ∈ ident, mod ∈ {got_pcrel_hi, tls_ie_pcrel_hi, tls_gd_pcrel_hi, tprel_add, plain}. llvm-mc rejects the corresponding store mem operand ⇒ encode_store([Reg(rs2), MemSymbol{rs1, form(mod,s)}], f3) is Err
+**Contract evidence:** inferred (llvm-mc only allows %lo/%pcrel_lo/%tprel_lo on S-type store offsets)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_store([Reg("x0"), MemSymbol{base:"x0", symbol:"%got_pcrel_hi(foo)"}], funct3=0) -> Ok(WordWithReloc{word:35, reloc_type:GotHi20, symbol:"foo"})
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 35, reloc_type: GotHi20, symbol: "foo" })
+**Impact:** %got_pcrel_hi is accepted with reloc_type GotHi20 on an S-type store. The linker then patches the wrong reloc class.
+**Root cause:** base.rs:208 passes unmatched reloc kinds through `other => other`, so GotHi20 from parse_reloc_modifier is stored on the S-type instruction.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:208`
+```rust
+                other => other,
+```
+**Suggested fix:** Reject non-lo modifiers.
+```rust
+                _ => return Err("store: expected %lo/%pcrel_lo/%tprel_lo".to_string()),
+```
+**Bug report:** bug_reports/encode_store_other_modifier.md
+**Repro seed:** (deterministic regression: %got_pcrel_hi(foo))
+**Raw output:**
+```text
+Test failed: non-lo modifier %got_pcrel_hi(foo) must Err on store; got Ok(WordWithReloc { word: 35, reloc: Relocation { reloc_type: GotHi20, symbol: "foo", addend: 0 } }) at src/backend/riscv/assembler/encoder/encode_store_pbt.rs:641.
+minimal failing input: (mn, f3) = (
+    "sb",
+    0,
+), rs2 = "x0", rs1 = "x0", form = "%got_pcrel_hi(foo)"
 ```
 
 ## Design Caveats
@@ -154,67 +205,72 @@ minimal failing input: (mn, f3) = ("lb", 0), rd = "x0", s = "foo", addend = 1
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_load_pbt.rs | 10 properties + 7 KAT + 4 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_store_pbt.rs | 9 properties + 6 KAT + 5 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_load -- --test-threads=1
+cargo test --lib encode_store -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_load_neg_extra -- --test-threads=1
+cargo test --lib encode_store_neg_extra -- --test-threads=1
 ```
 
 B2 imm oob:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_load_neg_imm_oob -- --test-threads=1
+cargo test --lib encode_store_neg_imm_oob -- --test-threads=1
 ```
 
 B3 hi modifier:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_load_neg_hi_modifier -- --test-threads=1
+cargo test --lib encode_store_neg_hi_modifier -- --test-threads=1
 ```
 
-B4 symbol offset:
+B4 I-type lo reloc:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_load_symbol_offset_addend -- --test-threads=1
+cargo test --lib encode_store_reloc_lo -- --test-threads=1
+```
+
+B5 GOT/TLS/plain modifier:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_store_neg_other_modifier -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/bug_reports/encode_load_extra_operand.md
-- pbt-out/bug_reports/encode_load_extra_operand.html
-- pbt-out/bug_reports/encode_load_imm_oob.md
-- pbt-out/bug_reports/encode_load_imm_oob.html
-- pbt-out/bug_reports/encode_load_hi_modifier.md
-- pbt-out/bug_reports/encode_load_hi_modifier.html
-- pbt-out/bug_reports/encode_load_symbol_offset.md
-- pbt-out/bug_reports/encode_load_symbol_offset.html
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign phases
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/report.json — machine-readable report
+- pbt-out/run/encode_store_test.log — first full test run
+- pbt-out/run/encode_store_sweep.log — sweep property run
+- pbt-out/bug_reports/encode_store_extra_operand.md and .html
+- pbt-out/bug_reports/encode_store_imm_oob.md and .html
+- pbt-out/bug_reports/encode_store_hi_modifier.md and .html
+- pbt-out/bug_reports/encode_store_lo_reloc_i_type.md and .html
+- pbt-out/bug_reports/encode_store_other_modifier.md and .html
+- src/backend/riscv/assembler/encoder/encode_store_pbt.rs — harness
+- proptest-regressions/backend/riscv/assembler/encoder/encode_store_pbt.txt — proptest failure cache from the run
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 14:06 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 187/324 total | PBT candidates: 187 | Tested: 187 (100%) | 1 pass, 187 fail
+> Last updated: 2026-10-06 14:25 (campaign: coverage)
+> Files: 12/12 scanned (100%) | Functions: 188/324 total | PBT candidates: 188 | Tested: 188 (100%) | 1 pass, 188 fail
 
 ## Summary
 
@@ -223,10 +279,10 @@ cargo test --lib encode_load_symbol_offset_addend -- --test-threads=1
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 187 |
-| **Tested (of PBT candidates)** | **187 / 187 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 187 / -1 |
-| **Overall (tested / all functions)** | **187 / 324 (58%)** |
+| PBT candidates (from FUNCTION_INDEX) | 188 |
+| **Tested (of PBT candidates)** | **188 / 188 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 188 / -1 |
+| **Overall (tested / all functions)** | **188 / 324 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -234,13 +290,13 @@ cargo test --lib encode_load_symbol_offset_addend -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 187 | 187 | 0 | 100% |
+|  | 188 | 188 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 187 | 187 | 0 | 100% |
+| unknown | 188 | 188 | 0 | 100% |
 
 ## File Coverage
 
@@ -450,3 +506,4 @@ cargo test --lib encode_load_symbol_offset_addend -- --test-threads=1
 | encode_jalr | base.rs |
 | encode_branch_instr | base.rs |
 | encode_load | base.rs |
+| encode_store | base.rs |
