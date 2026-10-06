@@ -1,256 +1,257 @@
-# Properties: encode_fma
+# Properties: encode_c_lui
 
-## encode_fma_diff_4op_llvm_mc
+## encode_c_lui_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest applicable oracle is differential against llvm-mc (independent RISC-V assembler). State machine rejected: encode_fma is a pure function with no lifecycle. Algebraic round-trip via in-tree decoder rejected: no R4-type decoder. encode_r / encode_fp_arith as differential sibling rejected by same-job gate (R-type packer / 3-operand OP-FP, not R4 FMA). Reference ISA field layout is used as a weaker invariant property, not this one.
-- Doc contract: src/backend/riscv/assembler/encoder/float.rs:189 "R4-type: rs3[31:27] | fmt[26:25] | rs2[24:20] | rs1[19:15] | rm[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint d1a3f01c
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_diff_3op_llvm_mc (same llvm-mc FP encode shape; FMA is 4-reg R4)
-- Formal: ∀ mn ∈ {fmadd.s, fmsub.s, fnmsub.s, fnmadd.s, fmadd.d, fmsub.d, fnmsub.d, fnmadd.d}, rd, rs1, rs2, rs3 ∈ FPNames. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opcode(mn), fmt(mn)) = Word(llvm-mc(mn rd, rs1, rs2, rs3))
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
+- Rationale: Strongest oracle is differential against llvm-mc (LLVM 15.0.6), the independent RISC-V assembler this tree already uses as the encoding reference. State machine rejected: encode_c_lui is a pure function with no lifecycle. Algebraic round-trip rejected: no C.LUI decoder in-tree. encode_lui / try_compress_rv64 rejected by the same-job gate (32-bit LUI / post-encode compress pass, not the `c.lui` mnemonic encoder). Domain is llvm-mc's accepted C.LUI immediate set [1, 31] ∪ [0xfffe0, 0xfffff] with rd ∉ {x0, x2}.
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: (none) — no existing c.lui unit test; KAT vectors taken from llvm-mc
+- Formal: ∀ rd ∈ GPR\{x0,x2}, ∀ imm ∈ [1,31] ∪ [1048544,1048575]. encode_c_lui([Reg(rd), Imm(imm)]) = Half(llvm-mc("c.lui rd, imm", -triple=riscv64 -mattr=+c))
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fma
+function: encoder.encode_c_lui
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mn, rd, rs1, rs2, rs3]
-  domain: { mn: {fmadd.s, fmsub.s, fnmsub.s, fnmadd.s, fmadd.d, fmsub.d, fnmsub.d, fnmadd.d}, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names }
+  vars: [rd, imm]
+  domain: { rd: gpr_except_x0_x2, imm: clui_imm20 }
   relation:
     op: eq
-    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opcode(mn), fmt(mn))
-    rhs: llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rs2 + ", " + rs3)
+    lhs: sut_half([Reg(rd), Imm(imm)])
+    rhs: llvm_mc_half("c.lui {rd}, {imm}")
 generators:
-  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
-  rd: { gen: string }
-  rs1: { gen: string }
-  rs2: { gen: string }
-  rs3: { gen: string }
-evidence: src/backend/riscv/assembler/README.md:309; encoder/mod.rs:797
+  rd: { gen: string, type: String }
+  imm: { gen: int, type: i64 }
+evidence: encoder/mod.rs:915 "c.lui" => encode_c_lui; README.md:13 C (compressed 16-bit); llvm-mc 15.0.6
 ```
 
-## encode_fma_diff_rm_llvm_mc
-- Tier: 5
-- Rationale: Same differential as the 4-op property, covering the optional rounding-mode operand. llvm-mc accepts rne/rtz/rdn/rup/rmm/dyn as a 5th token. Stronger state machine / round-trip rejected as above.
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:492 "Parse a rounding mode to 3-bit encoding" — asserted fingerprint c9473eee
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_diff_rm_llvm_mc
-- Formal: ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, rm ∈ {rne, rtz, rdn, rup, rmm, dyn}. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode(rm)], opcode(mn), fmt(mn)) = Word(llvm-mc(mn rd, rs1, rs2, rs3, rm))
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_fma
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mn, rd, rs1, rs2, rs3, rm]
-  domain: { mn: fma_mnemonics, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, rm: {rne, rtz, rdn, rup, rmm, dyn} }
-  relation:
-    op: eq
-    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode(rm)], opcode(mn), fmt(mn))
-    rhs: llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rs2 + ", " + rs3 + ", " + rm)
-generators:
-  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
-  rd: { gen: string }
-  rs1: { gen: string }
-  rs2: { gen: string }
-  rs3: { gen: string }
-  rm: { gen: oneof, items: ["rne", "rtz", "rdn", "rup", "rmm", "dyn"] }
-evidence: src/backend/riscv/assembler/parser.rs:41; encoder/mod.rs:492
-```
-
-## encode_fma_r4_type_fields
+## encode_c_lui_ci_type_fields
 - Tier: 4
-- Rationale: Algebraic invariant from the documented R4-type layout (rs3 | fmt | rs2 | rs1 | rm | rd | opcode). Stronger differential is a sibling property. Round-trip rejected (no decoder).
-- Doc contract: src/backend/riscv/assembler/encoder/float.rs:189 "R4-type: rs3[31:27] | fmt[26:25] | rs2[24:20] | rs1[19:15] | rm[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint d1a3f01c
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_r_type_fields
-- Formal: ∀ rd, rs1, rs2, rs3 ∈ 0..31, opc ∈ {0b1000011, 0b1000111, 0b1001011, 0b1001111}, fmt ∈ {0b00, 0b01}, rm ∈ {0,1,2,3,4,7}. unpack_r4(encode_fma([Reg(f{rd}), Reg(f{rs1}), Reg(f{rs2}), Reg(f{rs3}), RoundingMode(rm_name)], opc, fmt)) = (opc, rd, rm, rs1, rs2, fmt, rs3)
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
+- Rationale: RISC-V Unprivileged ISA CI-type layout for C.LUI is an exact structural invariant independent of llvm-mc. Weaker than the differential but pins opcode/funct3/rd/nzimm bit placement so a packing off-by-one cannot hide behind a matching reference if the mapping were wrong. Round-trip rejected (no decoder).
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: (none)
+- Formal: ∀ rd ∈ {1,3,…,31}, ∀ nzimm ∈ [-32,-1] ∪ [1,31]. let h = encode_c_lui([Reg(xN), Imm(nzimm as i64)]).as_half(). (h & 0b11) = 0b01 ∧ ((h >> 13) & 0b111) = 0b011 ∧ ((h >> 7) & 0x1F) = rd ∧ ((h >> 12) & 1) = nzimm[5] ∧ ((h >> 2) & 0x1F) = nzimm[4:0]
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fma
+function: encoder.encode_c_lui
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rs1, rs2, rs3, opc, fmt, rm]
-  domain: { rd: 0..31, rs1: 0..31, rs2: 0..31, rs3: 0..31, opc: {0b1000011, 0b1000111, 0b1001011, 0b1001111}, fmt: {0, 1}, rm: {0, 1, 2, 3, 4, 7} }
-  body: unpack_r4(word) == (opc, rd, rm, rs1, rs2, fmt, rs3)
+  vars: [rd, nzimm]
+  domain: { rd: gpr_except_x0_x2, nzimm: simm6_nonzero }
+  relation:
+    op: holds
+    lhs: ci_lui_fields(sut_half([Reg(xN), Imm(nzimm)]))
+    rhs: (op=01, funct3=011, rd, nzimm6)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  rs1: { gen: int, min: 0, max: 31, type: u32 }
-  rs2: { gen: int, min: 0, max: 31, type: u32 }
-  rs3: { gen: int, min: 0, max: 31, type: u32 }
-  opc: { gen: oneof, items: [67, 71, 75, 79] }
-  fmt: { gen: int, min: 0, max: 1, type: u32 }
-  rm: { gen: oneof, items: [0, 1, 2, 3, 4, 7] }
-evidence: src/backend/riscv/assembler/encoder/float.rs:189
+  nzimm: { gen: int, min: -32, max: 31, type: i32 }
+evidence: compress.rs:41 signed 6-bit range; RISC-V ISA C.LUI CI-type
 ```
 
-## encode_fma_abi_fn_alias
+## encode_c_lui_abi_xn_alias
 - Tier: 4
-- Rationale: Metamorphic: ABI names (ft0/fa0/fs0/...) and fN names are aliases of the same 5-bit FP register index (freg_num). Stronger differential is a sibling property over mixed names.
-- Doc contract: src/backend/riscv/assembler/encoder/float.rs:189 "R4-type: rs3[31:27] | fmt[26:25] | rs2[24:20] | rs1[19:15] | rm[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint d1a3f01c
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_abi_fn_alias
-- Formal: ∀ n, m, p, q ∈ 0..31, opc ∈ FmaOpcodes, fmt ∈ {0,1}. encode_fma([Reg(f{n}), Reg(f{m}), Reg(f{p}), Reg(f{q})], opc, fmt) = encode_fma([Reg(FABI[n]), Reg(FABI[m]), Reg(FABI[p]), Reg(FABI[q])], opc, fmt)
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
+- Rationale: ABI names (ra, a0, t6, fp/s0, …) and xN must encode the same halfword. Metamorphic under a behavior-preserving rename. Stronger differential already covers xN vs llvm-mc; this pins the alias table.
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: encode_lui_pbt.rs encode_lui_abi_xn_alias
+- Formal: ∀ n ∈ {1,3,…,31}, ∀ imm ∈ [1,31] ∪ [1048544,1048575]. encode_c_lui([Reg("x"+n), Imm(imm)]) = encode_c_lui([Reg(ABI[n]), Imm(imm)]) ∧ (n=8 ⇒ encode_c_lui([Reg("fp"), Imm(imm)]) = that halfword)
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fma
+function: encoder.encode_c_lui
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, m, p, q, opc, fmt]
-  domain: { n: 0..31, m: 0..31, p: 0..31, q: 0..31, opc: fma_opcodes, fmt: {0, 1} }
+  vars: [n, imm]
+  domain: { n: gpr_except_x0_x2, imm: clui_imm20 }
   relation:
     op: eq
-    lhs: encode_fma([Reg(fn(n)), Reg(fn(m)), Reg(fn(p)), Reg(fn(q))], opc, fmt)
-    rhs: encode_fma([Reg(fabi(n)), Reg(fabi(m)), Reg(fabi(p)), Reg(fabi(q))], opc, fmt)
+    lhs: sut_half([Reg(xN), Imm(imm)])
+    rhs: sut_half([Reg(ABI[n]), Imm(imm)])
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  p: { gen: int, min: 0, max: 31, type: u32 }
-  q: { gen: int, min: 0, max: 31, type: u32 }
-  opc: { gen: oneof, items: [67, 71, 75, 79] }
-  fmt: { gen: int, min: 0, max: 1, type: u32 }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:257
+  imm: { gen: int, type: i64 }
+evidence: encoder/mod.rs:210-256 reg_num ABI/xN/fp
 ```
 
-## encode_fma_rm_default_dyn
-- Tier: 4
-- Rationale: Metamorphic: omitted 5th operand equals explicit RoundingMode("dyn") and unpacks rm=111 (ISA default DYN). Stronger differential covers both forms independently.
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:492 "Parse a rounding mode to 3-bit encoding" — asserted fingerprint c9473eee
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_rm_default_dyn
-- Formal: ∀ rd, rs1, rs2, rs3 ∈ FPNames, opc ∈ FmaOpcodes, fmt ∈ {0,1}. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opc, fmt) = encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("dyn")], opc, fmt) ∧ unpack_r4(...).rm = 0b111
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
+## encode_c_lui_neg_rd_x0_x2
+- Tier: 3
+- Rationale: ISA C.LUI forbids rd ∈ {x0, x2}; x2 is C.ADDI16SP and x0 is HINT. SUT returns Err for both. llvm-mc also rejects x2/sp. (llvm-mc encodes x0 as HINT — not the C.LUI instruction this encoder implements; see Design Caveats.) Documented error strings at compressed.rs:8.
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: (none)
+- Formal: ∀ rd ∈ {x0, zero, x2, sp}, ∀ imm ∈ [1,31]. encode_c_lui([Reg(rd), Imm(imm)]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fma
+function: encoder.encode_c_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, imm]
+  domain: { rd: {x0,zero,x2,sp}, imm: 1..31 }
+  relation:
+    op: throws
+    lhs: encode_c_lui([Reg(rd), Imm(imm)])
+    rhs: Err
+generators:
+  rd: { gen: string, type: String }
+  imm: { gen: int, min: 1, max: 31, type: i64 }
+expected_error: String
+evidence: compressed.rs:8 rd cannot be x0 or x2; compress.rs:30 rd != {x0, x2}
+```
+
+## encode_c_lui_neg_nzimm_zero
+- Tier: 3
+- Rationale: C.LUI nzimm must not be zero (reserved / HINT). SUT and llvm-mc both reject 0. Documented bound; generator pins 0 exactly.
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: (none)
+- Formal: ∀ rd ∈ GPR\{x0,x2}. encode_c_lui([Reg(rd), Imm(0)]) = Err ∧ llvm-mc("c.lui rd, 0") rejects
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_c_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd]
+  domain: { rd: gpr_except_x0_x2 }
+  relation:
+    op: throws
+    lhs: encode_c_lui([Reg(rd), Imm(0)])
+    rhs: Err
+generators:
+  rd: { gen: string, type: String }
+expected_error: String
+evidence: compressed.rs:11 nzimm must not be zero
+```
+
+## encode_c_lui_neg_imm_oob
+- Tier: 3
+- Rationale: llvm-mc rejects immediates outside [1,31] ∪ [0xfffe0,0xfffff]. compress.rs:41 states signed 6-bit -32..31 excluding 0. Documented bound must be sampled at bound±1 (0, 32, 1048543, 1048576, -1 as assembler syntax llvm-mc rejects). SUT must Err rather than truncate.
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: (none)
+- Formal: ∀ rd ∈ GPR\{x0,x2}, ∀ imm ∉ [-32,-1]∪[1,31]∪[1048544,1048575]. llvm-mc rejects "c.lui rd, imm" ⇒ encode_c_lui([Reg(rd), Imm(imm)]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
+- Status: failing
+- Counterexample: encode_c_lui([Reg("x3"), Imm(32)]) -> Ok(Half(0x7181))
+- Bug report: bug_reports/encode_c_lui_imm_oob.md
+
+```property
+function: encoder.encode_c_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, imm]
+  domain: { rd: gpr_except_x0_x2, imm: not_in_clui_imm20 }
+  relation:
+    op: throws
+    lhs: encode_c_lui([Reg(rd), Imm(imm)])
+    rhs: Err
+generators:
+  rd: { gen: string, type: String }
+  imm: { gen: int, type: i64 }
+expected_error: String
+evidence: llvm-mc range [0xfffe0, 0xfffff] or [1, 31]; compress.rs:41
+```
+
+## encode_c_lui_neg_extra
+- Tier: 3
+- Rationale: C.LUI is two-operand. llvm-mc rejects a third operand. encode_c_lui currently reads only indices 0 and 1, so extra operands are a documented-by-reference error path.
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: encode_lui_pbt.rs encode_lui_neg_extra
+- Formal: ∀ rd ∈ GPR\{x0,x2}, ∀ imm ∈ [1,31], ∀ extra. encode_c_lui([Reg(rd), Imm(imm), extra]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
+- Status: failing
+- Counterexample: encode_c_lui([Reg("x3"), Imm(1), Imm(0)]) -> Ok(Half(0x6185))
+- Bug report: bug_reports/encode_c_lui_extra_operand.md
+
+```property
+function: encoder.encode_c_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, imm, extra]
+  domain: { rd: gpr_except_x0_x2, imm: 1..31, extra: Operand }
+  relation:
+    op: throws
+    lhs: encode_c_lui([Reg(rd), Imm(imm), extra])
+    rhs: Err
+generators:
+  rd: { gen: string, type: String }
+  imm: { gen: int, min: 1, max: 31, type: i64 }
+  extra: { gen: string, type: Operand }
+expected_error: String
+evidence: compressed.rs:5 two-operand form; llvm-mc invalid operand for extra
+```
+
+## encode_c_lui_neg_arity_fp
+- Tier: 3
+- Rationale: Missing operands must Err (get_reg/get_imm). FP register names are not integer GPRs (reg_num returns None). llvm-mc rejects both.
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: encode_lui_pbt.rs encode_lui_neg_arity / encode_lui_neg_fp
+- Formal: ∀ ops with |ops|<2. encode_c_lui(ops)=Err. ∀ fp ∈ FPR, ∀ imm ∈ [1,31]. encode_c_lui([Reg(fp), Imm(imm)])=Err
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_c_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  domain: { ops: arity_lt_2_or_fp_rd }
+  relation:
+    op: throws
+    lhs: encode_c_lui(ops)
+    rhs: Err
+generators:
+  ops: { gen: list, type: Vec<Operand> }
+expected_error: String
+evidence: encoder/mod.rs:411 get_reg; encoder/mod.rs:451 get_imm; parser.rs:22 integer registers
+```
+
+## encode_c_lui_signed_vs_uimm20
+- Tier: 4
+- Rationale: Sweep gap after coverage_gaps (file-level, encode_c_lui NOT LINKED in C++ binaries). Documented mapping: ISA/compress.rs signed 6-bit negatives equal llvm-mc's 20-bit LUI-style immediates [0xfffe0, 0xfffff]. Metamorphic plus differential. Stronger round-trip rejected (no decoder).
+- Doc contract: compressed.rs:5 "c.lui rd, nzimm" — asserted fingerprint f583dec3
+- Seed: (none)
+- Formal: ∀ rd ∈ GPR\{x0,x2}, ∀ nzimm ∈ [-32,-1]. encode_c_lui([Reg(xN), Imm(nzimm)]) = encode_c_lui([Reg(xN), Imm(nzimm as bits20)]) = llvm-mc("c.lui xN, bits20") where bits20 = nzimm & 0xfffff
+- Test file: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_c_lui
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rs1, rs2, rs3, opc, fmt]
-  domain: { rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, opc: fma_opcodes, fmt: {0, 1} }
+  vars: [rd, nzimm]
+  domain: { rd: gpr_except_x0_x2, nzimm: -32..-1 }
   relation:
     op: eq
-    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opc, fmt)
-    rhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("dyn")], opc, fmt)
+    lhs: sut_half([Reg(xN), Imm(nzimm)])
+    rhs: sut_half([Reg(xN), Imm(nzimm & 0xfffff)])
 generators:
-  rd: { gen: string }
-  rs1: { gen: string }
-  rs2: { gen: string }
-  rs3: { gen: string }
-  opc: { gen: oneof, items: [67, 71, 75, 79] }
-  fmt: { gen: int, min: 0, max: 1, type: u32 }
-evidence: src/backend/riscv/assembler/encoder/float.rs:180; encoder/mod.rs:492
-```
-
-## encode_fma_neg_arity_gpr
-- Tier: 4
-- Rationale: Negative/error contract: llvm-mc rejects too-few operands and GPR in an FP slot. get_freg returns Err for missing/non-FP operands. Stronger differential does not apply on the invalid domain.
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:425 "expected float register at operand {}, got {:?}" — asserted fingerprint 9575ce77
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_neg_arity_gpr
-- Formal: ∀ opc ∈ FmaOpcodes, fmt ∈ {0,1}, fp ∈ FPNames, gpr ∈ GPRNames, bad ∈ NonReg. encode_fma([], opc, fmt) is Err ∧ encode_fma([fp], opc, fmt) is Err ∧ encode_fma([fp,fp], opc, fmt) is Err ∧ encode_fma([fp,fp,fp], opc, fmt) is Err ∧ encode_fma with GPR or non-Reg in any of the four slots is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_fma
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [opc, fmt, fp, gpr, bad]
-  domain: { opc: fma_opcodes, fmt: {0, 1}, fp: fp_names, gpr: gpr_names, bad: non_reg_operands }
-  relation:
-    op: throws
-    lhs: encode_fma(too_few_or_gpr_or_nonreg, opc, fmt)
-    rhs: String
-generators:
-  opc: { gen: oneof, items: [67, 71, 75, 79] }
-  fmt: { gen: int, min: 0, max: 1, type: u32 }
-  fp: { gen: string }
-  gpr: { gen: string }
-  bad: { gen: string }
-expected_error: String
-evidence: src/backend/riscv/assembler/encoder/mod.rs:420; encoder/mod.rs:425
-```
-
-## encode_fma_neg_extra
-- Tier: 4
-- Rationale: Negative/error contract: llvm-mc rejects a 6th operand after rd, rs1, rs2, rs3, rm. The encoder must Err rather than silently ignore extras. Stronger differential does not apply on the invalid domain.
-- Doc contract: src/backend/riscv/assembler/README.md:309 "fmadd/fmsub/fnmadd/fnmsub" — asserted fingerprint f4814537
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_neg_extra
-- Formal: ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ Operand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("rne"), extra], opcode(mn), fmt(mn)) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
-- Status: failing
-- Counterexample: encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 0b1000011, 0) -> Ok(Word(67))
-- Bug report: pbt-out/bug_reports/encode_fma_extra_operand.md
-
-```property
-function: encoder.encode_fma
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mn, rd, rs1, rs2, rs3, extra]
-  domain: { mn: fma_mnemonics, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, extra: Operand }
-  relation:
-    op: throws
-    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("rne"), extra], opcode(mn), fmt(mn))
-    rhs: String
-generators:
-  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
-  rd: { gen: string }
-  rs1: { gen: string }
-  rs2: { gen: string }
-  rs3: { gen: string }
-  extra: { gen: string }
-expected_error: String
-evidence: src/backend/riscv/assembler/README.md:309
-```
-
-## encode_fma_neg_non_rm_fifth
-- Tier: 4
-- Rationale: Negative/error contract: llvm-mc requires the optional 5th operand to be a rounding-mode mnemonic. A non-RoundingMode 5th token must Err. Stronger differential does not apply on the invalid domain.
-- Doc contract: src/backend/riscv/assembler/parser.rs:41 "Rounding mode: rne, rtz, rdn, rup, rmm, dyn" — asserted fingerprint 4d950ca5
-- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_neg_non_rm_fourth
-- Formal: ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ NonRoundingModeOperand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), extra], opcode(mn), fmt(mn)) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
-- Status: failing
-- Counterexample: encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 0b1000011, 0) -> Ok(Word(28739))
-- Bug report: pbt-out/bug_reports/encode_fma_non_rm_fifth.md
-
-```property
-function: encoder.encode_fma
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mn, rd, rs1, rs2, rs3, extra]
-  domain: { mn: fma_mnemonics, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, extra: non_rm_operands }
-  relation:
-    op: throws
-    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), extra], opcode(mn), fmt(mn))
-    rhs: String
-generators:
-  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
-  rd: { gen: string }
-  rs1: { gen: string }
-  rs2: { gen: string }
-  rs3: { gen: string }
-  extra: { gen: string }
-expected_error: String
-evidence: src/backend/riscv/assembler/parser.rs:41
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  nzimm: { gen: int, min: -32, max: -1, type: i32 }
+evidence: compress.rs:41 signed 6-bit; llvm-mc 20-bit form 0xfffe0..0xfffff
 ```

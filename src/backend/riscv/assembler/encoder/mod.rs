@@ -80,6 +80,8 @@ mod encode_fmv_x_f_pbt;
 mod encode_fmv_f_x_pbt;
 #[cfg(test)]
 mod encode_fma_pbt;
+#[cfg(test)]
+mod encode_c_lui_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

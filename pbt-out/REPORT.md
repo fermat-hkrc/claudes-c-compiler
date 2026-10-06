@@ -1,59 +1,65 @@
-# PBT Campaign Report: encode_fma
+# PBT Campaign Report: encode_c_lui
 
 ## Summary
 
-**Verdict:** 2 medium: encode_fma silently ignores a 6th operand and maps a non-RoundingMode 5th operand to rm=DYN, so malformed FMADD/FMSUB/FNMSUB/FNMADD still assembles as a valid R4 word.
+**Verdict:** 1 high: encode_c_lui silently truncates out-of-range immediates so `c.lui x3, 32` encodes as nzimm=-32 (halfword 0x7181, value 0xfffe0000) instead of Err; 1 medium: extra operands are ignored so `c.lui x3, 1, 0` encodes as `c.lui x3, 1`.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fma
-**Tests:** 8
-**Result:** 6 passing, 2 bugs
-**Change surface:** 1 changed function (encode_fma), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and encode_fma NOT LINKED; Rust cargo tests are not those binaries). Manual audit of 4-op / rm / R4 / ABI / dyn-default / arity-GPR / extra / non-rm 5th. Closed: tier round spent; remaining documented gaps are the two filed bugs.
-**Effort tier:** standard
+**Modules tested:** encode_c_lui
+**Tests:** 9 properties (plus 6 KAT + 2 regression witnesses)
+**Result:** 7 passing, 2 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (build not instrumented / reporter missing) and encode_c_lui NOT LINKED in C++ pbt binaries; Rust `cargo test --lib` is not those binaries. Sweep: 1 round (signed-vs-uimm20), then closed (tier round spent).
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fma | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_c_lui | 9 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_fma ignores a 6th operand
+### B1: encode_c_lui ignores extra operands
 
-**Formal:** ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ Operand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("rne"), extra], opcode(mn), fmt(mn)) is Err
-**Contract evidence:** inferred (llvm-mc rejects extra operands; encode_instruction at encoder/mod.rs:797-804 passes the full operand slice through to encode_fma; README.md:309 lists fmadd/fmsub/fnmadd/fnmsub as assembler instructions)
+**Formal:** ∀ rd ∈ GPR\{x0,x2}, ∀ imm ∈ [1,31], ∀ extra. encode_c_lui([Reg(rd), Imm(imm), extra]) = Err
+**Contract evidence:** inferred (compressed.rs:5 two-operand form `c.lui rd, nzimm`; llvm-mc `-triple=riscv64 -mattr=+c` rejects a third token as `invalid operand for instruction`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 0b1000011, 0)
-**Expected / Actual:** Err / Ok(Word(67)) which is 0x00000043, the encoding of fmadd.s f0, f0, f0, f0, rne
-**Impact:** Malformed `fmadd.s f0, f0, f0, f0, rne, 0` still assembles as `fmadd.s f0, f0, f0, f0, rne`. A typo or extra token is silently dropped.
-**Root cause:** float.rs:176-191 reads only operands 0..4 via get_freg / optional RoundingMode and returns Ok without checking operands.len() > 5, so a 6th operand is ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:191`
+**Counterexample:** encode_c_lui([Reg("x3"), Imm(1), Imm(0)])
+**Expected / Actual:** Err / Ok(Half(0x6185)) (encoding of `c.lui x3, 1`)
+**Impact:** Accidental extra tokens are dropped; the assembler emits a valid-looking 16-bit instruction instead of an error, so the extra operand never surfaces.
+**Root cause:** compressed.rs:6-14 reads only operands[0] and operands[1] via get_reg/get_imm and never checks operands.len(), then returns Ok.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:6`
 ```rust
-    Ok(EncodeResult::Word(word))
+pub(crate) fn encode_c_lui(operands: &[Operand]) -> Result<EncodeResult, String> {
+    let rd = get_reg(operands, 0)?;
+    if rd == 0 || rd == 2 { return Err("c.lui: rd cannot be x0 or x2".into()); }
+    let imm = get_imm(operands, 1)?;
+    let nzimm = imm as i32;
+    if nzimm == 0 { return Err("c.lui: nzimm must not be zero".into()); }
+    let bit17 = ((nzimm >> 5) & 1) as u16;
+    let bits16_12 = (nzimm & 0x1F) as u16;
+    Ok(EncodeResult::Half(0b01 | ((bits16_12 & 0x1F) << 2) | ((rd as u16) << 7) | (bit17 << 12) | (0b011 << 13)))
+}
 ```
-**Suggested fix:** Reject more than five operands before packing the R4-type word.
+**Suggested fix:** Reject any operand list whose length is not exactly 2 before packing.
 ```rust
-    if operands.len() > 5 {
-        return Err("fma: unexpected extra operand".to_string());
-    }
-    let rd = get_freg(operands, 0)?;
-    let rs1 = get_freg(operands, 1)?;
-    let rs2 = get_freg(operands, 2)?;
-    let rs3 = get_freg(operands, 3)?;
+if operands.len() != 2 {
+    return Err(format!("c.lui: expected 2 operands, got {}", operands.len()));
+}
 ```
-**Bug report:** bug_reports/encode_fma_extra_operand.md
-**Repro seed:** cc b1bd6c766073b44a8c4f6988ef878031ede8d89207e666d84fc8e171a92b4f43
+**Bug report:** bug_reports/encode_c_lui_extra_operand.md
+**Repro seed:** cc d61994242bf0b142134434df88fff935c338d29ed9044b435e1065818557a9d7
 **Raw output:**
 ```text
-Test failed: 6th operand must Err for fmadd.s f0, f0, f0, f0, rne (llvm-mc rejects extra operands); got Ok(Word(67)) at src/backend/riscv/assembler/encoder/encode_fma_pbt.rs:569.
-minimal failing input: (mn, opc, fmt) = (
-    "fmadd.s",
-    67,
-    0,
-), rd = "f0", rs1 = "f0", rs2 = "f0", rs3 = "f0", extra = Imm(
+proptest: Saving this and future failures in /home/toan/github/claudes-c-compiler/proptest-regressions/backend/riscv/assembler/encoder/encode_c_lui_pbt.txt
+proptest: If this test was run on a CI system, you may wish to add the following line to your copy of the file. (You may need to create it.)
+cc d61994242bf0b142134434df88fff935c338d29ed9044b435e1065818557a9d7
+
+thread 'backend::riscv::assembler::encoder::encode_c_lui_pbt::encode_c_lui_neg_extra' (2838212) panicked at src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs:295:1:
+Test failed: extra operand must Err for c.lui x3, 1 (llvm-mc rejects extra operands); got Ok(Half(24965)) at src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs:382.
+minimal failing input: rd = "x3", imm = 1, extra = Imm(
     0,
 )
 	successes: 0
@@ -61,45 +67,35 @@ minimal failing input: (mn, opc, fmt) = (
 	global rejects: 0
 ```
 
-### B2: encode_fma maps a non-RoundingMode 5th operand to rm=DYN
+### B2: encode_c_lui truncates out-of-range immediates to 6 bits
 
-**Formal:** ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ NonRoundingModeOperand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), extra], opcode(mn), fmt(mn)) is Err
-**Contract evidence:** inferred (llvm-mc requires the optional 5th operand to be a rounding-mode mnemonic; parser.rs:41 lists the closed RM set; encode_instruction passes the operand slice through)
+**Formal:** ∀ rd ∈ GPR\{x0,x2}, ∀ imm ∉ [-32,-1]∪[1,31]∪[1048544,1048575]. llvm-mc rejects "c.lui rd, imm" ⇒ encode_c_lui([Reg(rd), Imm(imm)]) = Err
+**Contract evidence:** inferred (RISC-V C.LUI CI-type nzimm is signed 6-bit; compress.rs:41 `So nzimm must fit in signed 6-bit range: -32..31 (but not 0)`; llvm-mc range `[0xfffe0, 0xfffff] or [1, 31]`)
 **Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 0b1000011, 0)
-**Expected / Actual:** Err / Ok(Word(28739)) which is 0x00007043, the encoding of fmadd.s f0, f0, f0, f0 (rm=DYN)
-**Impact:** Malformed `fmadd.s f0, f0, f0, f0, 0` still assembles as `fmadd.s f0, f0, f0, f0` with dynamic rounding. A mistyped 5th token is silently rewritten to DYN.
-**Root cause:** float.rs:180-184 treats any non-RoundingMode 5th operand as rm=0b111 instead of returning Err.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:183`
+**Severity:** high
+**Counterexample:** encode_c_lui([Reg("x3"), Imm(32)])
+**Expected / Actual:** Err / Ok(Half(0x7181)) (encoding of `c.lui x3, -32`)
+**Impact:** `c.lui x3, 32` is packed as nzimm=-32, so the register is loaded with 0xfffe0000 instead of the assembler rejecting an unencodable immediate. A caller that meant LUI 32 (0x00020000) gets a completely different value.
+**Root cause:** compressed.rs:12-13 take bit 5 and bits 4:0 of nzimm with no range check, so 32 (0b100000) is packed as the 6-bit pattern of -32.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/compressed.rs:12`
 ```rust
-            _ => 0b111,
+    let bit17 = ((nzimm >> 5) & 1) as u16;
+    let bits16_12 = (nzimm & 0x1F) as u16;
+    Ok(EncodeResult::Half(0b01 | ((bits16_12 & 0x1F) << 2) | ((rd as u16) << 7) | (bit17 << 12) | (0b011 << 13)))
 ```
-**Suggested fix:** Return Err when the 5th operand is not a RoundingMode.
+**Suggested fix:** Reject nzimm values that do not fit in signed 6 bits and are not the 20-bit LUI-style form of those values, before packing.
 ```rust
-    let rm = if operands.len() > 4 {
-        match &operands[4] {
-            Operand::RoundingMode(s) => parse_rm(s),
-            other => {
-                return Err(format!("fma: expected rounding mode, got {:?}", other));
-            }
-        }
-    } else {
-        0b111
-    };
+if !(-32..=31).contains(&nzimm) && !(0xfffe0..=0xfffff).contains(&imm) {
+    return Err("c.lui: nzimm out of range".into());
+}
 ```
-**Bug report:** bug_reports/encode_fma_non_rm_fifth.md
-**Repro seed:** (none — deterministic regression `test_encode_fma_regression_non_rm_fifth`)
+**Bug report:** bug_reports/encode_c_lui_imm_oob.md
+**Repro seed:** (none — deterministic counterexample rd="x3", imm=32)
 **Raw output:**
 ```text
-Test failed: 5th non-RoundingMode operand must Err for fmadd.s f0, f0, f0, f0 (optional rm only); got Ok(Word(28739)) at src/backend/riscv/assembler/encoder/encode_fma_pbt.rs:589.
-minimal failing input: (mn, opc, fmt) = (
-    "fmadd.s",
-    67,
-    0,
-), rd = "f0", rs1 = "f0", rs2 = "f0", rs3 = "f0", extra = Imm(
-    0,
-)
+thread 'backend::riscv::assembler::encoder::encode_c_lui_pbt::encode_c_lui_neg_imm_oob' (2838213) panicked at src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs:295:1:
+Test failed: oob imm 32 must Err (llvm-mc range [1,31]∪[0xfffe0,0xfffff]; ISA simm6); got Ok(Half(29057)) at src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs:370.
+minimal failing input: rd = "x3", imm = 32
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -113,66 +109,65 @@ minimal failing input: (mn, opc, fmt) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_fma_pbt.rs | 8 properties + 2 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs | 9 properties + 6 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_c_lui_pbt;` |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (includes two expected property failures and two expected regression failures):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fma_pbt -- --test-threads=1
+cargo test --lib encode_c_lui -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fma_pbt -- --test-threads=1
-cargo test --lib test_encode_fma_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_c_lui_neg_extra -- --test-threads=1
 ```
 
-B2 non-RM fifth:
+B2 oob immediate:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fma_pbt -- --test-threads=1
-cargo test --lib test_encode_fma_regression_non_rm_fifth -- --test-threads=1
+cargo test --lib encode_c_lui_neg_imm_oob -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_fma_extra_operand.md
-- pbt-out/bug_reports/encode_fma_extra_operand.html
-- pbt-out/bug_reports/encode_fma_non_rm_fifth.md
-- pbt-out/bug_reports/encode_fma_non_rm_fifth.html
-- pbt-out/run/encode_fma_pbt.log
-- proptest-regressions/backend/riscv/assembler/encoder/encode_fma_pbt.txt
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — coverage ledger (encode_c_lui row appended)
+- pbt-out/COVERAGE_STATUS.md — this campaign's coverage summary
+- pbt-out/INVARIANTS.md — confirmed invariants for encode_c_lui
+- pbt-out/FUNCTION_INDEX.md — merged function index including compressed.rs
+- pbt-out/report.json — machine-readable report
+- pbt-out/bug_reports/encode_c_lui_extra_operand.md — B1
+- pbt-out/bug_reports/encode_c_lui_extra_operand.html — B1 HTML
+- pbt-out/bug_reports/encode_c_lui_imm_oob.md — B2
+- pbt-out/bug_reports/encode_c_lui_imm_oob.html — B2 HTML
+- pbt-out/run/kat.log, pbt-out/run/pbt.log, pbt-out/run/regression.log, pbt-out/run/sweep.log — test logs
+- proptest-regressions/backend/riscv/assembler/encoder/encode_c_lui_pbt.txt — saved extra-operand seed
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 21:01 (campaign: coverage)
-> Files: 14/14 scanned (100%) | Functions: 213/351 total | PBT candidates: 213 | Tested: 213 (100%) | 1 pass, 213 fail
+> Last updated: 2026-10-06 21:20 (campaign: coverage)
+> Files: 15/15 scanned (100%) | Functions: 214/367 total | PBT candidates: 214 | Tested: 214 (100%) | 1 pass, 214 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 14 |
-| Files scanned | 14 / 14 (100%) |
-| Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 213 |
-| **Tested (of PBT candidates)** | **213 / 213 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 213 / -1 |
-| **Overall (tested / all functions)** | **213 / 351 (61%)** |
+| Total source files | 15 |
+| Files scanned | 15 / 15 (100%) |
+| Total functions (all files) | 367 |
+| PBT candidates (from FUNCTION_INDEX) | 214 |
+| **Tested (of PBT candidates)** | **214 / 214 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 214 / -1 |
+| **Overall (tested / all functions)** | **214 / 367 (58%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -180,13 +175,13 @@ cargo test --lib test_encode_fma_regression_non_rm_fifth -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 213 | 213 | 0 | 100% |
+|  | 214 | 214 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 213 | 213 | 0 | 100% |
+| unknown | 214 | 214 | 0 | 100% |
 
 ## File Coverage
 
@@ -422,3 +417,4 @@ cargo test --lib test_encode_fma_regression_non_rm_fifth -- --test-threads=1
 | encode_fmv_x_f | float.rs |
 | encode_fmv_f_x | float.rs |
 | encode_fma | float.rs |
+| encode_c_lui | compressed.rs |

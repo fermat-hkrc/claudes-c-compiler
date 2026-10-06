@@ -1,4 +1,4 @@
-> Total files: 14 | Total functions: 351 | PBT candidates: 214 | Excluded: 137
+> Total files: 15 | Total functions: 367 | PBT candidates: 215 | Excluded: 152
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -353,3 +353,19 @@
 | encode_fmv_x_f | float.rs | 161 | function | yes | - |
 | encode_fmv_f_x | float.rs | 168 | function | yes | -
 | encode_fma | float.rs | 175 | function | yes | - |
+| encode_c_lui | compressed.rs | 6 | function | yes | - |
+| encode_c_li | compressed.rs | 18 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_c_addi | compressed.rs | 27 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_c_mv | compressed.rs | 36 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_c_add | compressed.rs | 43 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_c_jr | compressed.rs | 50 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_c_jalr | compressed.rs | 56 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_insn_directive | compressed.rs | 64 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| parse_insn_int | compressed.rs | 99 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| parse_insn_reg | compressed.rs | 110 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_insn_r | compressed.rs | 115 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_insn_i | compressed.rs | 129 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_insn_s | compressed.rs | 142 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_insn_b | compressed.rs | 163 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_insn_u | compressed.rs | 176 | function | no | out of campaign scope (HARD: test only encode_c_lui) |
+| encode_insn_j | compressed.rs | 187 | function | no | out of campaign scope (HARD: test only encode_c_lui) |

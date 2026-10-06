@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_c_lui)
+
+- Valid 2-operand C.LUI with rd ∉ {x0,x2} and imm in [1,31]∪[1048544,1048575] matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.lui x1, 1 = 0x6085, c.lui x1, 31 = 0x60fd, c.lui x1, 1048544 = 0x7081, c.lui x1, 1048575 = 0x70fd, c.lui a0, 1 = 0x6505, c.lui x31, 1 = 0x6f85.
+- CI-type layout holds for signed 6-bit nzimm ∈ [-32,-1]∪[1,31]: op=01, funct3=011, rd, nzimm[5] in bit 12, nzimm[4:0] in bits 6:2 (1000 cases).
+- ABI names (ra/a0/t6/fp/s0/…) encode the same halfword as xN (1000 cases).
+- Signed negative nzimm equals the 20-bit LUI-style form (nzimm & 0xfffff) and matches llvm-mc of that uimm20 (1000 cases).
+- rd ∈ {x0,zero,x2,sp} returns Err (1000 cases). nzimm=0 returns Err and llvm-mc rejects (1000 cases). Empty/1-operand and FP dest return Err (1000 cases).
+- Extra operand and out-of-range imm currently disagree with llvm-mc (see bugs): extra ignored; 32 truncated to nzimm=-32.
+
+## Environment (encode_c_lui)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+c -show-encoding (LLVM 15.0.6). Default riscv64 without +c rejects C.LUI.
+- Harness: src/backend/riscv/assembler/encoder/encode_c_lui_pbt.rs, cargo test --lib encode_c_lui, proptest cases=1000.
+- Dispatch: encoder/mod.rs:915 "c.lui" => encode_c_lui(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_c_lui NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit plus signed-vs-uimm20 metamorphic. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_c_lui)
+
+- llvm-mc prints `c.lui x1, 1` as `lui ra, 1` with a 16-bit encoding ([0x85,0x60]). Negative nzimm is written as 20-bit unsigned (0xfffe0..0xfffff); `c.lui x1, -1` is a syntax error, `c.lui x1, 1048575` is accepted.
+- llvm-mc encodes `c.lui x0, 1` as a HINT; SUT returns Err ("rd cannot be x0 or x2"), matching the ISA C.LUI constraint and compress.rs:30.
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number. llvm-mc rejects numeric rd.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_fma)
 
 - Valid 4-operand FMADD/FMSUB/FNMSUB/FNMADD .S/.D with four FP registers match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). Default omitted rm is DYN (111). KAT pins fmadd.s fa0, fa1, fa2, fa3 = 0x68c5f543, fmadd.s ft0, ft1, ft2, ft3 = 0x1820f043, fmsub.s fs0, fs1, fs2, fs3 = 0x9924f447, fnmsub.s fa0, fa1, fa2, fa3 = 0x68c5f54b, fnmadd.s fa0, fa1, fa2, fa3 = 0x68c5f54f, fmadd.d fa0, fa1, fa2, fa3 = 0x6ac5f543, fmadd.s f0, f1, f2, f3 = 0x1820f043, fmadd.s f0, f0, f0, f0 = 0x00007043, fmadd.s f31, f31, f31, f31 = 0xf9ffffc3.

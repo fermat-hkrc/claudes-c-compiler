@@ -1,21 +1,24 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_fma, English)
-> Coverage evidence: file-level (symbol presence) — no .gcda/.profraw; C++ reporter listed encode_fma NOT LINKED. Rust cargo tests executed the symbol.
+> Last updated: 2026-10-06 (campaign: encode_c_lui, English, tier standard)
+> Incremental: previous campaigns remain in COVERAGE.md. This campaign added compressed.rs / encode_c_lui.
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; encode_c_lui NOT LINKED in C++ pbt binaries (Rust `cargo test --lib` is not those binaries).
 
 ## This campaign
 
 | Metric | Value |
 |--------|-------|
-| Target | encode_fma (float.rs:175) |
-| Properties | 8 |
-| Passing | 6 |
-| Failing | 2 |
-| Bugs | 2 |
-| Sweep | 1 round (standard); all documented branches have a property; remaining gaps are the two filed bugs |
+| Target | encode_c_lui (compressed.rs:6) |
+| Properties | 9 (7 passing, 2 failing) |
+| KAT | 6 passing |
+| Regression witnesses | 2 failing (bugs) |
+| Sweep | 1 round (signed-vs-uimm20 metamorphic, passing) |
+| Bugs | 2 (extra operand ignored; oob imm truncated) |
 
-## File Coverage (this campaign)
+## Module Breakdown (this campaign)
 
-| Source File | Funcs | Candidates | Tested | Coverage | Status |
-|-------------|-------|------------|--------|----------|--------|
-| float.rs | 13 | encode_fma (this campaign) | 1 | this-symbol | covered |
+| Module | Scanned | Tested | Skipped | Coverage |
+|--------|---------|--------|---------|----------|
+| encode_c_lui | 1 | 1 | 0 | 100% of HARD-scoped symbol |
+
+Other compressed.rs functions were indexed and skipped (HARD: test only encode_c_lui).
