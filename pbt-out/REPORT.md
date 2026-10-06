@@ -1,36 +1,36 @@
-# PBT Campaign Report: encode_swp
+# PBT Campaign Report: encode_ldop
 
 ## Summary
 
-**Verdict:** 4 medium: encode_swp silently encodes assembler input that llvm-mc/gas reject — extra operands, SP as Rs/Rt, mixed W/X data registers, and nonzero memory offsets — so the built-in assembler emits the wrong word instead of an error.
+**Verdict:** 4 medium: encode_ldop silently accepts extra operands, SP/WSP as Rs/Rt (and W/XZR as base), mixed W/X plus FP and X-on-byte/half, and nonzero Mem offsets that llvm-mc/gas reject, so GNU-style assembly that should fail is encoded as a valid LSE atomic.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_swp
-**Tests:** 10 properties (plus 8 KAT + 8 failing regression witnesses)
-**Result:** 6 passing, 4 failing properties, 4 bugs
-**Change surface:** 1 changed function (encode_swp), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo test, C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of the 30-line body: every documented branch has a property. Sweep round 1/1 spent (invalid-name / alt-spellings passing).
+**Modules tested:** encode_ldop
+**Tests:** 11
+**Result:** 7 passing, 4 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes with a failure-path property
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_ldop NOT LINKED). Manual arm audit of the 45-line body plus three sweep properties.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_swp | 10 properties (8 KAT, 8 regression) | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_ldop | 11 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_swp ignores a fourth operand
+### B1: encode_ldop ignores a fourth operand
 
-**Formal:** ∀ v,rs,rt,rn,is_64 in the valid domain, ∀ extra ∈ Operand. encode_swp(v, valid_ops(v,rs,rt,rn,is_64) ++ [extra]) = Err(_)
-**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc rejects a 4th SWP operand)
+**Formal:** ∀ op,suf,rs,rt,rn,is_64 in the valid domain, ∀ extra ∈ Operand. encode_ldop(v, valid_ops ++ [extra]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc/gas reject a fourth operand; encode_instruction passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** v=0, rs=0, rt=0, rn=0, is_64=false, extra=Reg("x2")
+**Counterexample:** encode_ldop("ldadd", [Reg("w0"), Reg("w0"), Mem{base:"x0", offset:0}, Reg("x2")])
 **Expected / Actual:** Err / Ok(Word) — extra operand ignored
-**Impact:** Trailing operands are dropped; gas/llvm-mc reject the same line
-**Root cause:** load_store.rs:850 checks `operands.len() < 3` and never rejects `len() > 3`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:850`
+**Impact:** `ldadd w0, w0, [x0], x2` is assembled as `ldadd w0, w0, [x0]`. Callers that pass a trailing operand get a silent wrong encoding instead of an assembler error
+**Root cause:** load_store.rs:883 checks `operands.len() < 3` and never rejects `len() > 3`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:883`
 ```rust
     if operands.len() < 3 {
         return Err(format!("{} requires 3 operands", mnemonic));
@@ -42,99 +42,109 @@
         return Err(format!("{} requires 3 operands", mnemonic));
     }
 ```
-**Bug report:** bug_reports/encode_swp_extra_operand.md
-**Repro seed:** v=0, rs=0, rt=0, rn=0, is_64=false, extra=Reg("x2")
+**Bug report:** bug_reports/encode_ldop_extra_operand.md
+**Repro seed:** cc 573a81fb157a3eb187d6bf5fa7a9a68da01c3f930beda93337d353f6208238b3
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:751:5:
-swp w0, w0, [x0], x2 must Err; llvm-mc/gas reject a 4th operand
+thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_extra_operand' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:830:5:
+ldadd w0, w0, [x0], x2 must Err; llvm-mc/gas reject a 4th operand
 ```
 
-### B2: encode_swp accepts SP/WSP as Rs or Rt
+### B2: encode_ldop accepts SP/WSP as Rs or Rt and W/XZR as base
 
-**Formal:** ∀ v in variants, ∀ n ∈ [0,30]. encode_swp(v, ops with SP/WSP as Rs or Rt, or W/WSP/XZR/x31/WZR as base) = Err(_)
-**Contract evidence:** inferred (ARM SWP Rs/Rt are ZR not SP; llvm-mc "invalid operand for instruction")
+**Formal:** ∀ op,suf in the documented variants, ∀ n ∈ [0,30]. encode_ldop(v, [Reg(sp|wsp), …]) is Err ∧ encode_ldop(v, […, Mem{xzr|x31|wN|wsp|wzr, 0}]) is Err
+**Contract evidence:** inferred (ARM ARM Rs/Rt are ZR not SP; Rn is Xn|SP not ZR; llvm-mc/gas reject)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** v=0, n=0, kind=0, is_64=false
+**Counterexample:** encode_ldop("ldadd", [Reg("sp"), Reg("w1"), Mem{base:"x2", offset:0}])
 **Expected / Actual:** Err / Ok(Word) — SP encoded as register 31 (ZR)
-**Impact:** The stack pointer is silently rewritten as the zero register. The same property also accepts XZR/x31/W as base (regression witnesses test_encode_swp_regression_xzr_as_base and test_encode_swp_regression_w_base).
-**Root cause:** load_store.rs:853-854 call get_reg; parse_reg_num maps "sp"/"wsp" to 31
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:853`
+**Impact:** `ldadd sp, w1, [x2]` is assembled as `ldadd wzr, w1, [x2]`. The stack pointer is silently rewritten as the zero register
+**Root cause:** load_store.rs:886-887 call get_reg, and parse_reg_num maps "sp"/"wsp" to 31 with no LDADD-specific rejection of SP
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:886`
 ```rust
     let (rs, is_64) = get_reg(operands, 0)?;
     let (rt, _) = get_reg(operands, 1)?;
 ```
 **Suggested fix:** Reject SP/WSP as Rs and Rt
 ```rust
+    let (rs, is_64) = get_reg(operands, 0)?;
+    let (rt, _) = get_reg(operands, 1)?;
     if is_sp_name(operands, 0) || is_sp_name(operands, 1) {
-        return Err("swp: Rs/Rt cannot be SP".to_string());
+        return Err("ldop: Rs/Rt cannot be SP".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_swp_sp_as_rs.md
-**Repro seed:** v=0, n=0, kind=0, is_64=false
+**Bug report:** bug_reports/encode_ldop_sp_as_rs.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_sp_as_rs' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:767:5:
-swp sp, w1, [x2] must Err; llvm-mc/gas reject SP as Rs
+thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_sp_as_rs' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:846:5:
+ldadd sp, w1, [x2] must Err; llvm-mc/gas reject SP as Rs
 ```
 
-### B3: encode_swp accepts mixed W/X data registers
+### B3: encode_ldop accepts mixed W/X, FP registers, and X registers on byte/half variants
 
-**Formal:** ∀ n ∈ [0,30]. encode_swp on mixed W/X, FP/SIMD Rs/Rt, or swpb/swph/swpab/swpalh with X registers = Err(_)
-**Contract evidence:** inferred (llvm-mc rejects mixed W/X on SWP)
+**Formal:** ∀ n ∈ [0,30], ∀ fp ∈ {b,h,s,d,q,v}. encode_ldop("ldadd", [Reg(xN), Reg(wN), Mem{xN',0}]) is Err ∧ encode_ldop("ldadd", [Reg(fpN), …]) is Err ∧ encode_ldop("ldaddb"|"ldaddh"|"ldaddab"|"ldsetlh", [Reg(xN), Reg(xN'), Mem{xN'',0}]) is Err
+**Contract evidence:** inferred (README.md:12 gas-compat; llvm-mc/gas reject mixed W/X, FP, and X-on-byte/half)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** n=0, kind=0, fp='b'
-**Expected / Actual:** Err / Ok(Word) — Rt width discarded; size follows Rs
-**Impact:** Mixed-width assembly is silently coerced to the Rs width. The same property also accepts FP/SIMD Rs/Rt and SWPB with X registers (regression witnesses test_encode_swp_regression_fp_reg and test_encode_swp_regression_swpb_x_reg).
-**Root cause:** load_store.rs:854 `let (rt, _) = get_reg(operands, 1)?` ignores Rt width
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:854`
+**Counterexample:** encode_ldop("ldadd", [Reg("x0"), Reg("w0"), Mem{base:"x1", offset:0}])
+**Expected / Actual:** Err / Ok(Word) — size from Rs; Rt width ignored
+**Impact:** Mixed-width, FP, and `ldaddb x0, x1, [x2]` assemble instead of failing, producing encodings llvm-mc/gas refuse
+**Root cause:** load_store.rs:886-887 take is_64 only from Rs and discard Rt's width; parse_reg_num accepts FP prefixes
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:886`
 ```rust
+    let (rs, is_64) = get_reg(operands, 0)?;
     let (rt, _) = get_reg(operands, 1)?;
 ```
-**Suggested fix:** Require Rs and Rt to share the same GPR width
+**Suggested fix:** Require matching GPR widths and reject FP prefixes
 ```rust
+    let (rs, is_64) = get_reg(operands, 0)?;
     let (rt, rt_64) = get_reg(operands, 1)?;
     if is_64 != rt_64 {
-        return Err("swp: Rs and Rt must be the same width".to_string());
+        return Err("ldop: Rs and Rt must be the same width".to_string());
     }
 ```
-**Bug report:** bug_reports/encode_swp_mixed_width.md
-**Repro seed:** n=0, kind=0, fp='b'
+**Bug report:** bug_reports/encode_ldop_mixed_width.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_mixed_width' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:815:5:
-swp x0, w0, [x1] must Err; llvm-mc/gas reject mixed W/X
+thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_mixed_width' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:894:5:
+ldadd x0, w0, [x1] must Err; llvm-mc/gas reject mixed W/X
 ```
 
-### B4: encode_swp ignores a nonzero memory offset
+### B4: encode_ldop ignores a nonzero Mem offset
 
-**Formal:** ∀ v,rs,rt,rn,is_64 in the valid domain, ∀ off ∈ ℤ\{0}. encode_swp(v, [Reg(Rs), Reg(Rt), Mem{base(rn), off}]) = Err(_)
-**Contract evidence:** inferred (ARM optional offset only #0; llvm-mc rejects [x2, #8])
+**Formal:** ∀ op,suf,rs,rt in the valid domain, ∀ rn ∈ [0,30], ∀ off ∈ ℤ\{0}. encode_ldop(v, [Reg(gpr(rs)), Reg(gpr(rt)), Mem{base(rn), off}]) is Err
+**Contract evidence:** inferred (ARM optional offset only #0; llvm-mc/gas reject [Xn, #1])
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** v=0, rs=0, rt=0, rn=0, is_64=false, off=-1
-**Expected / Actual:** Err / Ok(Word) — offset ignored; encodes as [x0]
-**Impact:** The encoded address is not the one written
-**Root cause:** load_store.rs:856 matches `Operand::Mem { base, .. }` and discards offset
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:856`
+**Counterexample:** encode_ldop("ldadd", [Reg("w0"), Reg("w0"), Mem{base:"x0", offset:-1}])
+**Expected / Actual:** Err / Ok(Word) — offset ignored
+**Impact:** `ldadd w0, w0, [x0, #-1]` is assembled as `ldadd w0, w0, [x0]`. A nonzero offset is silently dropped
+**Root cause:** load_store.rs:888-889 matches `Operand::Mem { base, .. }` and never inspects offset
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/arm/assembler/encoder/load_store.rs:888`
 ```rust
-        Some(Operand::Mem { base, .. }) => parse_reg_num(base).ok_or("swp: invalid base")?,
+    let rn = match operands.get(2) {
+        Some(Operand::Mem { base, .. }) => parse_reg_num(base).ok_or("ldop: invalid base")?,
+        _ => return Err(format!("{} requires memory operand [Xn]", mnemonic)),
+    };
 ```
-**Suggested fix:** Require offset == 0
+**Suggested fix:** Reject a nonzero offset
 ```rust
+    let rn = match operands.get(2) {
         Some(Operand::Mem { base, offset }) if *offset == 0 => {
-            parse_reg_num(base).ok_or("swp: invalid base")?
+            parse_reg_num(base).ok_or("ldop: invalid base")?
         }
-        Some(Operand::Mem { .. }) => return Err("swp: optional offset can only be 0".to_string()),
+        Some(Operand::Mem { .. }) => return Err(format!("{}: offset must be #0", mnemonic)),
+        _ => return Err(format!("{} requires memory operand [Xn]", mnemonic)),
+    };
 ```
-**Bug report:** bug_reports/encode_swp_nonzero_offset.md
-**Repro seed:** v=0, rs=0, rt=0, rn=0, is_64=false, off=-1
+**Bug report:** bug_reports/encode_ldop_nonzero_offset.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::arm::assembler::encoder::encode_swp_pbt::test_encode_swp_regression_nonzero_offset' panicked at src/backend/arm/assembler/encoder/encode_swp_pbt.rs:863:5:
-swp w0, w0, [x0, #-1] must Err; gas: optional immediate offset can only be 0
+thread 'backend::arm::assembler::encoder::encode_ldop_pbt::test_encode_ldop_regression_nonzero_offset' panicked at src/backend/arm/assembler/encoder/encode_ldop_pbt.rs:942:5:
+ldadd w0, w0, [x0, #-1] must Err; gas: optional immediate offset can only be 0
 ```
 
 ## Design Caveats
@@ -145,54 +155,70 @@ swp w0, w0, [x0, #-1] must Err; gas: optional immediate offset can only be 0
 
 | File | Tests |
 |------|-------|
-| src/backend/arm/assembler/encoder/encode_swp_pbt.rs | 10 properties, 8 KAT, 8 regression witnesses |
+| src/backend/arm/assembler/encoder/encode_ldop_pbt.rs | 11 properties + 11 KAT + 8 regression witnesses |
+| src/backend/arm/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_ldop_pbt` |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_swp -- --test-threads=1
+cargo test --lib encode_ldop -- --test-threads=1
 ```
 
-Per-bug regression (each fails while the bug is unfixed):
+B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_swp_regression_extra_operand -- --test-threads=1
-cargo test --lib test_encode_swp_regression_sp_as_rs -- --test-threads=1
-cargo test --lib test_encode_swp_regression_mixed_width -- --test-threads=1
-cargo test --lib test_encode_swp_regression_nonzero_offset -- --test-threads=1
+cargo test --lib test_encode_ldop_regression_extra_operand -- --test-threads=1
+```
+
+B2 SP as Rs:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_ldop_regression_sp_as_rs -- --test-threads=1
+```
+
+B3 mixed width:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_ldop_regression_mixed_width -- --test-threads=1
+```
+
+B4 nonzero offset:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_ldop_regression_nonzero_offset -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/report.json
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/INVARIANTS.md
-- pbt-out/run/encode_swp_test.log
-- pbt-out/run/encode_swp_test2.log
-- pbt-out/run/encode_swp_test3.log
-- pbt-out/bug_reports/encode_swp_extra_operand.md
-- pbt-out/bug_reports/encode_swp_extra_operand.html
-- pbt-out/bug_reports/encode_swp_sp_as_rs.md
-- pbt-out/bug_reports/encode_swp_sp_as_rs.html
-- pbt-out/bug_reports/encode_swp_mixed_width.md
-- pbt-out/bug_reports/encode_swp_mixed_width.html
-- pbt-out/bug_reports/encode_swp_nonzero_offset.md
-- pbt-out/bug_reports/encode_swp_nonzero_offset.html
+- pbt-out/report.json
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_ldop_extra_operand.md
+- pbt-out/bug_reports/encode_ldop_extra_operand.html
+- pbt-out/bug_reports/encode_ldop_sp_as_rs.md
+- pbt-out/bug_reports/encode_ldop_sp_as_rs.html
+- pbt-out/bug_reports/encode_ldop_mixed_width.md
+- pbt-out/bug_reports/encode_ldop_mixed_width.html
+- pbt-out/bug_reports/encode_ldop_nonzero_offset.md
+- pbt-out/bug_reports/encode_ldop_nonzero_offset.html
+- pbt-out/run/encode_ldop_test.log
+- pbt-out/run/encode_ldop_test2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 04:32 (campaign: coverage)
-> Files: 11/11 scanned (100%) | Functions: 163/307 total | PBT candidates: 163 | Tested: 163 (100%) | 1 pass, 163 fail
+> Last updated: 2026-10-06 04:59 (campaign: coverage)
+> Files: 11/11 scanned (100%) | Functions: 164/307 total | PBT candidates: 164 | Tested: 164 (100%) | 1 pass, 164 fail
 
 ## Summary
 
@@ -201,10 +227,10 @@ cargo test --lib test_encode_swp_regression_nonzero_offset -- --test-threads=1
 | Total source files | 11 |
 | Files scanned | 11 / 11 (100%) |
 | Total functions (all files) | 307 |
-| PBT candidates (from FUNCTION_INDEX) | 163 |
-| **Tested (of PBT candidates)** | **163 / 163 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 163 / -1 |
-| **Overall (tested / all functions)** | **163 / 307 (53%)** |
+| PBT candidates (from FUNCTION_INDEX) | 164 |
+| **Tested (of PBT candidates)** | **164 / 164 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 164 / -1 |
+| **Overall (tested / all functions)** | **164 / 307 (53%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -212,13 +238,13 @@ cargo test --lib test_encode_swp_regression_nonzero_offset -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 163 | 163 | 0 | 100% |
+|  | 164 | 164 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 163 | 163 | 0 | 100% |
+| unknown | 164 | 164 | 0 | 100% |
 
 ## File Coverage
 
@@ -230,7 +256,7 @@ cargo test --lib test_encode_swp_regression_nonzero_offset -- --test-threads=1
 | data_processing.rs | 36 | 25 | 25 | 100% | covered |
 | fp_scalar.rs | 13 | 10 | 11 | 110% | covered |
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
-| load_store.rs | 20 | 12 | 12 | 100% | covered |
+| load_store.rs | 20 | 13 | 13 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 1 | 1 | 100% | covered |
 
@@ -404,3 +430,4 @@ cargo test --lib test_encode_swp_regression_nonzero_offset -- --test-threads=1
 | encode_at | system.rs |
 | encode_tlbi | system.rs |
 | encode_swp | load_store.rs |
+| encode_ldop | load_store.rs |

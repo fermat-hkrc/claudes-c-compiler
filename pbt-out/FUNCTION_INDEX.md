@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 164 | Excluded: 143
+> Total files: 11 | Total functions: 307 | PBT candidates: 165 | Excluded: 142
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -96,7 +96,7 @@
 | encode_prfop | load_store.rs | 786 | function | no | out of campaign scope |
 | encode_cas | load_store.rs | 814 | function | yes | - |
 | encode_swp | load_store.rs | 849 | function | yes | - |
-| encode_ldop | load_store.rs | 882 | function | no | out of campaign scope |
+| encode_ldop | load_store.rs | 882 | function | yes | - |
 | encode_stop | load_store.rs | 927 | function | no | out of campaign scope |
 | get_neon_reg | neon.rs | 7 | function | no | helper; campaign is single-symbol |
 | encode_cnt | neon.rs | 23 | function | yes | - |

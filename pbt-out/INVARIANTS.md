@@ -1,3 +1,35 @@
+# Confirmed invariants (encode_ldop)
+
+- Valid LDADD/LDCLR/LDEOR/LDSET variants (4 ops × 12 acquire/release/byte/half suffixes) with Rs/Rt in {w/x 0..30, wzr/xzr} (W-only for byte/half) and base Xn|SP match llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). KAT pins ldadd x0,x1,[x2]=0xF8200041, ldadd w0,w1,[x2]=0xB8200041, ldadda w0,w1,[x2]=0xB8A00041, ldaddl w0,w1,[x2]=0xB8600041, ldaddal w0,w1,[x2]=0xB8E00041, ldaddb w0,w1,[x2]=0x38200041, ldaddh w0,w1,[x2]=0x78200041, ldclr w0,w1,[x2]=0xB8201041, ldeor w0,w1,[x2]=0xB8202041, ldset w0,w1,[x2]=0xB8203041, ldadd xzr,xzr,[sp]=0xF83F03FF.
+- ARM LDADD layout holds: bits[29:24]=0b111000; bit21=1; bit15=0; bits[11:10]=0; size/A/R/opc/Rs/Rn/Rt match the generated fields (1000 cases).
+- Encodings of the same registers differ only in the mutated field; LDADDA XOR LDADD = 1<<23; LDADDL XOR LDADD = 1<<22; LDADDAL XOR LDADD = (1<<23)|(1<<22); LDCLR/LDEOR/LDSET XOR LDADD = opc<<12; uppercase LDADD matches lowercase (1000 cases).
+- Arity < 3 and non-Mem third operand return Err (1000 cases).
+- Unparsable register/base names (foo, x32, empty, r0) return Err (sweep, 1000 cases).
+- Unknown mnemonics that do not start with ldadd/ldclr/ldeor/ldset return Err (sweep, 1000 cases).
+- ASCII case-fold of the mnemonic matches llvm-mc (sweep, 1000 cases).
+- Extra operands, SP/WSP as Rs/Rt, XZR/W as base, mixed W/X, FP Rs/Rt, LDADDB with X, and nonzero Mem offset currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_ldop)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -mattr=+lse -show-encoding (LLVM 15.0.6).
+- ARM ARM LDADD: size 111000 A R 1 Rs 0 opc 00 Rn Rt. opc LDADD=000 LDCLR=001 LDEOR=010 LDSET=011. A=acquire, R=release. Rs/Rt are ZR not SP; Rn is Xn|SP not ZR. LDADDB/LDADDH require W registers. Optional offset only #0.
+- Dispatch: encoder/mod.rs:1050-1061 ldadd*|ldclr*|ldeor*|ldset* => encode_ldop(mnemonic, operands).
+- Sibling encode_cas / encode_swp / encode_stop are not same-job differentials (different LSE class / operand grammar).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_ldop_neg_invalid_name, encode_ldop_diff_alt_spellings, encode_ldop_neg_unknown_op. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_ldop_*.md.
+
+## Quirks (encode_ldop)
+
+- ASCII case of the mnemonic is accepted (to_lowercase).
+- parse_reg_num maps SP and XZR both to 31; encode_ldop does not distinguish them (see bugs).
+- get_reg accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- operands.len() < 3 does not reject extra operands (see bugs).
+- Operand::Mem { base, .. } ignores offset (see bugs).
+- llvm-mc aliases `ldadd xzr, xzr, [sp]` to `stadd xzr, [sp]`; encodings still compare.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 45-line body.
+
 # Confirmed invariants (encode_swp)
 
 - Valid SWP variants {swp,swpa,swpal,swpl,swpb,swpab,swpalb,swplb,swph,swpah,swpalh,swplh} with Rs/Rt in {w/x 0..30, wzr/xzr} (W-only for byte/half) and base Xn|SP match llvm-mc `-triple=aarch64 -mattr=+lse -show-encoding` (1000 cases). KAT pins swp x0,x1,[x2]=0xF8208041, swp w0,w1,[x2]=0xB8208041, swpa w0,w1,[x2]=0xB8A08041, swpl w0,w1,[x2]=0xB8608041, swpal w0,w1,[x2]=0xB8E08041, swpb w0,w1,[x2]=0x38208041, swph w0,w1,[x2]=0x78208041, swp xzr,xzr,[sp]=0xF83F83FF.
