@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_c_mv)
+
+- Valid 2-operand C.MV with rd ∈ {x0..x31} and rs2 ∈ {x1..x31} matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.mv t1, t0 = 0x8316, c.mv x1, x2 = 0x808a, c.mv a0, a1 = 0x852e, c.mv x31, x31 = 0x8ffe, c.mv x1, x1 = 0x8086, c.mv sp, ra = 0x8106.
+- CR-type layout holds: op=10, funct4=1000, rd in bits[11:7], rs2 in bits[6:2] (1000 cases).
+- ABI names (zero/ra/sp/a0/t6/fp/s0/…) encode the same halfword as xN (1000 cases).
+- Field isolation: rd bits[11:7] independent of rs2; rs2/op/funct4 bits independent of rd (1000 cases).
+- Empty/1-operand and FP dest/src return Err (1000 cases).
+- Extra operand and rs2=x0 currently disagree with llvm-mc (see bugs): extra ignored; rs2=x0 encodes as C.JR.
+
+## Environment (encode_c_mv)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+c -show-encoding (LLVM 15.0.6). Default riscv64 without +c rejects C.MV.
+- Harness: src/backend/riscv/assembler/encoder/encode_c_mv_pbt.rs, cargo test --lib encode_c_mv, proptest cases=1000.
+- Dispatch: encoder/mod.rs:924 "c.mv" => encode_c_mv(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_c_mv NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / CR-type / ABI / isolation / arity-FP / extra / rs2=x0. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_c_mv)
+
+- llvm-mc prints `c.mv x1, x2` as `mv ra, sp` with a 16-bit encoding ([0x8a,0x80]).
+- llvm-mc encodes `c.mv x0, x1` as a HINT; SUT also encodes it (no rd=x0 rejection, unlike C.LUI). ISA: C.MV with rd=x0 and rs2≠x0 is HINT.
+- C.MV allows rd=x2 (unlike C.LUI).
+- llvm-mc rejects `c.mv x1, x0` because rs2=x0 is the C.JR encoding. SUT currently emits that halfword (bug).
+- get_reg accepts Imm(0..=31) as a GCC bare GPR number. llvm-mc rejects numeric rd.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_c_addi)
 
 - Valid 2-operand C.ADDI with rd ∈ {x0..x31} and imm ∈ [-32, 31] matches llvm-mc `-triple=riscv64 -mattr=+c -show-encoding` (1000 cases). KAT pins c.addi x1, 1 = 0x0085, c.addi x1, 0 = 0x0081, c.addi x1, 31 = 0x00fd, c.addi x1, -1 = 0x10fd, c.addi x1, -32 = 0x1081, c.addi a0, 5 = 0x0515.

@@ -219,3 +219,4 @@
 | encode_c_lui | compressed.rs | encode_c_lui_pbt.rs | cargo test --lib encode_c_lui | 7 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep signed-vs-uimm20 passing, extra/oob failing) |
 | encode_c_li | compressed.rs | encode_c_li_pbt.rs | cargo test --lib encode_c_li | 5 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/fp passing, extra/oob failing) |
 | encode_c_addi | compressed.rs | encode_c_addi_pbt.rs | cargo test --lib encode_c_addi | 5 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/fp passing, extra/oob failing) |
+| encode_c_mv | compressed.rs | encode_c_mv_pbt.rs | cargo test --lib encode_c_mv | 5 passing / 2 failing properties (plus 6 passing KAT + 2 failing regression witnesses; 2 bugs; sweep arity/fp passing, extra/rs2=x0 failing) |

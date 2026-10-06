@@ -86,6 +86,8 @@ mod encode_c_lui_pbt;
 mod encode_c_li_pbt;
 #[cfg(test)]
 mod encode_c_addi_pbt;
+#[cfg(test)]
+mod encode_c_mv_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;
