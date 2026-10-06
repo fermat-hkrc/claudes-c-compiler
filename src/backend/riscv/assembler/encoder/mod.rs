@@ -70,6 +70,8 @@ mod encode_fp_cmp_pbt;
 mod encode_fclass_pbt;
 #[cfg(test)]
 mod encode_fcvt_int_pbt;
+#[cfg(test)]
+mod encode_fcvt_from_int_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;
