@@ -1,146 +1,148 @@
-# PBT Campaign Report: encode_lui
+# PBT Campaign Report: encode_auipc
 
 ## Summary
 
-**Verdict:** 4 bugs, worst high: encode_lui silently truncates out-of-range immediates (`lui x0, -1` encodes as `lui x0, 0xFFFFF`), accepts extra operands and non-%hi symbols as R_RISCV_HI20, and treats `%hi(foo+4)` as symbol `foo+4` with addend 0.
+**Verdict:** 4 high: encode_auipc silently truncates out-of-range immediates, ignores extra operands, accepts plain/%hi/%lo symbols as relocations, and treats `%pcrel_hi(foo+4)` as symbol `foo+4` with addend 0, so callers assembling AUIPC get wrong machine code or unresolvable relocs.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_lui
-**Tests:** 12 properties (plus 5 KAT + 4 regression witnesses)
+**Modules tested:** encode_auipc
+**Tests:** 12
 **Result:** 8 passing, 4 bugs
-**Change surface:** 1 changed function (encode_lui), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual audit of the 22-line body drove every match arm.
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (C++ reporter listed unrelated binaries and claimed encode_auipc NOT LINKED). The campaign's `cargo test --lib encode_auipc` executed the production symbol (5 KAT + 8 passing properties call encode_auipc). Manual arm audit of the 19-line body.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_lui | 12 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_auipc | 12 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_lui silently truncates immediates outside [0, 1048575]
+### B1: encode_auipc silently truncates immediates outside [0, 1048575]
 
-**Formal:** ∀ rd ∈ GPR names, ∀ imm ∈ i64 \ [0, 1048575]. encode_lui([Reg(rd), Imm(imm)]) = Err(_)
-**Contract evidence:** inferred (llvm-mc LUI operand diagnostic "integer in the range [0, 1048575]"; README.md:356 U-type imm[31:12] is 20 bits)
+**Formal:** ∀ rd ∈ GPR names, ∀ imm ∉ [0, 1048575]. llvm-mc rejects "auipc rd, imm" ⇒ encode_auipc([Reg(rd), Imm(imm)]) = Err(_)
+**Contract evidence:** inferred (llvm-mc AUIPC immediate range [0, 1048575]; README.md:356 U-type imm[31:12] is a 20-bit field)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_lui([Reg("x0"), Imm(-1)])
-**Expected / Actual:** Err / Ok(Word(0xFFFFF037))
-**Impact:** Out-of-range LUI immediates assemble to a different instruction instead of being rejected, so callers get silent wrong machine code.
-**Root cause:** base.rs:10 casts the i64 immediate to u32 and shifts, wrapping negatives and dropping bits above 20.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:10`
+**Counterexample:** encode_auipc([Reg("x0"), Imm(-1)])
+**Expected / Actual:** Err / Ok(Word(0xFFFFF017)) — encoding of `auipc x0, 1048575`
+**Impact:** Out-of-range AUIPC immediates assemble to a different instruction instead of being rejected, so callers get silent wrong machine code.
+**Root cause:** base.rs:34 casts the i64 immediate to u32 and shifts, wrapping negatives and dropping bits above 20, then encode_u masks to imm[31:12].
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:34`
 ```rust
-            Ok(EncodeResult::Word(encode_u(OP_LUI, rd, (*imm as u32) << 12)))
+            Ok(EncodeResult::Word(encode_u(OP_AUIPC, rd, (*imm as u32) << 12)))
 ```
 **Suggested fix:** Reject immediates outside the 20-bit unsigned range before shifting.
 ```rust
             let imm = *imm;
             if !(0..=1048575).contains(&imm) {
-                return Err(format!("lui: immediate {imm} out of range [0, 1048575]"));
+                return Err(format!("auipc: immediate {imm} out of range [0, 1048575]"));
             }
-            Ok(EncodeResult::Word(encode_u(OP_LUI, rd, (imm as u32) << 12)))
+            Ok(EncodeResult::Word(encode_u(OP_AUIPC, rd, (imm as u32) << 12)))
 ```
-**Bug report:** bug_reports/encode_lui_imm_oob.md
-**Repro seed:** (none — deterministic regression)
+**Bug report:** bug_reports/encode_auipc_imm_oob.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_lui_pbt::test_encode_lui_regression_imm_oob' panicked at src/backend/riscv/assembler/encoder/encode_lui_pbt.rs:333:5:
-lui x0, -1 must Err (llvm-mc range [0, 1048575]); got Ok(Word(4294963255))
+thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_imm_oob' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:348:5:
+auipc x0, -1 must Err (llvm-mc range [0, 1048575]); got Ok(Word(4294963223))
 ```
 
-### B2: encode_lui ignores extra operands
+### B2: encode_auipc ignores a third operand
 
-**Formal:** ∀ rd, ∀ imm ∈ [0, 1048575], ∀ extra. encode_lui([Reg(rd), Imm(imm), extra]) = Err(_)
-**Contract evidence:** inferred (README.md:304 two-operand U-type lui; llvm-mc "invalid operand for instruction" on a third operand)
+**Formal:** ∀ rd ∈ GPR names, ∀ imm ∈ [0, 1048575], ∀ extra. encode_auipc([Reg(rd), Imm(imm), extra]) = Err(_)
+**Contract evidence:** inferred (llvm-mc two-operand AUIPC; extra token is "invalid operand for instruction")
 **Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** encode_lui([Reg("x0"), Imm(0), Imm(0)])
-**Expected / Actual:** Err / Ok(Word(0x37))
-**Impact:** Typos and extra tokens are silently dropped, so the assembler accepts invalid syntax that llvm-mc rejects.
-**Root cause:** base.rs:7 matches only operands[0] and operands[1]; operands.len() is never checked.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:7`
+**Severity:** high
+**Counterexample:** encode_auipc([Reg("x0"), Imm(0), Imm(0)])
+**Expected / Actual:** Err / Ok(Word(0x00000017)) — encoding of `auipc x0, 0`
+**Impact:** Extra tokens in AUIPC are silently dropped, hiding assembler typos.
+**Root cause:** base.rs:32 matches only operands.get(1) and never checks operands.len().
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:32`
 ```rust
     match &operands.get(1) {
 ```
-**Suggested fix:** Require exactly two operands before encoding.
+**Suggested fix:** Reject arity other than 2 after reading rd.
 ```rust
     if operands.len() != 2 {
-        return Err("lui: invalid operands".to_string());
+        return Err("auipc: invalid operands".to_string());
     }
     match &operands.get(1) {
 ```
-**Bug report:** bug_reports/encode_lui_extra_operand.md
-**Repro seed:** (none — deterministic regression)
+**Bug report:** bug_reports/encode_auipc_extra_operand.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_lui_pbt::test_encode_lui_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_lui_pbt.rs:344:5:
-lui x0, 0 with a third operand must Err; got Ok(Word(55))
+thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:359:5:
+auipc x0, 0 with a third operand must Err; got Ok(Word(23))
 ```
 
-### B3: encode_lui accepts plain symbols and non-%hi modifiers as R_RISCV_HI20
+### B3: encode_auipc accepts plain symbols and non-AUIPC reloc modifiers
 
-**Formal:** ∀ rd, ∀ s ∈ {bare ident, %pcrel_hi(ident), %lo(ident), %got_pcrel_hi(ident), %pcrel_lo(ident)}. encode_lui([Reg(rd), Symbol(s)]) = Err(_)
-**Contract evidence:** inferred (llvm-mc "operand must be a symbol with %hi/%tprel_hi modifier or an integer in the range [0, 1048575]")
-**Documentation conflict:** base.rs:12 "// %hi(symbol)" names the intended Symbol form; it does not declare other symbols invalid. The comment is asserted intent, not an exclusion.
+**Formal:** ∀ rd ∈ GPR names, ∀ s ∈ {plain ident, %hi(ident), %lo(ident), %pcrel_lo(ident), %tprel_hi(ident), %tprel_lo(ident), %tprel_add(ident)}. llvm-mc rejects "auipc rd, s" ⇒ encode_auipc([Reg(rd), Symbol(s)]) = Err(_)
+**Contract evidence:** inferred (llvm-mc AUIPC modifier set %pcrel_hi/%got_pcrel_hi/%tls_ie_pcrel_hi/%tls_gd_pcrel_hi; encoder/mod.rs:57 PCREL_HI20 is for AUIPC)
+**Documentation conflict:** (none) — neighbouring helper pseudo.rs:605 "// Plain symbol - use as PC-relative" is parse_reloc_modifier's note, not encode_auipc's domain restriction
 **Severity:** high
-**Counterexample:** encode_lui([Reg("x0"), Symbol("foo")])
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x37, Hi20, symbol: "foo", addend: 0 })
-**Impact:** Bare symbols and `%pcrel_hi`/`%lo` emit R_RISCV_HI20. The linker applies the wrong reloc kind or looks up a non-existent name.
-**Root cause:** base.rs:16-20 special-cases only `%tprel_hi(`; every other Symbol is classified as Hi20.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:16`
+**Counterexample:** encode_auipc([Reg("x0"), Symbol("foo")])
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00000017, PcrelHi20, symbol: "foo", addend: 0 })
+**Impact:** A bare symbol becomes R_RISCV_PCREL_HI20; `%hi` becomes R_RISCV_HI20 on an AUIPC. The linker applies the wrong reloc kind or looks up an unintended symbol.
+**Root cause:** base.rs:36-37 forwards every Symbol through parse_reloc_modifier, whose else branch treats a plain name as PcrelHi20.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:36`
 ```rust
-                    reloc_type: if s.starts_with("%tprel_hi(") {
-                        RelocType::TprelHi20
-                    } else {
-                        RelocType::Hi20
-                    },
+        Some(Operand::Symbol(s)) => {
+            let (reloc_type, symbol) = parse_reloc_modifier(s);
 ```
-**Suggested fix:** Accept only `%hi(` and `%tprel_hi(`; reject every other symbol form.
+**Suggested fix:** Accept only the four AUIPC-valid modifiers; Err on anything else.
 ```rust
-                    reloc_type: if s.starts_with("%tprel_hi(") {
-                        RelocType::TprelHi20
-                    } else if s.starts_with("%hi(") {
-                        RelocType::Hi20
-                    } else {
-                        return Err("lui: expected %hi/%tprel_hi or integer".to_string());
-                    },
+        Some(Operand::Symbol(s)) => {
+            let (reloc_type, symbol) = parse_reloc_modifier(s);
+            match reloc_type {
+                RelocType::PcrelHi20 | RelocType::GotHi20
+                | RelocType::TlsGotHi20 | RelocType::TlsGdHi20
+                    if s.starts_with('%') => {}
+                _ => return Err("auipc: invalid operands".to_string()),
+            }
 ```
-**Bug report:** bug_reports/encode_lui_bad_modifier.md
-**Repro seed:** cc b3e97c02a9431da9c8eebb88d7f71c4565d6943c13e200aea2166c2df6811a98
+**Bug report:** bug_reports/encode_auipc_bad_modifier.md
+**Repro seed:** cc ffa18a32f0191bd88fac8e6d5ddabfba9ad39ccbc65cd6a7b45ec6fd7787ae5e
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_lui_pbt::test_encode_lui_regression_plain_symbol' panicked at src/backend/riscv/assembler/encoder/encode_lui_pbt.rs:355:5:
-lui x0, foo must Err (llvm-mc requires %hi/%tprel_hi); got Ok(WordWithReloc { word: 55, reloc: Relocation { reloc_type: Hi20, symbol: "foo", addend: 0 } })
+thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_plain_symbol' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:370:5:
+auipc x0, foo must Err (llvm-mc requires %pcrel_hi/%got_pcrel_hi/%tls_*_pcrel_hi); got Ok(WordWithReloc { word: 23, reloc: Relocation { reloc_type: PcrelHi20, symbol: "foo", addend: 0 } })
 ```
 
-### B4: encode_lui treats %hi(foo+4) as symbol "foo+4" with addend 0
+### B4: encode_auipc treats %pcrel_hi(foo+4) as symbol "foo+4" with addend 0
 
-**Formal:** ∀ rd, ∀ sym, ∀ a ≠ 0. encode_lui([Reg(rd), Symbol("%hi("+sym+sign(a)+")")]) = Ok(WordWithReloc{Hi20, symbol=sym, addend=a})
-**Contract evidence:** inferred (llvm-mc object `R_RISCV_HI20 foo 0x4` for `lui x1, %hi(foo+4)`; README.md:25 relocation modifiers)
+**Formal:** ∀ rd ∈ GPR names, ∀ sym ∈ identifier, ∀ a ≠ 0. encode_auipc([Reg(rd), Symbol("%pcrel_hi("+sym+±a+")")]) = Ok(WordWithReloc{PcrelHi20, symbol=sym, addend=a})
+**Contract evidence:** inferred (Relocation.addend field encoder/mod.rs:144; llvm-mc fixup value %pcrel_hi(foo+4); README.md:334 call/la expansions use %pcrel_hi)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_lui([Reg("x0"), Symbol("%hi(foo+4)")])
-**Expected / Actual:** symbol="foo" addend=4 / symbol="foo+4" addend=0
-**Impact:** The linker looks up the literal name `foo+4` instead of relocating `foo` with addend 4, so `symbol+offset` high-part addressing is wrong.
-**Root cause:** base.rs:22-23 stores extract_modifier_symbol(s) (the full inner text) and hardcodes addend 0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:22`
+**Counterexample:** encode_auipc([Reg("x0"), Symbol("%pcrel_hi(foo+4)")])
+**Expected / Actual:** WordWithReloc { PcrelHi20, symbol: "foo", addend: 4 } / WordWithReloc { PcrelHi20, symbol: "foo+4", addend: 0 }
+**Impact:** The linker cannot resolve the literal name `foo+4`, so PC-relative addressing of `symbol+offset` is wrong.
+**Root cause:** base.rs:37-43 stores parse_reloc_modifier's inner text `foo+4` and hardcodes addend 0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:42`
 ```rust
-                    symbol: extract_modifier_symbol(s),
+                    symbol,
                     addend: 0,
 ```
 **Suggested fix:** Split a trailing `+N`/`-N` off the extracted inner text into symbol and addend.
 ```rust
-                    let inner = extract_modifier_symbol(s);
-                    let (symbol, addend) = split_symbol_addend(&inner);
+            let (reloc_type, inner) = parse_reloc_modifier(s);
+            let (symbol, addend) = split_symbol_addend(&inner);
+            Ok(EncodeResult::WordWithReloc {
+                word: encode_u(OP_AUIPC, rd, 0),
+                reloc: Relocation { reloc_type, symbol, addend },
+            })
 ```
-**Bug report:** bug_reports/encode_lui_hi_addend.md
-**Repro seed:** (none — deterministic regression)
+**Bug report:** bug_reports/encode_auipc_pcrel_hi_addend.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_lui_pbt::test_encode_lui_regression_hi_addend' panicked at src/backend/riscv/assembler/encoder/encode_lui_pbt.rs:368:13:
-assertion `left == right` failed: %hi(foo+4) symbol must be foo, not foo+4
+thread 'backend::riscv::assembler::encoder::encode_auipc_pbt::test_encode_auipc_regression_pcrel_hi_addend' panicked at src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs:383:13:
+assertion `left == right` failed: %pcrel_hi(foo+4) symbol must be foo, not foo+4
   left: "foo+4"
  right: "foo"
 ```
@@ -153,39 +155,38 @@ assertion `left == right` failed: %hi(foo+4) symbol must be foo, not foo+4
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_lui_pbt.rs | 12 properties + 5 KAT + 4 regressions |
-| src/backend/riscv/assembler/encoder/mod.rs | one-line `#[cfg(test)] mod encode_lui_pbt` |
+| src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs | 12 properties + 5 KAT + 4 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_lui -- --test-threads=1
+cargo test --lib encode_auipc -- --test-threads=1
 ```
 
 B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_lui_regression_imm_oob -- --test-threads=1
+cargo test --lib test_encode_auipc_regression_imm_oob -- --test-threads=1
 ```
 
 B2:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_lui_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_auipc_regression_extra_operand -- --test-threads=1
 ```
 
 B3:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_lui_regression_plain_symbol -- --test-threads=1
+cargo test --lib test_encode_auipc_regression_plain_symbol -- --test-threads=1
 ```
 
 B4:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_lui_regression_hi_addend -- --test-threads=1
+cargo test --lib test_encode_auipc_regression_pcrel_hi_addend -- --test-threads=1
 ```
 
 ## Output Directories
@@ -196,25 +197,24 @@ cargo test --lib test_encode_lui_regression_hi_addend -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_lui_imm_oob.md
-- pbt-out/bug_reports/encode_lui_imm_oob.html
-- pbt-out/bug_reports/encode_lui_extra_operand.md
-- pbt-out/bug_reports/encode_lui_extra_operand.html
-- pbt-out/bug_reports/encode_lui_bad_modifier.md
-- pbt-out/bug_reports/encode_lui_bad_modifier.html
-- pbt-out/bug_reports/encode_lui_hi_addend.md
-- pbt-out/bug_reports/encode_lui_hi_addend.html
-- proptest-regressions/backend/riscv/assembler/encoder/encode_lui_pbt.txt (proptest failure corpus, left in-tree)
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_auipc_imm_oob.md
+- pbt-out/bug_reports/encode_auipc_imm_oob.html
+- pbt-out/bug_reports/encode_auipc_extra_operand.md
+- pbt-out/bug_reports/encode_auipc_extra_operand.html
+- pbt-out/bug_reports/encode_auipc_bad_modifier.md
+- pbt-out/bug_reports/encode_auipc_bad_modifier.html
+- pbt-out/bug_reports/encode_auipc_pcrel_hi_addend.md
+- pbt-out/bug_reports/encode_auipc_pcrel_hi_addend.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 12:22 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 182/324 total | PBT candidates: 182 | Tested: 182 (100%) | 1 pass, 182 fail
+> Last updated: 2026-10-06 12:42 (campaign: coverage)
+> Files: 12/12 scanned (100%) | Functions: 183/324 total | PBT candidates: 183 | Tested: 183 (100%) | 1 pass, 183 fail
 
 ## Summary
 
@@ -223,10 +223,10 @@ cargo test --lib test_encode_lui_regression_hi_addend -- --test-threads=1
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 182 |
-| **Tested (of PBT candidates)** | **182 / 182 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 182 / -1 |
-| **Overall (tested / all functions)** | **182 / 324 (56%)** |
+| PBT candidates (from FUNCTION_INDEX) | 183 |
+| **Tested (of PBT candidates)** | **183 / 183 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 183 / -1 |
+| **Overall (tested / all functions)** | **183 / 324 (56%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -234,13 +234,13 @@ cargo test --lib test_encode_lui_regression_hi_addend -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 182 | 182 | 0 | 100% |
+|  | 183 | 183 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 182 | 182 | 0 | 100% |
+| unknown | 183 | 183 | 0 | 100% |
 
 ## File Coverage
 
@@ -445,3 +445,4 @@ cargo test --lib test_encode_lui_regression_hi_addend -- --test-threads=1
 | encode_cond_branch | compare_branch.rs |
 | encode_ldr_str_auto | load_store.rs |
 | encode_lui | base.rs |
+| encode_auipc | base.rs |

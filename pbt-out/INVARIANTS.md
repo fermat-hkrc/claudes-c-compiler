@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_auipc)
+
+- Valid `auipc rd, imm` for imm in [0, 1048575] and rd in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins auipc x0,0=0x00000017, auipc x1,1=0x00001097, auipc x1,1048575=0xFFFFF097.
+- U-type layout holds: opcode=0b0010111, rd in bits[11:7], imm20 in bits[31:12] (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd (1000 cases).
+- `%pcrel_hi(sym)` reloc-form word equals `auipc rd, 0` with RelocType::PcrelHi20, symbol=sym, addend=0 (1000 cases).
+- `%got_pcrel_hi` / `%tls_ie_pcrel_hi` / `%tls_gd_pcrel_hi` same word with GotHi20 / TlsGotHi20 / TlsGdHi20 (1000 cases). KAT pins auipc t0, %got_pcrel_hi(x) word=0x00000297.
+- Arity < 2, FP dest, and Label/Mem/Csr/Fence/SymbolOffset/MemSymbol as operand 1 return Err (1000 cases).
+- Out-of-range immediates, extra operands, plain/%hi/%lo/%pcrel_lo/%tprel_* symbols, and `%pcrel_hi(sym+N)` addend currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_auipc)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_auipc_pbt.rs, cargo test --lib encode_auipc, proptest cases=1000.
+- Dispatch: encoder/mod.rs:455 `"auipc" => encode_auipc(operands)`.
+- Sibling encode_lui / encode_c_lui / encode_u are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_auipc_neg_arity / encode_auipc_neg_fp / encode_auipc_neg_bad_operand / encode_auipc_pcrel_hi_addend. Closed: tier round spent; remaining documented gaps are the four filed bugs.
+- Four failing properties are SUT bugs. See pbt-out/bug_reports/encode_auipc_*.md.
+
+## Quirks (encode_auipc)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:349 GCC inline asm).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- Immediate is `(*imm as u32) << 12` then masked; values outside [0, 1048575] wrap (see bugs).
+- Symbol arm forwards every Symbol through parse_reloc_modifier, including plain names as PcrelHi20 (see bugs).
+- extract_modifier_symbol keeps `foo+4` as the symbol and addend is hardcoded 0 (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 19-line body.
+
 # Confirmed invariants (encode_lui)
 
 - Valid `lui rd, imm` for imm in [0, 1048575] and rd in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins lui x0,0=0x00000037, lui x1,1=0x000010B7, lui x1,1048575=0xFFFFF0B7.
