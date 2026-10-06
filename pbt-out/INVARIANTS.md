@@ -213,3 +213,10 @@ Environment quirks (round 05):
   tail_call.rs requires inline epilogue, no Jump allowed between call and
   ret). -O0 frame bloat is known (ideas/). sqrtl(2)^2==2 fails on BOTH
   compilers (x87 80-bit rounding) — fair oracle note.
+
+- Round-22: struct-return ABI all correct (rax:rdx, xmm pairs, mixed,
+  sret, char[16], float×4). Findings: irconst_to_bits is a NUMERIC cast
+  not bitcast (#806 — signbit(-0.0) const-folds to 0; runtime/global path
+  correct); x86 assembler never uses the B0+r mov-imm8 short form (#807,
+  1B/instr bloat). -S→GNU-as roundtrip is a sharp new oracle (it exposed
+  #807 precisely because ccc's own -c bytes differ from as on ccc's -S).
