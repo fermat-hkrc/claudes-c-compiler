@@ -1,327 +1,328 @@
-# Properties: encode_ldr_str_auto
+# Properties: encode_lui
 
-## encode_ldr_str_auto_diff_gpr
-- Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc. State machine rejected (pure function). Algebraic round-trip rejected (no in-tree LDR/STR decoder). encode_ldr_str rejected as differential sibling (callee; explicit size; shared get_reg). README.md:12 gas contract + encoder/mod.rs:484 size-from-register-width + load_store.rs:8 Wn/Xn size map. SUT-boundary: internal-helper of GNU-style assembler; encode_instruction passes operands through.
-- Doc contract: load_store.rs:8 "Determine size from register: Wn -> 32-bit (size=10), Xn -> 64-bit (size=11)" — asserted fingerprint 368008af
-- Seed: encode_ldr_str_pbt.rs:260 encode_ldr_str_kat_llvm_mc_x0_x1
-- Formal: ∀ is_load ∈ {false,true}, rt ∈ [0,31], rn ∈ [0,31], imm12 ∈ [0,4095], width ∈ {W,X}. encode_ldr_str_auto([Reg(Rt), Mem{Xn|SP, imm12*(1<<size)}], is_load) = Word(llvm-mc(`ldr|str Rt, [Xn|SP, #pimm]`)) where size=10 for W and 11 for X, Rt≠SP
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.load_store.encode_ldr_str_auto
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [is_load, rt, rn, imm12, width]
-  domain:
-    is_load: bool
-    rt: 0..31
-    rn: 0..31
-    imm12: 0..4095
-    width: W_or_X
-  body: sut_word(ops, is_load) == llvm_mc_word(asm)
-generators:
-  is_load: { gen: bool }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  imm12: { gen: int, min: 0, max: 4095, type: u32 }
-  width: { gen: int, min: 0, max: 1, type: u32 }
-evidence: README.md:12 encoder/mod.rs:484-486 load_store.rs:8
-```
-
-## encode_ldr_str_auto_diff_fp_sdq
-- Tier: 5
-- Rationale: Same differential vs llvm-mc for the FP sizes the function comment names (S/D/Q). encode_ldr_str SIMD sweep is not this symbol. Q must set is_128bit (opc 11/10, shift=4).
-- Doc contract: load_store.rs:9 "FP: Sn -> 32-bit, Dn -> 64-bit, Qn -> 128-bit" — asserted fingerprint df05bd25
-- Seed: encode_ldr_str_pbt.rs SIMD S/D/Q sweep (INVARIANTS.md encode_ldr_str)
-- Formal: ∀ is_load ∈ {false,true}, rt ∈ [0,31], rn ∈ [0,31], imm12 ∈ [0,4095], pref ∈ {s,d,q}. encode_ldr_str_auto([Reg(pref+rt), Mem{Xn|SP, imm12*(1<<shift)}], is_load) = Word(llvm-mc(`ldr|str PrefRt, [Xn|SP, #pimm]`)) where (s→size=10 shift=2), (d→size=11 shift=3), (q→size=00 shift=4 is_128bit)
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.load_store.encode_ldr_str_auto
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [is_load, rt, rn, imm12, pref]
-  domain:
-    is_load: bool
-    rt: 0..31
-    rn: 0..31
-    imm12: 0..4095
-    pref: s_d_q
-  body: sut_word(ops, is_load) == llvm_mc_word(asm)
-generators:
-  is_load: { gen: bool }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  imm12: { gen: int, min: 0, max: 4095, type: u32 }
-  pref: { gen: int, min: 0, max: 2, type: u32 }
-evidence: load_store.rs:9 README.md:12
-```
-
-## encode_ldr_str_auto_diff_fp_bh
-- Tier: 5
-- Rationale: gas/llvm-mc accept `ldr/str Bt/Ht, [Xn|SP, #pimm]` (ARM SIMD&FP LDR/STR size=00/01 V=1). Function comment names S/D/Q but does not declare B/H invalid; parse_reg_num and is_fp_reg accept b/h; default-64-bit fallthrough is not an exclusion. README.md:12 gas contract.
-- Doc contract: README.md:12 "It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint f00ab438
-- Seed: (none) — encode_ldr_str_pbt SIMD sweep covered S/D/Q only
-- Formal: ∀ is_load ∈ {false,true}, rt ∈ [0,31], rn ∈ [0,31], imm12 ∈ [0,4095], pref ∈ {b,h}. encode_ldr_str_auto([Reg(pref+rt), Mem{Xn|SP, imm12*(1<<shift)}], is_load) = Word(llvm-mc(`ldr|str PrefRt, [Xn|SP, #pimm]`)) where (b→size=00 shift=0), (h→size=01 shift=1)
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
-- Status: failing
-- Counterexample: is_load=false, rt=0, rn=0, imm12=0, is_h=false → str b0, [x0] SUT=0xfd000000 llvm-mc=0x3d000000
-- Bug report: bug_reports/encode_ldr_str_auto_byte_half_size.md
-
-```property
-function: encoder.load_store.encode_ldr_str_auto
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [is_load, rt, rn, imm12, pref]
-  domain:
-    is_load: bool
-    rt: 0..31
-    rn: 0..31
-    imm12: 0..4095
-    pref: b_or_h
-  body: sut_word(ops, is_load) == llvm_mc_word(asm)
-generators:
-  is_load: { gen: bool }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  imm12: { gen: int, min: 0, max: 4095, type: u32 }
-  pref: { gen: int, min: 0, max: 1, type: u32 }
-evidence: README.md:12 ARM ARM LDR immediate SIMD and FP Bt Ht
-```
-
-## encode_ldr_str_auto_size_v_bits
+## encode_lui_diff_imm_llvm_mc
 - Tier: 4
-- Rationale: Algebraic invariant from ARM unsigned LDR/STR layout plus load_store.rs:8-9 size map. Independent of llvm-mc (unpack, not re-pack). Stronger differential is the sibling properties; this pins the auto-detect bits even if the reference is down. Domain includes B/H because parse_reg_num/is_fp_reg accept them and gas encodes them.
-- Doc contract: load_store.rs:8 "Determine size from register: Wn -> 32-bit (size=10), Xn -> 64-bit (size=11)" — asserted fingerprint 368008af
-- Seed: encode_ldr_str_pbt.rs encode_ldr_str_arm_fields
-- Formal: ∀ is_load, rt ∈ [0,30], rn ∈ [0,31], class ∈ {W,X,S,D,Q,B,H}. let w = encode_ldr_str_auto([Reg(class+rt), Mem{Xn|SP, 0}], is_load) as Word. unpack(w).size/V/opc match the ARM map: W→(10,0,load?01:00); X→(11,0,same); S→(10,1,same); D→(11,1,same); Q→(00,1,load?11:10); B→(00,1,load?01:00); H→(01,1,load?01:00). bits[29:27]=111, bits[25:24]=01, Rt=rt, Rn=rn
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
-- Status: failing
-- Counterexample: is_load=false, rt=0, rn=0, class=5 (B) -> size bits=11 expected 00
-- Bug report: bug_reports/encode_ldr_str_auto_byte_half_size.md
+- Rationale: Strongest applicable oracle is differential vs llvm-mc (independent RISC-V assembler). State machine rejected (pure function). Algebraic round-trip rejected (no in-tree LUI decoder). encode_auipc / encode_c_lui / encode_u rejected (different opcode / compressed / shared packer).
+- Doc contract: encoder/mod.rs:3 "Encodes RISC-V instructions into 32-bit machine code words." — asserted fingerprint 077a9290
+- Seed: (none)
+- Formal: ∀ rd ∈ {x0..x31 ∪ ABI names}, ∀ imm ∈ [0, 1048575]. encode_lui([Reg(rd), Imm(imm)]) = Ok(Word(w)) ∧ w = llvm-mc("lui rd, imm")
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldr_str_auto
+function: encoder.encode_lui
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, imm]
+  domain: { rd: gpr_name, imm: int(0..1048575) }
+  relation:
+    op: eq
+    lhs: encode_lui([Reg(rd), Imm(imm)])
+    rhs: llvm_mc_word("lui {rd}, {imm}")
+generators:
+  rd: { gen: string }
+  imm: { gen: int, min: 0, max: 1048575, type: i64 }
+evidence: encoder/mod.rs:3 README.md:304 llvm-mc -triple=riscv64
+```
+
+## encode_lui_isa_u_type
+- Tier: 3
+- Rationale: Algebraic invariant from README.md:356 / RISC-V U-type layout, independent of encode_u. Stronger differential is the sibling property; this pins opcode/rd/imm20 even if llvm-mc is unavailable.
+- Doc contract: README.md:356 "U-type:  [          imm[31:12]           |  rd  | opcode]" — asserted fingerprint 8c9098fd
+- Seed: (none)
+- Formal: ∀ rd ∈ 0..31, ∀ imm ∈ [0, 1048575]. let w = encode_lui([Reg(x{rd}), Imm(imm)]). w[6:0]=0b0110111 ∧ w[11:7]=rd ∧ w[31:12]=imm
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_lui
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [is_load, rt, rn, class]
-  domain:
-    is_load: bool
-    rt: 0..30
-    rn: 0..31
-    class: WXSDQBH
-  body: unpack_unsigned(sut_word(ops, is_load)) == expected_size_v_opc(class, is_load, rt, rn)
+  vars: [rd, imm]
+  domain: { rd: u32(0..31), imm: int(0..1048575) }
+  body: unpack_u(encode_lui([Reg(x{rd}), Imm(imm)])) == (0b0110111, rd, imm)
 generators:
-  is_load: { gen: bool }
-  rt: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  class: { gen: int, min: 0, max: 6, type: u32 }
-evidence: load_store.rs:8-9 ARM ARM LDR STR unsigned
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  imm: { gen: int, min: 0, max: 1048575, type: i64 }
+evidence: README.md:356 encoder/mod.rs:305
 ```
 
-## encode_ldr_str_auto_meta_load_store
-- Tier: 4
-- Rationale: Metamorphic: for a fixed Rt/Rn/offset=0, flipping is_load must flip only bit 22 (opc LSB) on GP and S/D/Q/B/H unsigned forms. W vs X at equal numbers differ only in size bits[31:30]. Stronger differential covers value equality; this isolates auto-detect independence of the load/store bit.
-- Doc contract: encoder/mod.rs:484 "Loads/stores - size determined from register width" — asserted fingerprint e79e106a
-- Seed: encode_ldr_str_pbt.rs encode_ldr_str_meta_rt_rn_imm
-- Formal: ∀ rt ∈ [0,30], rn ∈ [0,31], class ∈ {W,X,S,D,Q,B,H}. encode_ldr_str_auto(ops, true) XOR encode_ldr_str_auto(ops, false) = 1<<22. ∀ rt ∈ [0,30], rn ∈ [0,31]. encode_ldr_str_auto(W) XOR encode_ldr_str_auto(X) at offset 0 = 1<<30
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
+## encode_lui_abi_xn_alias
+- Tier: 3
+- Rationale: Algebraic metamorphic: ABI names, xN, zero/ra/sp/fp aliases encode the same rd field. Independent of llvm-mc. Stronger differential covers xN vs llvm-mc; this checks SUT alias table.
+- Doc contract: parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7" — asserted fingerprint 00db3ff1
+- Seed: encode_neg_pbt encode_neg_abi_xn_alias
+- Formal: ∀ n ∈ 0..31, ∀ imm ∈ [0, 1048575]. encode_lui([Reg(x{n}), Imm(imm)]) = encode_lui([Reg(ABI[n]), Imm(imm)]) ∧ (n=8 ⇒ encode_lui([Reg("fp"), Imm(imm)]) equals both)
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldr_str_auto
+function: encoder.encode_lui
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rt, rn, class]
-  domain:
-    rt: 0..30
-    rn: 0..31
-    class: WXSDQBH
-  body: (sut_word(ops, true) ^ sut_word(ops, false)) == (1u32 << 22)
+  vars: [n, imm]
+  domain: { n: u32(0..31), imm: int(0..1048575) }
+  relation:
+    op: eq
+    lhs: encode_lui([Reg(x{n}), Imm(imm)])
+    rhs: encode_lui([Reg(ABI[n]), Imm(imm)])
 generators:
-  rt: { gen: int, min: 0, max: 30, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  class: { gen: int, min: 0, max: 6, type: u32 }
-evidence: encoder/mod.rs:485-486 ARM opc load vs store
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  imm: { gen: int, min: 0, max: 1048575, type: i64 }
+evidence: encoder/mod.rs:146-191 parser.rs:22
 ```
 
-## encode_ldr_str_auto_neg_first_operand
+## encode_lui_reloc_hi
 - Tier: 4
-- Rationale: Negative/error contract from load_store.rs:13 "ldr/str needs register operand". Empty slice, missing first operand, and non-Reg first operands (Imm/Mem/Symbol/Label/Shift/Cond) must return Err. Documented exact error path.
-- Doc contract: load_store.rs:13 "ldr/str needs register operand" — asserted fingerprint 2ef6b00d
-- Seed: encode_ldr_str_pbt.rs encode_ldr_str_neg_arity_kinds
-- Formal: ∀ is_load ∈ {false,true}, ops ∈ {[], [Imm(_)], [Mem{_}], [Symbol(_)], [Label(_)], [Shift{_}], [Cond(_)], [Reg(x0)]}. encode_ldr_str_auto(ops, is_load) = Err(_)
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
+- Rationale: Differential + reloc contract. `%hi(symbol)` is the documented Symbol arm (base.rs:12). llvm-mc emits R_RISCV_HI20; reloc-form word equals `lui rd, 0`.
+- Doc contract: base.rs:12 "%hi(symbol)" — asserted fingerprint df4eaaa4
+- Seed: (none)
+- Formal: ∀ rd ∈ GPR names, ∀ sym ∈ identifier. encode_lui([Reg(rd), Symbol("%hi("+sym+")")]) = Ok(WordWithReloc{word, Hi20, symbol=sym, addend=0}) ∧ word = llvm-mc("lui rd, 0")
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldr_str_auto
-oracle: negative_error
+function: encoder.encode_lui
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_load, kind]
-  domain:
-    is_load: bool
-    kind: empty_or_nonreg_or_arity1
-  body: encode_ldr_str_auto(ops, is_load).is_err()
+  vars: [rd, sym]
+  domain: { rd: gpr_name, sym: identifier }
+  body: reloc(encode_lui([Reg(rd), Symbol("%hi("+sym+")")])) == (llvm_mc_word("lui {rd}, 0"), Hi20, sym, 0)
 generators:
-  is_load: { gen: bool }
-  kind: { gen: int, min: 0, max: 7, type: u32 }
-expected_error: String
-evidence: load_store.rs:13
+  rd: { gen: string }
+  sym: { gen: string }
+evidence: base.rs:12 README.md:213 RelocType::Hi20 -> R_RISCV_HI20
 ```
 
-## encode_ldr_str_auto_diff_aliases
-- Tier: 5
-- Rationale: Differential vs llvm-mc for Rt aliases the size-detect chain names as 64-bit GP (lr, xzr) and 32-bit GP (wzr) plus uppercase XZR/WZR/X0/W0 and x31/w31. SP as dest is a separate negative_error (llvm-mc rejects SP as Rt).
-- Doc contract: load_store.rs:8 "Determine size from register: Wn -> 32-bit (size=10), Xn -> 64-bit (size=11)" — asserted fingerprint 368008af
-- Seed: encode_ldr_str_pbt.rs encode_ldr_str_kat_llvm_mc_x0_x1 (lr/xzr aliases)
-- Formal: ∀ is_load, alias ∈ {lr, xzr, wzr, XZR, WZR, X0, W0, x31, w31}. encode_ldr_str_auto([Reg(alias), Mem{x1,0}], is_load) = Word(llvm-mc(`ldr|str alias, [x1]`))
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
+## encode_lui_reloc_tprel_hi
+- Tier: 4
+- Rationale: Same as reloc_hi for `%tprel_hi`. Codegen globals.rs:32 emits `lui t0, %tprel_hi(name)`. llvm-mc fixup_riscv_tprel_hi20 / R_RISCV_TPREL_HI20.
+- Doc contract: README.md:25 "Relocation modifier parsing (%pcrel_hi, %pcrel_lo, %hi, %lo, %tprel_*, %got_pcrel_hi, ...)" — asserted fingerprint a74b822a
+- Seed: (none)
+- Formal: ∀ rd ∈ GPR names, ∀ sym ∈ identifier. encode_lui([Reg(rd), Symbol("%tprel_hi("+sym+")")]) = Ok(WordWithReloc{word, TprelHi20, symbol=sym, addend=0}) ∧ word = llvm-mc("lui rd, 0")
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldr_str_auto
+function: encoder.encode_lui
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [is_load, alias]
-  domain:
-    is_load: bool
-    alias: lr_xzr_wzr_XZR_WZR_X0_W0_x31_w31
-  body: sut_word(ops, is_load) == llvm_mc_word(asm)
+  vars: [rd, sym]
+  domain: { rd: gpr_name, sym: identifier }
+  body: reloc(encode_lui([Reg(rd), Symbol("%tprel_hi("+sym+")")])) == (llvm_mc_word("lui {rd}, 0"), TprelHi20, sym, 0)
 generators:
-  is_load: { gen: bool }
-  alias: { gen: int, min: 0, max: 8, type: u32 }
-evidence: load_store.rs:8 README.md:12
+  rd: { gen: string }
+  sym: { gen: string }
+evidence: base.rs:16-18 globals.rs:32 README.md:216
 ```
 
-## encode_ldr_str_auto_literal
-- Tier: 5
-- Rationale: LDR (literal) is a documented address form of ldr (not str). encode_ldr_str maps Symbol+is_load to WordWithReloc Ldr19 with opc from auto-detected size (W=00, X=01, S=00, D=01, Q=10). Differential on the reloc-form word vs llvm-mc ldr Rt, #0. STR+Symbol must Err (llvm-mc rejects).
-- Doc contract: load_store.rs:7 "Auto-detect LDR/STR size from the first register operand." — asserted fingerprint 09f582bb
-- Seed: encode_ldr_str_pbt.rs LDR literal Symbol sweep
-- Formal: ∀ rt ∈ [0,30], class ∈ {W,X,S,D,Q}. encode_ldr_str_auto([Reg(class+rt), Symbol("foo")], true) = WordWithReloc { word matching llvm-mc `ldr Rt, #0` with imm19=0, reloc Ldr19 symbol foo addend 0 }. ∀ those, encode_ldr_str_auto(..., false) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
+## encode_lui_neg_imm_oob
+- Tier: 3
+- Rationale: Negative/error contract. llvm-mc rejects immediates outside [0, 1048575] (signed negatives, 1048576, i64 extremes). RISC-V U-immediate is 20 bits. SUT currently shifts/truncates; property asserts Err.
+- Doc contract: (none) on encode_lui for the range — contract inferred from llvm-mc LUI operand diagnostic and README U-type 20-bit imm[31:12]
+- Seed: (none)
+- Formal: ∀ rd ∈ GPR names, ∀ imm ∈ i64 \ [0, 1048575]. encode_lui([Reg(rd), Imm(imm)]) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: failing
+- Counterexample: encode_lui([Reg("x0"), Imm(-1)]) = Ok(Word(0xFFFFF037))
+- Bug report: pbt-out/bug_reports/encode_lui_imm_oob.md
+
+```property
+function: encoder.encode_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, imm]
+  domain: { rd: gpr_name, imm: i64_outside_0_1048575 }
+  relation:
+    op: throws
+    expr: encode_lui([Reg(rd), Imm(imm)])
+generators:
+  rd: { gen: string }
+  imm: { gen: int, type: i64 }
+expected_error: String
+evidence: llvm-mc "integer in the range [0, 1048575]" README.md:356
+```
+
+## encode_lui_neg_extra
+- Tier: 3
+- Rationale: Negative/error. llvm-mc rejects a third operand. README / ISA LUI is two-operand (`lui rd, imm`). No operands.len() check in the SUT.
+- Doc contract: README.md:304 "- **U-type**: lui, auipc." — asserted fingerprint 3c000870
+- Seed: encode_neg_pbt encode_neg_neg_extra
+- Formal: ∀ rd, ∀ imm ∈ [0, 1048575], ∀ extra. encode_lui([Reg(rd), Imm(imm), extra]) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: failing
+- Counterexample: encode_lui([Reg("x0"), Imm(0), Imm(0)]) = Ok(Word(0x37))
+- Bug report: pbt-out/bug_reports/encode_lui_extra_operand.md
+
+```property
+function: encoder.encode_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, imm, extra]
+  domain: { rd: gpr_name, imm: int(0..1048575), extra: Operand }
+  relation:
+    op: throws
+    expr: encode_lui([Reg(rd), Imm(imm), extra])
+generators:
+  rd: { gen: string }
+  imm: { gen: int, min: 0, max: 1048575, type: i64 }
+  extra: { gen: string }
+expected_error: String
+evidence: llvm-mc "invalid operand for instruction" README two-operand U-type
+```
+
+## encode_lui_neg_bad_modifier
+- Tier: 3
+- Rationale: Negative/error. llvm-mc accepts only `%hi` / `%tprel_hi` (or integer). Plain symbols, `%pcrel_hi`, `%lo`, `%got_pcrel_hi` are rejected. Comment base.rs:12 names `%hi(symbol)` as the intended form, not an exclusion of others; llvm-mc is the independent rejection contract.
+- Doc contract: base.rs:12 "%hi(symbol)" — asserted fingerprint df4eaaa4
+- Seed: (none)
+- Formal: ∀ rd, ∀ s ∈ {bare ident, %pcrel_hi(ident), %lo(ident), %got_pcrel_hi(ident), %pcrel_lo(ident)}. encode_lui([Reg(rd), Symbol(s)]) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: failing
+- Counterexample: encode_lui([Reg("x0"), Symbol("foo")]) = Ok(WordWithReloc{word: 0x37, Hi20, symbol: "foo", addend: 0})
+- Bug report: pbt-out/bug_reports/encode_lui_bad_modifier.md
+
+```property
+function: encoder.encode_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, s]
+  domain: { rd: gpr_name, s: bad_lui_symbol }
+  relation:
+    op: throws
+    expr: encode_lui([Reg(rd), Symbol(s)])
+generators:
+  rd: { gen: string }
+  s: { gen: string }
+expected_error: String
+evidence: llvm-mc "symbol with %hi/%tprel_hi modifier" base.rs:12
+```
+
+## encode_lui_neg_arity
+- Tier: 3
+- Rationale: Sweep — `_` / get_reg error paths for arity < 2. llvm-mc "too few operands". Documented two-operand U-type.
+- Doc contract: base.rs:26 "lui: invalid operands" — asserted fingerprint dff3cf3a
+- Seed: encode_neg_pbt encode_neg_neg_arity
+- Formal: ∀ ops. |ops| < 2 ⇒ encode_lui(ops) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldr_str_auto
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rt, class]
-  domain:
-    rt: 0..30
-    class: WXSDQ
-  body: sut_literal(ops) == llvm_mc_word(asm_ldr_hash0) and reloc_is_ldr19_foo
-generators:
-  rt: { gen: int, min: 0, max: 30, type: u32 }
-  class: { gen: int, min: 0, max: 4, type: u32 }
-evidence: load_store.rs:176-214 README.md Ldr19 ELF 273
-```
-
-## encode_ldr_str_auto_neg_v_reg
-- Tier: 4
-- Rationale: Sweep of the default-64-bit branch. llvm-mc/gas reject `ldr/str Vn, [Xn]` (bare V is not a scalar Rt). Operand::Reg documents v0-v31; the API accepts the name. README.md:12 gas contract requires rejection, not silent D-form.
-- Doc contract: README.md:12 "It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint f00ab438
-- Seed: (none) — coverage_gaps file-level plus manual arm audit of the else default
-- Formal: ∀ is_load ∈ {false,true}, rt ∈ [0,31], rn ∈ [0,31]. encode_ldr_str_auto([Reg("v"+rt), Mem{Xn|SP, 0}], is_load) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
-- Status: failing
-- Counterexample: is_load=false, rt=0, rn=0 → Ok(Word(0xfd000000))
-- Bug report: bug_reports/encode_ldr_str_auto_bare_v.md
-
-```property
-function: encoder.load_store.encode_ldr_str_auto
+function: encoder.encode_lui
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_load, rt, rn]
-  domain:
-    is_load: bool
-    rt: 0..31
-    rn: 0..31
-  body: encode_ldr_str_auto(ops_v, is_load).is_err()
+  vars: [ops]
+  domain: { ops: vec_len_lt_2 }
+  relation:
+    op: throws
+    expr: encode_lui(ops)
 generators:
-  is_load: { gen: bool }
-  rt: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
+  ops: { gen: list, maxLen: 1 }
 expected_error: String
-evidence: README.md:12 llvm-mc rejects ldr v0, [x1]
+evidence: llvm-mc "too few operands" base.rs:26 README.md:304
 ```
 
-## encode_ldr_str_auto_diff_fp_alias
-- Tier: 5
-- Rationale: Sweep of GNU fp=X29 alias. llvm-mc/gas accept `ldr fp, [x1]` as X29. Size-detect default 64-bit would be correct if parse_reg_num mapped fp. README.md:12 gas contract.
-- Doc contract: README.md:12 "It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint f00ab438
-- Seed: (none) — coverage_gaps file-level plus manual arm audit of aliases vs lr
-- Formal: ∀ is_load ∈ {false,true}, rn ∈ [0,30]. encode_ldr_str_auto([Reg("fp"), Mem{Xn, 0}], is_load) = Word(llvm-mc(`ldr|str fp, [Xn]`))
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
-- Status: failing
-- Counterexample: is_load=false, rn=0 → Err("invalid register: fp")
-- Bug report: bug_reports/encode_ldr_str_auto_fp_alias.md
+## encode_lui_neg_fp
+- Tier: 3
+- Rationale: Sweep — get_reg integer-register path. llvm-mc rejects FP dest for LUI.
+- Doc contract: parser.rs:22 "Register: x0-x31, zero, ra, sp, gp, tp, t0-t6, s0-s11, a0-a7" — asserted fingerprint 00db3ff1
+- Seed: (none)
+- Formal: ∀ fp ∈ FP names, ∀ imm ∈ [0, 1048575]. encode_lui([Reg(fp), Imm(imm)]) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.load_store.encode_ldr_str_auto
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [is_load, rn]
-  domain:
-    is_load: bool
-    rn: 0..30
-  body: sut_word(ops_fp, is_load) == llvm_mc_word(asm)
-generators:
-  is_load: { gen: bool }
-  rn: { gen: int, min: 0, max: 30, type: u32 }
-evidence: README.md:12 llvm-mc ldr fp, [x1] == ldr x29, [x1]
-```
-
-## encode_ldr_str_auto_neg_sp_dest
-- Tier: 4
-- Rationale: ARM Rt=31 in LDR/STR is ZR not SP. llvm-mc/gas reject `ldr sp, [x0]`. load_store.rs:10 names sp as 64-bit for size detect; that does not make SP a valid Rt. README.md:12 gas contract requires Err.
-- Doc contract: README.md:12 "It accepts the same textual assembly that GCC's gas would consume" — asserted fingerprint f00ab438
-- Seed: encode_ldr_str_pbt.rs encode_ldr_str_neg_invalid_regs SP dest
-- Formal: ∀ is_load ∈ {false,true}, rn ∈ [0,31]. encode_ldr_str_auto([Reg("sp"), Mem{Xn|SP, 0}], is_load) = Err
-- Test file: src/backend/arm/assembler/encoder/encode_ldr_str_auto_pbt.rs
-- Status: failing
-- Counterexample: is_load=false, rn=0 → Ok(Word(0xfd00001f))
-- Bug report: bug_reports/encode_ldr_str_auto_sp_dest.md
-
-```property
-function: encoder.load_store.encode_ldr_str_auto
+function: encoder.encode_lui
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [is_load, rn]
-  domain:
-    is_load: bool
-    rn: 0..31
-  body: encode_ldr_str_auto(ops_sp, is_load).is_err()
+  vars: [fp, imm]
+  domain: { fp: fp_name, imm: int(0..1048575) }
+  relation:
+    op: throws
+    expr: encode_lui([Reg(fp), Imm(imm)])
 generators:
-  is_load: { gen: bool }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
+  fp: { gen: string }
+  imm: { gen: int, min: 0, max: 1048575, type: i64 }
 expected_error: String
-evidence: README.md:12 llvm-mc rejects ldr sp, [x0]
+evidence: llvm-mc "invalid operand for instruction" get_reg integer-only
+```
+
+## encode_lui_neg_bad_operand
+- Tier: 3
+- Rationale: Sweep — `_` arm of the operand-1 match (Label/Mem/Csr/Fence/SymbolOffset/MemSymbol).
+- Doc contract: base.rs:26 "lui: invalid operands" — asserted fingerprint dff3cf3a
+- Seed: (none)
+- Formal: ∀ rd, ∀ bad ∈ Operand \ {Imm, Symbol, Reg}. encode_lui([Reg(rd), bad]) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_lui
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, bad]
+  domain: { rd: gpr_name, bad: non_imm_non_symbol }
+  relation:
+    op: throws
+    expr: encode_lui([Reg(rd), bad])
+generators:
+  rd: { gen: string }
+  bad: { gen: string }
+expected_error: String
+evidence: base.rs:26 `_ => Err("lui: invalid operands")`
+```
+
+## encode_lui_hi_addend
+- Tier: 4
+- Rationale: Sweep — `%hi(symbol+addend)` is accepted by llvm-mc as R_RISCV_HI20 against `symbol` with addend. extract_modifier_symbol keeps `foo+4` as the symbol name and hardcodes addend=0.
+- Doc contract: base.rs:12 "%hi(symbol)" — asserted fingerprint df4eaaa4
+- Seed: (none)
+- Formal: ∀ rd, ∀ sym, ∀ a ≠ 0. encode_lui([Reg(rd), Symbol("%hi("+sym+sign(a)+")")]) = Ok(WordWithReloc{Hi20, symbol=sym, addend=a})
+- Test file: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs
+- Status: failing
+- Counterexample: encode_lui([Reg("x0"), Symbol("%hi(foo+1)")]) reloc.symbol="foo+1" addend=0 (expected symbol="foo" addend=1)
+- Bug report: pbt-out/bug_reports/encode_lui_hi_addend.md
+
+```property
+function: encoder.encode_lui
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, sym, addend]
+  domain: { rd: gpr_name, sym: identifier, addend: i64_nonzero }
+  relation:
+    op: holds
+    expr: reloc(encode_lui([Reg(rd), Symbol("%hi(sym+addend)")])).symbol == sym && reloc.addend == addend
+generators:
+  rd: { gen: string }
+  sym: { gen: string }
+  addend: { gen: int, type: i64 }
+evidence: llvm-mc R_RISCV_HI20 foo 0x4 for lui x1, %hi(foo+4); README.md:25
 ```

@@ -184,3 +184,4 @@
 | encode_mov | data_processing.rs | encode_mov_pbt.rs | cargo test --lib | 5 passing / 10 failing properties (plus 7 passing KAT + 9 failing regression witnesses; 9 bugs; sweep alt-spellings passing) |
 | encode_cond_branch | compare_branch.rs | encode_cond_branch_pbt.rs | cargo test --lib encode_cond_branch | 8 passing / 3 failing properties (plus 2 passing KAT + 2 failing KAT + 3 failing regression witnesses; 3 bugs; sweep bad-operand/misclassified passing, modifier failing) |
 | encode_ldr_str_auto | load_store.rs | encode_ldr_str_auto_pbt.rs | cargo test --lib encode_ldr_str_auto | 6 passing / 5 failing properties (plus 2 passing KAT + 6 failing regression witnesses; 4 bugs; sweep V-bare/fp-alias/SP-dest failing) |
+| encode_lui | base.rs | encode_lui_pbt.rs | cargo test --lib encode_lui | 8 passing / 4 failing properties (plus 5 passing KAT + 4 failing regression witnesses; 4 bugs; sweep arity/fp/bad-operand passing, hi-addend failing) |

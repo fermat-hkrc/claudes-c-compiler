@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_lui)
+
+- Valid `lui rd, imm` for imm in [0, 1048575] and rd in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins lui x0,0=0x00000037, lui x1,1=0x000010B7, lui x1,1048575=0xFFFFF0B7.
+- U-type layout holds: opcode=0b0110111, rd in bits[11:7], imm20 in bits[31:12] (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd (1000 cases).
+- `%hi(sym)` reloc-form word equals `lui rd, 0` with RelocType::Hi20, symbol=sym, addend=0 (1000 cases).
+- `%tprel_hi(sym)` same word with RelocType::TprelHi20 (1000 cases). KAT pins lui t0, %tprel_hi(x) word=0x000002B7.
+- Arity < 2, FP dest, and Label/Mem/Csr/Fence/SymbolOffset/MemSymbol as operand 1 return Err (1000 cases).
+- Out-of-range immediates, extra operands, plain/%pcrel_hi/%lo symbols, and `%hi(sym+N)` addend currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_lui)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_lui_pbt.rs, cargo test --lib encode_lui, proptest cases=1000.
+- Dispatch: encoder/mod.rs:452 `"lui" => encode_lui(operands)`.
+- Sibling encode_auipc / encode_c_lui / encode_u are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_lui_neg_arity / encode_lui_neg_fp / encode_lui_neg_bad_operand / encode_lui_hi_addend. Closed: tier round spent; remaining documented gaps are the four filed bugs.
+- Four failing properties are SUT bugs. See pbt-out/bug_reports/encode_lui_*.md.
+
+## Quirks (encode_lui)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:348 GCC inline asm).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- Immediate is `(*imm as u32) << 12` then masked; values outside [0, 1048575] wrap (see bugs).
+- Symbol arm special-cases only `%tprel_hi(`; every other symbol is Hi20 (see bugs).
+- extract_modifier_symbol keeps `foo+4` as the symbol and addend is hardcoded 0 (see bugs).
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 22-line body.
+
 # Confirmed invariants (encode_ldr_str_auto)
 
 - Valid unsigned LDR/STR Wt/Xt, [Xn|SP, #pimm] with auto-detected size matches llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins ldr x0,[x1]=0xF9400020, ldr w0,[x1]=0xB9400020, str x0,[x1]=0xF9000020.

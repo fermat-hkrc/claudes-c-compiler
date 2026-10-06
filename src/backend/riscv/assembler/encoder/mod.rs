@@ -16,6 +16,8 @@ mod float;
 mod pseudo;
 mod compressed;
 mod vector;
+#[cfg(test)]
+mod encode_lui_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

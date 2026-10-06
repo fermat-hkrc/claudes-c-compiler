@@ -1,4 +1,4 @@
-> Total files: 11 | Total functions: 307 | PBT candidates: 182 | Excluded: 125
+> Total files: 12 | Total functions: 324 | PBT candidates: 183 | Excluded: 141
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -308,4 +308,21 @@
 | encode_tlbi | system.rs | 477 | function | yes | - |
 | encode_bti | system.rs | 542 | function | yes | - |
 | encode_hint | system.rs | 554 | function | yes | - |
-| encode_dc | system.rs | 564 | function | yes | - |
+| encode_dc | system.rs | 564 | function | yes | -
+| encode_lui | base.rs | 5 | function | yes | -
+| encode_auipc | base.rs | 30 | function | no | out of campaign scope
+| encode_jal | base.rs | 51 | function | no | out of campaign scope
+| encode_jalr | base.rs | 92 | function | no | out of campaign scope
+| encode_branch_instr | base.rs | 125 | function | no | out of campaign scope
+| encode_load | base.rs | 147 | function | no | out of campaign scope
+| encode_store | base.rs | 194 | function | no | out of campaign scope
+| encode_alu_imm | base.rs | 223 | function | no | out of campaign scope
+| encode_shift_imm | base.rs | 251 | function | no | out of campaign scope
+| encode_alu_reg | base.rs | 260 | function | no | out of campaign scope
+| encode_alu_imm_w | base.rs | 267 | function | no | out of campaign scope
+| encode_shift_imm_w | base.rs | 274 | function | no | out of campaign scope
+| encode_alu_reg_w | base.rs | 283 | function | no | out of campaign scope
+| encode_zbb_unary | base.rs | 294 | function | no | out of campaign scope
+| encode_zbb_unary_f5 | base.rs | 301 | function | no | out of campaign scope
+| encode_zbb_unary_w | base.rs | 309 | function | no | out of campaign scope
+| encode_zbb_zexth | base.rs | 316 | function | no | out of campaign scope
