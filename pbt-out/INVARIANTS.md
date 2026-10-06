@@ -1,3 +1,33 @@
+# Confirmed invariants (encode_alu_imm_w / requested encode_op_imm32)
+
+- Requested `--func encode_op_imm32` is absent from base.rs; the in-scope OP-IMM-32 I-type encoder is encode_alu_imm_w (base.rs:267).
+- Valid `addiw rd, rs1, imm` with imm in [-2048, 2047], rd/rs1 in x0..x31 / ABI names matches llvm-mc `-triple=riscv64 -show-encoding` (1000 cases). KAT pins addiw x1,x2,1=0x0011009b, addiw x1,x2,-1=0xfff1009b, addiw x1,x2,2047=0x7ff1009b, addiw x1,x2,-2048=0x8001009b, addiw x1,x2,0=0x0001009b = sext.w x1, x2.
+- I-type layout holds: opcode=0b0011011, funct3=000, rd in bits[11:7], rs1 in bits[19:15], reconstructed signed imm12 matches (1000 cases).
+- ABI names, xN, and fp=s0/x8 encode the same rd/rs1 (1000 cases).
+- Imm n in 0..=31 as rd/rs1 encodes as x{n} (get_reg GCC bare-register-number contract) (1000 cases).
+- Empty operand list, missing rs1/imm, FP dest/rs1, non-imm 3rd operand (Csr/Fence/RoundingMode/Label/SymbolOffset/Mem/MemSymbol), and invalid names (x32/foo/v0/xzr/w0) return Err (1000 cases).
+- Extra operands, out-of-range immediates, and %lo/%pcrel_lo/%tprel_lo currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_alu_imm_w)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_alu_imm_w_pbt.rs, cargo test --lib encode_alu_imm_w, proptest cases=1000.
+- Dispatch: encoder/mod.rs:563 addiw => encode_alu_imm_w; encoder/mod.rs:568 addw with Imm 3rd operand auto-converts to encode_alu_imm_w.
+- Requested `--func encode_op_imm32` is absent from base.rs; the in-scope symbol is encode_alu_imm_w.
+- Sibling encode_i / encode_alu_imm / encode_shift_imm_w / C.ADDIW are not same-job independent differentials.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit plus encode_alu_imm_w_neg_invalid_name. Closed: tier round spent; remaining documented gaps are the three filed bugs.
+
+## Quirks (encode_alu_imm_w)
+
+- ASCII case of register names is accepted (reg_num to_lowercase); llvm-mc RISC-V is case-sensitive.
+- get_reg accepts Imm 0..31 as bare register numbers (encoder/mod.rs:370 GCC inline asm).
+- No operands.len() == 3 check; extra operands are ignored (see bugs).
+- Immediate is `get_imm as i32` then encode_i masks with 0xFFF; values outside [-2048, 2047] wrap (see bugs).
+- No Symbol reloc branch (unlike encode_alu_imm); %lo/%pcrel_lo/%tprel_lo return Err (see bugs).
+- slliw/srliw/sraiw dispatch to encode_shift_imm_w, not this symbol.
+- Only addiw (funct3=000) is dispatched to this symbol among non-shift OP-IMM-32 ALU immediates.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+
 # Confirmed invariants (encode_alu_reg / requested encode_op)
 
 - Requested `--func encode_op` is absent from base.rs; the in-scope OP/R-type encoder is encode_alu_reg (base.rs:260).

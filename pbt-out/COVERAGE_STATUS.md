@@ -1,29 +1,21 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 (campaign: encode_alu_reg / requested encode_op)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; C++ reporter listed unrelated binaries and claimed NOT LINKED. Manual arm audit of encode_alu_reg plus encode_alu_reg_neg_invalid_name sweep.
-
-## Summary
-
-| Metric | Value |
-|--------|-------|
-| Campaign target | encode_alu_reg (base.rs:260); requested encode_op absent |
-| Properties | 8 |
-| Passing / Failing | 7 / 1 |
-| Bugs | 1 (extra operand ignored) |
-| Sweep rounds | 1/1 (invalid integer register names) |
-| Effort tier | standard |
+> Last updated: 2026-10-06 (campaign: encode_alu_imm_w / requested encode_op_imm32)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps had no .gcda/.profraw
 
 ## This campaign
 
-| Function | Source File | Tested | Notes |
-|----------|-------------|--------|-------|
-| encode_alu_reg | base.rs | yes | 7 passing / 1 failing; real SUT via cargo test --lib encode_alu_reg |
+| Metric | Value |
+|--------|-------|
+| Target | encode_alu_imm_w (base.rs:267) |
+| Properties | 9 |
+| Passing | 6 |
+| Failing (bugs) | 3 |
+| Sweep | 1/1 — encode_alu_imm_w_neg_invalid_name (passing) |
+| Tier | standard |
 
-## File Coverage (scope)
+## File Coverage (this campaign)
 
-| Source File | Campaign symbol | Status |
-|-------------|-----------------|--------|
-| base.rs | encode_alu_reg | tested (this campaign) |
-
-Requested encode_op was not in base.rs. Other base.rs symbols remain out of this campaign's HARD single-symbol scope.
+| Source File | Funcs in scope | Candidates | Tested | Coverage | Status |
+|-------------|----------------|------------|--------|----------|--------|
+| base.rs | 1 (HARD: encode_alu_imm_w only) | 1 | 1 | 100% | covered with 3 bugs |

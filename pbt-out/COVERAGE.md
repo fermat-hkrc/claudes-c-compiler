@@ -193,3 +193,4 @@
 | encode_store | base.rs | encode_store_pbt.rs | cargo test --lib encode_store | 4 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep arity/fp/empty/symbol passing, other-modifier failing) |
 | encode_alu_imm | base.rs | encode_alu_imm_pbt.rs | cargo test --lib encode_alu_imm | 5 passing / 4 failing properties (plus 6 passing KAT + 4 failing regression witnesses; 4 bugs; sweep arity/fp/empty passing, other-modifier failing) |
 | encode_alu_reg | base.rs | encode_alu_reg_pbt.rs | cargo test --lib encode_alu_reg | 7 passing / 1 failing properties (plus 5 passing KAT + 1 failing regression witness; 1 bug; sweep invalid-name passing, extra-operand failing) |
+| encode_alu_imm_w | base.rs | encode_alu_imm_w_pbt.rs | cargo test --lib encode_alu_imm_w | 6 passing / 3 failing properties (plus 4 passing KAT + 3 failing regression witnesses; 3 bugs; sweep invalid-name passing, extra/oob/reloc failing) |

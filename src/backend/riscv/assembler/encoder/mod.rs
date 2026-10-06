@@ -34,6 +34,8 @@ mod encode_store_pbt;
 mod encode_alu_imm_pbt;
 #[cfg(test)]
 mod encode_alu_reg_pbt;
+#[cfg(test)]
+mod encode_alu_imm_w_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

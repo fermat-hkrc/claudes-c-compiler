@@ -1,68 +1,109 @@
-# PBT Campaign Report: encode_alu_reg (requested encode_op)
+# PBT Campaign Report: encode_alu_imm_w
 
 ## Summary
 
-**Verdict:** 1 high: encode_alu_reg silently ignores a fourth operand and still emits a well-formed OP word (add x0,x0,x0,0 -> 0x00000033), so a mistyped extra operand is never diagnosed.
+**Verdict:** 2 high, 1 medium: encode_alu_imm_w silently wraps out-of-range immediates (2048 → -2048), ignores extra operands, and rejects valid I-type %lo/%pcrel_lo/%tprel_lo relocs that llvm-mc accepts.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_alu_reg (src/backend/riscv/assembler/encoder/base.rs)
-**Tests:** 8
-**Result:** 7 passing, 1 bug
-**Change surface:** requested encode_op unresolved in base.rs; in-scope symbol encode_alu_reg tested with 8 properties (1 negative extra-operand failure-path)
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (build tree not instrumented / C++ reporter listed unrelated binaries and claimed NOT LINKED). Manual arm audit of encode_alu_reg plus invalid-name sweep.
+**Modules tested:** encode_alu_imm_w
+**Tests:** 9
+**Result:** 6 passing, 3 bugs
+**Change surface:** requested encode_op_imm32 unresolved in base.rs; mapped to encode_alu_imm_w (1 function with properties, 3 error-path properties)
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps returned no .gcda/.profraw (Rust cargo test is not the C++ gcov reporter); listed unrelated host binaries as NOT LINKED. Manual audit of encode_alu_imm_w plus encode_alu_imm_w_neg_invalid_name.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_alu_reg | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_alu_imm_w | 9 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_alu_reg ignores extra operands
+### B1: encode_alu_imm_w ignores extra operands
 
-**Formal:** ∀ mn ∈ OP_MNEMONICS, ∀ rd,rs1,rs2 ∈ GPR, ∀ extra. encode_alu_reg([Reg(rd),Reg(rs1),Reg(rs2), extra], f3, f7) = Err(_)
-**Contract evidence:** inferred (README.md:352 R-type has exactly three register fields; llvm-mc 15.0.6 rejects a fourth operand on add/sub/…)
+**Formal:** ∀ rd, rs1 ∈ GPRNames, imm ∈ [-2048, 2047], extra ∈ Operand. encode_alu_imm_w([Reg(rd), Reg(rs1), Imm(imm), extra], 0) = Err(_)
+**Contract evidence:** inferred (llvm-mc rejects a fourth operand on addiw; sibling encode_alu_imm has the same arity contract)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** encode_alu_reg([Reg("x0"), Reg("x0"), Reg("x0"), Imm(0)], funct3=0, funct7=0)
-**Expected / Actual:** Err / Ok(Word(51))  // 0x00000033 = add x0, x0, x0
-**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed OP word instead of diagnosing the line.
-**Root cause:** base.rs:261-264 reads only operands[0..2] via get_reg and never checks operands.len(), so any trailing operands are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:260`
+**Counterexample:** encode_alu_imm_w([Reg("x0"), Reg("x0"), Imm(0), Imm(0)], funct3=0)
+**Expected / Actual:** Err / Ok(Word(0x0000001b))
+**Impact:** A mistyped extra operand is silently dropped, so the assembler emits a well-formed OP-IMM-32 word instead of diagnosing the line.
+**Root cause:** base.rs:267-271 never checks operands.len(), so trailing operands after rd, rs1, imm are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:267`
 ```rust
-pub(crate) fn encode_alu_reg(operands: &[Operand], funct3: u32, funct7: u32) -> Result<EncodeResult, String> {
+pub(crate) fn encode_alu_imm_w(operands: &[Operand], funct3: u32) -> Result<EncodeResult, String> {
     let rd = get_reg(operands, 0)?;
     let rs1 = get_reg(operands, 1)?;
-    let rs2 = get_reg(operands, 2)?;
-    Ok(EncodeResult::Word(encode_r(OP_OP, rd, funct3, rs1, rs2, funct7)))
+    let imm = get_imm(operands, 2)? as i32;
+    Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, funct3, rs1, imm)))
 }
 ```
 **Suggested fix:** Reject anything other than exactly three operands before packing.
 ```rust
-pub(crate) fn encode_alu_reg(operands: &[Operand], funct3: u32, funct7: u32) -> Result<EncodeResult, String> {
     if operands.len() != 3 {
-        return Err("alu_reg: expected rd, rs1, rs2".to_string());
+        return Err("alu_imm_w: expected rd, rs1, imm".to_string());
     }
     let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
-    let rs2 = get_reg(operands, 2)?;
-    Ok(EncodeResult::Word(encode_r(OP_OP, rd, funct3, rs1, rs2, funct7)))
-}
 ```
-**Bug report:** bug_reports/encode_alu_reg_extra_operand.md
-**Repro seed:** cc 81387cb9f925b310574950728700f589094b21e81c3a2f952d72adad31b14415
-**Raw output:**
-```text
-Test failed: extra operand must Err for add x0, x0, x0 (llvm-mc rejects extra operands); got Ok(Word(51)) at src/backend/riscv/assembler/encoder/encode_alu_reg_pbt.rs:456.
-minimal failing input: (mn, f3, f7) = (
-    "add",
-    0,
-    0,
-), rd = "x0", rs1 = "x0", rs2 = "x0", extra = Imm(
-    0,
-)
+**Bug report:** bug_reports/encode_alu_imm_w_extra_operand.md
+**Repro seed:** cc 2901cc06d4a99364790cfef20686f824d8818cb63d81f2b79d9c5dbdd9d6e3d4
+**Raw output:** Test failed: extra operand must Err for addiw x0, x0, 0 (llvm-mc rejects extra operands); got Ok(Word(27)). minimal failing input: rd = "x0", rs1 = "x0", imm = 0, extra = Imm(0)
+
+### B2: encode_alu_imm_w wraps out-of-range immediates
+
+**Formal:** ∀ rd, rs1 ∈ GPRNames, imm ∉ [-2048, 2047]. llvm-mc rejects "addiw rd, rs1, imm" ⇒ encode_alu_imm_w([Reg(rd), Reg(rs1), Imm(imm)], 0) = Err(_)
+**Contract evidence:** documented README.md:353 "I-type:  [    imm[11:0]  | rs1 | funct3 |  rd  | opcode]" plus llvm-mc "integer in the range [-2048, 2047]"
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** encode_alu_imm_w([Reg("x0"), Reg("x0"), Imm(2048)], funct3=0)
+**Expected / Actual:** Err / Ok(Word(0x8000001b)) which is addiw x0, x0, -2048
+**Impact:** addiw with immediate 2048 is encoded as addiw with -2048; a too-large immediate silently becomes a different instruction.
+**Root cause:** base.rs:270 casts get_imm to i32 with no range check; encode_i then masks with 0xFFF, wrapping 2048 to the signed-12 encoding of -2048.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:270`
+```rust
+    let imm = get_imm(operands, 2)? as i32;
+    Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, funct3, rs1, imm)))
 ```
+**Suggested fix:** Reject immediates outside the signed 12-bit range before packing.
+```rust
+    let imm = get_imm(operands, 2)?;
+    if !(-2048..=2047).contains(&imm) {
+        return Err(format!("alu_imm_w: immediate {imm} out of [-2048, 2047]"));
+    }
+    Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, funct3, rs1, imm as i32)))
+```
+**Bug report:** bug_reports/encode_alu_imm_w_imm_oob.md
+**Repro seed:** (deterministic; shrunk to imm=2048)
+**Raw output:** Test failed: oob imm 2048 must Err (llvm-mc range [-2048, 2047]); got Ok(Word(2147483675)). minimal failing input: rd = "x0", rs1 = "x0", imm = 2048
+
+### B3: encode_alu_imm_w rejects I-type %lo/%pcrel_lo/%tprel_lo
+
+**Formal:** ∀ rd, rs1 ∈ GPRNames, s ∈ ident. encode_alu_imm_w([Reg(rd), Reg(rs1), Symbol("%lo(s)")], 0) = WordWithReloc { word = encode_alu_imm_w([Reg(rd), Reg(rs1), Imm(0)], 0), reloc_type=Lo12I, symbol=s, addend=0 }. Likewise %pcrel_lo → PcrelLo12I and %tprel_lo → TprelLo12I.
+**Contract evidence:** documented encoder/mod.rs:81 "R_RISCV_LO12_I - for ADDI/LW/LD (absolute low 12 bits, I-type)"; llvm-mc accepts addiw ra, sp, %lo(foo) with fixup_riscv_lo12_i; sibling encode_alu_imm implements the same I-type reloc form
+**Documentation conflict:** (none) — encode_alu_imm_w has no comment declaring Symbol invalid
+**Severity:** medium
+**Counterexample:** encode_alu_imm_w([Reg("x0"), Reg("x0"), Symbol("%lo(foo)")], funct3=0)
+**Expected / Actual:** Ok(WordWithReloc { word: 0x0000001b, Lo12I, "foo", 0 }) / Err("expected immediate at operand 2, got Some(Symbol(\"%lo(foo)\"))")
+**Impact:** Valid I-type relocation forms on addiw fail to assemble, so RV64 code that uses addiw with %lo/%pcrel_lo/%tprel_lo cannot be encoded.
+**Root cause:** base.rs:270 always calls get_imm on operand 2; unlike encode_alu_imm there is no Symbol branch to emit WordWithReloc.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/base.rs:270`
+```rust
+    let imm = get_imm(operands, 2)? as i32;
+    Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, funct3, rs1, imm)))
+```
+**Suggested fix:** Accept Symbol %lo/%pcrel_lo/%tprel_lo the same way encode_alu_imm does, packing imm=0 with the matching I-type lo12 reloc.
+```rust
+    match &operands.get(2) {
+        Some(Operand::Imm(imm)) => {
+            Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, funct3, rs1, *imm as i32)))
+        }
+        Some(Operand::Symbol(s)) => { /* WordWithReloc Lo12I / PcrelLo12I / TprelLo12I */ }
+        _ => Err("alu_imm_w: expected immediate".to_string()),
+    }
+```
+**Bug report:** bug_reports/encode_alu_imm_w_missing_lo_reloc.md
+**Repro seed:** (deterministic; shrunk to rd="x0", rs1="x0", s="foo", m="%lo")
+**Raw output:** Test failed: SUT rejected %lo(foo): expected immediate at operand 2, got Some(Symbol("%lo(foo)")). minimal failing input: rd = "x0", rs1 = "x0", s = "foo", m = "%lo"
 
 ## Design Caveats
 
@@ -72,44 +113,45 @@ minimal failing input: (mn, f3, f7) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_alu_reg_pbt.rs | 8 properties + 5 KAT + 1 regression witness |
-| src/backend/riscv/assembler/encoder/mod.rs | one additive `#[cfg(test)] mod encode_alu_reg_pbt;` line |
+| src/backend/riscv/assembler/encoder/encode_alu_imm_w_pbt.rs | 9 properties + 4 KAT + 3 regression witnesses |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_reg -- --test-threads=1
+cargo test --lib encode_alu_imm_w -- --test-threads=1
 ```
 
-Bug B1 (extra operand):
+B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_alu_reg_neg_extra -- --test-threads=1
+cargo test --lib encode_alu_imm_w_neg_extra -- --test-threads=1
+```
+
+B2 out-of-range immediate:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_alu_imm_w_neg_imm_oob -- --test-threads=1
+```
+
+B3 missing lo reloc:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_alu_imm_w_reloc_lo -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_alu_reg_extra_operand.md
-- pbt-out/bug_reports/encode_alu_reg_extra_operand.html
-- pbt-out/run/encode_alu_reg_test.log
+pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/PROPERTIES.md, pbt-out/PLAN.md, pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md, pbt-out/report.json, pbt-out/INVARIANTS.md, pbt-out/FUNCTION_INDEX.md, pbt-out/run/encode_alu_imm_w.log, pbt-out/bug_reports/encode_alu_imm_w_extra_operand.md, pbt-out/bug_reports/encode_alu_imm_w_extra_operand.html, pbt-out/bug_reports/encode_alu_imm_w_imm_oob.md, pbt-out/bug_reports/encode_alu_imm_w_imm_oob.html, pbt-out/bug_reports/encode_alu_imm_w_missing_lo_reloc.md, pbt-out/bug_reports/encode_alu_imm_w_missing_lo_reloc.html
+
+Tier: standard. Closed because the one coverage_gaps-driven sweep round was spent (manual arm audit + encode_alu_imm_w_neg_invalid_name); remaining documented gaps are the three filed bugs.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 14:57 (campaign: coverage)
-> Files: 12/12 scanned (100%) | Functions: 190/324 total | PBT candidates: 190 | Tested: 190 (100%) | 1 pass, 190 fail
+> Last updated: 2026-10-06 15:16 (campaign: coverage)
+> Files: 12/12 scanned (100%) | Functions: 191/324 total | PBT candidates: 191 | Tested: 191 (100%) | 1 pass, 191 fail
 
 ## Summary
 
@@ -118,10 +160,10 @@ cargo test --lib encode_alu_reg_neg_extra -- --test-threads=1
 | Total source files | 12 |
 | Files scanned | 12 / 12 (100%) |
 | Total functions (all files) | 324 |
-| PBT candidates (from FUNCTION_INDEX) | 190 |
-| **Tested (of PBT candidates)** | **190 / 190 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 190 / -1 |
-| **Overall (tested / all functions)** | **190 / 324 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 191 |
+| **Tested (of PBT candidates)** | **191 / 191 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 191 / -1 |
+| **Overall (tested / all functions)** | **191 / 324 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -129,13 +171,13 @@ cargo test --lib encode_alu_reg_neg_extra -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 190 | 190 | 0 | 100% |
+|  | 191 | 191 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 190 | 190 | 0 | 100% |
+| unknown | 191 | 191 | 0 | 100% |
 
 ## File Coverage
 
@@ -348,3 +390,4 @@ cargo test --lib encode_alu_reg_neg_extra -- --test-threads=1
 | encode_store | base.rs |
 | encode_alu_imm | base.rs |
 | encode_alu_reg | base.rs |
+| encode_alu_imm_w | base.rs |
