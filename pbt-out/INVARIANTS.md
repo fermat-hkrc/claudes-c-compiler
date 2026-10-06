@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_fma)
+
+- Valid 4-operand FMADD/FMSUB/FNMSUB/FNMADD .S/.D with four FP registers match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). Default omitted rm is DYN (111). KAT pins fmadd.s fa0, fa1, fa2, fa3 = 0x68c5f543, fmadd.s ft0, ft1, ft2, ft3 = 0x1820f043, fmsub.s fs0, fs1, fs2, fs3 = 0x9924f447, fnmsub.s fa0, fa1, fa2, fa3 = 0x68c5f54b, fnmadd.s fa0, fa1, fa2, fa3 = 0x68c5f54f, fmadd.d fa0, fa1, fa2, fa3 = 0x6ac5f543, fmadd.s f0, f1, f2, f3 = 0x1820f043, fmadd.s f0, f0, f0, f0 = 0x00007043, fmadd.s f31, f31, f31, f31 = 0xf9ffffc3.
+- Valid 5th RoundingMode in {rne,rtz,rdn,rup,rmm,dyn} matches llvm-mc (1000 cases). KAT pins fmadd.s fa0, fa1, fa2, fa3, rne = 0x68c58543 and ..., rtz = 0x68c59543.
+- R4-type layout holds: opcode in {0b1000011,0b1000111,0b1001011,0b1001111}, fmt in bits 26:25 (00 S / 01 D), rs3 in bits 31:27, rm in bits 14:12, rd/rs1/rs2 as given (1000 cases).
+- FP ABI names (ft0/fa0/fs0/...) encode the same rd/rs1/rs2/rs3 as fN (1000 cases).
+- Omitted rm equals explicit RoundingMode("dyn") and unpacks rm=111 (1000 cases).
+- Empty, 1-operand, 2-operand, 3-operand, GPR in any of the four FP slots, and non-Reg rd return Err (1000 cases).
+- A 6th operand and a 5th non-RoundingMode operand currently disagree with llvm-mc (see bugs): extra ignored; non-RM 5th mapped to rm=DYN.
+
+## Environment (encode_fma)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+f,+d -show-encoding (LLVM 15.0.6). Default riscv64 without +f,+d rejects F/D; RV64GC includes both (README.md:13).
+- Harness: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs, cargo test --lib encode_fma_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:797-804 fmadd/fmsub/fnmsub/fnmadd .s/.d => encode_fma with OP_FMADD/OP_FMSUB/OP_FNMSUB/OP_FNMADD and fmt 0b00 S / 0b01 D. Operands passed through with ISA opcode and fmt.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_fma NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 4-op / rm / R4 / ABI / dyn-default / arity-GPR / extra / non-rm 5th. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+
+## Quirks (encode_fma)
+
+- llvm-mc prints `fmadd.s f0, f1, f2, f3` as ft0, ft1, ft2, ft3 (same encoding). `fmadd.s ..., dyn` is printed without the dyn token; encoding still has rm=111.
+- parse_rm lowercases and maps unknown strings to 0b111; the parser only constructs RoundingMode for the closed set {rne,rtz,rdn,rup,rmm,dyn}, so unknown RM strings are not caller-reachable through encode_instruction.
+- encode_fma does not range-check opcode or fmt; callers supply the ISA values.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_fmv_f_x)
 
 - Valid 2-operand FMV.W.X / FMV.S.X / FMV.D.X with FP rd and GPR rs1 match llvm-mc `-triple=riscv64 -mattr=+f,+d -show-encoding` (1000 cases). KAT pins fmv.w.x fa0, a1 = 0xf0058553, fmv.s.x fa0, a1 = 0xf0058553 (alias), fmv.w.x ft0, t0 = 0xf0028053, fmv.w.x ft0, zero = 0xf0000053, fmv.d.x fa0, a1 = 0xf2058553, fmv.d.x ft11, t6 = 0xf20f8fd3, fmv.d.x f0, x0 = 0xf2000053, fmv.w.x f31, x0 = 0xf0000fd3, fmv.w.x ft0, fp = 0xf0040053, fmv.w.x f8, s0 = 0xf0040453.

@@ -1,57 +1,59 @@
-# PBT Campaign Report: encode_fmv_f_x
+# PBT Campaign Report: encode_fma
 
 ## Summary
 
-**Verdict:** 2 medium: encode_fmv_f_x ignores a 3rd operand and a 3rd RoundingMode, so malformed `fmv.w.x f0, x0, 0` and `fmv.w.x f0, x0, rne` still assemble as `fmv.w.x f0, x0`.
+**Verdict:** 2 medium: encode_fma silently ignores a 6th operand and maps a non-RoundingMode 5th operand to rm=DYN, so malformed FMADD/FMSUB/FNMSUB/FNMADD still assembles as a valid R4 word.
 **Date:** 2026-10-06
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_fmv_f_x
-**Tests:** 8 properties (plus 2 KAT + 2 regression witnesses)
+**Modules tested:** encode_fma
+**Tests:** 8
 **Result:** 6 passing, 2 bugs
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_fmv_f_x NOT LINKED in unrelated C++ binaries; Rust cargo tests are not those binaries. Execution evidence is `cargo test --lib encode_fmv_f_x`.
-**Tier:** standard
+**Change surface:** 1 changed function (encode_fma), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (C++ reporter listed unrelated binaries and encode_fma NOT LINKED; Rust cargo tests are not those binaries). Manual audit of 4-op / rm / R4 / ABI / dyn-default / arity-GPR / extra / non-rm 5th. Closed: tier round spent; remaining documented gaps are the two filed bugs.
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_fmv_f_x | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_fma | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_fmv_f_x ignores a 3rd operand
+### B1: encode_fma ignores a 6th operand
 
-**Formal:** ∀ mn ∈ {fmv.w.x, fmv.s.x, fmv.d.x}, rd ∈ FPNames, rs1 ∈ GPRNames, extra ∈ Operand. encode_fmv_f_x([Reg(rd), Reg(rs1), extra], funct7(mn), 0) is Err
-**Contract evidence:** inferred (llvm-mc rejects extra operands as "invalid operand for instruction"; RISC-V FMV.W.X/D.X is a 2-operand form; encode_instruction at encoder/mod.rs:764 and encoder/mod.rs:794 passes the full operand slice through)
+**Formal:** ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ Operand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("rne"), extra], opcode(mn), fmt(mn)) is Err
+**Contract evidence:** inferred (llvm-mc rejects extra operands; encode_instruction at encoder/mod.rs:797-804 passes the full operand slice through to encode_fma; README.md:309 lists fmadd/fmsub/fnmadd/fnmsub as assembler instructions)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fmv_f_x([Reg("f0"), Reg("x0"), Imm(0)], 0b1111000, 0)
-**Expected / Actual:** Err / Ok(Word(0xf0000053)) — encoding of fmv.w.x f0, x0
-**Impact:** Malformed `fmv.w.x f0, x0, 0` still assembles as `fmv.w.x f0, x0`. A typo or extra token is silently dropped, so the assembler emits a valid OP-FP FMV.W.X word instead of diagnosing the extra operand.
-**Root cause:** float.rs:170-172 reads only operands 0 and 1 via get_freg/get_reg and returns Ok without checking operands.len() > 2, so a 3rd operand is ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:172`
+**Counterexample:** encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 0b1000011, 0)
+**Expected / Actual:** Err / Ok(Word(67)) which is 0x00000043, the encoding of fmadd.s f0, f0, f0, f0, rne
+**Impact:** Malformed `fmadd.s f0, f0, f0, f0, rne, 0` still assembles as `fmadd.s f0, f0, f0, f0, rne`. A typo or extra token is silently dropped.
+**Root cause:** float.rs:176-191 reads only operands 0..4 via get_freg / optional RoundingMode and returns Ok without checking operands.len() > 5, so a 6th operand is ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:191`
 ```rust
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b000, rs1, 0, funct7)))
+    Ok(EncodeResult::Word(word))
 ```
-**Suggested fix:** Reject more than two operands before packing the R-type word.
+**Suggested fix:** Reject more than five operands before packing the R4-type word.
 ```rust
-    if operands.len() > 2 {
-        return Err("fmv.w.x/d.x: unexpected extra operand".to_string());
+    if operands.len() > 5 {
+        return Err("fma: unexpected extra operand".to_string());
     }
     let rd = get_freg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b000, rs1, 0, funct7)))
+    let rs1 = get_freg(operands, 1)?;
+    let rs2 = get_freg(operands, 2)?;
+    let rs3 = get_freg(operands, 3)?;
 ```
-**Bug report:** bug_reports/encode_fmv_f_x_extra_operand.md
-**Repro seed:** cc bc5a472e74bca83a626d5af1b230ceab1479f0932467caf46cf428df0e9f4d13
+**Bug report:** bug_reports/encode_fma_extra_operand.md
+**Repro seed:** cc b1bd6c766073b44a8c4f6988ef878031ede8d89207e666d84fc8e171a92b4f43
 **Raw output:**
 ```text
-Test failed: 3rd operand must Err for fmv.w.x f0, x0 (llvm-mc rejects extra operands); got Ok(Word(4026531923)) at src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs:468.
-minimal failing input: (mn, f7) = (
-    "fmv.w.x",
-    120,
-), rd = "f0", rs1 = "x0", extra = Imm(
+Test failed: 6th operand must Err for fmadd.s f0, f0, f0, f0, rne (llvm-mc rejects extra operands); got Ok(Word(67)) at src/backend/riscv/assembler/encoder/encode_fma_pbt.rs:569.
+minimal failing input: (mn, opc, fmt) = (
+    "fmadd.s",
+    67,
+    0,
+), rd = "f0", rs1 = "f0", rs2 = "f0", rs3 = "f0", extra = Imm(
     0,
 )
 	successes: 0
@@ -59,38 +61,45 @@ minimal failing input: (mn, f7) = (
 	global rejects: 0
 ```
 
-### B2: encode_fmv_f_x ignores a 3rd RoundingMode
+### B2: encode_fma maps a non-RoundingMode 5th operand to rm=DYN
 
-**Formal:** ∀ mn ∈ {fmv.w.x, fmv.s.x, fmv.d.x}, rd ∈ FPNames, rs1 ∈ GPRNames, rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fmv_f_x([Reg(rd), Reg(rs1), RoundingMode(rm)], funct7(mn), 0) is Err
-**Contract evidence:** inferred (ISA hardwires funct3=000 and rs2=00000 for FMV.W.X/D.X, unlike FCVT; llvm-mc rejects `fmv.w.x fa0, a1, rne` as "invalid operand for instruction"; encode_instruction passes the full operand slice through)
+**Formal:** ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ NonRoundingModeOperand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), extra], opcode(mn), fmt(mn)) is Err
+**Contract evidence:** inferred (llvm-mc requires the optional 5th operand to be a rounding-mode mnemonic; parser.rs:41 lists the closed RM set; encode_instruction passes the operand slice through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_fmv_f_x([Reg("f0"), Reg("x0"), RoundingMode("rne")], 0b1111000, 0)
-**Expected / Actual:** Err / Ok(Word(0xf0000053)) — encoding of fmv.w.x f0, x0 (funct3 remains 000, not rne)
-**Impact:** Malformed `fmv.w.x f0, x0, rne` still assembles as `fmv.w.x f0, x0`. Unlike FCVT (which consumes rm in funct3), FMV.W.X must not accept rm; silently dropping it hides a real assembly error and can confuse a caller who copied an FCVT-style 3-operand form.
-**Root cause:** float.rs:170-172 reads only operands 0 and 1 via get_freg/get_reg and returns Ok without checking operands.len() > 2, so a 3rd RoundingMode is ignored and does not overwrite the hardwired funct3=000.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:172`
+**Counterexample:** encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 0b1000011, 0)
+**Expected / Actual:** Err / Ok(Word(28739)) which is 0x00007043, the encoding of fmadd.s f0, f0, f0, f0 (rm=DYN)
+**Impact:** Malformed `fmadd.s f0, f0, f0, f0, 0` still assembles as `fmadd.s f0, f0, f0, f0` with dynamic rounding. A mistyped 5th token is silently rewritten to DYN.
+**Root cause:** float.rs:180-184 treats any non-RoundingMode 5th operand as rm=0b111 instead of returning Err.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/float.rs:183`
 ```rust
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b000, rs1, 0, funct7)))
+            _ => 0b111,
 ```
-**Suggested fix:** Reject more than two operands before packing the R-type word.
+**Suggested fix:** Return Err when the 5th operand is not a RoundingMode.
 ```rust
-    if operands.len() > 2 {
-        return Err("fmv.w.x/d.x: unexpected extra operand".to_string());
-    }
-    let rd = get_freg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
-    Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, 0b000, rs1, 0, funct7)))
+    let rm = if operands.len() > 4 {
+        match &operands[4] {
+            Operand::RoundingMode(s) => parse_rm(s),
+            other => {
+                return Err(format!("fma: expected rounding mode, got {:?}", other));
+            }
+        }
+    } else {
+        0b111
+    };
 ```
-**Bug report:** bug_reports/encode_fmv_f_x_rm_third.md
-**Repro seed:** (none — first generated case failed; same witness as extra-operand with RoundingMode("rne"))
+**Bug report:** bug_reports/encode_fma_non_rm_fifth.md
+**Repro seed:** (none — deterministic regression `test_encode_fma_regression_non_rm_fifth`)
 **Raw output:**
 ```text
-Test failed: 3rd RoundingMode must Err for fmv.w.x f0, x0, rne (FMV.W.X has no rm); got Ok(Word(4026531923)) at src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs:486.
-minimal failing input: (mn, f7) = (
-    "fmv.w.x",
-    120,
-), rd = "f0", rs1 = "x0", rm = "rne"
+Test failed: 5th non-RoundingMode operand must Err for fmadd.s f0, f0, f0, f0 (optional rm only); got Ok(Word(28739)) at src/backend/riscv/assembler/encoder/encode_fma_pbt.rs:589.
+minimal failing input: (mn, opc, fmt) = (
+    "fmadd.s",
+    67,
+    0,
+), rd = "f0", rs1 = "f0", rs2 = "f0", rs3 = "f0", extra = Imm(
+    0,
+)
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -104,52 +113,54 @@ minimal failing input: (mn, f7) = (
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs | 8 properties + 2 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_fma_pbt.rs | 8 properties + 2 KAT + 2 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_fmv_f_x -- --test-threads=1
+cargo test --lib encode_fma_pbt -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fmv_f_x_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_fma_pbt -- --test-threads=1
+cargo test --lib test_encode_fma_regression_extra_operand -- --test-threads=1
 ```
 
-B2 RoundingMode third:
+B2 non-RM fifth:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_fmv_f_x_regression_rm_third -- --test-threads=1
+cargo test --lib encode_fma_pbt -- --test-threads=1
+cargo test --lib test_encode_fma_regression_non_rm_fifth -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
 - pbt-out/REPORT.html
-- pbt-out/report.json
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
 - pbt-out/INVARIANTS.md
-- pbt-out/CHANGE_SURFACE.md
-- pbt-out/bug_reports/encode_fmv_f_x_extra_operand.md
-- pbt-out/bug_reports/encode_fmv_f_x_extra_operand.html
-- pbt-out/bug_reports/encode_fmv_f_x_rm_third.md
-- pbt-out/bug_reports/encode_fmv_f_x_rm_third.html
-- pbt-out/run/encode_fmv_f_x.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_fma_extra_operand.md
+- pbt-out/bug_reports/encode_fma_extra_operand.html
+- pbt-out/bug_reports/encode_fma_non_rm_fifth.md
+- pbt-out/bug_reports/encode_fma_non_rm_fifth.html
+- pbt-out/run/encode_fma_pbt.log
+- proptest-regressions/backend/riscv/assembler/encoder/encode_fma_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 20:47 (campaign: coverage)
-> Files: 14/14 scanned (100%) | Functions: 212/351 total | PBT candidates: 212 | Tested: 212 (100%) | 1 pass, 212 fail
+> Last updated: 2026-10-06 21:01 (campaign: coverage)
+> Files: 14/14 scanned (100%) | Functions: 213/351 total | PBT candidates: 213 | Tested: 213 (100%) | 1 pass, 213 fail
 
 ## Summary
 
@@ -158,10 +169,10 @@ cargo test --lib test_encode_fmv_f_x_regression_rm_third -- --test-threads=1
 | Total source files | 14 |
 | Files scanned | 14 / 14 (100%) |
 | Total functions (all files) | 351 |
-| PBT candidates (from FUNCTION_INDEX) | 212 |
-| **Tested (of PBT candidates)** | **212 / 212 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 212 / -1 |
-| **Overall (tested / all functions)** | **212 / 351 (60%)** |
+| PBT candidates (from FUNCTION_INDEX) | 213 |
+| **Tested (of PBT candidates)** | **213 / 213 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 213 / -1 |
+| **Overall (tested / all functions)** | **213 / 351 (61%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -169,13 +180,13 @@ cargo test --lib test_encode_fmv_f_x_regression_rm_third -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 212 | 212 | 0 | 100% |
+|  | 213 | 213 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 212 | 212 | 0 | 100% |
+| unknown | 213 | 213 | 0 | 100% |
 
 ## File Coverage
 
@@ -410,3 +421,4 @@ cargo test --lib test_encode_fmv_f_x_regression_rm_third -- --test-threads=1
 | encode_fcvt_fp | float.rs |
 | encode_fmv_x_f | float.rs |
 | encode_fmv_f_x | float.rs |
+| encode_fma | float.rs |

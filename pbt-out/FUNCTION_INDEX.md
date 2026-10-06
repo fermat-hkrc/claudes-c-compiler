@@ -1,4 +1,4 @@
-> Total files: 14 | Total functions: 351 | PBT candidates: 213 | Excluded: 138
+> Total files: 14 | Total functions: 351 | PBT candidates: 214 | Excluded: 137
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -352,4 +352,4 @@
 | encode_fcvt_fp | float.rs | 146 | function | yes | - |
 | encode_fmv_x_f | float.rs | 161 | function | yes | - |
 | encode_fmv_f_x | float.rs | 168 | function | yes | -
-| encode_fma | float.rs | 175 | function | no | HARD: test only encode_fmv_f_x |
+| encode_fma | float.rs | 175 | function | yes | - |

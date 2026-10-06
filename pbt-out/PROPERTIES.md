@@ -1,217 +1,256 @@
-# Properties: encode_fmv_f_x
+# Properties: encode_fma
 
-## encode_fmv_f_x_diff_2op_llvm_mc
+## encode_fma_diff_4op_llvm_mc
 - Tier: 5
-- Rationale: Strongest applicable oracle is differential against llvm-mc (independent RISC-V assembler). State machine rejected: encode_fmv_f_x is a pure function with no lifecycle. Algebraic round-trip via in-tree decoder rejected: no OP-FP decoder. encode_r / encode_fclass / encode_fmv_x_f as differential sibling rejected by same-job gate (private packer / FCLASS uses funct3=001 / FMV.X.W is the opposite direction). Reference ISA field layout is used as a weaker invariant property, not this one.
-- Doc contract: src/backend/riscv/assembler/encoder/float.rs:169 "Integer to float register move" — asserted fingerprint 2b1739f2
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_diff_2op_llvm_mc (same 2-op OP-FP FMV shape, opposite register classes)
-- Formal: ∀ mn ∈ {fmv.w.x, fmv.s.x, fmv.d.x}, rd ∈ FPNames, rs1 ∈ GPRNames. encode_fmv_f_x([Reg(rd), Reg(rs1)], funct7(mn), 0) = Word(llvm-mc(mn rd, rs1))
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
+- Rationale: Strongest applicable oracle is differential against llvm-mc (independent RISC-V assembler). State machine rejected: encode_fma is a pure function with no lifecycle. Algebraic round-trip via in-tree decoder rejected: no R4-type decoder. encode_r / encode_fp_arith as differential sibling rejected by same-job gate (R-type packer / 3-operand OP-FP, not R4 FMA). Reference ISA field layout is used as a weaker invariant property, not this one.
+- Doc contract: src/backend/riscv/assembler/encoder/float.rs:189 "R4-type: rs3[31:27] | fmt[26:25] | rs2[24:20] | rs1[19:15] | rm[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint d1a3f01c
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_diff_3op_llvm_mc (same llvm-mc FP encode shape; FMA is 4-reg R4)
+- Formal: ∀ mn ∈ {fmadd.s, fmsub.s, fnmsub.s, fnmadd.s, fmadd.d, fmsub.d, fnmsub.d, fnmadd.d}, rd, rs1, rs2, rs3 ∈ FPNames. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opcode(mn), fmt(mn)) = Word(llvm-mc(mn rd, rs1, rs2, rs3))
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fmv_f_x
+function: encoder.encode_fma
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mn, rd, rs1]
-  domain: { mn: {fmv.w.x, fmv.s.x, fmv.d.x}, rd: fp_names, rs1: gpr_names }
+  vars: [mn, rd, rs1, rs2, rs3]
+  domain: { mn: {fmadd.s, fmsub.s, fnmsub.s, fnmadd.s, fmadd.d, fmsub.d, fnmsub.d, fnmadd.d}, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names }
   relation:
     op: eq
-    lhs: encode_fmv_f_x([Reg(rd), Reg(rs1)], funct7(mn), 0)
-    rhs: llvm_mc(mn + " " + rd + ", " + rs1)
+    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opcode(mn), fmt(mn))
+    rhs: llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rs2 + ", " + rs3)
 generators:
-  mn: { gen: oneof, items: ["fmv.w.x", "fmv.s.x", "fmv.d.x"] }
+  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
   rd: { gen: string }
   rs1: { gen: string }
-evidence: src/backend/riscv/assembler/README.md:308; encoder/mod.rs:764; encoder/mod.rs:794
+  rs2: { gen: string }
+  rs3: { gen: string }
+evidence: src/backend/riscv/assembler/README.md:309; encoder/mod.rs:797
 ```
 
-## encode_fmv_f_x_r_type_fields
-- Tier: 4
-- Rationale: Algebraic invariant from the documented R-type layout and ISA FMV.W.X/D hardwires (opcode OP-FP, funct3=000, rs2=0). Stronger differential is a sibling property. Round-trip rejected (no decoder).
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:336 "R-type: funct7[31:25] | rs2[24:20] | rs1[19:15] | funct3[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint 34009d12
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_r_type_fields
-- Formal: ∀ rd, rs1 ∈ 0..31, f7 ∈ {0b1111000, 0b1111001}. unpack_r(encode_fmv_f_x([Reg(f{rd}), Reg(x{rs1})], f7, 0)) = (OP_OP_FP, 0b000, rd, rs1, 0, f7)
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
+## encode_fma_diff_rm_llvm_mc
+- Tier: 5
+- Rationale: Same differential as the 4-op property, covering the optional rounding-mode operand. llvm-mc accepts rne/rtz/rdn/rup/rmm/dyn as a 5th token. Stronger state machine / round-trip rejected as above.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:492 "Parse a rounding mode to 3-bit encoding" — asserted fingerprint c9473eee
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_diff_rm_llvm_mc
+- Formal: ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, rm ∈ {rne, rtz, rdn, rup, rmm, dyn}. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode(rm)], opcode(mn), fmt(mn)) = Word(llvm-mc(mn rd, rs1, rs2, rs3, rm))
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fmv_f_x
+function: encoder.encode_fma
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [mn, rd, rs1, rs2, rs3, rm]
+  domain: { mn: fma_mnemonics, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, rm: {rne, rtz, rdn, rup, rmm, dyn} }
+  relation:
+    op: eq
+    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode(rm)], opcode(mn), fmt(mn))
+    rhs: llvm_mc(mn + " " + rd + ", " + rs1 + ", " + rs2 + ", " + rs3 + ", " + rm)
+generators:
+  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
+  rd: { gen: string }
+  rs1: { gen: string }
+  rs2: { gen: string }
+  rs3: { gen: string }
+  rm: { gen: oneof, items: ["rne", "rtz", "rdn", "rup", "rmm", "dyn"] }
+evidence: src/backend/riscv/assembler/parser.rs:41; encoder/mod.rs:492
+```
+
+## encode_fma_r4_type_fields
+- Tier: 4
+- Rationale: Algebraic invariant from the documented R4-type layout (rs3 | fmt | rs2 | rs1 | rm | rd | opcode). Stronger differential is a sibling property. Round-trip rejected (no decoder).
+- Doc contract: src/backend/riscv/assembler/encoder/float.rs:189 "R4-type: rs3[31:27] | fmt[26:25] | rs2[24:20] | rs1[19:15] | rm[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint d1a3f01c
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_r_type_fields
+- Formal: ∀ rd, rs1, rs2, rs3 ∈ 0..31, opc ∈ {0b1000011, 0b1000111, 0b1001011, 0b1001111}, fmt ∈ {0b00, 0b01}, rm ∈ {0,1,2,3,4,7}. unpack_r4(encode_fma([Reg(f{rd}), Reg(f{rs1}), Reg(f{rs2}), Reg(f{rs3}), RoundingMode(rm_name)], opc, fmt)) = (opc, rd, rm, rs1, rs2, fmt, rs3)
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_fma
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rs1, f7]
-  domain: { rd: 0..31, rs1: 0..31, f7: {0b1111000, 0b1111001} }
-  body: unpack_r(word) == (0b1010011, 0b000, rd, rs1, 0, f7)
+  vars: [rd, rs1, rs2, rs3, opc, fmt, rm]
+  domain: { rd: 0..31, rs1: 0..31, rs2: 0..31, rs3: 0..31, opc: {0b1000011, 0b1000111, 0b1001011, 0b1001111}, fmt: {0, 1}, rm: {0, 1, 2, 3, 4, 7} }
+  body: unpack_r4(word) == (opc, rd, rm, rs1, rs2, fmt, rs3)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs1: { gen: int, min: 0, max: 31, type: u32 }
-  f7: { gen: oneof, items: [120, 121] }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:336
+  rs2: { gen: int, min: 0, max: 31, type: u32 }
+  rs3: { gen: int, min: 0, max: 31, type: u32 }
+  opc: { gen: oneof, items: [67, 71, 75, 79] }
+  fmt: { gen: int, min: 0, max: 1, type: u32 }
+  rm: { gen: oneof, items: [0, 1, 2, 3, 4, 7] }
+evidence: src/backend/riscv/assembler/encoder/float.rs:189
 ```
 
-## encode_fmv_f_x_abi_fn_xn_alias
+## encode_fma_abi_fn_alias
 - Tier: 4
-- Rationale: Metamorphic: ABI names and fN/xN names are aliases of the same 5-bit register index (parser/freg_num, reg_num). Stronger differential is a sibling property over mixed names.
-- Doc contract: src/backend/riscv/assembler/encoder/float.rs:169 "Integer to float register move" — asserted fingerprint 2b1739f2
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_abi_xn_fn_alias
-- Formal: ∀ n, m ∈ 0..31, f7 ∈ {0b1111000, 0b1111001}. encode_fmv_f_x([Reg(f{n}), Reg(x{m})], f7, 0) = encode_fmv_f_x([Reg(FABI[n]), Reg(GABI[m])], f7, 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
+- Rationale: Metamorphic: ABI names (ft0/fa0/fs0/...) and fN names are aliases of the same 5-bit FP register index (freg_num). Stronger differential is a sibling property over mixed names.
+- Doc contract: src/backend/riscv/assembler/encoder/float.rs:189 "R4-type: rs3[31:27] | fmt[26:25] | rs2[24:20] | rs1[19:15] | rm[14:12] | rd[11:7] | opcode[6:0]" — asserted fingerprint d1a3f01c
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_abi_fn_alias
+- Formal: ∀ n, m, p, q ∈ 0..31, opc ∈ FmaOpcodes, fmt ∈ {0,1}. encode_fma([Reg(f{n}), Reg(f{m}), Reg(f{p}), Reg(f{q})], opc, fmt) = encode_fma([Reg(FABI[n]), Reg(FABI[m]), Reg(FABI[p]), Reg(FABI[q])], opc, fmt)
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fmv_f_x
+function: encoder.encode_fma
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, m, f7]
-  domain: { n: 0..31, m: 0..31, f7: {0b1111000, 0b1111001} }
+  vars: [n, m, p, q, opc, fmt]
+  domain: { n: 0..31, m: 0..31, p: 0..31, q: 0..31, opc: fma_opcodes, fmt: {0, 1} }
   relation:
     op: eq
-    lhs: encode_fmv_f_x([Reg(fn(n)), Reg(xn(m))], f7, 0)
-    rhs: encode_fmv_f_x([Reg(fabi(n)), Reg(gabi(m))], f7, 0)
+    lhs: encode_fma([Reg(fn(n)), Reg(fn(m)), Reg(fn(p)), Reg(fn(q))], opc, fmt)
+    rhs: encode_fma([Reg(fabi(n)), Reg(fabi(m)), Reg(fabi(p)), Reg(fabi(q))], opc, fmt)
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   m: { gen: int, min: 0, max: 31, type: u32 }
-  f7: { gen: oneof, items: [120, 121] }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:207
+  p: { gen: int, min: 0, max: 31, type: u32 }
+  q: { gen: int, min: 0, max: 31, type: u32 }
+  opc: { gen: oneof, items: [67, 71, 75, 79] }
+  fmt: { gen: int, min: 0, max: 1, type: u32 }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:257
 ```
 
-## encode_fmv_f_x_s_vs_d_fmt
+## encode_fma_rm_default_dyn
 - Tier: 4
-- Rationale: Metamorphic: FMV.W.X vs FMV.D.X differ only in funct7 bit 0 (fmt), which is bit 25 of the word. Documented by dispatch 0b1111000 vs 0b1111001.
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:764 `"fmv.w.x" | "fmv.s.x" => encode_fmv_f_x(operands, 0b1111000, 0b00)` — asserted fingerprint 2f466653
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_s_vs_d_fmt
-- Formal: ∀ rd, rs1 ∈ 0..31. encode_fmv_f_x(ops, 0b1111000, 0) xor encode_fmv_f_x(ops, 0b1111001, 0) = 1<<25
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
+- Rationale: Metamorphic: omitted 5th operand equals explicit RoundingMode("dyn") and unpacks rm=111 (ISA default DYN). Stronger differential covers both forms independently.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:492 "Parse a rounding mode to 3-bit encoding" — asserted fingerprint c9473eee
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_rm_default_dyn
+- Formal: ∀ rd, rs1, rs2, rs3 ∈ FPNames, opc ∈ FmaOpcodes, fmt ∈ {0,1}. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opc, fmt) = encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("dyn")], opc, fmt) ∧ unpack_r4(...).rm = 0b111
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fmv_f_x
+function: encoder.encode_fma
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rs1]
-  domain: { rd: 0..31, rs1: 0..31 }
-  body: encode_fmv_f_x(ops, 0b1111000, 0) xor encode_fmv_f_x(ops, 0b1111001, 0) == (1 << 25)
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rs1: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:764; encoder/mod.rs:794
-```
-
-## encode_fmv_f_x_w_vs_s_alias
-- Tier: 4
-- Rationale: Metamorphic plus differential: fmv.w.x and fmv.s.x share funct7=0b1111000 (dispatch OR-pattern). llvm-mc encodes them identically. Stronger 2-op differential is a sibling covering all three mnemonics.
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:764 `"fmv.w.x" | "fmv.s.x" => encode_fmv_f_x(operands, 0b1111000, 0b00)` — asserted fingerprint 2f466653
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_w_vs_s_alias
-- Formal: ∀ rd ∈ FPNames, rs1 ∈ GPRNames. encode_fmv_f_x([Reg(rd), Reg(rs1)], 0b1111000, 0) = llvm-mc(fmv.w.x rd, rs1) = llvm-mc(fmv.s.x rd, rs1)
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_fmv_f_x
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rs1]
-  domain: { rd: fp_names, rs1: gpr_names }
-  body: sut == llvm_mc("fmv.w.x " + rd + ", " + rs1) == llvm_mc("fmv.s.x " + rd + ", " + rs1)
+  vars: [rd, rs1, rs2, rs3, opc, fmt]
+  domain: { rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, opc: fma_opcodes, fmt: {0, 1} }
+  relation:
+    op: eq
+    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3)], opc, fmt)
+    rhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("dyn")], opc, fmt)
 generators:
   rd: { gen: string }
   rs1: { gen: string }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:764
+  rs2: { gen: string }
+  rs3: { gen: string }
+  opc: { gen: oneof, items: [67, 71, 75, 79] }
+  fmt: { gen: int, min: 0, max: 1, type: u32 }
+evidence: src/backend/riscv/assembler/encoder/float.rs:180; encoder/mod.rs:492
 ```
 
-## encode_fmv_f_x_neg_arity_class
-- Tier: 3
-- Rationale: Negative/error contract: FMV.W.X/D.X is a 2-operand instruction with FP rd and integer rs1. llvm-mc rejects empty, 1-operand, GPR rd, FP rs1, and non-register rd. get_freg does not accept Imm for rd. Stronger differential does not apply on the invalid domain. These inputs are documented-invalid, not a SUT mishandling.
-- Doc contract: src/backend/riscv/assembler/encoder/float.rs:169 "Integer to float register move" — asserted fingerprint 2b1739f2
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_neg_arity_class
-- Formal: ∀ f7 ∈ {0b1111000, 0b1111001}, fp ∈ FPNames, gpr ∈ GPRNames, bad ∉ FPRegs. encode_fmv_f_x([], f7, 0) is Err ∧ encode_fmv_f_x([Reg(fp)], f7, 0) is Err ∧ encode_fmv_f_x([Reg(gpr), Reg(gpr)], f7, 0) is Err ∧ encode_fmv_f_x([Reg(fp), Reg(fp)], f7, 0) is Err ∧ encode_fmv_f_x([bad, Reg(gpr)], f7, 0) is Err ∧ encode_fmv_f_x([Imm(0), Reg(gpr)], f7, 0) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
+## encode_fma_neg_arity_gpr
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc rejects too-few operands and GPR in an FP slot. get_freg returns Err for missing/non-FP operands. Stronger differential does not apply on the invalid domain.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:425 "expected float register at operand {}, got {:?}" — asserted fingerprint 9575ce77
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_neg_arity_gpr
+- Formal: ∀ opc ∈ FmaOpcodes, fmt ∈ {0,1}, fp ∈ FPNames, gpr ∈ GPRNames, bad ∈ NonReg. encode_fma([], opc, fmt) is Err ∧ encode_fma([fp], opc, fmt) is Err ∧ encode_fma([fp,fp], opc, fmt) is Err ∧ encode_fma([fp,fp,fp], opc, fmt) is Err ∧ encode_fma with GPR or non-Reg in any of the four slots is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_fmv_f_x
+function: encoder.encode_fma
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [f7, fp, gpr, bad]
-  domain: { f7: {0b1111000, 0b1111001}, fp: fp_names, gpr: gpr_names, bad: non_fp_reg }
-  body: encode_fmv_f_x(invalid, f7, 0) is Err
+  vars: [opc, fmt, fp, gpr, bad]
+  domain: { opc: fma_opcodes, fmt: {0, 1}, fp: fp_names, gpr: gpr_names, bad: non_reg_operands }
+  relation:
+    op: throws
+    lhs: encode_fma(too_few_or_gpr_or_nonreg, opc, fmt)
+    rhs: String
 generators:
-  f7: { gen: oneof, items: [120, 121] }
+  opc: { gen: oneof, items: [67, 71, 75, 79] }
+  fmt: { gen: int, min: 0, max: 1, type: u32 }
   fp: { gen: string }
   gpr: { gen: string }
+  bad: { gen: string }
 expected_error: String
-evidence: src/backend/riscv/assembler/encoder/float.rs:170
+evidence: src/backend/riscv/assembler/encoder/mod.rs:420; encoder/mod.rs:425
 ```
 
-## encode_fmv_f_x_neg_extra
-- Tier: 3
-- Rationale: Negative/error contract: llvm-mc rejects a 3rd operand on fmv.w.x/s.x/d.x ("invalid operand for instruction"). The ISA form is 2-operand; extra tokens must be Err. Stronger differential does not apply on the invalid domain.
-- Doc contract: src/backend/riscv/assembler/README.md:308 "fmv.x.w/d, fmv.w.x/d.x" — asserted fingerprint 8b41c309
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_neg_extra
-- Formal: ∀ mn ∈ {fmv.w.x, fmv.s.x, fmv.d.x}, rd ∈ FPNames, rs1 ∈ GPRNames, extra ∈ Operand. encode_fmv_f_x([Reg(rd), Reg(rs1), extra], funct7(mn), 0) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
+## encode_fma_neg_extra
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc rejects a 6th operand after rd, rs1, rs2, rs3, rm. The encoder must Err rather than silently ignore extras. Stronger differential does not apply on the invalid domain.
+- Doc contract: src/backend/riscv/assembler/README.md:309 "fmadd/fmsub/fnmadd/fnmsub" — asserted fingerprint f4814537
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_neg_extra
+- Formal: ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ Operand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("rne"), extra], opcode(mn), fmt(mn)) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
 - Status: failing
-- Counterexample: encode_fmv_f_x([Reg("f0"), Reg("x0"), Imm(0)], 0b1111000, 0) = Ok(Word(0xf0000053))
-- Bug report: bug_reports/encode_fmv_f_x_extra_operand.md
+- Counterexample: encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), RoundingMode("rne"), Imm(0)], 0b1000011, 0) -> Ok(Word(67))
+- Bug report: pbt-out/bug_reports/encode_fma_extra_operand.md
 
 ```property
-function: encoder.encode_fmv_f_x
+function: encoder.encode_fma
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mn, rd, rs1, extra]
-  domain: { mn: {fmv.w.x, fmv.s.x, fmv.d.x}, rd: fp_names, rs1: gpr_names, extra: Operand }
-  body: encode_fmv_f_x([Reg(rd), Reg(rs1), extra], funct7(mn), 0) is Err
+  vars: [mn, rd, rs1, rs2, rs3, extra]
+  domain: { mn: fma_mnemonics, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, extra: Operand }
+  relation:
+    op: throws
+    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), RoundingMode("rne"), extra], opcode(mn), fmt(mn))
+    rhs: String
 generators:
-  mn: { gen: oneof, items: ["fmv.w.x", "fmv.s.x", "fmv.d.x"] }
+  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
   rd: { gen: string }
   rs1: { gen: string }
+  rs2: { gen: string }
+  rs3: { gen: string }
+  extra: { gen: string }
 expected_error: String
-evidence: src/backend/riscv/assembler/README.md:308
+evidence: src/backend/riscv/assembler/README.md:309
 ```
 
-## encode_fmv_f_x_neg_rm_third
-- Tier: 3
-- Rationale: Negative/error contract: FMV.W.X/D.X has no rounding-mode field (funct3 hardwired 000, unlike FCVT). llvm-mc rejects a 3rd rne/rtz/rdn/rup/rmm/dyn token. Stronger differential does not apply on the invalid domain.
-- Doc contract: src/backend/riscv/assembler/encoder/float.rs:169 "Integer to float register move" — asserted fingerprint 2b1739f2
-- Seed: encode_fmv_x_f_pbt.rs:encode_fmv_x_f_neg_rm_third
-- Formal: ∀ mn ∈ {fmv.w.x, fmv.s.x, fmv.d.x}, rd ∈ FPNames, rs1 ∈ GPRNames, rm ∈ {rne,rtz,rdn,rup,rmm,dyn}. encode_fmv_f_x([Reg(rd), Reg(rs1), RoundingMode(rm)], funct7(mn), 0) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_fmv_f_x_pbt.rs
+## encode_fma_neg_non_rm_fifth
+- Tier: 4
+- Rationale: Negative/error contract: llvm-mc requires the optional 5th operand to be a rounding-mode mnemonic. A non-RoundingMode 5th token must Err. Stronger differential does not apply on the invalid domain.
+- Doc contract: src/backend/riscv/assembler/parser.rs:41 "Rounding mode: rne, rtz, rdn, rup, rmm, dyn" — asserted fingerprint 4d950ca5
+- Seed: encode_fp_arith_pbt.rs:encode_fp_arith_neg_non_rm_fourth
+- Formal: ∀ mn ∈ FmaMn, rd, rs1, rs2, rs3 ∈ FPNames, extra ∈ NonRoundingModeOperand. encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), extra], opcode(mn), fmt(mn)) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_fma_pbt.rs
 - Status: failing
-- Counterexample: encode_fmv_f_x([Reg("f0"), Reg("x0"), RoundingMode("rne")], 0b1111000, 0) = Ok(Word(0xf0000053))
-- Bug report: bug_reports/encode_fmv_f_x_rm_third.md
+- Counterexample: encode_fma([Reg("f0"), Reg("f0"), Reg("f0"), Reg("f0"), Imm(0)], 0b1000011, 0) -> Ok(Word(28739))
+- Bug report: pbt-out/bug_reports/encode_fma_non_rm_fifth.md
 
 ```property
-function: encoder.encode_fmv_f_x
+function: encoder.encode_fma
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mn, rd, rs1, rm]
-  domain: { mn: {fmv.w.x, fmv.s.x, fmv.d.x}, rd: fp_names, rs1: gpr_names, rm: {rne,rtz,rdn,rup,rmm,dyn} }
-  body: encode_fmv_f_x([Reg(rd), Reg(rs1), RoundingMode(rm)], funct7(mn), 0) is Err
+  vars: [mn, rd, rs1, rs2, rs3, extra]
+  domain: { mn: fma_mnemonics, rd: fp_names, rs1: fp_names, rs2: fp_names, rs3: fp_names, extra: non_rm_operands }
+  relation:
+    op: throws
+    lhs: encode_fma([Reg(rd), Reg(rs1), Reg(rs2), Reg(rs3), extra], opcode(mn), fmt(mn))
+    rhs: String
 generators:
-  mn: { gen: oneof, items: ["fmv.w.x", "fmv.s.x", "fmv.d.x"] }
+  mn: { gen: oneof, items: ["fmadd.s", "fmsub.s", "fnmsub.s", "fnmadd.s", "fmadd.d", "fmsub.d", "fnmsub.d", "fnmadd.d"] }
   rd: { gen: string }
   rs1: { gen: string }
-  rm: { gen: oneof, items: ["rne", "rtz", "rdn", "rup", "rmm", "dyn"] }
+  rs2: { gen: string }
+  rs3: { gen: string }
+  extra: { gen: string }
 expected_error: String
-evidence: src/backend/riscv/assembler/encoder/float.rs:172
+evidence: src/backend/riscv/assembler/parser.rs:41
 ```
