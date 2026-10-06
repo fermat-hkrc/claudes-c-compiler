@@ -96,6 +96,9 @@ pub(crate) fn encode_fp_sgnj(operands: &[Operand], funct7: u32, funct3: u32) -> 
     let rd = get_freg(operands, 0)?;
     let rs1 = get_freg(operands, 1)?;
     let rs2 = get_freg(operands, 2)?;
+    if operands.len() > 3 {
+        return Err("unexpected extra operand for fp_sgnj instruction".to_string());
+    }
     Ok(EncodeResult::Word(encode_r(OP_OP_FP, rd, funct3, rs1, rs2, funct7)))
 }
 
