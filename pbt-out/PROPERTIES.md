@@ -1,48 +1,78 @@
-# Properties: encode_smaddl
+# Properties: encode_mneg
 
-## encode_smaddl_diff_valid_gpr
+## encode_mneg_diff_gpr
 - Tier: 5
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (independent AArch64 assembler, same GNU-style text). State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree SMADDL decoder). encode_umaddl rejected as same-job sibling (U=1 unsigned). encode_smull rejected as independent differential (shared get_reg / same TU). ARM ARM field unpack is a weaker invariant used in encode_smaddl_arm_fields.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: src/backend/arm/assembler/encoder/data_processing.rs encode_umaddl_pbt llvm-mc differential
-- Formal: ∀ rd,ra ∈ 0..31, rn,rm ∈ 0..31. encode_smaddl([Xd(rd), Wn(rn), Wm(rm), Xa(ra)]) = llvm-mc("smaddl Xd, Wn, Wm, Xa")
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (GNU-style assembler README.md:12). State machine rejected (pure function). Round-trip rejected (no in-tree MNEG decoder). encode_msub rejected as independent differential (same-job gate: 4-operand vs 3-operand alias; shared get_reg / same TU).
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: data_processing.rs:8109 encode_msub_diff_gpr / data_processing.rs encode_mul_diff_gpr
+- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool. encode_mneg([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm))]) = llvm-mc("mneg Rd, Rn, Rm")
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, ra]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, ra: 0..31 }
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool }
   relation:
     op: eq
-    lhs: encode_smaddl([Xd(rd), Wn(rn), Wm(rm), Xa(ra)])
-    rhs: llvm_mc("smaddl", Xd(rd), Wn(rn), Wm(rm), Xa(ra))
+    lhs: encode_mneg([Reg(gpr(is_64,rd)), Reg(gpr(is_64,rn)), Reg(gpr(is_64,rm))])
+    rhs: llvm_mc("mneg Rd, Rn, Rm")
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  ra: { gen: int, min: 0, max: 31, type: u32 }
-evidence: data_processing.rs:652 rustdoc; encoder/mod.rs:405 dispatch; llvm-mc -triple=aarch64 -show-encoding
+  is_64: { gen: bool }
+evidence: README.md:12 gas-compat; encoder/mod.rs:409 mneg dispatch; llvm-mc 15.0.6
 ```
 
-## encode_smaddl_alias_smull_xzr
+## encode_mneg_alias_msub_zr
 - Tier: 4
-- Rationale: ARM ARM and the SUT rustdoc of encode_smull state SMULL Xd, Wn, Wm is the alias of SMADDL Xd, Wn, Wm, XZR. That is a metamorphic equality, not an independent differential (shared get_reg / same TU). llvm-mc is used as a second check that both encodings match the assembler. Round-trip rejected (no decoder).
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_alias_umull_xzr
-- Formal: ∀ rd,rn,rm ∈ 0..31. encode_smaddl([Xd(rd), Wn(rn), Wm(rm), XZR]) = encode_smull([Xd(rd), Wn(rn), Wm(rm)]) = llvm-mc("smaddl Xd, Wn, Wm, xzr") = llvm-mc("smull Xd, Wn, Wm")
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+- Rationale: Documented alias (rustdoc "MNEG -> MSUB ... XZR"; ARM ARM MNEG is MSUB with Ra=ZR). Not an independent differential (encode_msub shares get_reg / same TU). Metamorphic: SUT MNEG equals SUT MSUB with ZR and both equal llvm-mc.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: data_processing.rs:8089 encode_msub_kat_llvm_mc_ra_zr_is_mneg
+- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool. encode_mneg([Rd,Rn,Rm]) = encode_msub([Rd,Rn,Rm,ZR]) = llvm-mc("mneg Rd, Rn, Rm") = llvm-mc("msub Rd, Rn, Rm, ZR")
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_smaddl
+function: encode_mneg
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool }
+  relation:
+    op: eq
+    lhs: encode_mneg([Rd,Rn,Rm])
+    rhs: encode_msub([Rd,Rn,Rm,ZR])
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+evidence: data_processing.rs:676 rustdoc alias; ARM ARM MNEG = MSUB Ra=ZR
+```
+
+## encode_mneg_metamorphic_sf_bit
+- Tier: 4
+- Rationale: ARM ARM sf is bit 31 of Data-processing (3 source); same Rd/Rn/Rm numbers in X vs W form differ only by sf. Weaker than differential; still an independent layout identity.
+- Doc contract: data_processing.rs:682 "MSUB with Ra=XZR: sf 00 11011 000 Rm 1 11111 Rn Rd" — asserted fingerprint cd805a03
+- Seed: data_processing.rs:8164 encode_msub_metamorphic_sf_bit
+- Formal: ∀ rd, rn, rm ∈ {0..31}. encode_mneg(X-form) XOR encode_mneg(W-form) = 1<<31
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_mneg
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
@@ -50,328 +80,299 @@ predicate:
   domain: { rd: 0..31, rn: 0..31, rm: 0..31 }
   relation:
     op: eq
-    lhs: encode_smaddl([Xd(rd), Wn(rn), Wm(rm), XZR])
-    rhs: encode_smull([Xd(rd), Wn(rn), Wm(rm)])
+    lhs: encode_mneg(Xform) XOR encode_mneg(Wform)
+    rhs: 1u32 << 31
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-evidence: data_processing.rs:630 Encode SMULL Xd, Wn, Wm -> SMADDL Xd, Wn, Wm, XZR; ARM ARM SMULL alias
+evidence: ARM ARM Data-processing (3 source) sf bit 31; data_processing.rs:682
 ```
 
-## encode_smaddl_xor_umaddl_u_bit
+## encode_mneg_invariant_arm_fields
 - Tier: 4
-- Rationale: Metamorphic: SMADDL and UMADDL of the same registers differ only in bit 23 (U). encode_umaddl is not a same-job differential (unsigned); the U-bit XOR is the evidenced structural relation from ARM ARM. Round-trip rejected (no decoder).
-- Doc contract: data_processing.rs:658 "SMADDL: 1 00 11011 001 Rm 0 Ra Rn Rd" — asserted fingerprint e2a9b663
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_xor_smaddl_u_bit
-- Formal: ∀ rd,rn,rm,ra ∈ 0..31. encode_smaddl(ops) XOR encode_umaddl(ops) = 1<<23
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+- Rationale: ARM ARM field layout of MNEG/MSUB-ZR is an exact structural invariant independent of llvm-mc: sf, bits[30:21]=0011011000, Rm, o0=1, Ra=31, Rn, Rd.
+- Doc contract: data_processing.rs:682 "MSUB with Ra=XZR: sf 00 11011 000 Rm 1 11111 Rn Rd" — asserted fingerprint cd805a03
+- Seed: data_processing.rs:8196 encode_msub_invariant_arm_fields
+- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool. word = encode_mneg([Rd,Rn,Rm]) ⇒ (word>>31)=sf ∧ (word>>21)&0x3FF=0b0011011000 ∧ (word>>16)&0x1F=rm ∧ (word>>15)&1=1 ∧ (word>>10)&0x1F=31 ∧ (word>>5)&0x1F=rn ∧ word&0x1F=rd
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_smaddl
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, ra]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, ra: 0..31 }
-  relation:
-    op: eq
-    lhs: encode_smaddl(ops) XOR encode_umaddl(ops)
-    rhs: 1<<23
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  ra: { gen: int, min: 0, max: 31, type: u32 }
-evidence: data_processing.rs:658 vs 670 U bit (bit 23); ARM ARM Data-processing (3 source)
-```
-
-## encode_smaddl_arm_fields
-- Tier: 4
-- Rationale: ARM ARM SMADDL layout is an exact structural invariant independent of llvm-mc. Weaker than differential; kept as a second oracle so a llvm-mc mapping bug cannot hide a field-layout error. Round-trip rejected (no decoder).
-- Doc contract: data_processing.rs:658 "SMADDL: 1 00 11011 001 Rm 0 Ra Rn Rd" — asserted fingerprint e2a9b663
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_arm_fields
-- Formal: ∀ rd,rn,rm,ra ∈ 0..31. let w = encode_smaddl([Xd(rd), Wn(rn), Wm(rm), Xa(ra)]). w[31]=1 ∧ w[30:21]=0011011001 ∧ w[20:16]=rm ∧ w[15]=0 ∧ w[14:10]=ra ∧ w[9:5]=rn ∧ w[4:0]=rd
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_smaddl
+function: encode_mneg
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, ra]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, ra: 0..31 }
-  body: fields(encode_smaddl(valid_ops)) match ARM SMADDL layout for (sf=1, U=0, o0=0, rd, rn, rm, ra)
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool }
+  body: let w = encode_mneg([Rd,Rn,Rm]) in (w>>31)==sf && ((w>>21)&0x3FF)==0b0011011000 && ((w>>16)&0x1F)==rm && ((w>>15)&1)==1 && ((w>>10)&0x1F)==31 && ((w>>5)&0x1F)==rn && (w&0x1F)==rd
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  ra: { gen: int, min: 0, max: 31, type: u32 }
-evidence: data_processing.rs:658 encoding comment; ARM ARM Data-processing (3 source) SMADDL
+  is_64: { gen: bool }
+evidence: ARM ARM Data-processing (3 source) MNEG = MSUB Ra=ZR; data_processing.rs:682
 ```
 
-## encode_smaddl_neg_arity
-- Tier: 4
-- Rationale: llvm-mc / gas reject SMADDL with fewer than 4 operands ("too few operands"). get_reg on a missing slot returns Err, which is the documented assembler contract. Extra-operand case is a separate property because the body has no upper bound.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_neg_arity
-- Formal: ∀ ops. |ops| ∈ {0,1,2,3} ⇒ encode_smaddl(ops) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_neg_too_few
+- Tier: 3
+- Rationale: llvm-mc reports "too few operands for instruction" for arity < 3. get_reg on a missing index returns Err. Documented error contract of the GNU-style assembler.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: data_processing.rs:8253 encode_msub_neg_too_few
+- Formal: ∀ ops with |ops| ∈ {0,1,2}. encode_mneg(ops) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops]
-  domain: { ops: operand slices of length 0..3 }
+  domain: { ops: operand lists of length 0..2 }
   relation:
     op: throws
-    expr: encode_smaddl(ops)
+    expr: encode_mneg(ops)
 generators:
-  len: { gen: int, min: 0, max: 3, type: usize }
-expected_error: Err
-evidence: llvm-mc too few operands; data_processing.rs:652 four named operands
+  len: { gen: int, min: 0, max: 2, type: usize }
+expected_error: String
+evidence: llvm-mc "too few operands for instruction"; get_reg missing index
 ```
 
-## encode_smaddl_neg_extra_operand
-- Tier: 4
-- Rationale: llvm-mc / gas reject a 5th SMADDL operand ("invalid operand for instruction"). The rustdoc names four operands. Body has no operands.len() upper bound, so the input stays in the generator.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_neg_extra_operand
-- Formal: ∀ rd,rn,rm,ra ∈ 0..31, extra ∈ Operand. encode_smaddl([Xd(rd), Wn(rn), Wm(rm), Xa(ra), extra]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_neg_extra_operand
+- Tier: 3
+- Rationale: llvm-mc rejects a 4th operand ("invalid operand for instruction"). README.md:12 gas-compat. Body has no arity upper bound so this is a documented assembler contract the encoder must honour; generator keeps the extra operand.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: data_processing.rs:8274 encode_msub_neg_extra_operand
+- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool, extra ∈ Operand. encode_mneg([Rd,Rn,Rm,extra]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, ra=0, extra=Reg("x0") → Ok(Word(0x9b200000))
-- Bug report: bug_reports/encode_smaddl_extra_operand.md
+- Counterexample: encode_mneg([Reg("w0"), Reg("w0"), Reg("w0"), Reg("x0")]) -> Ok(Word(0x1b00fc00))
+- Bug report: pbt-out/bug_reports/encode_mneg_extra_operand.md
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, ra, extra]
-  domain: { rd: 0..31, rn: 0..31, rm: 0..31, ra: 0..31, extra: Operand }
+  vars: [rd, rn, rm, is_64, extra]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool, extra: Operand }
   relation:
     op: throws
-    expr: encode_smaddl([Xd(rd), Wn(rn), Wm(rm), Xa(ra), extra])
+    expr: encode_mneg([Rd,Rn,Rm,extra])
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rn: { gen: int, min: 0, max: 31, type: u32 }
   rm: { gen: int, min: 0, max: 31, type: u32 }
-  ra: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: Err
-evidence: llvm-mc invalid operand for instruction; data_processing.rs:652 four named operands
+  is_64: { gen: bool }
+expected_error: String
+evidence: llvm-mc rejects 4th operand; README.md:12 gas-compat
 ```
 
-## encode_smaddl_neg_wrong_width
-- Tier: 4
-- Rationale: ARM ARM and the rustdoc require Xd, Wn, Wm, Xa. llvm-mc rejects any other W/X mix. get_reg returns width but encode_smaddl discards it, so the input stays in the generator.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_neg_wrong_width
-- Formal: ∀ rd,rn,rm,ra ∈ 0..30, rd64,rn64,rm64,ra64 ∈ bool. ¬(rd64 ∧ ¬rn64 ∧ ¬rm64 ∧ ra64) ⇒ encode_smaddl([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm), gpr(ra64,ra)]) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_neg_mixed_width
+- Tier: 3
+- Rationale: ARM ARM and llvm-mc require Rd, Rn, Rm the same width (all X or all W). llvm-mc "invalid operand". Body takes sf only from Rd and discards Rn/Rm width; mixed width stays in the generator.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: data_processing.rs:8296 encode_msub_neg_mixed_width
+- Formal: ∀ rd, rn, rm ∈ {0..30}, rd64, rn64, rm64 ∈ Bool. ¬(rd64=rn64=rm64) ⇒ encode_mneg([gpr(rd64,rd), gpr(rn64,rn), gpr(rm64,rm)]) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: failing
-- Counterexample: rd=0, rn=0, rm=0, ra=0, rd64=false, rn64=false, rm64=false, ra64=false (w0,w0,w0,w0) → Ok(Word(0x9b200000))
-- Bug report: bug_reports/encode_smaddl_wrong_width.md
+- Counterexample: encode_mneg([Reg("w0"), Reg("w0"), Reg("x0")]) -> Ok(Word(0x1b00fc00))
+- Bug report: pbt-out/bug_reports/encode_mneg_mixed_width.md
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, ra, rd64, rn64, rm64, ra64]
-  domain: { rd,rn,rm,ra: 0..30, widths: not the valid X/W/W/X mix }
+  vars: [rd, rn, rm, rd64, rn64, rm64]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30, rd64: bool, rn64: bool, rm64: bool }
   relation:
     op: throws
-    expr: encode_smaddl(mixed_width_ops)
+    expr: encode_mneg(mixed-width triple)
 generators:
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
   rm: { gen: int, min: 0, max: 30, type: u32 }
-  ra: { gen: int, min: 0, max: 30, type: u32 }
   rd64: { gen: bool }
   rn64: { gen: bool }
   rm64: { gen: bool }
-  ra64: { gen: bool }
-expected_error: Err
-evidence: data_processing.rs:652 Xd, Wn, Wm, Xa; llvm-mc invalid operand for instruction
+expected_error: String
+evidence: llvm-mc mixed W/X "invalid operand"; ARM ARM same-width GPR
 ```
 
-## encode_smaddl_neg_sp
-- Tier: 4
-- Rationale: ARM ARM register 31 in SMADDL is XZR/WZR, not SP/WSP. llvm-mc rejects SP/WSP in any slot. parse_reg_num maps both to 31, so the input stays in the generator.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_neg_sp
-- Formal: ∀ which ∈ 0..3, is_64 ∈ bool, a,b ∈ 0..30. encode_smaddl(valid_ops with slot which replaced by SP if is_64 else WSP) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_neg_sp
+- Tier: 3
+- Rationale: ARM ARM register 31 in Data-processing (3 source) is ZR not SP. llvm-mc rejects sp/wsp as MNEG operands. parse_reg_num maps both to 31; the function does not declare SP invalid, so SP stays in the generator.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: data_processing.rs:8324 encode_msub_neg_sp
+- Formal: ∀ which ∈ {0,1,2}, is_64 ∈ Bool, a, b ∈ {0..30}. encode_mneg(triple with slot `which` = sp/wsp) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: failing
-- Counterexample: which=0, is_64=false, a=0, b=0 (wsp, w0, w0, x0) → Ok(Word(0x9b20001f))
-- Bug report: bug_reports/encode_smaddl_sp_as_zr.md
+- Counterexample: encode_mneg([Reg("wsp"), Reg("w0"), Reg("w0")]) -> Ok(Word(0x1b00fc1f))
+- Bug report: pbt-out/bug_reports/encode_mneg_sp_as_zr.md
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, is_64, a, b]
-  domain: { which: 0..3, is_64: bool, a,b: 0..30 }
+  domain: { which: 0..2, is_64: bool, a: 0..30, b: 0..30 }
   relation:
     op: throws
-    expr: encode_smaddl(ops_with_sp_in_slot)
+    expr: encode_mneg(triple with SP/WSP at slot which)
 generators:
-  which: { gen: int, min: 0, max: 3, type: u32 }
+  which: { gen: int, min: 0, max: 2, type: u32 }
   is_64: { gen: bool }
   a: { gen: int, min: 0, max: 30, type: u32 }
   b: { gen: int, min: 0, max: 30, type: u32 }
-expected_error: Err
-evidence: ARM ARM Rd/Ra are XZR not SP; llvm-mc invalid operand for instruction; data_processing.rs:652
+expected_error: String
+evidence: llvm-mc "invalid operand" for sp/wsp; ARM ARM Ra/Rd/Rn/Rm use ZR not SP
 ```
 
-## encode_smaddl_diff_alt_spellings
-- Tier: 5
-- Rationale: Sweep: x31/XZR/LR/uppercase aliases that llvm-mc accepts must match. Differential vs llvm-mc. Strengthens the valid-domain generator toward spelling edges.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_diff_alt_spellings
-- Formal: ∀ rd,rn,rm,ra ∈ 0..31 and alt spellings in {x31, XZR, LR, uppercase}. encode_smaddl(ops) = llvm-mc(asm)
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_smaddl
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [rd, rn, rm, ra, dest_spell, src_spell, acc_spell]
-  domain: { registers 0..31, alt spellings x31/XZR/LR/uppercase }
-  relation:
-    op: eq
-    lhs: encode_smaddl(ops)
-    rhs: llvm_mc(asm)
-generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rn: { gen: int, min: 0, max: 31, type: u32 }
-  rm: { gen: int, min: 0, max: 31, type: u32 }
-  ra: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:267 parse_reg_num xzr/wzr/lr/casefold; llvm-mc -triple=aarch64
-```
-
-## encode_smaddl_neg_fp
-- Tier: 4
-- Rationale: Sweep: llvm-mc rejects FP/SIMD prefixes (d/s/q/v/h/b) as SMADDL operands. parse_reg_num accepts those prefixes, so the input stays in the generator.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_neg_fp
-- Formal: ∀ which ∈ 0..3, prefix ∈ {d,s,q,v,h,b}, n ∈ 0..31. encode_smaddl(valid_ops with slot which = prefix∥n) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_neg_fp
+- Tier: 3
+- Rationale: llvm-mc rejects FP/SIMD prefixes (d/s/q/v/h/b) as MNEG operands. parse_reg_num accepts those prefixes; encode_mneg does not call is_fp_reg. Strengthening round after extra/mixed/SP failures.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: encode_smaddl_pbt.rs encode_smaddl_neg_fp
+- Formal: ∀ which ∈ {0,1,2}, prefix ∈ {d,s,q,v,h,b}, n ∈ {0..31}. encode_mneg(triple with slot which = prefix||n) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: failing
-- Counterexample: which=0, prefix="d", n=0 (d0, w1, w2, x3) → Ok(Word(0x9b220c20))
-- Bug report: bug_reports/encode_smaddl_fp_as_gpr.md
+- Counterexample: encode_mneg([Reg("d0"), Reg("w1"), Reg("w2")]) -> Ok(Word(0x1b02fc20))
+- Bug report: pbt-out/bug_reports/encode_mneg_fp_as_gpr.md
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, prefix, n]
-  domain: { which: 0..3, prefix: {d,s,q,v,h,b}, n: 0..31 }
+  domain: { which: 0..2, prefix: {d,s,q,v,h,b}, n: 0..31 }
   relation:
     op: throws
-    expr: encode_smaddl(ops_with_fp_in_slot)
+    expr: encode_mneg(triple with FP register at slot which)
 generators:
-  which: { gen: int, min: 0, max: 3, type: u32 }
+  which: { gen: int, min: 0, max: 2, type: u32 }
   n: { gen: int, min: 0, max: 31, type: u32 }
-expected_error: Err
-evidence: llvm-mc invalid operand for instruction; data_processing.rs:652 Xd/Wn/Wm/Xa are GPRs
+expected_error: String
+evidence: llvm-mc "invalid operand" for d0; is_fp_reg unused by encode_mneg
 ```
 
-## encode_smaddl_neg_nonreg
-- Tier: 4
-- Rationale: Sweep: non-register operand kinds (Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement) must Err. get_reg already rejects non-Reg.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_neg_nonreg
-- Formal: ∀ which ∈ 0..3, bad ∈ non-Reg Operand. encode_smaddl(valid_ops with slot which = bad) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_neg_nonreg
+- Tier: 3
+- Rationale: get_reg requires Operand::Reg; Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement must Err. Strengthening / contract-surface.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: encode_smaddl_pbt.rs encode_smaddl_neg_nonreg
+- Formal: ∀ which ∈ {0,1,2}, bad ∈ non-Reg Operand. encode_mneg(triple with slot which = bad) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, bad]
-  domain: { which: 0..3, bad: non-Reg Operand }
+  domain: { which: 0..2, bad: non-Reg Operand }
   relation:
     op: throws
-    expr: encode_smaddl(ops_with_nonreg)
+    expr: encode_mneg(triple with non-register at slot which)
 generators:
-  which: { gen: int, min: 0, max: 3, type: u32 }
-expected_error: Err
-evidence: encoder/mod.rs:1092 get_reg expected register; data_processing.rs:654-657
+  which: { gen: int, min: 0, max: 2, type: u32 }
+expected_error: String
+evidence: get_reg returns Err for non-Reg; llvm-mc requires GPR operands
 ```
 
-## encode_smaddl_neg_invalid_name
-- Tier: 4
-- Rationale: Sweep: unparsable names (foo, x32, empty, r0) must Err. parse_reg_num returns None.
-- Doc contract: data_processing.rs:652 "Encode SMADDL Xd, Wn, Wm, Xa (signed multiply-add long)" — asserted fingerprint db6834ac
-- Seed: data_processing.rs encode_umaddl_pbt encode_umaddl_neg_invalid_name
-- Formal: ∀ which ∈ 0..3, name ∈ {foo, x32, w32, x, r0, "", x-1, x99, w}. encode_smaddl(valid_ops with slot which = Reg(name)) is Err
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_neg_invalid_name
+- Tier: 3
+- Rationale: parse_reg_num returns None for x32/foo/empty/r0; get_reg must Err. Strengthening / contract-surface.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: encode_smaddl_pbt.rs encode_smaddl_neg_invalid_name
+- Formal: ∀ which ∈ {0,1,2}, name ∈ {foo, x32, w32, x, r0, empty, x-1, x99, w}. encode_mneg(triple with slot which = Reg(name)) is Err
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_smaddl
+function: encode_mneg
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [which, name]
-  domain: { which: 0..3, name: unparsable register names }
+  domain: { which: 0..2, name: invalid register names }
   relation:
     op: throws
-    expr: encode_smaddl(ops_with_bad_name)
+    expr: encode_mneg(triple with invalid name at slot which)
 generators:
-  which: { gen: int, min: 0, max: 3, type: u32 }
-expected_error: Err
-evidence: encoder/mod.rs:267 parse_reg_num; encoder/mod.rs:1092 invalid register
+  which: { gen: int, min: 0, max: 2, type: u32 }
+expected_error: String
+evidence: parse_reg_num None for x32/foo; llvm-mc rejects unrecognized names
 ```
 
-## encode_smaddl_meta_rd_rn_rm_ra
-- Tier: 4
-- Rationale: Strengthening / sweep: incrementing Rd/Rn/Rm/Ra by 1 updates only that 5-bit field. Independent of llvm-mc. Round-trip rejected (no decoder).
-- Doc contract: data_processing.rs:658 "SMADDL: 1 00 11011 001 Rm 0 Ra Rn Rd" — asserted fingerprint e2a9b663
-- Seed: encode_crc32_pbt encode_crc32_meta_rd_rn_rm
-- Formal: ∀ rd,rn,rm,ra ∈ 0..30. encode_smaddl(..., rd+1, ...) differs from base only in bits[4:0]; rn+1 only in bits[9:5]; rm+1 only in bits[20:16]; ra+1 only in bits[14:10]
-- Test file: src/backend/arm/assembler/encoder/encode_smaddl_pbt.rs
+## encode_mneg_diff_alt_spellings
+- Tier: 5
+- Rationale: parse_reg_num lowercases and accepts x31/w31/XZR/LR. Differential vs llvm-mc on those aliases. Strengthening / contract-surface.
+- Doc contract: data_processing.rs:676 "Encode MNEG Xd, Xn, Xm -> MSUB Xd, Xn, Xm, XZR" — asserted fingerprint 19f56334
+- Seed: encode_smaddl_pbt.rs encode_smaddl_diff_alt_spellings
+- Formal: ∀ rd, rn, rm ∈ {0..31}, is_64 ∈ Bool, spellings ∈ {x31, XZR, LR, uppercase}. encode_mneg(spelled) = llvm-mc(spelled)
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_smaddl
+function: encode_mneg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..31, rn: 0..31, rm: 0..31, is_64: bool }
+  relation:
+    op: eq
+    lhs: encode_mneg(alt-spellings)
+    rhs: llvm_mc(alt-spellings)
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rn: { gen: int, min: 0, max: 31, type: u32 }
+  rm: { gen: int, min: 0, max: 31, type: u32 }
+  is_64: { gen: bool }
+evidence: parse_reg_num to_lowercase; llvm-mc accepts x31/XZR/LR
+```
+
+## encode_mneg_meta_rd_rn_rm
+- Tier: 4
+- Rationale: Rd/Rn/Rm n vs n+1 must differ only in that 5-bit field (ARM layout isolation). Strengthening / contract-surface.
+- Doc contract: data_processing.rs:682 "MSUB with Ra=XZR: sf 00 11011 000 Rm 1 11111 Rn Rd" — asserted fingerprint cd805a03
+- Seed: encode_smaddl_pbt.rs encode_smaddl_meta_rd_rn_rm_ra
+- Formal: ∀ rd, rn, rm ∈ {0..30}, is_64 ∈ Bool. (encode_mneg(rd+1) XOR encode_mneg(rd)) & ~0x1F = 0, and similarly Rn bits[9:5], Rm bits[20:16]
+- Test file: src/backend/arm/assembler/encoder/encode_mneg_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_mneg
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rd, rn, rm, ra]
-  domain: { rd: 0..30, rn: 0..30, rm: 0..30, ra: 0..30 }
-  body: mutating one of rd/rn/rm/ra by +1 flips only that 5-bit field
+  vars: [rd, rn, rm, is_64]
+  domain: { rd: 0..30, rn: 0..30, rm: 0..30, is_64: bool }
+  relation:
+    op: eq
+    lhs: (encode_mneg(rd+1) XOR encode_mneg(rd)) AND NOT 0x1F
+    rhs: 0
 generators:
   rd: { gen: int, min: 0, max: 30, type: u32 }
   rn: { gen: int, min: 0, max: 30, type: u32 }
   rm: { gen: int, min: 0, max: 30, type: u32 }
-  ra: { gen: int, min: 0, max: 30, type: u32 }
-evidence: data_processing.rs:658 Rd/Rn/Rm/Ra field positions
+  is_64: { gen: bool }
+evidence: ARM ARM Rd bits[4:0] Rn bits[9:5] Rm bits[20:16]
 ```

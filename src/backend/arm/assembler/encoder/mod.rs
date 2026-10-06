@@ -156,6 +156,8 @@ mod encode_tbz_pbt;
 mod encode_crc32_pbt;
 #[cfg(test)]
 mod encode_smaddl_pbt;
+#[cfg(test)]
+mod encode_mneg_pbt;
 
 pub(crate) use data_processing::*;
 pub(crate) use compare_branch::*;

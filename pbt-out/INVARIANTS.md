@@ -1,3 +1,38 @@
+# Confirmed invariants (encode_mneg)
+
+- Valid MNEG Rd, Rn, Rm with same-width GPRs in {x0..x30, xzr, x31, lr} or {w0..w30, wzr, w31} match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins mneg x0,x1,x2=0x9b02fc20, mneg w0,w1,w2=0x1b02fc20, mneg xzr,xzr,xzr=0x9b1fffff, mneg lr,x1,x2=0x9b02fc3e, msub x0,x1,x2,xzr aliases to the same word.
+- ARM MNEG/MSUB-ZR layout holds: bits[30:21]=0011011000; o0=1; Ra=31; Rm/Rn/Rd match; sf from width (1000 cases).
+- MNEG equals MSUB with Ra=ZR of the same registers and llvm-mc (1000 cases).
+- X-form XOR W-form = 1<<31 (1000 cases).
+- Rd/Rn/Rm n vs n+1 differ only in that 5-bit field (1000 cases).
+- Arity 0, 1, and 2 return Err (1000 cases).
+- Unparsable names (x32, foo, empty, r0) return Err (sweep, 1000 cases).
+- Non-register operand kinds (Imm/Mem/Shift/Label/Symbol/Cond/RegArrangement) return Err (sweep, 1000 cases).
+- ASCII case-fold / x31 / LR aliases match llvm-mc (sweep, 1000 cases).
+- Extra operands, SP/WSP, mixed W/X widths, and FP/SIMD registers currently disagree with llvm-mc/gas (see bugs).
+
+## Environment (encode_mneg)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=aarch64 -show-encoding (LLVM 15.0.6).
+- ARM ARM Data-processing (3 source) MNEG is the alias of MSUB Rd, Rn, Rm, ZR: sf 00 11011 000 Rm o0=1 Ra=11111 Rn Rd. Register 31 is ZR not SP.
+- Dispatch: encoder/mod.rs:409 `"mneg" => encode_mneg(operands)`.
+- Sibling encode_msub is not a same-job independent differential (4-operand vs 3-operand alias; shared get_reg / same TU); used only as algebraic.metamorphic Ra=ZR alias.
+- proptest 1.11 requires `#[test]` inside `proptest! { }`. 1000 cases. Sweep round 1/1 spent.
+- coverage_gaps had no LLVM profraw in this session (C++ reporter listed unrelated binaries and claimed NOT LINKED). Sweep was a manual arm audit of the 12-line body plus encode_mneg_neg_fp / encode_mneg_neg_invalid_name / encode_mneg_neg_nonreg / encode_mneg_diff_alt_spellings / encode_mneg_meta_rd_rn_rm. Closed: every documented behavior has a property; tier round spent.
+- Four failing properties are SUT bugs, not quirks. See pbt-out/bug_reports/encode_mneg_*.md.
+
+## Quirks (encode_mneg)
+
+- ASCII case of register names is accepted (to_lowercase / parse_reg_num).
+- parse_reg_num maps SP and XZR both to 31; encode_mneg does not distinguish them (see bugs).
+- parse_reg_num accepts FP prefixes (d/s/q/v/h/b) (see bugs).
+- No operands.len() upper bound; extra operands are ignored (see bugs).
+- get_reg width of Rn/Rm is discarded; sf comes only from Rd (see bugs).
+- llvm-mc aliases `msub x0, x1, x2, xzr` to `mneg x0, x1, x2`; encodings still compare.
+- llvm-mc accepts `x31` as XZR/WZR.
+- proptest 1.11 requires `#[test]` inside `proptest! { }` or the functions are not registered.
+- `coverage_gaps` had no LLVM profraw in this session; sweep was a manual arm audit of the 12-line body.
+
 # Confirmed invariants (encode_smaddl)
 
 - Valid SMADDL Xd, Wn, Wm, Xa with Rd/Ra in {x0..x30, xzr, x31, lr} and Rn/Rm in {w0..w30, wzr, w31} match llvm-mc `-triple=aarch64 -show-encoding` (1000 cases). KAT pins smaddl x0,w1,w2,x3=0x9b220c20, smaddl xzr,wzr,wzr,xzr=0x9b3f7fff, smaddl x0,w1,w2,xzr=0x9b227c20 (alias smull), smaddl lr,w1,w2,x30=0x9b22783e.
