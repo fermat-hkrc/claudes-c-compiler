@@ -5,3 +5,6 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 5e96eff526b8b355c0aa1dc1d32ca8bcddf3aaac30d896b854c26d828cd355a9 # shrinks to fns = [FnSpec { n_args: 4, tokens: [(0, 0), (0, 0), (0, 0), (122, -4356743081147969760), (0, 0), (0, 0), (15, -1)] }], loop_n = 0, loop_k = 0
+cc ed44420d7f16e4b5879c07f4560b5dedb7a8df3d1b1a738f0bd67dfbb4b892fc # shrinks to fam = 8, a = 0, b = 0, c = 0, imm = 0
+cc e4feeb885ee22d5f55a2f98fc0f089962db1f93e9d853c4c127cae4d65b2c37c # shrinks to fam = 0, a = 0, b = 0, c = 0, imm = 0, m = 0, slot = 0
+cc 0d550a2963fd5dd5a8431df61908c7e0db9c28ffa5bb754118a08a4858e22bbd # shrinks to fam = 18, a = 0, b = 0, c = 0, imm = 0

@@ -172,3 +172,9 @@ Environment quirks (round 05):
   ldur imm range [-256,-1]; ARM ldr/str base must be X registers; RISC-V
   ld/st 12-bit offsets (max 2047).
 - asm >> is LOGICAL per GNU as AND llvm-mc (both references agree).
+- Round-15 sweep: 20 additional families (lea/test/xchg/cmov/setcc/imul/
+  idiv/mul/adc/scalar-SSE/cvt*/psrlq/vpermd/crc32/rdtsc/cpuid/cqo/cdq/
+  min-max) — all clean except packed min/max (#782, scalar forms present).
+- Coverage evidence level: file-level (symbol presence); coverage_gaps'
+  passes NOT LINKED list = cfg(test) false negative (round-07 properties
+  call those fns directly).

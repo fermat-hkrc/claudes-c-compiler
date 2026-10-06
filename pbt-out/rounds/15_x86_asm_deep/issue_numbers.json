@@ -1,0 +1,1 @@
+{"x86asm_gpr_width_silent_coercion": 774, "x86asm_simd_width_silent_promotion": 775, "x86asm_imm32_overflow_silent_truncation": 776, "x86asm_bare_popcnt_lzcnt_tzcnt_rejected": 777}
