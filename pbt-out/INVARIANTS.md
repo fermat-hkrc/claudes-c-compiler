@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_v_arith_vv)
+
+- Valid 3-operand unmasked OPIVV with vd, vs2, vs1 ∈ {v0..v31}, (mnem,funct6) ∈ {(vadd.vv,000000),(vsub.vv,000010),(vand.vv,001001),(vor.vv,001010),(vxor.vv,001011)} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vadd.vv v0, v0, v0 = 0x02000057; vadd.vv v1, v2, v3 = 0x022180d7; vadd.vv v31, v30, v29 = 0x03ee8fd7; vsub.vv v1, v2, v3 = 0x0a2180d7; vand.vv v1, v2, v3 = 0x262180d7; vor.vv v1, v2, v3 = 0x2a2180d7; vxor.vv v1, v2, v3 = 0x2e2180d7.
+- Format layout holds: opcode=1010111, funct3=000, vm=1, vd in [11:7], vs1 in [19:15], vs2 in [24:20], funct6 in [31:26] (1000 cases over funct6 0..63).
+- Field isolation: vd/vs2/vs1/funct6 bits independent of the other fields (1000 cases).
+- vs2/vs1 swap: swapping operands 1 and 2 swaps bits [24:20] and [19:15] and preserves all other bits (1000 cases).
+- Too few operands, non-vector registers (GPR/FP/v32), and non-Reg kinds at any of the three positions return Err (1000 cases).
+- Extra operand and trailing v0.t currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_v_arith_vv)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6). Default riscv64 without +v rejects vadd.vv / vsub.vv / vand.vv / vor.vv / vxor.vv.
+- Harness: src/backend/riscv/assembler/encoder/encode_v_arith_vv_pbt.rs, cargo test --lib encode_v_arith_vv, proptest cases=1000.
+- Dispatch: encoder/mod.rs:974-987 vadd.vv/vsub.vv/vand.vv/vor.vv/vxor.vv => encode_v_arith_vv(operands, funct6). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_v_arith_vv NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / format / isolation / vs2-vs1-swap / arity-bad-regs / extra / mask-v0.t. Closed: tier round spent; remaining documented gaps are the extra-operand and mask-v0.t bugs.
+
+## Quirks (encode_v_arith_vv)
+
+- vreg_num lowercases; llvm-mc rejects uppercase register names.
+- get_vreg does not accept Imm(0..=31) as a bare vector register number (unlike get_reg for GPRs).
+- vm is hardcoded to 1 (unmasked). Dispatcher TODO encoder/mod.rs:947: masked variants (v0.t) are not yet supported.
+- Assembly order is vd, vs2, vs1 (RISC-V V), not ALU rd, rs1, rs2.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vstore)
 
 - Valid 2-operand unit-stride vector stores with vs3 ∈ {v0..v31}, rs1 ∈ {x0..x31} ∪ ABI ∪ {fp}, (mnem,width,sumop) ∈ {(vse8.v,000,0),(vse16.v,101,0),(vse32.v,110,0),(vse64.v,111,0),(vsm.v,000,0x0B)} match llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vse8.v v0, (a0) = 0x02050027; vse16.v v1, (a1) = 0x0205d0a7; vse32.v v2, (sp) = 0x02016127; vse64.v v31, (zero) = 0x02007fa7; vsm.v v0, (a0) = 0x02b50027; vse8.v v0, (x10) = 0x02050027.

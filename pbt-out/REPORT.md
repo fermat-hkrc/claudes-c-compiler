@@ -1,69 +1,100 @@
-# PBT Campaign Report: encode_vstore
+# PBT Campaign Report: encode_v_arith_vv
 
 ## Summary
 
-**Verdict:** 1 medium: encode_vstore ignores extra operands, so `vse8.v v0, (x0), 0` (and any trailing token, including a `v0.t` mask) encodes as unmasked `vse8.v v0, (x0)` instead of being rejected the way llvm-mc rejects it.
-**Date:** 2026-10-06
+**Verdict:** 1 medium and 1 low: encode_v_arith_vv ignores extra operands, so `vadd.vv v0, v0, v0, 0` encodes as unmasked `vadd.vv v0, v0, v0`, and a trailing `v0.t` is dropped so a masked OPIVV is silently encoded unmasked (vm=1).
+**Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_vstore
-**Tests:** 8
-**Result:** 7 passing, 1 bug
-**Change surface:** 1 changed function (encode_vstore), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vstore NOT LINKED in C++ reporter binaries; Rust cargo tests are not those binaries. Manual audit of the documented 2-operand / format / mem-reg / ABI / isolation / arity / extra / nonzero-offset surface.
+**Modules tested:** encode_v_arith_vv
+**Tests:** 7
+**Result:** 5 passing, 2 bugs
+**Change surface:** 1 changed function (encode_v_arith_vv), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_v_arith_vv NOT LINKED in C++ reporter binaries; Rust cargo tests are not those binaries. Manual audit of the documented 3-operand / format / isolation / vs2-vs1-swap / arity / extra / mask-v0.t surface.
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_vstore | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_v_arith_vv | 7 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_vstore ignores extra operands
+### B1: encode_v_arith_vv ignores extra operands
 
-**Formal:** ∀ vs3 ∈ {v0..v31}, rs1 ∈ GPR names, extra ∈ Operand. encode_vstore([Reg(vs3), Mem{base:rs1, offset:0}, extra], width, sumop) = Err(_)
-**Contract evidence:** inferred (rustdoc two-operand syntax `vse{8,16,32,64}.v vs3, (rs1)` at vector.rs:101; llvm-mc `-triple=riscv64 -mattr=+v` rejects a third non-mask token with `operand must be v0.t`; encoder/mod.rs:962-969 passes operands through)
+**Formal:** ∀ vd, vs2, vs1 ∈ 0..31, extra ∈ Operand \ {v0.t mask token}, (mnem, funct6) ∈ opivv_family. encode_v_arith_vv([Reg(v{vd}), Reg(v{vs2}), Reg(v{vs1}), extra], funct6) is Err
+**Contract evidence:** inferred (rustdoc three-register OPIVV form at vector.rs:122; llvm-mc `-triple=riscv64 -mattr=+v` rejects a fourth non-mask token with `operand must be v0.t` / `expected '.t' suffix`; encoder/mod.rs:974-987 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_vstore([Reg("v0"), Mem{base:"x0", offset:0}, Imm(0)], width=0b000, sumop=0)
-**Expected / Actual:** Err / Ok(Word(0x02000027)) — same encoding as `vse8.v v0, (x0)`
-**Impact:** Invalid assembly with a stray third operand is assembled into a valid-looking unit-stride store. A trailing `v0.t` mask token is also dropped, so a masked store is silently encoded as unmasked (vm=1).
-**Root cause:** vector.rs:105-119 reads only operands 0 and 1 and never checks operands.len() == 2, so extra tokens are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:105`
+**Counterexample:** encode_v_arith_vv([Reg("v0"), Reg("v0"), Reg("v0"), Imm(0)], funct6=0b000000)
+**Expected / Actual:** Err / Ok(Word(0x02000057)) — same encoding as `vadd.vv v0, v0, v0`
+**Impact:** Invalid assembly with a stray fourth operand is assembled into a valid-looking unmasked OPIVV word instead of an assembler error.
+**Root cause:** vector.rs:124-130 reads only operands 0, 1, and 2 via get_vreg and never checks operands.len() == 3, so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:124`
 ```rust
-    let vs3 = get_vreg(operands, 0)?;
-    let rs1 = match operands.get(1) {
-        Some(Operand::Mem { base, offset: 0 }) => {
-            reg_num(base).ok_or_else(|| format!("invalid base register: {}", base))?
-        }
-        Some(Operand::Reg(name)) => {
-            reg_num(name).ok_or_else(|| format!("invalid register: {}", name))?
-        }
-        other => return Err(format!("expected (rs1) at operand 1, got {:?}", other)),
-    };
-    let vm: u32 = 1;
-    // nf=000, mew=0, mop=00 (bits 31:26 = 0)
-    let word = (vm << 25)
-        | (sumop << 20) | (rs1 << 15) | (width << 12) | (vs3 << 7) | OP_STORE_FP;
+    let vd = get_vreg(operands, 0)?;
+    let vs2 = get_vreg(operands, 1)?;
+    let vs1 = get_vreg(operands, 2)?;
+    let vm: u32 = 1; // unmasked
+    // funct3=000 (OPIVV)
+    let word = (funct6 << 26) | (vm << 25) | (vs2 << 20) | (vs1 << 15) | (vd << 7) | OP_V;
     Ok(EncodeResult::Word(word))
 ```
-**Suggested fix:** Reject any operand list that is not exactly two operands.
+**Suggested fix:** Reject any operand list that is not exactly three operands (mask token v0.t is a separate 4-operand form).
 ```rust
-    if operands.len() != 2 {
-        return Err(format!("vse*.v/vsm.v expects 2 operands, got {}", operands.len()));
+    if operands.len() != 3 {
+        return Err(format!("OPIVV expects 3 operands, got {}", operands.len()));
     }
-    let vs3 = get_vreg(operands, 0)?;
+    let vd = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_vstore_extra_operand.md
-**Repro seed:** cc 7a6b2270397084ba17246537dbbb41a441204e7b189bb03dc37f937227e8c407
+**Bug report:** bug_reports/encode_v_arith_vv_extra_operand.md
+**Repro seed:** (none — shrunk to Imm(0) on the first case; replay via the regression test)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_vstore_pbt::encode_vstore_neg_extra' (2875549) panicked at src/backend/riscv/assembler/encoder/encode_vstore_pbt.rs:324:1:
-Test failed: extra operand Imm(0) must Err for vstore (llvm-mc rejects extra); got Ok(Word(33554471)) at src/backend/riscv/assembler/encoder/encode_vstore_pbt.rs:475.
-minimal failing input: vs3 = 0, rs1 = "x0", extra = Imm(
+thread 'backend::riscv::assembler::encoder::encode_v_arith_vv_pbt::encode_v_arith_vv_neg_extra' (2877953) panicked at src/backend/riscv/assembler/encoder/encode_v_arith_vv_pbt.rs:260:1:
+Test failed: extra operand Imm(0) must Err for OPIVV (llvm-mc rejects extra); got Ok(Word(33554519)) at src/backend/riscv/assembler/encoder/encode_v_arith_vv_pbt.rs:394.
+minimal failing input: vd = 0, vs2 = 0, vs1 = 0, extra = Imm(
     0,
 ), kind = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+```
+
+### B2: encode_v_arith_vv drops v0.t and encodes unmasked
+
+**Formal:** ∀ vd ∈ {1..31}, vs2, vs1 ∈ {0..31}, (mnem, funct6) ∈ opivv_family. encode_v_arith_vv([Reg(v{vd}), Reg(v{vs2}), Reg(v{vs1}), Symbol("v0.t")], funct6) = llvm-mc(mnem v{vd}, v{vs2}, v{vs1}, v0.t)
+**Contract evidence:** documented limitation encoder/mod.rs:947 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)." — known limitation on an input the public wrapper accepts (operands passed through at encoder/mod.rs:974-987). RISC-V V 1.0 and llvm-mc encode `, v0.t` as vm=0.
+**Documentation conflict:** encoder/mod.rs:947 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)." — admits a gap on an input the API accepts (limitation, not an exclusion). vector.rs:127 `let vm: u32 = 1; // unmasked` describes the emission, not that v0.t is invalid.
+**Severity:** low (documented by the author)
+**Counterexample:** encode_v_arith_vv([Reg("v1"), Reg("v0"), Reg("v0"), Symbol("v0.t")], funct6=0b000000)
+**Expected / Actual:** Ok(Word(0x000000d7)) / Ok(Word(0x020000d7)) — llvm-mc `vadd.vv v1, v0, v0, v0.t` vs unmasked `vadd.vv v1, v0, v0`
+**Impact:** A masked OPIVV instruction is silently encoded as unmasked. Inactive elements that should be left undisturbed are overwritten.
+**Root cause:** vector.rs:127 hardcodes `vm = 1` and never inspects operand 3, so a v0.t mask token cannot clear bit 25.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:127`
+```rust
+    let vm: u32 = 1; // unmasked
+```
+**Suggested fix:** Accept an optional fourth operand `v0.t` and set vm=0; reject any other extra operand.
+```rust
+    let vm: u32 = match operands.get(3) {
+        None => 1,
+        Some(Operand::Symbol(s)) | Some(Operand::Reg(s)) if s == "v0.t" => 0,
+        Some(other) => return Err(format!("operand 3 must be v0.t, got {:?}", other)),
+    };
+    if operands.len() > 4 {
+        return Err(format!("OPIVV expects 3 or 4 operands, got {}", operands.len()));
+    }
+```
+**Bug report:** bug_reports/encode_v_arith_vv_mask_v0t.md
+**Repro seed:** cc 9b7d30bde5d402d15e00e09f944f35fcf8a592b6a0b685cd714caddf3e1f4fd0
+**Raw output:**
+```text
+thread 'backend::riscv::assembler::encoder::encode_v_arith_vv_pbt::encode_v_arith_vv_mask_v0t' (2877970) panicked at src/backend/riscv/assembler/encoder/encode_v_arith_vv_pbt.rs:260:1:
+Test failed: assertion failed: `(left == right)` 
+  left: `33554647`, 
+ right: `215`: SUT 0x020000d7 != llvm-mc 0x000000d7 for masked vadd.vv v1, v0, v0, v0.t at src/backend/riscv/assembler/encoder/encode_v_arith_vv_pbt.rs:417.
+minimal failing input: vd = 1, vs2 = 0, vs1 = 0, kind = 0
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -77,22 +108,26 @@ minimal failing input: vs3 = 0, rs1 = "x0", extra = Imm(
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_vstore_pbt.rs | 8 properties + 6 KAT + 1 regression witness |
+| src/backend/riscv/assembler/encoder/encode_v_arith_vv_pbt.rs | 7 properties + 7 KAT + 2 failing regression witnesses |
 
 ## Reproduction
 
-Whole suite (expect 13 passed, 2 failed — the extra-operand property and its regression witness):
-
+Whole suite (5 passing properties, 2 failing properties, 7 KAT, 2 regression witnesses):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_vstore -- --test-threads=1
+cargo test --lib encode_v_arith_vv -- --test-threads=1
 ```
 
 B1 extra operand:
-
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_vstore_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_v_arith_vv_regression_extra_operand -- --test-threads=1
+```
+
+B2 mask v0.t:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_v_arith_vv_regression_mask_v0t -- --test-threads=1
 ```
 
 ## Output Directories
@@ -100,22 +135,25 @@ cargo test --lib test_encode_vstore_regression_extra_operand -- --test-threads=1
 - pbt-out/REPORT.md — this report
 - pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
 - pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign checklist
+- pbt-out/PLAN.md — campaign phases
 - pbt-out/COVERAGE.md — coverage ledger
 - pbt-out/COVERAGE_STATUS.md — coverage status
-- pbt-out/report.json — machine-readable report
-- pbt-out/FUNCTION_INDEX.md — function index (merged)
 - pbt-out/INVARIANTS.md — confirmed invariants
-- pbt-out/bug_reports/encode_vstore_extra_operand.md — B1
-- pbt-out/bug_reports/encode_vstore_extra_operand.html — B1 HTML
-- pbt-out/run/encode_vstore_pbt.log — test run log
+- pbt-out/report.json — machine-readable report
+- pbt-out/FUNCTION_INDEX.md — merged function index
+- pbt-out/bug_reports/encode_v_arith_vv_extra_operand.md — B1
+- pbt-out/bug_reports/encode_v_arith_vv_extra_operand.html — B1 HTML
+- pbt-out/bug_reports/encode_v_arith_vv_mask_v0t.md — B2
+- pbt-out/bug_reports/encode_v_arith_vv_mask_v0t.html — B2 HTML
+- pbt-out/run/encode_v_arith_vv.log — cargo test log
+- proptest-regressions/backend/riscv/assembler/encoder/encode_v_arith_vv_pbt.txt — proptest failure file (outside pbt-out/; created by proptest)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-06 23:55 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 225/383 total | PBT candidates: 225 | Tested: 225 (100%) | 1 pass, 225 fail
+> Last updated: 2026-10-07 00:11 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 226/383 total | PBT candidates: 226 | Tested: 226 (100%) | 1 pass, 226 fail
 
 ## Summary
 
@@ -124,10 +162,10 @@ cargo test --lib test_encode_vstore_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 225 |
-| **Tested (of PBT candidates)** | **225 / 225 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 225 / -1 |
-| **Overall (tested / all functions)** | **225 / 383 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 226 |
+| **Tested (of PBT candidates)** | **226 / 226 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 226 / -1 |
+| **Overall (tested / all functions)** | **226 / 383 (59%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -135,13 +173,13 @@ cargo test --lib test_encode_vstore_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 225 | 225 | 0 | 100% |
+|  | 226 | 226 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 225 | 225 | 0 | 100% |
+| unknown | 226 | 226 | 0 | 100% |
 
 ## File Coverage
 
@@ -389,3 +427,4 @@ cargo test --lib test_encode_vstore_regression_extra_operand -- --test-threads=1
 | encode_vsetvl | vector.rs |
 | encode_vload | vector.rs |
 | encode_vstore | vector.rs |
+| encode_v_arith_vv | vector.rs |
