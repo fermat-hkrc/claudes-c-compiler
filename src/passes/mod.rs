@@ -1203,3 +1203,185 @@ int cmain(void) {{
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_opt_adversarial {
+    //! Round-42: adversarial optimizer patterns with boundary injection —
+    //! branchless abs/min/max at INT_MIN, guarded overflow checks, rotates with
+    //! r=0/33 wraps, induction-variable strength reduction at wrap edges.
+    //! Oracle: gcc -O0 (semantics invariant).
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/42_optadv/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    fn body(x: i32, u: u32, r: u32, n: u32, k: u32, d: i64) -> String {
+        format!("\
+static unsigned rotr32(unsigned x, unsigned r) {{ r &= 31; return r ? (x << (32 - r)) | (x >> r) : x; }}
+static int abs_b(int v) {{ int m = v >> 31; return (v ^ m) - m; }}
+static int maxb(int a, int b) {{ return a ^ ((a ^ b) & -(a < b)); }}
+static int minb(int a, int b) {{ return b ^ ((a ^ b) & -(a < b)); }}
+static int ovf_check(int a, int b, int *ok) {{
+    if (b > 0 && a > 2147483647 - b) {{ *ok = 0; return -1; }}
+    if (b < 0 && a < (-2147483647 - 1) - b) {{ *ok = 0; return -2; }}
+    *ok = 1; return a + b;
+}}
+static unsigned strength(unsigned n, unsigned k) {{
+    unsigned s = 0;
+    for (unsigned i = 0; i < n; i++) s += i * 8 + k;
+    return s;
+}}
+static long guarded_div(long a, long b) {{ return b ? a / b : -77; }}
+int cmain(void) {{
+    unsigned R = {r}u;
+    int A = {x}, B = {x} + 1;
+    unsigned X = {u}u, K = {k}u, N = {n} % 200u;
+    long D = {d};
+    long h = rotr32(X, R) + rotr32(X, R + 1) + rotr32(X, R + 31) + rotr32(X, 32);
+    h += (long)abs_b(A) + abs_b(B) + abs_b(-2147483647 - 1);
+    h += maxb(A, B) + minb(A, B) + maxb(-2147483647 - 1, B) * 0;
+    int ok1, ok2, ok3;
+    h += ovf_check(A, B, &ok1) + ovf_check(A, -B, &ok2) + ovf_check(2147483647, 1, &ok3) * ok3;
+    h += (long)strength(N, K) + strength(N + 1, K + 7);
+    h += guarded_div(D, D % 97 - 50) + guarded_div(D, 0);
+    h += (long)(X - K) + (long)(K - X);   // 无符号回绕对称
+    return (int)((h * 2654435761L) % 251);
+}}
+int main(void){{ return cmain(); }}", x = x, u = u, r = r, n = n, k = k, d = d)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+        #[test]
+        fn p_opt_adversarial_vs_gcc(
+            x in proptest::strategy::Union::new(vec![
+                any::<i32>().boxed(),
+                (0i32..4).prop_map(|k| [i32::MIN, i32::MAX, i32::MIN + 1, i32::MAX - 1][k as usize]).boxed(),
+            ]),
+            u in proptest::strategy::Union::new(vec![
+                any::<u32>().boxed(),
+                (0u32..3).prop_map(|k| [0u32, u32::MAX, u32::MAX - 1][k as usize]).boxed(),
+            ]),
+            r in 0u32..34, n in any::<u32>(), k in any::<u32>(), d in any::<i64>(),
+            lvl in 0usize..3,
+        ) {
+            let prog = body(x, u, r, n, k, d);
+            let lvl = ["-O0", "-O1", "-O2"][lvl];
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("V{}.c", case));
+            std::fs::write(&src, &prog).unwrap();
+            let g = dir.join(format!("V{}g", case));
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&g).arg(&src).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+            let want = Command::new(&g).output().unwrap();
+            let expected = want.status.code().unwrap_or(-1);
+            let _ = std::fs::remove_file(&g);
+            let out = dir.join(format!("V{}c", case));
+            let argv = vec!["ccc".to_string(), lvl.to_string(), src.to_str().unwrap().to_string(), "-o".to_string(), out.to_str().unwrap().to_string()];
+            let mut drv = crate::driver::Driver::new();
+            let cc = match drv.parse_cli_args(&argv) { Ok(false) => drv.run(), Ok(true) => Err("cli".into()), Err(e) => Err(e) };
+            prop_assert!(cc.is_ok(), "ccc {} failed\n{}", lvl, prog);
+            let got = Command::new(&out).output().unwrap();
+            let _ = std::fs::remove_file(&out); let _ = std::fs::remove_file(&src);
+            prop_assert!(!got.status.to_string().contains("signal"), "crashed at {}\n{}", lvl, prog);
+            prop_assert_eq!(got.status.code().unwrap_or(-1), expected,
+                "OPT-ADVERSARIAL MISMATCH at {} (gcc -O0)\n{}", lvl, prog);
+        }
+    }
+}
+
+#[cfg(test)]
+mod pbt_memgraph {
+    //! Round-42: memory-graph fuzzer — aliasing writes through computed indices,
+    //! side effects via function pointers, pointer arithmetic, final-state oracle
+    //! vs gcc. The classic miscompile zone at -O0/-O1/-O2.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/42_optadv/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 生成随机操作序列作用于 8 个全局 cell + 2 个数组（可别名）
+    fn body(seed: u64, n_ops: usize) -> String {
+        let mut rng = seed | 1;
+        let mut next = move || { rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (rng >> 33) as u32 };
+        let mut ops = String::new();
+        let mut fdefs = String::new();
+        let mut fno = 0;
+        for i in 0..n_ops {
+            let op = next() % 7;
+            let c1 = next() % 8;
+            let c2 = next() % 8;
+            let v = (next() % 1000) as i64;
+            match op {
+                0 => ops.push_str(&format!("    cells[{c1}] = cells[{c2}] + {v};\n")),
+                1 => ops.push_str(&format!("    arr[{c1} % 6] = {v}; cells[{c2}] += arr[{c1} % 6];\n")),
+                2 => { fno += 1;
+                    fdefs.push_str(&format!("static int f{fno}(int *p, int *q) {{ *p += {v}; return *q * 2; }}\n"));
+                    ops.push_str(&format!("    sum += f{fno}(&cells[{c1}], &cells[{c2}]);\n")); }
+                3 => ops.push_str(&format!("    {{ int *p = &cells[{c1}]; int *q = p + {c2}; if (q >= cells && q < cells + 8) *q ^= {v}u; }}\n")),
+                4 => ops.push_str(&format!("    for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + {c1}) % 8] % 97;\n")),
+                5 => ops.push_str(&format!("    sum += cells[{c1}] > cells[{c2}] ? cells[{c1}] : -cells[{c2}];\n")),
+                _ => ops.push_str(&format!("    {{ struct {{ int v; int *np; }} box = {{ cells[{c1}], &cells[{c2}] }}; box.v += *box.np; cells[{c1}] = box.v; }}\n")),
+            }
+            let _ = i;
+        }
+        let mut pre = format!("{}", fdefs);
+        pre.insert_str(0, "");
+        format!("\
+{fdefs}static int cells[8];
+static int arr[6];
+static long sum;
+int cmain(void) {{
+    for (int i = 0; i < 8; i++) cells[i] = i * 13 % 101;
+    for (int i = 0; i < 6; i++) arr[i] = i * 7;
+{ops}    long h = sum;
+    for (int i = 0; i < 8; i++) h = h * 1099511628211L + cells[i];
+    for (int i = 0; i < 6; i++) h = h * 31 + arr[i];
+    return (int)((h ^ (h >> 32)) % 251);
+}}
+int main(void){{ return cmain(); }}", ops = ops)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(300))]
+        #[test]
+        fn p_memgraph_vs_gcc(seed in any::<u64>(), n in 6usize..24, lvl in 0usize..3) {
+            let prog = body(seed, n);
+            let lvl = ["-O0", "-O1", "-O2"][lvl];
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("G{}.c", case));
+            std::fs::write(&src, &prog).unwrap();
+            let g = dir.join(format!("G{}g", case));
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&g).arg(&src).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+            let want = Command::new(&g).output().unwrap();
+            let expected = want.status.code().unwrap_or(-1);
+            let _ = std::fs::remove_file(&g);
+            let out = dir.join(format!("G{}c", case));
+            let argv = vec!["ccc".to_string(), lvl.to_string(), src.to_str().unwrap().to_string(), "-o".to_string(), out.to_str().unwrap().to_string()];
+            let mut drv = crate::driver::Driver::new();
+            let cc = match drv.parse_cli_args(&argv) { Ok(false) => drv.run(), Ok(true) => Err("cli".into()), Err(e) => Err(e) };
+            prop_assert!(cc.is_ok(), "ccc failed\n{}", prog);
+            let got = Command::new(&out).output().unwrap();
+            let _ = std::fs::remove_file(&out); let _ = std::fs::remove_file(&src);
+            prop_assert!(!got.status.to_string().contains("signal"), "crashed at {}\n{}", lvl, prog);
+            prop_assert_eq!(got.status.code().unwrap_or(-1), expected, "MEMGRAPH MISMATCH at {} (gcc -O0)\n{}", lvl, prog);
+        }
+    }
+}
