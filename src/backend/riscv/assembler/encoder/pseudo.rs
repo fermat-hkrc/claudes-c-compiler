@@ -755,3 +755,78 @@ mod pbt_pseudo_diff {
         assert_eq!(fails, 0, "{} FP pseudo encodings mismatched", fails);
     }
 }
+
+#[cfg(test)]
+mod pbt_extra_unclaimed {
+    //! Round-37: extra-operand sweep over NOT-yet-claimed RISC-V encoders.
+    //! Claimed set (137 fns) from dedup DB — this sweep only reports unclaimed.
+    use super::*;
+    use crate::backend::riscv::assembler::parser::Operand;
+
+    fn r(s: &str) -> Operand { Operand::Reg(s.to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+    fn sym(s: &str) -> Operand { Operand::Symbol(s.to_string()) }
+
+    #[test]
+    fn p_extra_unclaimed_sweep() {
+        // (fn name, correct form, +1 extra operand form)
+        let cases: Vec<(&str, Vec<Operand>, Vec<Operand>)> = vec![
+            ("encode_bgez", vec![r("a0"), sym("L")], vec![r("a0"), sym("L"), r("a1")]),
+            ("encode_bltz", vec![r("a0"), sym("L")], vec![r("a0"), sym("L"), r("a1")]),
+            ("encode_bgtz", vec![r("a0"), sym("L")], vec![r("a0"), sym("L"), r("a1")]),
+            ("encode_bgt",  vec![r("a0"), r("a1"), sym("L")], vec![r("a0"), r("a1"), sym("L"), r("a2")]),
+            ("encode_ble",  vec![r("a0"), r("a1"), sym("L")], vec![r("a0"), r("a1"), sym("L"), r("a2")]),
+            ("encode_bgtu", vec![r("a0"), r("a1"), sym("L")], vec![r("a0"), r("a1"), sym("L"), r("a2")]),
+            ("encode_bleu", vec![r("a0"), r("a1"), sym("L")], vec![r("a0"), r("a1"), sym("L"), r("a2")]),
+            ("encode_csrr", vec![r("a0"), i(0x300)], vec![r("a0"), i(0x300), i(1)]),
+            ("encode_csrw", vec![i(0x300), r("a0")], vec![i(0x300), r("a0"), r("a1")]),
+            ("encode_csrs", vec![i(0x300), r("a0")], vec![i(0x300), r("a0"), r("a1")]),
+            ("encode_csrc", vec![i(0x300), r("a0")], vec![i(0x300), r("a0"), r("a1")]),
+            ("encode_fmv_s",  vec![r("f0"), r("f1")], vec![r("f0"), r("f1"), r("f2")]),
+            ("encode_fmv_d",  vec![r("f0"), r("f1")], vec![r("f0"), r("f1"), r("f2")]),
+            ("encode_fabs_s", vec![r("f0"), r("f1")], vec![r("f0"), r("f1"), r("f2")]),
+            ("encode_fabs_d", vec![r("f0"), r("f1")], vec![r("f0"), r("f1"), r("f2")]),
+            ("encode_fneg_s", vec![r("f0"), r("f1")], vec![r("f0"), r("f1"), r("f2")]),
+            ("encode_fneg_d", vec![r("f0"), r("f1")], vec![r("f0"), r("f1"), r("f2")]),
+            ("encode_la",  vec![r("a0"), sym("sym")], vec![r("a0"), sym("sym"), r("a1")]),
+            ("encode_lla", vec![r("a0"), sym("sym")], vec![r("a0"), sym("sym"), r("a1")]),
+        ];
+        let mut ignored = Vec::new();
+        for (name, base, extra) in &cases {
+            let rb = dispatch(name, base);
+            let re = dispatch(name, extra);
+            match (rb, re) {
+                (Ok(_), Ok(_)) => { println!("  {}: extra operand IGNORED", name); ignored.push(*name); }
+                (Ok(_), Err(_)) => println!("  {}: extra operand REJECTED (correct)", name),
+                (Err(e), _) => println!("  {}: base form fails: {}", name, &e[..e.len().min(40)]),
+            }
+        }
+        println!("\\nUNCLAIMED + IGNORED: {:?}", ignored);
+        assert!(ignored.is_empty(), "unclaimed fns silently ignore extra operands: {:?}", ignored);
+    }
+
+    fn dispatch(name: &str, ops: &[Operand]) -> Result<EncodeResult, String> {
+        match name {
+            "encode_bgez" => encode_bgez(ops),
+            "encode_bltz" => encode_bltz(ops),
+            "encode_bgtz" => encode_bgtz(ops),
+            "encode_bgt" => encode_bgt(ops),
+            "encode_ble" => encode_ble(ops),
+            "encode_bgtu" => encode_bgtu(ops),
+            "encode_bleu" => encode_bleu(ops),
+            "encode_csrr" => encode_csrr(ops),
+            "encode_csrw" => encode_csrw(ops),
+            "encode_csrs" => encode_csrs(ops),
+            "encode_csrc" => encode_csrc(ops),
+            "encode_fmv_s" => encode_fmv_s(ops),
+            "encode_fmv_d" => encode_fmv_d(ops),
+            "encode_fabs_s" => encode_fabs_s(ops),
+            "encode_fabs_d" => encode_fabs_d(ops),
+            "encode_fneg_s" => encode_fneg_s(ops),
+            "encode_fneg_d" => encode_fneg_d(ops),
+            "encode_la" => encode_la(ops),
+            "encode_lla" => encode_lla(ops),
+            _ => Err("unknown".into()),
+        }
+    }
+}

@@ -97,3 +97,21 @@
 | 32 | src/frontend/preprocessor/expr_eval.rs | #if accepts malformed exprs silently, 8/13 wrong branch | **new issue filed** | [#1088](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1088) |
 | 32 | src/frontend/preprocessor/macro_defs.rs | __VA_OPT__ emitted as literal tokens (not expanded) | **new issue filed** | [#1089](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1089) |
 | 35 | src/backend/linker_common | linked output drops .symtab/.strtab (nm "no symbols", no enabling flag) | **new issue filed** | [#1092](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1092) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_bgt silently ignores extra operands | **new issue filed** | [#1095](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1095) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_ble silently ignores extra operands | **new issue filed** | [#1096](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1096) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_bgtu silently ignores extra operands | **new issue filed** | [#1097](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1097) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_bleu silently ignores extra operands | **new issue filed** | [#1098](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1098) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_bltz silently ignores extra operands | **new issue filed** | [#1099](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1099) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_bgtz silently ignores extra operands | **new issue filed** | [#1100](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1100) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_csrr silently ignores extra operands | **new issue filed** | [#1101](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1101) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_csrw silently ignores extra operands | **new issue filed** | [#1102](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1102) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_csrs silently ignores extra operands | **new issue filed** | [#1103](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1103) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_csrc silently ignores extra operands | **new issue filed** | [#1104](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1104) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_fmv_s silently ignores extra operands | **new issue filed** | [#1105](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1105) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_fmv_d silently ignores extra operands | **new issue filed** | [#1106](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1106) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_fabs_s silently ignores extra operands | **new issue filed** | [#1107](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1107) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_fabs_d silently ignores extra operands | **new issue filed** | [#1108](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1108) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_fneg_s silently ignores extra operands | **new issue filed** | [#1109](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1109) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_fneg_d silently ignores extra operands | **new issue filed** | [#1110](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1110) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_la silently ignores extra operands | **new issue filed** | [#1111](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1111) |
+| 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_lla silently ignores extra operands | **new issue filed** | [#1112](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1112) |
