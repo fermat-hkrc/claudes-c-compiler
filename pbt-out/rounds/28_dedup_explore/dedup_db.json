@@ -1,5 +1,9 @@
 [
  {
+  "n": 1062,
+  "t": "Bug: AArch64 NEON fneg v.4s encodes with bit 23 clear (wrong S field) \u2014 produces wrong instruction"
+ },
+ {
   "n": 1061,
   "t": "Bug: encode_v_crypto_vi truncates out-of-range uimm5"
  },
@@ -796,10 +800,6 @@
   "t": "Bug: encode_sxtb accepts FP/SIMD registers as GPRs"
  },
  {
-  "n": 862,
-  "t": "Bug: encode_sxtb accepts FP/SIMD registers as GPRs"
- },
- {
   "n": 861,
   "t": "Bug: encode_sxtb silently ignores a 3rd operand"
  },
@@ -1590,6 +1590,10 @@
  {
   "n": 664,
   "t": "Bug: encode_neon_three_same ignores a fourth operand"
+ },
+ {
+  "n": 663,
+  "t": "Bug: encode_neon_three_same accepts a bare Vn/Vm without arrangement"
  },
  {
   "n": 663,
