@@ -1,5 +1,17 @@
 [
  {
+  "n": 1050,
+  "t": "Bug: encode_vid_v ignores trailing v0.t and hardcodes vm=1"
+ },
+ {
+  "n": 1049,
+  "t": "Bug: encode_vid_v ignores extra operands"
+ },
+ {
+  "n": 1048,
+  "t": "Bug: sema accepts _Generic with no matching type and no default \u2014 C11 requires exactly one association to match"
+ },
+ {
   "n": 1047,
   "t": "Bug: sema conflates signed char with char in _Generic type matching \u2014 C11 requires three distinct char types"
  },
@@ -390,10 +402,6 @@
  {
   "n": 949,
   "t": "Bug: encode_alu_imm_w rejects I-type %lo/%pcrel_lo/%tprel_lo"
- },
- {
-  "n": 948,
-  "t": "Bug: encode_alu_imm_w wraps out-of-range immediates"
  },
  {
   "n": 948,
@@ -1182,6 +1190,10 @@
  {
   "n": 752,
   "t": "Bug: encode_brk ignores extra operands"
+ },
+ {
+  "n": 751,
+  "t": "Bug: encode_smc masks immediates outside 0..=65535 instead of rejecting"
  },
  {
   "n": 751,

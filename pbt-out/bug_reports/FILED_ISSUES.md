@@ -76,3 +76,4 @@
 | 28 | src/backend/arm/assembler | AArch64 FP16 arithmetic encoded as FP32 — fadd h0,h1,h2 produces fadd  | **new issue filed** | [#1043](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1043) |
 | 28 | src/frontend/sema | _Generic conflates signed char with char (C11 distinct types) | **new issue filed** | [#1047](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1047) |
 | 28 | src/frontend/sema | _Generic: no-match+no-default accepted (C11 requires exactly one) + non-selected branches not type-checked | **new issue filed** | [#1048](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1048) |
+| 28 | src/backend/x86/assembler | SSE4.2 string cmp (4) + MOVBE (2) missing | **new issue filed** | [#1051](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1051) |
