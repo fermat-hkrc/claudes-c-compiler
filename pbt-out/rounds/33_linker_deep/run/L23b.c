@@ -1,7 +1,0 @@
-int g0 = 84731;
-int g1 = 71803;
-extern int h3b(int);
-typeedef int (*fp3)(int);
-fp3 tbl3[2] = { 0, h3b };
-int tent5;
-int init_tent5() { tent5 = -406; return tent5; }

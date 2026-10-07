@@ -1,4 +1,7 @@
-int arr1[4] = { -94, -30, -31, -73 };
-int deep2(int x) { return x - 25; }
-static int h4a(int x) { return x + -68; }
-int h4b(int x) { return x * 1; }
+int tent1;
+static int h2a(int x) { return x + 6; }
+int h2b(int x) { return x * 7; }
+static int h3a(int x) { return x + -22; }
+int h3b(int x) { return x * -2; }
+int arr4[4] = { 63, 82, 29, 46 };
+int tent5;

@@ -1,6 +1,5 @@
-int deep1(int x) { return x - -15; }
-static int h2a(int x) { return x + -56; }
-int h2b(int x) { return x * -2; }
-static int h4a(int x) { return x + 59; }
-int h4b(int x) { return x * 5; }
-int f5(int x) { return x * 48 + 56; }
+static int h1a(int x) { return x + 51; }
+int h1b(int x) { return x * 4; }
+int deep3(int x) { return x - -11; }
+int deep4(int x) { return x - 8; }
+int deep5(int x) { return x - 1; }

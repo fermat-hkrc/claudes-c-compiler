@@ -2,16 +2,16 @@
 extern int g0;
 typedef int (*fp_t1)(int); extern fp_t1 tbl1[2];
 extern int mid2(int);
-extern int g3;
+extern int mid3(int);
 extern int mid4(int);
-extern int f5(int);
+typedef int (*fp_t5)(int); extern fp_t5 tbl5[2];
 int main(void) {
     printf("g0=%d\\n", g0);
-printf("tbl1=%d\\n", tbl1[1](-17));
-printf("mid2=%d\\n", mid2(-16));
-printf("g3=%d\\n", g3);
-printf("mid4=%d\\n", mid4(6));
-printf("f5=%d\\n", f5(-31));
+printf("tbl1=%d\\n", tbl1[1](15));
+printf("mid2=%d\\n", mid2(-14));
+printf("mid3=%d\\n", mid3(-20));
+printf("tent4=%d\\n", init_tent4());
+printf("tbl5=%d\\n", tbl5[1](12));
 
     return 0;
 }

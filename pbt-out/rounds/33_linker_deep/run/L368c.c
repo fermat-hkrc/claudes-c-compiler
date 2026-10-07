@@ -1,6 +1,6 @@
-int f1(int x) { return x * 50 + 71; }
+int f1(int x) { return x * -15 + -38; }
 int tent2;
-int deep3(int x) { return x - -56; }
-int arr4[4] = { -23, -62, -12, -23 };
-static int h5a(int x) { return x + 56; }
-int h5b(int x) { return x * 6; }
+static int h3a(int x) { return x + 29; }
+int h3b(int x) { return x * 4; }
+int f4(int x) { return x * -45 + -38; }
+int deep5(int x) { return x - 26; }

@@ -1,0 +1,4 @@
+static int h2a(int x) { return x + 64; }
+int h2b(int x) { return x * 9; }
+int tent4;
+int f5(int x) { return x * 37 + 76; }
