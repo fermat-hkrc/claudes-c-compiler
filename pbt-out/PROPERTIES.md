@@ -1,272 +1,327 @@
-# Properties: encode_beqz
+# Properties: encode_bnez
 
-## encode_beqz_diff_llvm_mc
-- Tier: 4
-- Rationale: Strongest independent reference is llvm-mc (RISC-V assembler). State machine rejected (pure encoder). Round-trip rejected (no BEQZ decoder). Differential vs encode_branch_instr rejected as primary (shared encode_b/get_reg; used as metamorphic instead). Doc evidence: README.md:328 beqz → beq rs, x0, label; RISC-V ISA BEQZ = BEQ rs, x0, offset.
+## encode_bnez_diff_llvm_mc
+- Tier: 5
+- Rationale: Strongest oracle is differential vs llvm-mc (independent assembler). State machine rejected (pure function). Algebraic round-trip rejected (no in-tree BNEZ decoder). Shared-source encode_branch_instr used only as weaker metamorphic. Evidence: README.md:328 `beqz/bnez` → `beq/bne rs, x0, label`; RISC-V ISA BNEZ = BNE rs, x0.
 - Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
-- Seed: encode_branch_instr_pbt.rs KAT beq zero-imm form (none on encode_beqz itself)
-- Formal: ∀ rs ∈ GPRNames. word(encode_beqz([Reg(rs), Imm(0)])) = llvm_mc("beqz rs, 0") ∧ reloc_type=Branch ∧ symbol="0" ∧ addend=0
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+- Seed: encode_beqz_pbt.rs encode_beqz_diff_llvm_mc (sibling)
+- Formal: ∀ rs ∈ GPRNames. word(encode_bnez([Reg(rs), Imm(0)])) = llvm_mc("bnez rs, 0") ∧ reloc = Branch/"0"/0
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: differential
 predicate:
   quantifier: forall
   vars: [rs]
-  domain: { rs: gpr_name }
+  domain: { rs: GPRNames }
   relation:
     op: eq
-    lhs: word(encode_beqz([Reg(rs), Imm(0)]))
-    rhs: llvm_mc("beqz " + rs + ", 0")
+    lhs: word(encode_bnez([Reg(rs), Imm(0)]))
+    rhs: llvm_mc("bnez rs, 0")
 generators:
   rs: { gen: string, type: String }
 evidence: src/backend/riscv/assembler/README.md:328
 ```
 
-## encode_beqz_diff_llvm_mc_beq
-- Tier: 4
-- Rationale: Documented expansion sweep against independent assembler (`beq rs, x0, 0`), not in-tree encode_branch_instr. Strengthen round after first green differential batch.
+## encode_bnez_diff_llvm_mc_bne
+- Tier: 5
+- Rationale: Documented expansion vs independent assembler `bne rs, x0, 0`. Strengthens differential beyond the mnemonic spelling.
 - Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
-- Seed: (none)
-- Formal: ∀ rs ∈ GPRNames. word(encode_beqz([Reg(rs), Imm(0)])) = llvm_mc("beq rs, x0, 0")
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+- Seed: encode_beqz_pbt.rs encode_beqz_diff_llvm_mc_beq
+- Formal: ∀ rs ∈ GPRNames. word(encode_bnez([Reg(rs), Imm(0)])) = llvm_mc("bne rs, x0, 0")
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: differential
 predicate:
   quantifier: forall
   vars: [rs]
-  domain: { rs: gpr_name }
+  domain: { rs: GPRNames }
   relation:
     op: eq
-    lhs: word(encode_beqz([Reg(rs), Imm(0)]))
-    rhs: llvm_mc("beq " + rs + ", x0, 0")
+    lhs: word(encode_bnez([Reg(rs), Imm(0)]))
+    rhs: llvm_mc("bne rs, x0, 0")
 generators:
   rs: { gen: string, type: String }
 evidence: src/backend/riscv/assembler/README.md:328
 ```
 
-## encode_beqz_eq_beq_x0
-- Tier: 3
-- Rationale: Documented expansion beqz rs, label = beq rs, x0, label. Metamorphic vs same-job sibling encode_branch_instr(..., funct3=000) on Symbol targets.
+## encode_bnez_eq_bne_x0
+- Tier: 4
+- Rationale: Algebraic metamorphic — documented expansion to BNE rs, x0 via encode_branch_instr(funct3=001). Same-job sibling (bne dispatch).
 - Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
-- Seed: (none)
-- Formal: ∀ rs ∈ 0..31, tgt ∈ LabelIdents. encode_beqz([Reg(xN(rs)), Symbol(tgt)]) = encode_branch_instr([Reg(xN(rs)), Reg(x0), Symbol(tgt)], 0b000) as WordWithReloc (word, Branch, tgt, 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+- Seed: encode_beqz_pbt.rs encode_beqz_eq_beq_x0
+- Formal: ∀ rs ∈ 0..31, tgt ∈ LabelIdents. encode_bnez([Reg(xN(rs)), Symbol(tgt)]) = encode_branch_instr([Reg(xN(rs)), Reg(x0), Symbol(tgt)], 0b001) = encode_branch_instr([Reg(xN(rs)), Reg(zero), Symbol(tgt)], 0b001)
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [rs, tgt]
-  domain: { rs: reg_num, tgt: ident }
+  domain: { rs: 0..31, tgt: LabelIdents }
   relation:
     op: eq
-    lhs: encode_beqz([Reg(xN(rs)), Symbol(tgt)])
-    rhs: encode_branch_instr([Reg(xN(rs)), Reg("x0"), Symbol(tgt)], 0b000)
+    lhs: encode_bnez([Reg(xN(rs)), Symbol(tgt)])
+    rhs: encode_branch_instr([Reg(xN(rs)), Reg("x0"), Symbol(tgt)], 0b001)
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
   tgt: { gen: string, type: String }
 evidence: src/backend/riscv/assembler/README.md:328
 ```
 
-## encode_beqz_isa_b_type
-- Tier: 3
-- Rationale: B-type layout from RISC-V ISA / encoder/mod.rs encode_b comment. beqz fixes funct3=000, rs2=x0, imm=0 (reloc deferred).
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:420 "/// B-type: imm[12|10:5] | rs2 | rs1 | funct3 | imm[4:1|11] | opcode" — asserted fingerprint 8772767d; section comment pseudo.rs:281 "// Branch pseudo-instructions" — other fingerprint c33ca75f
-- Seed: encode_branch_instr_pbt.rs encode_branch_instr_isa_b_type
-- Formal: ∀ rs ∈ 0..31, tgt ∈ LabelIdents. let w = word(encode_beqz([Reg(xN(rs)), Symbol(tgt)])). unpack_b(w) = (OP_BRANCH, 0b000, rs, 0, 0) ∧ reloc=(Branch, tgt, 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+## encode_bnez_isa_b_type
+- Tier: 4
+- Rationale: Algebraic invariant — B-type field layout per RISC-V unprivileged ISA; funct3 must be 001 (BNE), rs2=x0, imm deferred to reloc.
+- Doc contract: (none on encode_bnez body) — ISA layout from encode_b comment chain / opcode constants in mod.rs
+- Seed: encode_beqz_pbt.rs encode_beqz_isa_b_type
+- Formal: ∀ rs ∈ 0..31, tgt ∈ LabelIdents. unpack_b(word(encode_bnez([Reg(xN(rs)), Symbol(tgt)]))) = (OP_BRANCH, 0b001, rs, 0, 0) ∧ reloc=(Branch, tgt, 0)
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rs, tgt]
-  domain: { rs: reg_num, tgt: ident }
-  body: unpack_b(word(encode_beqz([Reg(xN(rs)), Symbol(tgt)]))) == (OP_BRANCH, 0b000, rs, 0, 0)
+  domain: { rs: 0..31, tgt: LabelIdents }
+  body: unpack_b(word(encode_bnez([Reg(xN(rs)), Symbol(tgt)]))) == (OP_BRANCH, 0b001, rs, 0, 0) && reloc == (Branch, tgt, 0)
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
   tgt: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:420
+evidence: src/backend/riscv/assembler/encoder/mod.rs:422
 ```
 
-## encode_beqz_abi_xn_alias
-- Tier: 3
-- Rationale: ABI names and xN must encode identically; fp aliases s0/x8.
-- Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
-- Seed: encode_sgtz_pbt.rs encode_sgtz_abi_xn_alias
-- Formal: ∀ n ∈ 0..31, tgt ∈ LabelIdents. encode_beqz([Reg(abi(n)), Symbol(tgt)]).word = encode_beqz([Reg(xN(n)), Symbol(tgt)]).word
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+## encode_bnez_abi_xn_alias
+- Tier: 4
+- Rationale: Algebraic metamorphic — ABI name, xN, and fp (for n=8) must encode identically.
+- Doc contract: (none on encode_bnez) — register alias table in parser/encoder
+- Seed: encode_beqz_pbt.rs encode_beqz_abi_xn_alias
+- Formal: ∀ n ∈ 0..31, tgt ∈ LabelIdents. encode_bnez([Reg(abi(n)), Symbol(tgt)]) = encode_bnez([Reg(xN(n)), Symbol(tgt)]); if n=8 also via "fp"
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [n, tgt]
-  domain: { n: reg_num, tgt: ident }
+  domain: { n: 0..31, tgt: LabelIdents }
   relation:
     op: eq
-    lhs: word(encode_beqz([Reg(abi(n)), Symbol(tgt)]))
-    rhs: word(encode_beqz([Reg(xN(n)), Symbol(tgt)]))
+    lhs: encode_bnez([Reg(abi(n)), Symbol(tgt)])
+    rhs: encode_bnez([Reg(xN(n)), Symbol(tgt)])
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   tgt: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/parser.rs:21
+evidence: src/backend/riscv/assembler/encoder/mod.rs:475
 ```
 
-## encode_beqz_target_forms
-- Tier: 3
-- Rationale: get_branch_target accepts Symbol | Label | Reg | Imm; Symbol/Label/Reg with same string must yield identical reloc. Imm stringifies (separate property).
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:281 "// Branch pseudo-instructions" — other fingerprint c33ca75f
-- Seed: encode_branch_instr_pbt reloc Symbol/Label/Reg
-- Formal: ∀ rs ∈ 0..31, s ∈ LabelIdents. encode_beqz([Reg(xN(rs)), Symbol(s)]) = encode_beqz([Reg(xN(rs)), Label(s)]) = encode_beqz([Reg(xN(rs)), Reg(s)]) as WordWithReloc
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+## encode_bnez_target_forms
+- Tier: 4
+- Rationale: get_branch_target treats Symbol/Label/Reg-as-label equivalently (doc on get_branch_target).
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:380 "A register name can also be a symbol/label name (e.g. `beqz a0, t1`" — asserted fingerprint bc6f2199
+- Seed: encode_beqz_pbt.rs encode_beqz_target_forms
+- Formal: ∀ rs ∈ 0..31, s ∈ LabelIdents. encode_bnez([Reg(xN(rs)), Symbol(s)]) = encode_bnez([Reg(xN(rs)), Label(s)]) = encode_bnez([Reg(xN(rs)), Reg(s)])
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [rs, s]
-  domain: { rs: reg_num, s: ident }
-  relation:
-    op: eq
-    lhs: encode_beqz([Reg(xN(rs)), Symbol(s)])
-    rhs: encode_beqz([Reg(xN(rs)), Label(s)])
+  domain: { rs: 0..31, s: LabelIdents }
+  body: encode_bnez([xN(rs), Symbol(s)]) == encode_bnez([xN(rs), Label(s)]) == encode_bnez([xN(rs), Reg(s)])
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
   s: { gen: string, type: String }
 evidence: src/backend/riscv/assembler/encoder/pseudo.rs:376
 ```
 
-## encode_beqz_imm_target
-- Tier: 3
-- Rationale: Strengthen round — Imm branch target is accepted by get_branch_target via format!("{}", v); word stays zero-imm BEQ with reloc symbol = decimal string.
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:281 "// Branch pseudo-instructions" — other fingerprint c33ca75f
-- Seed: (none)
-- Formal: ∀ rs ∈ 0..31, imm ∈ ℤ. encode_beqz([Reg(xN(rs)), Imm(imm)]) = WordWithReloc(BEQ rs,x0,0, Branch, format(imm), 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+## encode_bnez_imm_target
+- Tier: 4
+- Rationale: Imm target stringified into reloc; word always zero-imm BNE (reloc carries target).
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:379 "Some(Operand::Imm(v)) => Ok(format!("{}", v))," — asserted fingerprint ad06d32a
+- Seed: encode_beqz_pbt.rs encode_beqz_imm_target
+- Formal: ∀ rs ∈ 0..31, imm ∈ ImmTargets. unpack_b(word(encode_bnez([xN(rs), Imm(imm)]))) = (OP_BRANCH, 0b001, rs, 0, 0) ∧ reloc.symbol = format!(imm) ∧ addend=0
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rs, imm]
-  domain: { rs: reg_num, imm: int }
-  body: "reloc.symbol == format!(imm) && unpack_b(word) == (OP_BRANCH, 0, rs, 0, 0)"
+  domain: { rs: 0..31, imm: ImmTargets }
+  body: unpack_b(word(...)) == (OP_BRANCH, 0b001, rs, 0, 0) && symbol == format(imm)
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, min: -4096, max: 4094, type: i64 }
+  imm: { gen: int, min: -64, max: 64, type: i64 }
 evidence: src/backend/riscv/assembler/encoder/pseudo.rs:379
 ```
 
-## encode_beqz_neg_arity
-- Tier: 2
-- Rationale: Two-operand form required; missing operands must Err. llvm-mc rejects too few operands.
-- Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
-- Seed: encode_sgtz_pbt encode_sgtz_neg_arity
-- Formal: ∀ ops. len(ops) < 2 ⇒ encode_beqz(ops) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+
+## encode_bnez_imm_as_rs
+- Tier: 4
+- Rationale: Algebraic metamorphic strengthen — get_reg accepts Imm(0..31) as bare register numbers (GCC inline asm path). Same encoding as xN.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:481 "GCC sometimes emits bare register numbers (0-31) in inline asm" — asserted fingerprint f1b1a1fb
+- Seed: (none)
+- Formal: ∀ n ∈ 0..31, tgt ∈ LabelIdents. encode_bnez([Imm(n), Symbol(tgt)]) = encode_bnez([Reg(xN(n)), Symbol(tgt)])
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [n, tgt]
+  domain: { n: 0..31, tgt: LabelIdents }
+  relation:
+    op: eq
+    lhs: encode_bnez([Imm(n), Symbol(tgt)])
+    rhs: encode_bnez([Reg(xN(n)), Symbol(tgt)])
+generators:
+  n: { gen: int, min: 0, max: 31, type: u32 }
+  tgt: { gen: string, type: String }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:480
+```
+
+## encode_bnez_neg_arity
+- Tier: 3
+- Rationale: Negative/error — two-operand form per README; arity < 2 must Err (get_reg/get_branch_target missing operand).
+- Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
+- Seed: encode_beqz_pbt.rs encode_beqz_neg_arity
+- Formal: ∀ ops. len(ops) < 2 ⇒ encode_bnez(ops) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_bnez
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops]
-  domain: { ops: short_ops }
+  domain: { ops: ShortOps }
   relation:
     op: holds
-    expr: encode_beqz(ops).is_err()
+    expr: encode_bnez(ops).is_err()
 generators:
   ops: { gen: list, maxLen: 1 }
 expected_error: String
 evidence: src/backend/riscv/assembler/README.md:328
 ```
 
-## encode_beqz_neg_invalid
-- Tier: 2
-- Rationale: Invalid rs (FP/vector/unknown) or invalid target types (Mem/Csr/Fence/RM/SymbolOffset) must Err. Implemented as encode_beqz_neg_invalid_rs + encode_beqz_neg_invalid_target.
-- Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
-- Seed: encode_sgtz_pbt encode_sgtz_neg_invalid
-- Formal: ∀ bad_rs ∈ InvalidReg, good_tgt ∈ LabelIdents. encode_beqz([bad_rs, Symbol(good_tgt)]) = Err(_) ∧ ∀ good_rs ∈ GPR, bad_tgt ∈ InvalidTarget. encode_beqz([Reg(good_rs), bad_tgt]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
+## encode_bnez_neg_invalid_rs
+- Tier: 3
+- Rationale: Negative/error — non-GPR first operand must Err via get_reg.
+- Doc contract: (none on encode_bnez) — get_reg rejects non-integer registers
+- Seed: encode_beqz_pbt.rs encode_beqz_neg_invalid_rs
+- Formal: ∀ bad ∈ InvalidRs, tgt ∈ LabelIdents. encode_bnez([bad, Symbol(tgt)]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad, good]
-  domain: { bad: invalid_operand, good: gpr_or_ident }
+  vars: [bad, tgt]
+  domain: { bad: InvalidRs, tgt: LabelIdents }
   relation:
     op: holds
-    expr: encode_beqz(ops(bad, good)).is_err()
+    expr: encode_bnez([bad, Symbol(tgt)]).is_err()
 generators:
-  bad: { gen: string }
+  bad: { gen: oneof }
+  tgt: { gen: string, type: String }
 expected_error: String
-evidence: src/backend/riscv/assembler/encoder/mod.rs:473
+evidence: src/backend/riscv/assembler/encoder/mod.rs:475
 ```
 
-## encode_beqz_neg_extra
-- Tier: 2
-- Rationale: Exactly two operands (README + llvm-mc rejects third). SUT must not silently ignore extras.
-- Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
-- Seed: encode_sgtz_pbt encode_sgtz_neg_extra / test_encode_sgtz_regression_extra_operand
-- Formal: ∀ rs ∈ GPRNames, tgt ∈ LabelIdents, extra ∈ Operand. encode_beqz([Reg(rs), Symbol(tgt), extra]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs
-- Status: failing
-- Counterexample: encode_beqz([Reg("a0"), Symbol("foo"), Reg("a1")])
-- Bug report: bug_reports/encode_beqz_extra_operand.md
-- Re-verified: PBT_TEST_JOBS=1 cargo test --lib test_encode_beqz_regression_extra_operand -- --test-threads=1 → FAIL (serial)
+## encode_bnez_neg_invalid_target
+- Tier: 3
+- Rationale: Negative/error — Mem/Csr/Fence/etc targets rejected by get_branch_target.
+- Doc contract: pseudo.rs:387 expected branch target error path
+- Seed: encode_beqz_pbt.rs encode_beqz_neg_invalid_target
+- Formal: ∀ rs ∈ GPRNames, bad ∈ InvalidTarget. encode_bnez([Reg(rs), bad]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encode_beqz
+function: encode_bnez
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rs, bad]
+  domain: { rs: GPRNames, bad: InvalidTarget }
+  relation:
+    op: holds
+    expr: encode_bnez([Reg(rs), bad]).is_err()
+generators:
+  rs: { gen: string, type: String }
+  bad: { gen: oneof }
+expected_error: String
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:387
+```
+
+## encode_bnez_neg_extra
+- Tier: 3
+- Rationale: Negative/error — README documents two-operand form; llvm-mc rejects a third operand. encode_bnez must Err on extra operands (same contract as sibling beqz).
+- Doc contract: src/backend/riscv/assembler/README.md:328 "| `beqz/bnez`    | `beq/bne rs, x0, label`                              |" — asserted fingerprint d12d645c
+- Seed: encode_beqz_pbt.rs encode_beqz_neg_extra / test_encode_beqz_regression_extra_operand
+- Formal: ∀ rs ∈ GPRNames, tgt ∈ LabelIdents, extra ∈ Operand. encode_bnez([Reg(rs), Symbol(tgt), extra]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs
+- Status: failing
+- Counterexample: encode_bnez([Reg("a0"), Symbol("foo"), Reg("a1")]) → Ok (expected Err)
+- Bug report: bug_reports/encode_bnez_extra_operand.md
+
+```property
+function: encode_bnez
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rs, tgt, extra]
-  domain: { rs: gpr_name, tgt: ident, extra: extra_operand }
+  domain: { rs: GPRNames, tgt: LabelIdents, extra: Operand }
   relation:
     op: holds
-    expr: encode_beqz([Reg(rs), Symbol(tgt), extra]).is_err()
+    expr: encode_bnez([Reg(rs), Symbol(tgt), extra]).is_err()
 generators:
   rs: { gen: string, type: String }
   tgt: { gen: string, type: String }
+  extra: { gen: oneof }
 expected_error: String
 evidence: src/backend/riscv/assembler/README.md:328
 ```

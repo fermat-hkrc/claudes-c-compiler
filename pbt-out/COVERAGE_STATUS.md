@@ -1,24 +1,18 @@
-# PBT Coverage Status
+# Coverage Status — encode_bnez campaign
 
-> Last updated: 2026-10-07 (campaign: encode_beqz)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw for Rust cargo tests; encode_beqz NOT LINKED in C++ pbt binaries. Execution evidence is cargo test of encode_beqz_pbt (13 items).
-
-## Summary
+**Coverage evidence:** file-level (symbol presence / cargo execution) — not line-level.
+- `coverage_gaps` found no `.gcda`/`.profraw` (C++ reporter; Rust cargo run is not instrumented for that tool).
+- Tool listed `encode_bnez` as NOT LINKED against unrelated C++ OH pbt binaries — false negative for this Rust campaign.
+- Execution evidence: `cargo test --lib encode_bnez` ran 14 tests against `encode_bnez` (12 proptest + KAT + regression); 12 passed, 2 failed (expected extra-operand bug).
 
 | Metric | Value |
 |--------|-------|
-| Campaign target | encode_beqz (pseudo.rs:282) |
-| Properties | 10 (9 passing, 1 failing) |
+| Target function | encode_bnez (pseudo.rs:291) |
+| Properties | 12 (11 passing, 1 failing) |
+| KAT / regression | 1 / 1 |
 | Bugs | 1 (extra operand ignored) |
-| Effort tier | standard |
-| Contract-surface sweep | 1 round spent (manual audit; coverage_gaps file-level only) |
+| Sweep rounds completed | 1/1 (standard) |
+| Sweep close reason | documented behaviors have properties; line-level data unavailable |
 
-## This campaign
-
-| Function | Source | Tested | Result |
-|----------|--------|--------|--------|
-| encode_beqz | pseudo.rs | yes | 9 pass / 1 fail (extra operand) |
-
-## Coverage evidence level
-
-file-level (symbol presence) — native line coverage unavailable for this Rust lib-test target under the campaign's C++ coverage reporter.
+## Untested in-scope branches
+(none documented) — encode_bnez body is straight-line with `?` error paths; all exercised.

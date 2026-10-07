@@ -144,6 +144,7 @@ mod encode_sltz_pbt;
 mod encode_sgtz_pbt;
 #[cfg(test)]
 mod encode_beqz_pbt;
+mod encode_bnez_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

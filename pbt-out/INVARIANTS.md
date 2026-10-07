@@ -1017,3 +1017,23 @@
 - Unlike encode_branch_instr, encode_beqz always returns WordWithReloc even for Imm targets (get_branch_target stringifies Imm); the B-type immediate field is always 0 and the reloc carries the target string.
 - get_branch_target intentionally accepts Reg as a label name (e.g. beqz a0, t1 where t1 is a label).
 - proptest 1.11 requires `#[test]` inside `proptest!`.
+
+# Confirmed invariants (encode_bnez)
+
+- Documented expansion: word/reloc of encode_bnez([rs, Symbol(tgt)]) equals encode_branch_instr([rs, x0, Symbol(tgt)], funct3=0b001) and llvm-mc `bnez rs, 0` / `bne rs, x0, 0`.
+- B-type layout: opcode OP_BRANCH, funct3=001 (BNE), rs2=x0, imm field always 0 (reloc carries target), RelocType::Branch, addend=0.
+- ABI / xN / fp (x8) aliases and Symbol/Label/Reg-as-label / Imm targets are equivalent for the reloc symbol string.
+- get_reg Imm(0..31) bare-number path equals Reg(xN).
+- Arity < 2 and invalid rs/target return Err.
+- A third operand currently disagrees with llvm-mc (see bug encode_bnez_extra_operand.md) — same class as encode_beqz.
+
+## Environment (encode_bnez)
+
+- llvm-mc: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding
+- Harness: src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs, cargo test --lib encode_bnez -- --test-threads=1
+- Dispatch: encoder/mod.rs "bnez" => encode_bnez(operands). Operands passed through without arity check.
+- coverage_gaps had no LLVM profraw (C++ reporter; encode_bnez NOT LINKED there); cargo execution is the evidence.
+
+## Quirks (encode_bnez)
+
+- Unlike encode_branch_instr, encode_bnez always returns WordWithReloc even for Imm targets (imm never folded into the B-type immediate field).
