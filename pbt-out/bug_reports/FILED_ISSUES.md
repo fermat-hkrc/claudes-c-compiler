@@ -151,3 +151,7 @@
 | 42 | symbol emitter | asm-label rename splits call/def symbol names → unlink | **new issue filed** | [#1152](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1152) |
 | 43 | init_array emission | constructor(N) priorities ignored — declaration order instead | **new issue filed** | [#1153](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1153) |
 | 43 | src/frontend/preprocessor/expr_eval.rs | #if operand-type constraints (float/str/cast/pp-number, 5 forms) | **new issue filed** | [#1154](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1154) |
+| 45 | src/frontend/lexer | empty hex escape \\x accepted (gcc/clang error) | **new issue filed** | [#1156](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1156) |
+| 45 | src/driver | -U does not cancel preceding -D (X stays defined) | **new issue filed** | [#1157](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1157) |
+| 45 | src/driver CLI | function-like -D unsupported (implicit-decl warning) | **new issue filed** | [#1158](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1158) |
+| 45 | src/frontend/preprocessor/includes.rs | self-include builds silently (no depth diagnostic) | **new issue filed** | [#1159](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1159) |
