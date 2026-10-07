@@ -118,6 +118,8 @@ mod encode_vmv_v_x_pbt;
 mod encode_vmv_v_i_pbt;
 #[cfg(test)]
 mod encode_vid_v_pbt;
+#[cfg(test)]
+mod encode_v_crypto_vi_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

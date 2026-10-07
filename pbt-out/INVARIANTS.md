@@ -1,3 +1,29 @@
+# Confirmed invariants (encode_v_crypto_vi)
+
+- Valid 3-operand unmasked vsm3c.vi / vsm4k.vi with vd, vs2 ∈ {v0..v31} and uimm5 ∈ [0, 31] packs funct6, vm=1, vs2, uimm5, funct3=010, vd (1000 cases). Rustdoc KAT pins vsm3c.vi v0, v0, 0 = 0xae002077; vsm3c.vi v1, v2, 3 = 0xae21a0f7; vsm3c.vi v31, v30, 31 = 0xafefaff7; vsm4k.vi v1, v2, 3 = 0x8621a0f7 (these words use OP_V_CRYPTO=1110111).
+- Format layout holds for vd/funct3/uimm5/vs2/vm/funct6 (1000 cases). Opcode currently 1110111, not Volume II OP-V 1010111 (see bugs).
+- Field isolation: vd/vs2/uimm5/funct6 bits independent of the other fields (1000 cases).
+- vd/vs2 swap: swapping operands 0 and 1 swaps bits [11:7] and [24:20] and preserves all other bits (1000 cases).
+- Too few operands, non-vector vd/vs2, and non-Imm at operand 2 return Err (1000 cases).
+- Extra operand, trailing v0.t, out-of-range uimm5, and OP-V opcode currently disagree with the claimed RISC-V Crypto Volume II contract (see bugs).
+
+## Environment (encode_v_crypto_vi)
+
+- Reference: RISC-V Cryptography Extensions Volume II (Zvksh vsm3c.vi funct6=101011, Zvksed vsm4k.vi funct6=100001, opcode OP-V=1010111, funct3=010, vm=1, not maskable). llvm-mc 15.0.6 does not recognize these mnemonics.
+- Harness: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs, cargo test --lib encode_v_crypto_vi, proptest cases=1000.
+- Dispatch: encoder/mod.rs:1018 "vsm3c.vi" => encode_v_crypto_vi(operands, 0b101011); encoder/mod.rs:1021 "vsm4k.vi" => encode_v_crypto_vi(operands, 0b100001). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_v_crypto_vi NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / format / isolation / vd-vs2-swap / arity-bad-regs (passing) and opcode / extra / uimm-oob / mask-v0.t (filed bugs). Closed: tier round spent; remaining documented gaps are the four filed bugs.
+
+## Quirks (encode_v_crypto_vi)
+
+- vreg_num lowercases; get_vreg does not accept Imm(0..=31) as a bare vector register number.
+- get_imm accepts only Operand::Imm.
+- vm is hardcoded to 1. Zvksh/Zvksed VI is not maskable; a trailing v0.t is currently ignored (bug).
+- Assembly order is vd, vs2, uimm5. Operand 2 is a 5-bit unsigned immediate.
+- OP_V_CRYPTO is 0b1110111 (OP-P). Volume II uses OP-V 0b1010111 (bug).
+- The SUT truncates uimm with `& 0x1F` and does not range-check.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vid_v)
 
 - Valid 1-operand unmasked vid.v with vd ∈ {v0..v31} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vid.v v0 = 0x5208a057; vid.v v1 = 0x5208a0d7; vid.v v31 = 0x5208afd7. Masked KAT: llvm-mc vid.v v1, v0.t = 0x5008a0d7.

@@ -1,162 +1,222 @@
-# Properties: encode_vid_v
+# Properties: encode_v_crypto_vi
 
-## encode_vid_v_diff_llvm_mc
-- Tier: 4
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (LLVM 15.0.6), an independently meaningful assembler of the same RISC-V V 1.0 vid.v encoding. State machine rejected: encode_vid_v is a pure function with no lifecycle. Algebraic round-trip rejected: no in-tree vid.v decoder. Sibling encode_vmv_v_v / encode_v_arith_vv rejected by same-job gate (OPIVV funct3=000 / 3-operand OPIVV with vs2/vs1 vs OPMVV unary with vs1=10001). Public wrapper encoder/mod.rs:1015 passes operands through, so the helper contract is the assembler contract.
-- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
-- Seed: encode_vmv_v_v_pbt.rs:208 encode_vmv_v_v_diff_llvm_mc (generalized from 2-operand vmv.v.v to 1-operand vid.v)
-- Formal: ∀ vd ∈ {0..31}. encode_vid_v([Reg("v{vd}")]) = llvm-mc("vid.v v{vd}") as little-endian Word
-- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_v_crypto_vi_spec_opcode
+- Tier: 5
+- Rationale: Strongest evidenced oracle is Reference against RISC-V Cryptography Extensions Volume II, which the SUT claims (README.md:14 Zvksh/Zvksed; encoder/mod.rs:445 "per RVV Crypto spec"). The ratified vector-crypto encoding uses major opcode OP-V (1010111), not OP-P (1110111). llvm-mc 15.0.6 cannot be a differential — it does not recognize vsm3c.vi/vsm4k.vi. State machine rejected (pure function). Round-trip rejected (no decoder). encode_v_arith_vi rejected as sibling (same-job gate: OPIVI funct3=011 / OP-V, not crypto VI).
+- Doc contract: vector.rs:189-190 "Encode Zvksh/Zvksed crypto instructions with VI format" — asserted fingerprint e8d38bc7
+- Seed: (none)
+- Formal: ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, (mnem,funct6) ∈ {(vsm3c.vi,101011),(vsm4k.vi,100001)}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6) = Word(w) ∧ (w & 0x7F) = 0b1010111
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
+- Status: failing
+- Counterexample: vd=0, vs2=0, uimm=0, kind=0 (vsm3c.vi); SUT opcode 0b1110111 vs OP-V 0b1010111; Word(0xae002077)
+- Bug report: pbt-out/bug_reports/encode_v_crypto_vi_spec_opcode.md
 
 ```property
-function: encoder.encode_vid_v
-oracle: differential
+function: encoder.encode_v_crypto_vi
+oracle: reference
 predicate:
   quantifier: forall
-  vars: [vd]
-  domain: { vd: "v0..v31" }
-  relation:
-    op: eq
-    lhs: "encode_vid_v([Reg(v{vd})])"
-    rhs: "llvm_mc(vid.v v{vd})"
+  vars: [vd, vs2, uimm, funct6]
+  domain: { vd: 0..31, vs2: 0..31, uimm: 0..31, funct6: {0b101011, 0b100001} }
+  body: (encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6) as Word & 0x7F) == 0b1010111
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: vector.rs:180; encoder/mod.rs:1015; assembler/README.md:14; llvm-mc RISC-V V 1.0
+  vs2: { gen: int, min: 0, max: 31, type: u32 }
+  uimm: { gen: int, min: 0, max: 31, type: i64 }
+  funct6: { gen: oneof, items: [0b101011, 0b100001], type: u32 }
+evidence: encoder/mod.rs:445 "Vector crypto (Zvk*) — uses OP-P encoding space per RVV Crypto spec"; assembler/README.md:14 Zvksh/Zvksed; RISC-V Cryptography Extensions Volume II OP-V=1010111
 ```
 
-## encode_vid_v_format_fields
-- Tier: 3
-- Rationale: Algebraic invariant unpacking the RISC-V V 1.0 OPMVV vid.v layout named by the rustdoc (opcode, funct3=010, vm=1, vs2=0, vs1=10001, funct6=010100, vd). Stronger differential already present as a sibling property; this pins field placement independently of llvm-mc.
-- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
-- Seed: encode_vmv_v_v_pbt.rs:218 encode_vmv_v_v_format_fields
-- Formal: ∀ vd ∈ {0..31}. let w = encode_vid_v([Reg("v{vd}")]). w[6:0]=1010111 ∧ w[11:7]=vd ∧ w[14:12]=010 ∧ w[19:15]=10001 ∧ w[24:20]=0 ∧ w[25]=1 ∧ w[31:26]=010100
-- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
+## encode_v_crypto_vi_format_fields
+- Tier: 4
+- Rationale: Algebraic invariant from the function rustdoc packing (vd, funct3=010, uimm5, vs2, vm=1, funct6). Opcode is checked by the Reference property. This property pins every other field so an opcode bug cannot hide packing defects.
+- Doc contract: vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" — asserted fingerprint 40191257
+- Seed: (none)
+- Formal: ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, funct6 ∈ {0..63}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6) = Word(w) ∧ unpack(w).vd=vd ∧ unpack(w).funct3=010 ∧ unpack(w).uimm5=uimm ∧ unpack(w).vs2=vs2 ∧ unpack(w).vm=1 ∧ unpack(w).funct6=funct6
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_vid_v
+function: encoder.encode_v_crypto_vi
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [vd]
-  domain: { vd: "v0..v31" }
-  relation:
-    op: holds
-    expr: "unpack(encode_vid_v([Reg(v{vd})])) matches OPMVV vid.v layout"
+  vars: [vd, vs2, uimm, funct6]
+  domain: { vd: 0..31, vs2: 0..31, uimm: 0..31, funct6: 0..63 }
+  body: unpack(encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6)) == (vd, 0b010, uimm, vs2, 1, funct6)
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: vector.rs:180
+  vs2: { gen: int, min: 0, max: 31, type: u32 }
+  uimm: { gen: int, min: 0, max: 31, type: i64 }
+  funct6: { gen: int, min: 0, max: 63, type: u32 }
+evidence: vector.rs:190 packing comment
 ```
 
-## encode_vid_v_field_isolation
-- Tier: 3
-- Rationale: Metamorphic isolation — changing vd must only affect bits [11:7]; all other bits are constant across the vd domain. Required metamorphic/differential property for standard tier.
-- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
-- Seed: encode_vmv_v_v_pbt.rs:232 encode_vmv_v_v_field_isolation
-- Formal: ∀ vd_a, vd_b ∈ {0..31}. let wa = encode_vid_v([v{vd_a}]); wb = encode_vid_v([v{vd_b}]). (wa & ~(0x1F<<7)) = (wb & ~(0x1F<<7)) ∧ (wa>>7)&0x1F = vd_a ∧ (wb>>7)&0x1F = vd_b
-- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
+## encode_v_crypto_vi_field_isolation
+- Tier: 4
+- Rationale: Metamorphic isolation — changing one of vd/vs2/uimm/funct6 must not alter the other fields. Required metamorphic angle at standard tier. Stronger Reference/round-trip rejected as above.
+- Doc contract: vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" — asserted fingerprint 40191257
+- Seed: (none)
+- Formal: ∀ vd_a, vd_b, vs2_a, vs2_b, uimm_a, uimm_b ∈ {0..31}, f6_a, f6_b ∈ {0..63}. let wa = encode(vd_a, vs2_a, uimm_a, f6_a). Changing only vd (resp. vs2, uimm, funct6) flips only bits [11:7] (resp. [24:20], [19:15], [31:26]).
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_vid_v
+function: encoder.encode_v_crypto_vi
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [vd_a, vd_b]
-  domain: { vd_a: "v0..v31", vd_b: "v0..v31" }
-  relation:
-    op: holds
-    expr: "non-vd bits independent of vd"
+  vars: [vd_a, vd_b, vs2_a, vs2_b, uimm_a, uimm_b, f6_a, f6_b]
+  domain: { vd_a: 0..31, vd_b: 0..31, vs2_a: 0..31, vs2_b: 0..31, uimm_a: 0..31, uimm_b: 0..31, f6_a: 0..63, f6_b: 0..63 }
+  body: (encode(vd_a,vs2_a,uimm_a,f6_a) & !vd_mask) == (encode(vd_b,vs2_a,uimm_a,f6_a) & !vd_mask)
 generators:
   vd_a: { gen: int, min: 0, max: 31, type: u32 }
   vd_b: { gen: int, min: 0, max: 31, type: u32 }
-evidence: vector.rs:180
+  vs2_a: { gen: int, min: 0, max: 31, type: u32 }
+  vs2_b: { gen: int, min: 0, max: 31, type: u32 }
+  uimm_a: { gen: int, min: 0, max: 31, type: i64 }
+  uimm_b: { gen: int, min: 0, max: 31, type: i64 }
+  f6_a: { gen: int, min: 0, max: 63, type: u32 }
+  f6_b: { gen: int, min: 0, max: 63, type: u32 }
+evidence: vector.rs:190 disjoint field layout
 ```
 
-## encode_vid_v_neg_arity_bad_regs
-- Tier: 2
-- Rationale: Negative/error contract. llvm-mc rejects too-few operands (`vid.v` with no vd) and non-vector vd (GPR/FP/v32/non-Reg). get_vreg returns Err for missing or non-vreg operand 0. No documented acceptance of those inputs.
-- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
-- Seed: encode_vmv_v_v_pbt.rs:273 encode_vmv_v_v_neg_arity_bad_regs
-- Formal: ∀ ops. ops = [] ∨ (ops = [bad] ∧ bad ∉ v0..v31 as Operand::Reg) ⇒ encode_vid_v(ops) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
+## encode_v_crypto_vi_vd_vs2_swap
+- Tier: 4
+- Rationale: Metamorphic — swapping the two vector-register operands (still v-regs) must swap bits [11:7] and [24:20] and preserve every other bit, matching assembly order vd, vs2.
+- Doc contract: vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" — asserted fingerprint 40191257
+- Seed: (none)
+- Formal: ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, funct6 ∈ {0..63}. let w = encode([v{vd}, v{vs2}, Imm(uimm)], funct6); let w' = encode([v{vs2}, v{vd}, Imm(uimm)], funct6). (w >> 7 & 0x1F) = vd ∧ (w >> 20 & 0x1F) = vs2 ∧ (w' >> 7 & 0x1F) = vs2 ∧ (w' >> 20 & 0x1F) = vd ∧ (w & ~(vd_mask|vs2_mask)) = (w' & ~(vd_mask|vs2_mask))
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_vid_v
+function: encoder.encode_v_crypto_vi
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [vd, vs2, uimm, funct6]
+  domain: { vd: 0..31, vs2: 0..31, uimm: 0..31, funct6: 0..63 }
+  body: (encode([v{vd}, v{vs2}, Imm(uimm)], funct6) >> 7 & 0x1F) == vd && (encode([v{vs2}, v{vd}, Imm(uimm)], funct6) >> 7 & 0x1F) == vs2
+generators:
+  vd: { gen: int, min: 0, max: 31, type: u32 }
+  vs2: { gen: int, min: 0, max: 31, type: u32 }
+  uimm: { gen: int, min: 0, max: 31, type: i64 }
+  funct6: { gen: int, min: 0, max: 63, type: u32 }
+evidence: vector.rs:192-193 get_vreg(0)=vd, get_vreg(1)=vs2
+```
+
+## encode_v_crypto_vi_neg_arity_bad_regs
+- Tier: 3
+- Rationale: Negative/error contract — fewer than 3 operands, non-vector vd/vs2, or non-Imm at uimm must return Err. Evidenced by get_vreg/get_imm contracts and the 3-operand rustdoc form. Stronger oracles do not apply to the invalid domain.
+- Doc contract: vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" — asserted fingerprint 40191257
+- Seed: (none)
+- Formal: ∀ ops with |ops|<3 ∨ ops[0] or ops[1] not a v-reg ∨ ops[2] not Imm, funct6 ∈ {0..63}. encode_v_crypto_vi(ops, funct6) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_v_crypto_vi
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops]
-  domain: { ops: "empty or one non-vreg operand" }
-  relation:
-    op: throws
-    expr: "encode_vid_v(ops)"
+  vars: [ops, funct6]
+  domain: { ops: arity_lt_3_or_bad_vreg_or_non_imm, funct6: 0..63 }
+  body: encode_v_crypto_vi(ops, funct6).is_err()
 generators:
-  ops: { gen: list, elem: { gen: string }, maxLen: 1 }
+  funct6: { gen: int, min: 0, max: 63, type: u32 }
 expected_error: String
-evidence: vector.rs:180; llvm-mc too few operands / invalid operand
+evidence: vector.rs:192-194 get_vreg/get_imm; encoder/mod.rs:480-494
 ```
 
-## encode_vid_v_neg_extra
-- Tier: 2
-- Rationale: Negative/error contract. llvm-mc rejects any second operand other than v0.t (`operand must be v0.t` / `expected '.t' suffix` / `invalid operand`). The public wrapper passes extra operands through. No SUT comment declares extra tokens valid or out of domain. v0.t is excluded from this generator and covered by encode_vid_v_mask_v0t_diff_llvm_mc (it is a valid masked form, not extra garbage).
-- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
-- Seed: encode_vmv_v_v_pbt.rs:295 encode_vmv_v_v_neg_extra
-- Formal: ∀ vd ∈ {0..31}, extra ∈ Operand \ {Symbol("v0.t")}. encode_vid_v([Reg("v{vd}"), extra]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
+## encode_v_crypto_vi_neg_extra
+- Tier: 3
+- Rationale: Negative/error — a fourth operand after a complete vd, vs2, uimm5 form must Err. Public wrapper encode_instruction passes operands through; a 3-operand instruction does not accept extras. No arity check in the body (inferred contract).
+- Doc contract: vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" — asserted fingerprint 40191257
+- Seed: (none)
+- Formal: ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, extra ∈ Operand, funct6 ∈ {vsm3c.vi, vsm4k.vi}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm), extra], funct6) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
 - Status: failing
-- Counterexample: encode_vid_v([Reg("v0"), Imm(0)]) → Ok(Word(0x5208a057))
-- Bug report: pbt-out/bug_reports/encode_vid_v_extra_operand.md
+- Counterexample: vd=0, vs2=0, uimm=0, extra=Imm(0), kind=0; Ok(Word(0xae002077))
+- Bug report: pbt-out/bug_reports/encode_v_crypto_vi_extra_operand.md
 
 ```property
-function: encoder.encode_vid_v
+function: encoder.encode_v_crypto_vi
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [vd, extra]
-  domain: { vd: "v0..v31", extra: "Operand except Symbol(v0.t)" }
-  relation:
-    op: throws
-    expr: "encode_vid_v([Reg(v{vd}), extra])"
+  vars: [vd, vs2, uimm, extra, funct6]
+  domain: { vd: 0..31, vs2: 0..31, uimm: 0..31, extra: Operand, funct6: {0b101011, 0b100001} }
+  body: encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm), extra], funct6).is_err()
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-  extra: { gen: string }
+  vs2: { gen: int, min: 0, max: 31, type: u32 }
+  uimm: { gen: int, min: 0, max: 31, type: i64 }
+  funct6: { gen: oneof, items: [0b101011, 0b100001], type: u32 }
 expected_error: String
-evidence: llvm-mc RISC-V V 1.0 vid.v operand list; encoder/mod.rs:1015
+evidence: inferred (3-operand rustdoc form; encode_instruction at encoder/mod.rs:1018,1021 passes operands through)
 ```
 
-## encode_vid_v_mask_v0t_diff_llvm_mc
-- Tier: 4
-- Rationale: Differential vs llvm-mc for the documented RISC-V V 1.0 masked form `vid.v vd, v0.t` (vm=0). Unlike vmv.v.v, vid.v is maskable. Full vd domain {0..31}: llvm-mc encodes vm=0 for vd ∈ {1..31} and rejects vd=v0 (destination overlaps mask). Agreement is: SUT Word equals llvm-mc Word when llvm-mc accepts, and SUT is Err when llvm-mc rejects. Dispatcher TODO encoder/mod.rs:962 admits masked variants are not yet supported — a known limitation on an input the public API accepts, not a domain exclusion.
-- Doc contract: encoder/mod.rs:962 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)." — limitation fingerprint 99cac70e
-- Seed: encode_vmv_v_v_pbt.rs:311 encode_vmv_v_v_neg_mask_v0t (inverted: for vid.v the mask form is valid, so the oracle is differential agreement not rejection)
-- Formal: ∀ vd ∈ {0..31}. let mc = llvm-mc("vid.v v{vd}, v0.t"); let sut = encode_vid_v([Reg("v{vd}"), Symbol("v0.t")]). (mc = Ok(w) ⇒ sut = Ok(w)) ∧ (mc = Err ⇒ sut = Err)
-- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
+## encode_v_crypto_vi_neg_uimm_oob
+- Tier: 3
+- Rationale: Negative/error — rustdoc names the immediate uimm5, so the documented domain is {0..31}. Values outside that range must Err rather than wrap with `& 0x1F`. Bounds 32, -1, i64::MIN/MAX are forced.
+- Doc contract: vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" — asserted fingerprint 40191257
+- Seed: (none)
+- Formal: ∀ vd, vs2 ∈ {0..31}, uimm ∉ {0..31}, funct6 ∈ {vsm3c.vi, vsm4k.vi}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
 - Status: failing
-- Counterexample: encode_vid_v([Reg("v0"), Symbol("v0.t")]) → Ok(Word(0x5208a057))
-- Bug report: pbt-out/bug_reports/encode_vid_v_mask_v0t.md
+- Counterexample: vd=0, vs2=0, uimm=-1, kind=0 (vsm3c.vi); Ok(Word(0xae0f8077))
+- Bug report: pbt-out/bug_reports/encode_v_crypto_vi_uimm_oob.md
 
 ```property
-function: encoder.encode_vid_v
-oracle: differential
+function: encoder.encode_v_crypto_vi
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [vd]
-  domain: { vd: "v0..v31" }
-  relation:
-    op: holds
-    expr: "llvm_mc_ok iff sut_ok and then sut_word == mc_word"
+  vars: [vd, vs2, uimm, funct6]
+  domain: { vd: 0..31, vs2: 0..31, uimm: i64_outside_0_31, funct6: {0b101011, 0b100001} }
+  body: encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6).is_err()
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-evidence: RISC-V V 1.0 vid.v vm; encoder/mod.rs:962; llvm-mc -mattr=+v
+  vs2: { gen: int, min: 0, max: 31, type: u32 }
+  uimm: { gen: int, min: -1000, max: 1000, type: i64 }
+  funct6: { gen: oneof, items: [0b101011, 0b100001], type: u32 }
+expected_error: String
+evidence: vector.rs:190 uimm5; vector.rs:194 `& 0x1F` with no range check
+```
+
+## encode_v_crypto_vi_neg_mask_v0t
+- Tier: 3
+- Rationale: Negative/error — Zvksh/Zvksed VI forms are not maskable (vm is required 1; RISC-V Crypto Volume II). A trailing v0.t token must Err, not be ignored while still emitting vm=1.
+- Doc contract: vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" — asserted fingerprint 40191257
+- Seed: (none)
+- Formal: ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, funct6 ∈ {vsm3c.vi, vsm4k.vi}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm), Symbol("v0.t")], funct6) = Err(_)
+- Test file: src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs
+- Status: failing
+- Counterexample: vd=0, vs2=0, uimm=0, kind=0; Ok(Word(0xae002077))
+- Bug report: pbt-out/bug_reports/encode_v_crypto_vi_mask_v0t.md
+
+```property
+function: encoder.encode_v_crypto_vi
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [vd, vs2, uimm, funct6]
+  domain: { vd: 0..31, vs2: 0..31, uimm: 0..31, funct6: {0b101011, 0b100001} }
+  body: encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm), Symbol("v0.t")], funct6).is_err()
+generators:
+  vd: { gen: int, min: 0, max: 31, type: u32 }
+  vs2: { gen: int, min: 0, max: 31, type: u32 }
+  uimm: { gen: int, min: 0, max: 31, type: i64 }
+  funct6: { gen: oneof, items: [0b101011, 0b100001], type: u32 }
+expected_error: String
+evidence: vector.rs:190 vm=1; RISC-V Cryptography Extensions Volume II (not maskable); encoder/mod.rs:962 TODO masked variants
 ```
