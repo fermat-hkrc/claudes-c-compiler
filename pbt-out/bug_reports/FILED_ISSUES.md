@@ -82,3 +82,4 @@
 | 28 | src/backend/x86/assembler | BMI1 blsi/blsmsk/blsr + bextri missing (9 forms) | **new issue filed** | [#1054](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1054) |
 | 28 | src/backend/x86/assembler | CET/shadow-stack (endbr64/wrssd/etc.) missing | **new issue filed** | [#1055](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1055) |
 | 28 | src/backend/arm/assembler | NEON fmaxv/fminv/fmaxnmv/fminnmv + smov missing (5 GAPs) | **new issue filed** | [#1056](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1056) |
+| 28 | src/backend/arm/assembler | NEON fcmp-vs-zero: fcmeq/fcmgt → NOP; fcmlt/fcmle wrong; sqshlu/cmls missing | **new issue filed** | [#1057](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1057) |
