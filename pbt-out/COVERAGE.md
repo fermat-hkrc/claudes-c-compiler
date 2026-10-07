@@ -96,5 +96,12 @@
 | X87-class struct ABI ({long double}) | src/backend/call_abi.rs + x86 codegen | round-38 manual probes | interop | RAX:RDX/RDI:RSI instead of st(0)/memory → **#1116** |
 | ARM64 HFA struct ABI | src/backend/call_abi.rs + ARM codegen | round-38 clang/qemu interop | 5-direction exit-code witness | X0/W0 integer regs instead of S/V — all 5 BAD → **#1118** |
 | RISC-V FP-struct return | src/backend/riscv codegen | round-38 disasm + qemu witness | mkf/mkd/mk2 | integer a0, fa0 never loaded, {f,f} drops b → **#1119** (args fa0/fa1 correct) |
+
+## Round 39 — encode sweep 2 (base/zbb/atomics-suffixed)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| encode_zbb_unary/_f5/_w, encode_zbb_zexth, encode_shift_imm/_w, encode_amo/lr/sc_suffixed (9 fns) | src/backend/riscv/assembler/encoder/{base,atomics}.rs | base.rs ::pbt_extra_base_zbb | p_extra_base_zbb_sweep | 10/10 ignore extras; zbb_binary→encode_alu_reg #946 skipped; 9 filed **#1122-#1130** |
+| i686 struct ABI (5 directions) | src/backend/i686 | round-38 gcc -m32 interop | — | ALL GREEN (matches gcc) |
+| fn-ptr FP-struct calls | x86 codegen | round-38 probe | — | breakage = #1114 propagation (mk return garbage), not new |
 | volatile local folding | src/passes (storage classification) | round-38 /tmp/vol2.c f6 | access-count vs gcc | constants folded, 1/6 accesses survive → **#1115** |
 | long double runtime arith / >16B MEMORY structs | x86 backend | round-38 probes | interop | both GREEN (exact mul/div/cmp; 5×double hidden-pointer ✓) |
