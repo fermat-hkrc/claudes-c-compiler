@@ -1,4 +1,4 @@
-> Total files: 16 | Total functions: 383 | PBT candidates: 228 | Excluded: 155
+> Total files: 16 | Total functions: 383 | PBT candidates: 229 | Excluded: 154
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -377,7 +377,7 @@
 | encode_vstore | vector.rs | 104 | function | yes | already covered |
 | encode_v_arith_vv | vector.rs | 123 | function | yes | change surface |
 | encode_v_arith_vx | vector.rs | 134 | function | yes | change surface |
-| encode_v_arith_vi | vector.rs | 144 | function | no | HARD: test only encode_v_arith_vv |
+| encode_v_arith_vi | vector.rs | 144 | function | yes | change surface |
 | encode_vmv_v_v | vector.rs | 154 | function | no | HARD: test only encode_v_arith_vv |
 | encode_vmv_v_x | vector.rs | 163 | function | no | HARD: test only encode_v_arith_vv |
 | encode_vmv_v_i | vector.rs | 172 | function | no | HARD: test only encode_v_arith_vv |

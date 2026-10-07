@@ -108,6 +108,8 @@ mod encode_vstore_pbt;
 mod encode_v_arith_vv_pbt;
 #[cfg(test)]
 mod encode_v_arith_vx_pbt;
+#[cfg(test)]
+mod encode_v_arith_vi_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

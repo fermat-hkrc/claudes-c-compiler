@@ -1,3 +1,30 @@
+# Confirmed invariants (encode_v_arith_vi)
+
+- Valid 3-operand unmasked OPIVI with vd, vs2 ∈ {v0..v31}, (mnem,funct6,imm) ∈ signed_family × [-16,15] ∪ slide_family × [0,31] matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` except vslideup.vi when vd overlaps vs2 (llvm-mc architectural overlap check; skipped). signed_family = {(vadd.vi,000000),(vand.vi,001001),(vor.vi,001010),(vxor.vi,001011)}; slide_family = {(vslideup.vi,001110),(vslidedown.vi,001111)}. KAT pins vadd.vi v0, v0, 0 = 0x02003057; vadd.vi v1, v2, 3 = 0x0221b0d7; vadd.vi v31, v30, 15 = 0x03e7bfd7; vadd.vi v1, v2, -1 = 0x022fb0d7; vadd.vi v1, v2, -16 = 0x022830d7; vand.vi v1, v2, 3 = 0x2621b0d7; vor.vi v1, v2, 3 = 0x2a21b0d7; vxor.vi v1, v2, 3 = 0x2e21b0d7; vslideup.vi v1, v2, 3 = 0x3a21b0d7; vslidedown.vi v1, v2, 3 = 0x3e21b0d7.
+- Format layout holds: opcode=1010111, funct3=011, vm=1, vd in [11:7], simm5 in [19:15], vs2 in [24:20], funct6 in [31:26] (1000 cases over funct6 0..63 and simm [-16,15]).
+- Field isolation: vd/vs2/simm5/funct6 bits independent of the other fields (1000 cases).
+- simm5 two's complement: bits[19:15] = (simm as u32) & 0x1F for simm ∈ [-16,15] (1000 cases; bounds -16/-1/0/15 forced).
+- Too few operands, non-vector vd/vs2, and non-Imm at operand 2 return Err (1000 cases).
+- Extra operand, trailing v0.t, and out-of-range immediates currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_v_arith_vi)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs, cargo test --lib encode_v_arith_vi, proptest cases=1000.
+- Dispatch: encoder/mod.rs:980-997 vadd.vi/vand.vi/vor.vi/vxor.vi/vslideup.vi/vslidedown.vi => encode_v_arith_vi(operands, funct6). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_v_arith_vi NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / format / isolation / simm5 / arity-bad-regs / extra / mask-v0.t / imm-oob. Closed: tier round spent; remaining documented gaps are the extra-operand, mask-v0.t, and imm-oob bugs.
+
+## Quirks (encode_v_arith_vi)
+
+- vreg_num lowercases; llvm-mc rejects uppercase register names.
+- get_vreg does not accept Imm(0..=31) as a bare vector register number.
+- get_imm accepts only Operand::Imm.
+- vm is hardcoded to 1 (unmasked). Dispatcher TODO encoder/mod.rs:952: masked variants (v0.t) are not yet supported.
+- Assembly order is vd, vs2, imm (RISC-V V). Operand 2 is a 5-bit immediate, not a register.
+- llvm-mc rejects vslideup.vi when vd overlaps vs2. vslidedown.vi overlap is accepted. That is an architectural constraint, not an encoding-layout rule; the SUT still encodes those combinations.
+- llvm-mc signed OPIVI range is [-16, 15]; vslideup.vi / vslidedown.vi use unsigned [0, 31]. The SUT truncates with `& 0x1F` and does not range-check.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_v_arith_vx)
 
 - Valid 3-operand unmasked OPIVX with vd, vs2 ∈ {v0..v31}, rs1 ∈ {x0..x31}, (mnem,funct6) ∈ {(vadd.vx,000000),(vsub.vx,000010),(vand.vx,001001),(vor.vx,001010),(vxor.vx,001011),(vslideup.vx,001110),(vslidedown.vx,001111)} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` except vslideup/vslidedown when vd overlaps vs2 (llvm-mc architectural overlap check; skipped). KAT pins vadd.vx v0, v0, x0 = 0x02004057; vadd.vx v1, v2, x3 = 0x0221c0d7; vadd.vx v31, v30, x29 = 0x03eecfd7; vsub.vx v1, v2, x3 = 0x0a21c0d7; vand.vx v1, v2, x3 = 0x2621c0d7; vor.vx v1, v2, x3 = 0x2a21c0d7; vxor.vx v1, v2, x3 = 0x2e21c0d7; vslideup.vx v1, v2, x3 = 0x3a21c0d7; vslidedown.vx v1, v2, x3 = 0x3e21c0d7.

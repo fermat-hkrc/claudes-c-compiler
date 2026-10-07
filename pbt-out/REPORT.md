@@ -1,58 +1,58 @@
-# PBT Campaign Report: encode_v_arith_vx
+# PBT Campaign Report: encode_v_arith_vi
 
 ## Summary
 
-**Verdict:** 1 medium and 1 low: encode_v_arith_vx ignores extra operands, so `vadd.vx v0, v0, x0, 0` encodes as unmasked `vadd.vx v0, v0, x0`, and a trailing `v0.t` is dropped so a masked OPIVX is silently encoded unmasked (vm=1).
+**Verdict:** 1 medium + 1 medium + 1 low: encode_v_arith_vi silently ignores extra operands, truncates out-of-range immediates into a different in-range encoding, and drops `v0.t` so masked OPIVI is assembled unmasked.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_v_arith_vx
-**Tests:** 8
-**Result:** 6 passing, 2 bugs
-**Change surface:** 1 changed function (encode_v_arith_vx), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_v_arith_vx NOT LINKED in C++ reporter binaries; Rust cargo tests are not those binaries. Manual audit of the documented 3-operand / format / isolation / vs2-rs1-swap / ABI / arity / extra / mask-v0.t surface.
-**Effort tier:** standard
+**Modules tested:** encode_v_arith_vi
+**Tests:** 8 properties (plus 10 KAT + 5 regression witnesses)
+**Result:** 5 passing, 3 bugs
+**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_v_arith_vi NOT LINKED in C++ reporter binaries; the function did execute under `cargo test --lib encode_v_arith_vi`.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_v_arith_vx | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_v_arith_vi | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_v_arith_vx ignores extra operands
+### B1: encode_v_arith_vi ignores extra operands
 
-**Formal:** ∀ vd, vs2, rs1 ∈ 0..31, extra ∉ {v0.t mask}, (mnem, funct6) ∈ opivx_family. encode_v_arith_vx([v{vd}, v{vs2}, x{rs1}, extra], funct6) is Err
-**Contract evidence:** inferred (rustdoc three-operand OPIVX form at vector.rs:133; llvm-mc `-triple=riscv64 -mattr=+v` rejects a fourth non-mask token; encoder/mod.rs:976-994 passes operands through)
+**Formal:** ∀ vd, vs2 ∈ 0..31, extra ∉ {v0.t mask}, (mnem, funct6) ∈ opivi_family. encode_v_arith_vi([v{vd}, v{vs2}, Imm(imm), extra], funct6) is Err
+**Contract evidence:** inferred (llvm-mc rejects a fourth non-mask token with "operand must be v0.t"; encoder/mod.rs:980-997 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_v_arith_vx([Reg("v0"), Reg("v0"), Reg("x0"), Imm(0)], funct6=0b000000)
-**Expected / Actual:** Err / Ok(Word(0x02004057)) — same encoding as `vadd.vx v0, v0, x0`
-**Impact:** Invalid assembly with a stray fourth operand is assembled into a valid-looking unmasked OPIVX word instead of an assembler error.
-**Root cause:** vector.rs:135-140 reads only operands 0, 1, and 2 via get_vreg/get_reg and never checks operands.len() == 3, so extra tokens are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:135`
+**Counterexample:** encode_v_arith_vi([Reg("v0"), Reg("v0"), Imm(-16), Imm(0)], funct6=0b000000)
+**Expected / Actual:** Err / Ok(Word(0x02083057)) — same as `vadd.vi v0, v0, -16`
+**Impact:** Invalid assembly with a stray fourth operand is assembled into a valid-looking unmasked OPIVI word instead of an assembler error.
+**Root cause:** vector.rs:145-150 reads only operands 0, 1, and 2 via get_vreg/get_imm and never checks operands.len() == 3, so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:145`
 ```rust
     let vd = get_vreg(operands, 0)?;
     let vs2 = get_vreg(operands, 1)?;
-    let rs1 = get_reg(operands, 2)?;
+    let simm5 = get_imm(operands, 2)? as u32 & 0x1F;
     let vm: u32 = 1;
-    let word = (funct6 << 26) | (vm << 25) | (vs2 << 20) | (rs1 << 15) | (0b100 << 12) | (vd << 7) | OP_V;
+    let word = (funct6 << 26) | (vm << 25) | (vs2 << 20) | (simm5 << 15) | (0b011 << 12) | (vd << 7) | OP_V;
     Ok(EncodeResult::Word(word))
 ```
 **Suggested fix:** Reject any operand list that is not exactly three operands (mask token v0.t is a separate 4-operand form).
 ```rust
     if operands.len() != 3 {
-        return Err(format!("OPIVX expects 3 operands, got {}", operands.len()));
+        return Err(format!("OPIVI expects 3 operands, got {}", operands.len()));
     }
     let vd = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_v_arith_vx_extra_operand.md
-**Repro seed:** (none — shrunk to Imm(0) on the first case; replay via the regression test)
+**Bug report:** bug_reports/encode_v_arith_vi_extra_operand.md
+**Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_v_arith_vx_pbt::encode_v_arith_vx_neg_extra' (2880308) panicked at src/backend/riscv/assembler/encoder/encode_v_arith_vx_pbt.rs:317:1:
-Test failed: extra operand Imm(0) must Err for OPIVX (llvm-mc rejects extra); got Ok(Word(33570903)) at src/backend/riscv/assembler/encoder/encode_v_arith_vx_pbt.rs:478.
-minimal failing input: vd = 0, vs2 = 0, rs1 = 0, extra = Imm(
+thread 'backend::riscv::assembler::encoder::encode_v_arith_vi_pbt::encode_v_arith_vi_neg_extra' (2882352) panicked at src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs:356:1:
+Test failed: extra operand Imm(0) must Err for OPIVI (llvm-mc rejects extra); got Ok(Word(34091095)) at src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs:498.
+minimal failing input: vd = 0, vs2 = 0, simm = -16, extra = Imm(
     0,
 ), kind = 0
 	successes: 0
@@ -60,17 +60,17 @@ minimal failing input: vd = 0, vs2 = 0, rs1 = 0, extra = Imm(
 	global rejects: 0
 ```
 
-### B2: encode_v_arith_vx drops v0.t and encodes unmasked
+### B2: encode_v_arith_vi drops v0.t and encodes unmasked
 
-**Formal:** ∀ vd ∈ {1..31}, vs2, rs1 ∈ {0..31}, (mnem, funct6) ∈ opivx_family with not (slide mnemonic and vd = vs2). encode_v_arith_vx([Reg(v{vd}), Reg(v{vs2}), Reg(x{rs1}), Symbol("v0.t")], funct6) = llvm-mc(mnem v{vd}, v{vs2}, x{rs1}, v0.t)
-**Contract evidence:** documented limitation encoder/mod.rs:952 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)." — known limitation on an input the public wrapper accepts (operands passed through at encoder/mod.rs:976-994). RISC-V V 1.0 and llvm-mc encode `, v0.t` as vm=0.
-**Documentation conflict:** encoder/mod.rs:952 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)." — admits a gap on an input the API accepts (limitation, not an exclusion). vector.rs:138 `let vm: u32 = 1;` describes the emission, not that v0.t is invalid.
+**Formal:** ∀ vd ∈ {1..31}, vs2 ∈ {0..31}, (mnem, funct6, imm) in the valid OPIVI domain with not (mnem = vslideup.vi ∧ vd = vs2). encode_v_arith_vi([Reg(v{vd}), Reg(v{vs2}), Imm(imm), Symbol("v0.t")], funct6) = llvm-mc(mnem v{vd}, v{vs2}, imm, v0.t)
+**Contract evidence:** documented limitation encoder/mod.rs:952 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)."
+**Documentation conflict:** encoder/mod.rs:952 admits the gap on an input the API accepts (known limitation, not an input-domain restriction). Severity one step down.
 **Severity:** low (documented by the author)
-**Counterexample:** encode_v_arith_vx([Reg("v1"), Reg("v0"), Reg("x0"), Symbol("v0.t")], funct6=0b000000)
-**Expected / Actual:** Ok(Word(0x000040d7)) / Ok(Word(0x020040d7)) — llvm-mc `vadd.vx v1, v0, x0, v0.t` vs unmasked `vadd.vx v1, v0, x0`
-**Impact:** A masked OPIVX instruction is silently encoded as unmasked. Inactive elements that should be left undisturbed are overwritten.
-**Root cause:** vector.rs:138 hardcodes `vm = 1` and never inspects operand 3, so a v0.t mask token cannot clear bit 25.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:138`
+**Counterexample:** encode_v_arith_vi([Reg("v1"), Reg("v0"), Imm(-16), Symbol("v0.t")], funct6=0b000000)
+**Expected / Actual:** Ok(Word(0x000830d7)) llvm-mc `vadd.vi v1, v0, -16, v0.t` / Ok(Word(0x020830d7)) unmasked
+**Impact:** A masked OPIVI instruction is silently encoded as unmasked. Inactive elements that should be left undisturbed are overwritten.
+**Root cause:** vector.rs:148 hardcodes `vm = 1` and never inspects operand 3, so a v0.t mask token cannot clear bit 25.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:148`
 ```rust
     let vm: u32 = 1;
 ```
@@ -82,18 +82,52 @@ minimal failing input: vd = 0, vs2 = 0, rs1 = 0, extra = Imm(
         Some(other) => return Err(format!("operand 3 must be v0.t, got {:?}", other)),
     };
     if operands.len() > 4 {
-        return Err(format!("OPIVX expects 3 or 4 operands, got {}", operands.len()));
+        return Err(format!("OPIVI expects 3 or 4 operands, got {}", operands.len()));
     }
 ```
-**Bug report:** bug_reports/encode_v_arith_vx_mask_v0t.md
-**Repro seed:** cc 26e6d7b1921522136d997ec987cd64251d210f32de45ce4dde8137a70f3bd208
+**Bug report:** bug_reports/encode_v_arith_vi_mask_v0t.md
+**Repro seed:** cc accba68482b038c4a267fe8ee4ef36a5e5ef3af55a32baf77d550ff4eba9acd9
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_v_arith_vx_pbt::encode_v_arith_vx_mask_v0t' (2880287) panicked at src/backend/riscv/assembler/encoder/encode_v_arith_vx_pbt.rs:317:1:
+thread 'backend::riscv::assembler::encoder::encode_v_arith_vi_pbt::encode_v_arith_vi_mask_v0t' (2882333) panicked at src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs:356:1:
 Test failed: assertion failed: `(left == right)` 
-  left: `33571031`, 
- right: `16599`: SUT 0x020040d7 != llvm-mc 0x000040d7 for masked vadd.vx v1, v0, x0, v0.t at src/backend/riscv/assembler/encoder/encode_v_arith_vx_pbt.rs:502.
-minimal failing input: vd = 1, vs2 = 0, rs1 = 0, kind = 0
+  left: `34091223`, 
+ right: `536791`: SUT 0x020830d7 != llvm-mc 0x000830d7 for masked vadd.vi v1, v0, -16, v0.t at src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs:524.
+minimal failing input: vd = 1, vs2 = 0, simm = -16, uimm = 0, kind = 0
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+```
+
+### B3: encode_v_arith_vi truncates out-of-range immediates
+
+**Formal:** ∀ vd, vs2 ∈ 0..31, (mnem,funct6) ∈ signed_family, imm ∈ ℤ \ [-16,15]. encode_v_arith_vi([v{vd}, v{vs2}, Imm(imm)], funct6) is Err. ∀ (mnem,funct6) ∈ slide_family, imm ∈ ℤ \ [0,31]. encode_v_arith_vi(...) is Err.
+**Contract evidence:** inferred (llvm-mc rejects values outside [-16, 15] for vadd/vand/vor/vxor.vi and outside [0, 31] for vslideup/vslidedown.vi; wrapper encode_instruction passes Imm through)
+**Documentation conflict:** (none) — vector.rs:143 names the simm5 field but does not declare out-of-range immediates invalid; llvm-mc is the assembler error contract.
+**Severity:** medium
+**Counterexample:** encode_v_arith_vi([Reg("v0"), Reg("v0"), Imm(-17)], funct6=0b000000)
+**Expected / Actual:** Err / Ok(Word(0x0207b057)) — same as `vadd.vi v0, v0, 15`
+**Impact:** An immediate outside the 5-bit field is silently wrapped. `vadd.vi ..., -17` becomes `15`; `vadd.vi ..., 16` becomes `-16`; `vslideup.vi ..., 32` becomes `0`.
+**Root cause:** vector.rs:147 packs `get_imm(operands, 2)? as u32 & 0x1F` with no range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:147`
+```rust
+    let simm5 = get_imm(operands, 2)? as u32 & 0x1F;
+```
+**Suggested fix:** Reject immediates outside the mnemonic's 5-bit range before packing. Signed OPIVI uses [-16, 15]; vslideup.vi / vslidedown.vi use [0, 31].
+```rust
+    let imm = get_imm(operands, 2)?;
+    if imm < -16 || imm > 15 {
+        return Err(format!("simm5 out of range: {}", imm));
+    }
+    let simm5 = (imm as u32) & 0x1F;
+```
+**Bug report:** bug_reports/encode_v_arith_vi_imm_oob.md
+**Repro seed:** (none — deterministic regression)
+**Raw output:**
+```text
+thread 'backend::riscv::assembler::encoder::encode_v_arith_vi_pbt::encode_v_arith_vi_neg_imm_oob' (2882353) panicked at src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs:356:1:
+Test failed: vadd.vi v0, v0, -17 must Err (llvm-mc immediate out of range); got Ok(Word(34058327)) at src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs:542.
+minimal failing input: vd = 0, vs2 = 0, s_oob = -17, u_oob = -1, kind = 0
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -107,51 +141,58 @@ minimal failing input: vd = 1, vs2 = 0, rs1 = 0, kind = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_v_arith_vx_pbt.rs | 8 properties + 9 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_v_arith_vi_pbt.rs | 8 properties + 10 KAT + 5 regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_v_arith_vx -- --test-threads=1
+cargo test --lib encode_v_arith_vi -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_arith_vx_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_v_arith_vi_regression_extra_operand -- --test-threads=1
 ```
 
 B2 mask v0.t:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_arith_vx_regression_mask_v0t -- --test-threads=1
+cargo test --lib test_encode_v_arith_vi_regression_mask_v0t -- --test-threads=1
+```
+
+B3 imm oob:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_v_arith_vi_regression_simm_oob_m17 -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md — this report
-- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign checklist
-- pbt-out/COVERAGE.md — coverage ledger
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/report.json — machine-readable report
-- pbt-out/INVARIANTS.md — confirmed invariants
-- pbt-out/FUNCTION_INDEX.md — function index
-- pbt-out/bug_reports/encode_v_arith_vx_extra_operand.md
-- pbt-out/bug_reports/encode_v_arith_vx_extra_operand.html
-- pbt-out/bug_reports/encode_v_arith_vx_mask_v0t.md
-- pbt-out/bug_reports/encode_v_arith_vx_mask_v0t.html
-- pbt-out/run/ — scratch directory for test CWD
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/INVARIANTS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_v_arith_vi_extra_operand.md
+- pbt-out/bug_reports/encode_v_arith_vi_extra_operand.html
+- pbt-out/bug_reports/encode_v_arith_vi_mask_v0t.md
+- pbt-out/bug_reports/encode_v_arith_vi_mask_v0t.html
+- pbt-out/bug_reports/encode_v_arith_vi_imm_oob.md
+- pbt-out/bug_reports/encode_v_arith_vi_imm_oob.html
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 00:28 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 227/383 total | PBT candidates: 227 | Tested: 227 (100%) | 1 pass, 227 fail
+> Last updated: 2026-10-07 00:40 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 228/383 total | PBT candidates: 228 | Tested: 228 (100%) | 1 pass, 228 fail
 
 ## Summary
 
@@ -160,10 +201,10 @@ cargo test --lib test_encode_v_arith_vx_regression_mask_v0t -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 227 |
-| **Tested (of PBT candidates)** | **227 / 227 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 227 / -1 |
-| **Overall (tested / all functions)** | **227 / 383 (59%)** |
+| PBT candidates (from FUNCTION_INDEX) | 228 |
+| **Tested (of PBT candidates)** | **228 / 228 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 228 / -1 |
+| **Overall (tested / all functions)** | **228 / 383 (60%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -171,13 +212,13 @@ cargo test --lib test_encode_v_arith_vx_regression_mask_v0t -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 227 | 227 | 0 | 100% |
+|  | 228 | 228 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 227 | 227 | 0 | 100% |
+| unknown | 228 | 228 | 0 | 100% |
 
 ## File Coverage
 
@@ -427,3 +468,4 @@ cargo test --lib test_encode_v_arith_vx_regression_mask_v0t -- --test-threads=1
 | encode_vstore | vector.rs |
 | encode_v_arith_vv | vector.rs |
 | encode_v_arith_vx | vector.rs |
+| encode_v_arith_vi | vector.rs |
