@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_v_crypto_vv)
+
+- Valid 3-operand unmasked vsm3me.vv with vd, vs2, vs1 ∈ {v0..v31} packs funct6, vm=1, vs2, vs1, funct3=010, vd (1000 cases). Rustdoc KAT pins vsm3me.vv v0, v0, v0 = 0x82002077; vsm3me.vv v1, v2, v3 = 0x8221a0f7; vsm3me.vv v31, v30, v29 = 0x83eeaff7 (these words use OP_V_CRYPTO=1110111).
+- Format layout holds for vd/funct3/vs1/vs2/vm/funct6 (1000 cases). Opcode currently 1110111, not Volume II OP-V 1010111 (see bugs).
+- Field isolation: vd/vs2/vs1/funct6 bits independent of the other fields (1000 cases).
+- Operand swap: swapping operands 0 and 1 swaps bits [11:7] and [24:20]; swapping operands 1 and 2 swaps bits [24:20] and [19:15]; other bits preserved (1000 cases).
+- Too few operands and non-vector vd/vs2/vs1 return Err (1000 cases).
+- Extra operand and trailing v0.t currently disagree with the claimed RISC-V Crypto Volume II contract (see bugs).
+
+## Environment (encode_v_crypto_vv)
+
+- Reference: RISC-V Cryptography Extensions Volume II (Zvksh vsm3me.vv funct6=100000, opcode OP-V=1010111, funct3=010, vm=1, not maskable). llvm-mc 15.0.6 does not recognize this mnemonic.
+- Harness: src/backend/riscv/assembler/encoder/encode_v_crypto_vv_pbt.rs, cargo test --lib encode_v_crypto_vv, proptest cases=1000.
+- Dispatch: encoder/mod.rs:1021 "vsm3me.vv" => encode_v_crypto_vv(operands, 0b100000). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_v_crypto_vv NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / format / isolation / operand-swap / arity-bad-regs (passing) and opcode / extra / mask-v0.t (filed bugs). Closed: tier round spent; remaining documented gaps are the three filed bugs.
+
+## Quirks (encode_v_crypto_vv)
+
+- vreg_num lowercases; get_vreg does not accept Imm(0..=31) as a bare vector register number.
+- vm is hardcoded to 1. Zvksh VV is not maskable; a trailing v0.t is currently ignored (bug).
+- Assembly order is vd, vs2, vs1.
+- OP_V_CRYPTO is 0b1110111 (OP-P). Volume II uses OP-V 0b1010111 (bug).
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_v_crypto_vi)
 
 - Valid 3-operand unmasked vsm3c.vi / vsm4k.vi with vd, vs2 ∈ {v0..v31} and uimm5 ∈ [0, 31] packs funct6, vm=1, vs2, uimm5, funct3=010, vd (1000 cases). Rustdoc KAT pins vsm3c.vi v0, v0, 0 = 0xae002077; vsm3c.vi v1, v2, 3 = 0xae21a0f7; vsm3c.vi v31, v30, 31 = 0xafefaff7; vsm4k.vi v1, v2, 3 = 0x8621a0f7 (these words use OP_V_CRYPTO=1110111).

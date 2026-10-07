@@ -1,147 +1,117 @@
-# PBT Campaign Report: encode_v_crypto_vi
+# PBT Campaign Report: encode_v_crypto_vv
 
 ## Summary
 
-**Verdict:** 1 high: encode_v_crypto_vi emits major opcode 1110111 (OP-P) for vsm3c.vi / vsm4k.vi, so objects will not decode as RISC-V Vector Crypto (OP-V 1010111); plus 3 medium: extra operands, trailing v0.t, and out-of-range uimm5 are silently accepted.
+**Verdict:** 1 high: encode_v_crypto_vv emits major opcode 1110111 (OP-P) for vsm3me.vv, so objects will not decode as RISC-V Vector Crypto (OP-V 1010111); plus 2 medium: extra operands and trailing v0.t are silently accepted.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_v_crypto_vi
-**Tests:** 8
-**Result:** 4 passing, 4 bugs
+**Modules tested:** encode_v_crypto_vv
+**Tests:** 7
+**Result:** 4 passing, 3 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_v_crypto_vi NOT LINKED in C++ reporter binaries; the Rust `cargo test --lib encode_v_crypto_vi` run executed the symbol (KATs and 1000-case properties). Sweep: 1 round (standard), manual audit of documented 3-op / format / isolation / swap / arity / opcode / extra / uimm-oob / v0.t. Closed: tier round spent.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_v_crypto_vv NOT LINKED in C++ reporter binaries; the Rust `cargo test --lib encode_v_crypto_vv` run executed the symbol (KATs and 1000-case properties). Sweep: 1 round (standard), manual audit of documented 3-op / format / isolation / swap / arity / opcode / extra / v0.t. Closed: tier round spent; remaining documented gaps are the three filed bugs.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_v_crypto_vi | 8 | 4 | reference, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_v_crypto_vv | 7 | 3 | reference, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_v_crypto_vi uses OP-P instead of OP-V
+### B1: encode_v_crypto_vv uses OP-P instead of OP-V
 
-**Formal:** ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, (mnem,funct6) ∈ {(vsm3c.vi,101011),(vsm4k.vi,100001)}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6) = Word(w) ∧ (w & 0x7F) = 0b1010111
-**Contract evidence:** documented encoder/mod.rs:445 "Vector crypto (Zvk*) — uses OP-P encoding space per RVV Crypto spec" — the SUT claims RISC-V Cryptography Extensions Volume II, which encodes these instructions in OP-V (1010111)
-**Documentation conflict:** vector.rs:190 "vsm3c.vi, vsm4k.vi: funct6 | vm=1 | vs2 | uimm5 | 010 | vd | OP_V_CRYPTO" and encoder/mod.rs:445 assert OP-P. The comment cites the RVV Crypto spec but states the wrong major opcode; it does not declare OP-V invalid. Mark (not independently verified) against every historical draft — ratified Volume II uses OP-V.
+**Formal:** ∀ vd, vs2, vs1 ∈ {0..31}. encode_v_crypto_vv([v{vd}, v{vs2}, v{vs1}], 0b100000) = Word(w) ∧ (w & 0x7F) = 0b1010111 ∧ w = spec_word(vd, vs2, vs1, 0b100000)
+**Contract evidence:** documented encoder/mod.rs:449 "Vector crypto (Zvk*) — uses OP-P encoding space per RVV Crypto spec" — the SUT claims RISC-V Cryptography Extensions Volume II, which encodes these instructions in OP-V (1010111)
+**Documentation conflict:** vector.rs:200 "vsm3me.vv: funct6 | vm=1 | vs2 | vs1 | 010 | vd | OP_V_CRYPTO" and encoder/mod.rs:449 assert OP-P. The comment cites the RVV Crypto spec but states the wrong major opcode; it does not declare OP-V invalid. Mark (not independently verified) against every historical draft — ratified Volume II uses OP-V.
 **Severity:** high
-**Counterexample:** encode_v_crypto_vi([Reg("v0"), Reg("v0"), Imm(0)], 0b101011)
-**Expected / Actual:** opcode 0b1010111 (Word 0xae002057) / opcode 0b1110111 (Word 0xae002077)
-**Impact:** Assembled vsm3c.vi / vsm4k.vi will not execute as SM3/SM4 crypto on a spec-compliant Zvksh/Zvksed core.
-**Root cause:** vector.rs:195 ORs OP_V_CRYPTO, defined as 0b1110111 at encoder/mod.rs:445, instead of OP-V 0b1010111.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:195`
+**Counterexample:** encode_v_crypto_vv([Reg("v0"), Reg("v0"), Reg("v0")], 0b100000)
+**Expected / Actual:** opcode 0b1010111 (Word 0x82002057) / opcode 0b1110111 (Word 0x82002077)
+**Impact:** Assembled vsm3me.vv will not execute as SM3 message expansion on a spec-compliant Zvksh core.
+**Root cause:** vector.rs:205 ORs OP_V_CRYPTO, defined as 0b1110111 at encoder/mod.rs:449, instead of OP-V 0b1010111.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:205`
 ```rust
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (uimm5 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
+    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (vs1 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
 ```
 **Suggested fix:** Pack OP-V.
 ```rust
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (uimm5 << 15) | (0b010 << 12) | (vd << 7) | OP_V;
+    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (vs1 << 15) | (0b010 << 12) | (vd << 7) | OP_V;
 ```
-**Bug report:** bug_reports/encode_v_crypto_vi_spec_opcode.md
-**Repro seed:** vd=0, vs2=0, uimm=0, kind=0
+**Bug report:** bug_reports/encode_v_crypto_vv_spec_opcode.md
+**Repro seed:** vd=0, vs2=0, vs1=0
 **Raw output:**
 ```text
-Test failed: assertion failed: `(left == right)`
-  left: `119`,
+Test failed: assertion failed: `(left == right)` 
+  left: `119`, 
  right: `87`: opcode must be OP-V 1010111 per RISC-V Crypto Volume II; got 0b1110111
-minimal failing input: vd = 0, vs2 = 0, uimm = 0, kind = 0
+minimal failing input: vd = 0, vs2 = 0, vs1 = 0
 ```
 
-### B2: encode_v_crypto_vi ignores extra operands
+### B2: encode_v_crypto_vv ignores extra operands
 
-**Formal:** ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, extra ∈ Operand, funct6 ∈ {vsm3c.vi, vsm4k.vi}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm), extra], funct6) = Err(_)
-**Contract evidence:** inferred (3-operand rustdoc form at vector.rs:190; encode_instruction at encoder/mod.rs:1018,1021 passes operands through)
+**Formal:** ∀ vd, vs2, vs1 ∈ {0..31}, extra ∈ Operand. encode_v_crypto_vv([v{vd}, v{vs2}, v{vs1}, extra], 0b100000) = Err(_)
+**Contract evidence:** inferred (3-operand rustdoc form at vector.rs:200; encode_instruction at encoder/mod.rs:1021 passes operands through)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_v_crypto_vi([Reg("v0"), Reg("v0"), Imm(0), Imm(0)], 0b101011)
-**Expected / Actual:** Err / Ok(Word(0xae002077))
-**Impact:** A stray fourth token is assembled as a complete vsm3c.vi / vsm4k.vi instead of an assembler error.
-**Root cause:** vector.rs:192-196 reads only operands 0..2 and never checks operands.len() == 3.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:192`
+**Counterexample:** encode_v_crypto_vv([Reg("v0"), Reg("v0"), Reg("v0"), Imm(0)], 0b100000)
+**Expected / Actual:** Err / Ok(Word(0x82002077))
+**Impact:** A stray fourth token is assembled as a complete vsm3me.vv instead of an assembler error.
+**Root cause:** vector.rs:202-206 reads only operands 0..2 and never checks operands.len() == 3.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:202`
 ```rust
     let vd = get_vreg(operands, 0)?;
     let vs2 = get_vreg(operands, 1)?;
-    let uimm5 = get_imm(operands, 2)? as u32 & 0x1F;
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (uimm5 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
+    let vs1 = get_vreg(operands, 2)?;
+    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (vs1 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
     Ok(EncodeResult::Word(word))
 ```
 **Suggested fix:** Reject arity other than 3.
 ```rust
     if operands.len() != 3 {
-        return Err(format!("vsm3c.vi/vsm4k.vi expect 3 operands, got {}", operands.len()));
+        return Err(format!("vsm3me.vv expects 3 operands, got {}", operands.len()));
     }
     let vd = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_v_crypto_vi_extra_operand.md
-**Repro seed:** cc c0fd4fa51e8959a8eeb2bbd3c144f15f56e01c3983d6e0aeafc2fb3664f302e0
+**Bug report:** bug_reports/encode_v_crypto_vv_extra_operand.md
+**Repro seed:** cc 25bc599605b94c3d8ee050e56cc6fc874a16f9be9a27c6218c8c1d5743b4d5cd
 **Raw output:**
 ```text
-Test failed: extra operand Imm(0) must Err for crypto VI; got Ok(Word(2919243895))
-minimal failing input: vd = 0, vs2 = 0, uimm = 0, extra = Imm(0), kind = 0
+Test failed: extra operand Imm(0) must Err for crypto VV; got Ok(Word(2181046391))
+minimal failing input: vd = 0, vs2 = 0, vs1 = 0, extra = Imm(0)
 ```
 
-### B3: encode_v_crypto_vi truncates out-of-range uimm5
+### B3: encode_v_crypto_vv ignores trailing v0.t on a non-maskable instruction
 
-**Formal:** ∀ vd, vs2 ∈ {0..31}, uimm ∉ {0..31}, funct6 ∈ {vsm3c.vi, vsm4k.vi}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm)], funct6) = Err(_)
-**Contract evidence:** documented vector.rs:190 "uimm5" — the documented domain is [0, 31]
-**Documentation conflict:** (none) — the rustdoc names uimm5; it does not declare values outside [0, 31] valid
+**Formal:** ∀ vd, vs2, vs1 ∈ {0..31}. encode_v_crypto_vv([v{vd}, v{vs2}, v{vs1}, Symbol("v0.t")], 0b100000) = Err(_)
+**Contract evidence:** inferred (Volume II vsm3me.vv is not maskable; rustdoc vector.rs:200 states vm=1; encode_instruction at encoder/mod.rs:1021 passes operands through)
+**Documentation conflict:** vector.rs:200 "vm=1" asserts the encoding bit, not that a trailing v0.t is invalid input. The comment does not declare v0.t out of domain; Volume II says the instruction is not maskable. (none as an exclusion)
 **Severity:** medium
-**Counterexample:** encode_v_crypto_vi([Reg("v0"), Reg("v0"), Imm(-1)], 0b101011)
-**Expected / Actual:** Err / Ok(Word(0xae0f8077)) encoding uimm=31
-**Impact:** Out-of-range round numbers wrap (`-1` → 31, `32` → 0) instead of being rejected.
-**Root cause:** vector.rs:194 `get_imm(...) as u32 & 0x1F` masks without a range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:194`
-```rust
-    let uimm5 = get_imm(operands, 2)? as u32 & 0x1F;
-```
-**Suggested fix:** Reject immediates outside 0..=31.
-```rust
-    let imm = get_imm(operands, 2)?;
-    if !(0..=31).contains(&imm) {
-        return Err(format!("uimm5 out of range: {imm}"));
-    }
-    let uimm5 = imm as u32;
-```
-**Bug report:** bug_reports/encode_v_crypto_vi_uimm_oob.md
-**Repro seed:** vd=0, vs2=0, uimm=-1, kind=0
-**Raw output:**
-```text
-Test failed: vsm3c.vi v0, v0, -1 must Err (uimm5 domain [0, 31]); got Ok(Word(2920259703))
-minimal failing input: vd = 0, vs2 = 0, uimm = -1, kind = 0
-```
-
-### B4: encode_v_crypto_vi ignores trailing v0.t
-
-**Formal:** ∀ vd, vs2 ∈ {0..31}, uimm ∈ {0..31}, funct6 ∈ {vsm3c.vi, vsm4k.vi}. encode_v_crypto_vi([v{vd}, v{vs2}, Imm(uimm), Symbol("v0.t")], funct6) = Err(_)
-**Contract evidence:** documented vector.rs:190 "vm=1"; RISC-V Cryptography Extensions Volume II — Zvksh/Zvksed VI is not maskable
-**Documentation conflict:** encoder/mod.rs:962 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)" — known limitation on an input the API accepts if the parser yields a fourth Symbol("v0.t"). Severity one step below impact (medium → low) would apply only if this were a documented limitation of crypto VI; the TODO is about RVV arithmetic masking, and crypto VI is not maskable. Keep medium.
-**Severity:** medium
-**Counterexample:** encode_v_crypto_vi([Reg("v0"), Reg("v0"), Imm(0), Symbol("v0.t")], 0b101011)
-**Expected / Actual:** Err / Ok(Word(0xae002077)) with vm=1
-**Impact:** `vsm3c.vi vd, vs2, uimm, v0.t` assembles as unmasked instead of being rejected.
-**Root cause:** vector.rs:192-196 never inspects operands past index 2; vm is hardcoded to 1.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:192`
+**Counterexample:** encode_v_crypto_vv([Reg("v0"), Reg("v0"), Reg("v0"), Symbol("v0.t")], 0b100000)
+**Expected / Actual:** Err / Ok(Word(0x82002077)) with vm=1
+**Impact:** `vsm3me.vv vd, vs2, vs1, v0.t` assembles as unmasked instead of being rejected.
+**Root cause:** vector.rs:202-206 never inspects operands past index 2, and vm is hardcoded to 1.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:202`
 ```rust
     let vd = get_vreg(operands, 0)?;
     let vs2 = get_vreg(operands, 1)?;
-    let uimm5 = get_imm(operands, 2)? as u32 & 0x1F;
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (uimm5 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
+    let vs1 = get_vreg(operands, 2)?;
+    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (vs1 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
     Ok(EncodeResult::Word(word))
 ```
-**Suggested fix:** Reject a fourth v0.t (and any extra operand). These instructions are not maskable.
+**Suggested fix:** Reject a fourth v0.t (and any other extra operand).
 ```rust
     if operands.len() != 3 {
-        return Err(format!("vsm3c.vi/vsm4k.vi expect 3 operands (not maskable), got {}", operands.len()));
+        return Err(format!("vsm3me.vv expects 3 operands (not maskable), got {}", operands.len()));
     }
     let vd = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_v_crypto_vi_mask_v0t.md
-**Repro seed:** vd=0, vs2=0, uimm=0, kind=0
+**Bug report:** bug_reports/encode_v_crypto_vv_mask_v0t.md
+**Repro seed:** vd=0, vs2=0, vs1=0
 **Raw output:**
 ```text
-Test failed: trailing v0.t must Err (Zvksh/Zvksed VI is not maskable); got Ok(Word(2919243895))
-minimal failing input: vd = 0, vs2 = 0, uimm = 0, kind = 0
+Test failed: trailing v0.t must Err (Zvksh VV is not maskable); got Ok(Word(2181046391))
+minimal failing input: vd = 0, vs2 = 0, vs1 = 0
 ```
 
 ## Design Caveats
@@ -152,38 +122,32 @@ minimal failing input: vd = 0, vs2 = 0, uimm = 0, kind = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_v_crypto_vi_pbt.rs | 8 properties + 4 passing KAT + 1 failing spec KAT + 5 failing regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_v_crypto_vv_pbt.rs | 7 properties (4 passing / 3 failing) plus 3 passing KAT + 1 failing spec KAT + 3 failing regression witnesses |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_v_crypto_vi -- --test-threads=1
+cargo test --lib encode_v_crypto_vv -- --test-threads=1
 ```
 
 B1 opcode:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_crypto_vi_regression_spec_opcode -- --test-threads=1
+cargo test --lib test_encode_v_crypto_vv_regression_spec_opcode -- --test-threads=1
 ```
 
 B2 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_crypto_vi_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_v_crypto_vv_regression_extra_operand -- --test-threads=1
 ```
 
-B3 uimm oob:
+B3 trailing v0.t:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_crypto_vi_regression_uimm_oob_m1 -- --test-threads=1
-```
-
-B4 mask v0.t:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_crypto_vi_regression_mask_v0t -- --test-threads=1
+cargo test --lib test_encode_v_crypto_vv_regression_mask_v0t -- --test-threads=1
 ```
 
 ## Output Directories
@@ -194,25 +158,23 @@ cargo test --lib test_encode_v_crypto_vi_regression_mask_v0t -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_v_crypto_vi_spec_opcode.md
-- pbt-out/bug_reports/encode_v_crypto_vi_spec_opcode.html
-- pbt-out/bug_reports/encode_v_crypto_vi_extra_operand.md
-- pbt-out/bug_reports/encode_v_crypto_vi_extra_operand.html
-- pbt-out/bug_reports/encode_v_crypto_vi_uimm_oob.md
-- pbt-out/bug_reports/encode_v_crypto_vi_uimm_oob.html
-- pbt-out/bug_reports/encode_v_crypto_vi_mask_v0t.md
-- pbt-out/bug_reports/encode_v_crypto_vi_mask_v0t.html
-- pbt-out/run/encode_v_crypto_vi.log
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_v_crypto_vv_spec_opcode.md
+- pbt-out/bug_reports/encode_v_crypto_vv_spec_opcode.html
+- pbt-out/bug_reports/encode_v_crypto_vv_extra_operand.md
+- pbt-out/bug_reports/encode_v_crypto_vv_extra_operand.html
+- pbt-out/bug_reports/encode_v_crypto_vv_mask_v0t.md
+- pbt-out/bug_reports/encode_v_crypto_vv_mask_v0t.html
+- pbt-out/run/encode_v_crypto_vv.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 02:00 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 233/383 total | PBT candidates: 233 | Tested: 233 (100%) | 1 pass, 233 fail
+> Last updated: 2026-10-07 02:11 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 234/383 total | PBT candidates: 234 | Tested: 234 (100%) | 1 pass, 234 fail
 
 ## Summary
 
@@ -221,10 +183,10 @@ cargo test --lib test_encode_v_crypto_vi_regression_mask_v0t -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 233 |
-| **Tested (of PBT candidates)** | **233 / 233 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 233 / -1 |
-| **Overall (tested / all functions)** | **233 / 383 (61%)** |
+| PBT candidates (from FUNCTION_INDEX) | 234 |
+| **Tested (of PBT candidates)** | **234 / 234 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 234 / -1 |
+| **Overall (tested / all functions)** | **234 / 383 (61%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -232,13 +194,13 @@ cargo test --lib test_encode_v_crypto_vi_regression_mask_v0t -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 233 | 233 | 0 | 100% |
+|  | 234 | 234 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 233 | 233 | 0 | 100% |
+| unknown | 234 | 234 | 0 | 100% |
 
 ## File Coverage
 
@@ -494,3 +456,4 @@ cargo test --lib test_encode_v_crypto_vi_regression_mask_v0t -- --test-threads=1
 | encode_vmv_v_i | vector.rs |
 | encode_vid_v | vector.rs |
 | encode_v_crypto_vi | vector.rs |
+| encode_v_crypto_vv | vector.rs |
