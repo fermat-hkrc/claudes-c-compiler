@@ -1385,3 +1385,82 @@ int main(void){{ return cmain(); }}", ops = ops)
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_mutation_fuzz {
+    //! Round-46: mutation fuzz — valid programs get random token-level
+    //! deletions/insertions/replacements; the compiler must NEVER panic (ICE)
+    //! or hang on malformed input (gcc contract: any byte sequence parses to
+    //! errors, not a crash).
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Instant;
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/46_fuzz/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    const CORPUS: &[&str] = &[
+        "int main(void){ int x = 1; return x + 2; }\n",
+        "#include <stdio.h>\nstruct S { int a; double b; };\nstatic struct S gs = {1, 2.5};\nint main(void){ struct S l = gs; printf(\"%d %f\\n\", l.a, l.b); return 0; }\n",
+        "int f(int a, int b){ return a * b - (a + b); }\nint main(void){ return f(3, 4) - 5; }\n",
+        "typedef unsigned u32;\nenum E { A = 1, B = 2 };\nstatic u32 arr[4] = {A, B, A, B};\nint main(void){ return arr[0]; }\n",
+        "int main(void){ for (int i = 0; i < 10; i++) { if (i % 3) continue; } return 0; }\n",
+        "union U { int i; char c[4]; };\nint main(void){ union U u; u.i = 65; return u.c[0]; }\n",
+        "#define M(x) ((x) * 2)\nint main(void){ return M(21) - 42; }\n",
+        "int main(void){ switch (1) { case 1: return 0; default: return 1; } }\n",
+        "static int g = 5;\nint (*fp)(void);\nint f(void){ return g; }\nint main(void){ fp = f; return fp(); }\n",
+        "struct N { struct { int x; } in; int a[3]; };\nint main(void){ struct N n = { { 1 }, { 2, 3, 4 } }; return n.a[2]; }\n",
+    ];
+
+    /// token 化（保守:按空白切+保留标点为独立块）与变异
+    fn mutate(src: &str, seed: u64, n_mut: usize) -> String {
+        let toks: Vec<&str> = src.split_whitespace().collect();
+        let mut rng = seed | 1;
+        let mut next = move || { rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); (rng >> 33) as u32 };
+        let mut toks: Vec<String> = toks.iter().map(|s| s.to_string()).collect();
+        let junk = ["@", "#", "`", "\\", "$", "€", "~", "^", "!", "struct", "case", "0x", "'a", "\"s", "...", "%:", "??", "->", "::"];
+        for _ in 0..n_mut {
+            if toks.is_empty() { break; }
+            let k = (next() as usize) % 3;
+            let i = (next() as usize) % toks.len();
+            match k {
+                0 => { toks.remove(i); }
+                1 => { toks.insert(i, junk[(next() as usize) % junk.len()].to_string()); }
+                _ => { toks[i] = junk[(next() as usize) % junk.len()].to_string(); }
+            }
+        }
+        toks.join(" ")
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(600))]
+        #[test]
+        fn p_mutation_no_ice(
+            corpus_idx in 0usize..10, seed in any::<u64>(), n_mut in 1usize..8,
+        ) {
+            let mutated = mutate(CORPUS[corpus_idx], seed, n_mut);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("Z{}.c", case));
+            std::fs::write(&src, &mutated).unwrap();
+            let t0 = Instant::now();
+            let out = Command::new("./target/debug/ccc")
+                .args(["-w", "-c", src.to_str().unwrap(), "-o", dir.join(format!("Z{}.o", case)).to_str().unwrap()])
+                .output();
+            let elapsed = t0.elapsed();
+            let _ = std::fs::remove_file(&src);
+            let _ = std::fs::remove_file(dir.join(format!("Z{}.o", case)));
+            let out = out.unwrap();
+            prop_assert!(elapsed.as_secs() < 20, "HANG ({}s) on mutated input:\n{}", elapsed.as_secs(), mutated);
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            prop_assert!(!stderr.contains("panicked"), "ICE (Rust panic) on mutated input:\n{}\n---\n{}", mutated, stderr);
+            prop_assert!(!stderr.contains("RUST_BACKTRACE"), "ICE backtrace on mutated input:\n{}", mutated);
+        }
+    }
+}

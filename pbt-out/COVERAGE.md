@@ -160,3 +160,11 @@
 | -U/-D ordering, functional -D, -C, -M | src/driver | /tmp/uu.c /tmp/fm.c /tmp/ec.c /tmp/mm.c | gcc diff | 4 breaks → #1157 #1158 #1160 #1161 |
 | self-include depth | includes.rs | /tmp/deep.h | gcc diff | silent object → #1159 |
 | UTF-8 strings/comments, \8, \7777, -isystem, include_next, search order | — | /tmp/e45.c etc | value diff | all green |
+
+## Round 46 — robustness + linker semantics
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| parser robustness | frontend | mod.rs::pbt_mutation_fuzz | p_mutation_no_ice | 600 mutants, 0 ICE/hang |
+| -E round-trip | preprocessor | /tmp/rt1.c | recompile identity | green (ccc→ccc, gcc→ccc) |
+| strong/strong resolution | linker symbols | /tmp/lk | gcc diff | silent link → #1166 |
+| archive lazy/whole/cross-addr | linker archive | /tmp/lk lazy.a | order matrix | lazy+deps+addr green; --whole-archive → #1165 ext |
