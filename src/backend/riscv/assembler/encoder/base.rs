@@ -388,3 +388,57 @@ mod pbt_zbb_diff {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_extra_base_zbb {
+    use super::*;
+    use crate::backend::riscv::assembler::parser::Operand;
+    fn r(s: &str) -> Operand { Operand::Reg(s.to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+
+    #[test]
+    fn p_extra_base_zbb_sweep() {
+        let cases: Vec<(&str, Vec<Operand>, Vec<Operand>)> = vec![
+            ("encode_zbb_unary", vec![r("a0"), r("a1")], vec![r("a0"), r("a1"), r("a2")]),
+            ("encode_zbb_unary_f5", vec![r("a0"), r("a1")], vec![r("a0"), r("a1"), r("a2")]),
+            ("encode_zbb_unary_w", vec![r("a0"), r("a1")], vec![r("a0"), r("a1"), r("a2")]),
+            ("encode_zbb_zexth", vec![r("a0"), r("a1")], vec![r("a0"), r("a1"), r("a2")]),
+            ("encode_zbb_binary", vec![r("a0"), r("a1"), r("a2")], vec![r("a0"), r("a1"), r("a2"), r("a3")]),
+            ("encode_shift_imm", vec![r("a0"), r("a1"), i(3)], vec![r("a0"), r("a1"), i(3), r("a2")]),
+            ("encode_shift_imm_w", vec![r("a0"), r("a1"), i(3)], vec![r("a0"), r("a1"), i(3), r("a2")]),
+            ("encode_amo_suffixed", vec![r("a0"), r("a1"), Operand::Mem { base: "a2".into(), offset: 0 }],
+                vec![r("a0"), r("a1"), Operand::Mem { base: "a2".into(), offset: 0 }, r("a3")]),
+            ("encode_lr_suffixed", vec![r("a0"), Operand::Mem { base: "a1".into(), offset: 0 }],
+                vec![r("a0"), Operand::Mem { base: "a1".into(), offset: 0 }, r("a2")]),
+            ("encode_sc_suffixed", vec![r("a0"), r("a1"), Operand::Mem { base: "a2".into(), offset: 0 }],
+                vec![r("a0"), r("a1"), Operand::Mem { base: "a2".into(), offset: 0 }, r("a3")]),
+        ];
+        let mut ignored = Vec::new();
+        for (name, base, extra) in &cases {
+            let rb = dispatch2(name, base);
+            let re = dispatch2(name, extra);
+            match (rb, re) {
+                (Ok(_), Ok(_)) => { println!("  {}: extra IGNORED", name); ignored.push(*name); }
+                (Ok(_), Err(_)) => println!("  {}: extra REJECTED (correct)", name),
+                (Err(e), _) => println!("  {}: BASE FAILS: {}", name, &e[..e.len().min(50)]),
+            }
+        }
+        println!("IGNORED: {:?}", ignored);
+        assert!(ignored.is_empty(), "silently ignore extras: {:?}", ignored);
+    }
+
+    fn dispatch2(name: &str, ops: &[Operand]) -> Result<EncodeResult, String> {
+        match name {
+            "encode_zbb_unary" => encode_zbb_unary(ops, 0x600),
+            "encode_zbb_unary_f5" => encode_zbb_unary_f5(ops, 0b0110000),
+            "encode_zbb_unary_w" => encode_zbb_unary_w(ops, 0x600),
+            "encode_zbb_zexth" => encode_zbb_zexth(ops),
+            "encode_zbb_binary" => encode_alu_reg(ops, 0b111, 0b0100000),
+            "encode_shift_imm" => encode_shift_imm(ops, 0b001, 0b000000),
+            "encode_shift_imm_w" => encode_shift_imm_w(ops, 0b001, 0b0000000),
+            "encode_amo_suffixed" => crate::backend::riscv::assembler::encoder::atomics::encode_amo_suffixed("amoadd.w", ops),
+            "encode_lr_suffixed" => crate::backend::riscv::assembler::encoder::atomics::encode_lr_suffixed("lr.w", ops),
+            _ => crate::backend::riscv::assembler::encoder::atomics::encode_sc_suffixed("sc.w", ops),
+        }
+    }
+}

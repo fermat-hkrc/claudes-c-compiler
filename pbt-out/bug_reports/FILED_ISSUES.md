@@ -120,3 +120,12 @@
 | 38 | src/backend/call_abi.rs + x86 codegen | X87-class {long double} struct: return RAX:RDX (need st(0)), args RDI:RSI (need memory) | **new issue filed** | [#1116](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1116) |
 | 38 | src/backend/call_abi.rs + ARM codegen | ARM64 HFA structs in X0/W0 integer regs (need S/V) — 5/5 interop directions BAD | **new issue filed** | [#1118](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1118) |
 | 38 | src/backend/riscv codegen return path | RISC-V FP-struct returns in integer a0 (need fa0/fa1; {f,f} drops b) | **new issue filed** | [#1119](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1119) |
+| 39 | src/backend/riscv/assembler/encoder | encode_zbb_unary silently ignores extra operands | **new issue filed** | [#1122](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1122) |
+| 39 | src/backend/riscv/assembler/encoder | encode_zbb_unary_f5 silently ignores extra operands | **new issue filed** | [#1123](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1123) |
+| 39 | src/backend/riscv/assembler/encoder | encode_zbb_unary_w silently ignores extra operands | **new issue filed** | [#1124](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1124) |
+| 39 | src/backend/riscv/assembler/encoder | encode_zbb_zexth silently ignores extra operands | **new issue filed** | [#1125](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1125) |
+| 39 | src/backend/riscv/assembler/encoder | encode_shift_imm silently ignores extra operands | **new issue filed** | [#1126](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1126) |
+| 39 | src/backend/riscv/assembler/encoder | encode_shift_imm_w silently ignores extra operands | **new issue filed** | [#1127](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1127) |
+| 39 | src/backend/riscv/assembler/encoder | encode_amo_suffixed silently ignores extra operands | **new issue filed** | [#1128](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1128) |
+| 39 | src/backend/riscv/assembler/encoder | encode_lr_suffixed silently ignores extra operands | **new issue filed** | [#1129](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1129) |
+| 39 | src/backend/riscv/assembler/encoder | encode_sc_suffixed silently ignores extra operands | **new issue filed** | [#1130](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1130) |
