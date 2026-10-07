@@ -1,25 +1,14 @@
-# Coverage status — encode_blez campaign
+# Coverage Status
 
-**Tier:** standard
-**Coverage evidence:** file-level (symbol presence) — no Rust .profraw/.gcda consumed by `coverage_gaps`; C++ reporter listed unrelated host PBT binaries and marked `encode_blez` NOT LINKED.
-**Execution evidence:** `cargo test --lib encode_blez -- --test-threads=1` ran 14 tests against production `encode_blez` in `pseudo.rs` (12 property passes, 1 property fail, 1 KAT pass, 1 regression fail).
+**Mode:** incremental (standard tier)
+**Target:** encode_bgez (pseudo.rs:309)
+**Evidence level:** file-level (symbol presence) — `coverage_gaps` reported no line-level .gcda/.profraw and listed encode_bgez as NOT LINKED in C++ test binaries (irrelevant here). Rust `cargo test --lib encode_bgez` linked and executed the production symbol (14 tests).
 
-| Metric | Value |
-|--------|-------|
-| Target function | encode_blez |
-| Properties | 13 |
-| Passing | 12 |
-| Failing | 1 (extra operand) |
-| Bugs filed | 1 |
-| Sweep rounds used | 1 / 1 |
+## This campaign
+- Function encode_bgez exercised by 14 tests in encode_bgez_pbt.rs
+- 11 passing properties + 1 passing KAT; 1 failing property + 1 failing regression witness
+- Documented behaviors covered: llvm-mc differential, BGE rs,x0 expansion metamorphic, B-type layout, ABI/xN/fp alias, Symbol/Label/Reg/Imm targets, Imm-as-rs, arity/invalid rs/target negatives, extra-operand negative (bug)
 
-Documented behaviors with a property:
-- llvm-mc `blez rs, 0` differential
-- llvm-mc `bge x0, rs, 0` expansion differential
-- in-tree `encode_branch_instr` BGE metamorphic
-- B-type ISA field layout (rs1=x0, rs2=rs, funct3=BGE)
-- ABI / xN / fp alias
-- Symbol / Label / Reg / Imm targets
-- Imm-as-rs bare register number
-- arity < 2, invalid rs, invalid target negatives
-- extra operand negative (failing → bug)
+## Contract-surface sweep
+- coverage_gaps called once (standard tier 1/1)
+- No additional documented branch without a property; remaining gap is the confirmed extra-operand bug

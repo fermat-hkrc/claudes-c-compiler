@@ -148,6 +148,8 @@ mod encode_beqz_pbt;
 mod encode_bnez_pbt;
 #[cfg(test)]
 mod encode_blez_pbt;
+#[cfg(test)]
+mod encode_bgez_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

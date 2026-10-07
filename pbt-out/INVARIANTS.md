@@ -1060,3 +1060,10 @@
 ## Quirks (encode_bnez)
 
 - Unlike encode_branch_instr, encode_bnez always returns WordWithReloc even for Imm targets (imm never folded into the B-type immediate field).
+
+## encode_bgez (2026-04-09)
+- Expansion: bgez rs, tgt ≡ bge rs, x0, tgt (funct3=0b101, rs2=x0, imm deferred to Branch reloc).
+- llvm-mc -triple=riscv64 is a valid differential reference for Imm(0) encodings.
+- ABI names, xN, and fp≡x8 are aliases; bare Imm(0..31) is accepted as rs (GCC path).
+- Symbol/Label/Reg-as-label/Imm targets are equivalent forms via get_branch_target.
+- Bug: extra operands beyond 2 are silently ignored (same class as beqz/bnez/blez).

@@ -1,55 +1,54 @@
-# PBT Campaign Report: encode_blez
+# PBT Campaign Report: encode_bgez
 
 ## Summary
 
-**Verdict:** 1 medium: `encode_blez` silently ignores a third (or later) operand, so `blez a0, foo, a1` encodes as a valid `bge x0, a0, foo` with no diagnostic — same class as `beqz`/`bnez`.
+**Verdict:** 1 medium: `encode_bgez` silently ignores extra operands, so `bgez a0, foo, a1` encodes as `bge a0, x0, foo` with no diagnostic.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_blez
-**Tests:** 13 properties (12 passing, 1 failing) + 1 KAT + 1 regression witness
-**Result:** 12 passing, 1 bug
-**Change surface:** 1 changed function (encode_blez), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no line-level .gcda/.profraw for this Rust cargo lib test; C++ reporter listed unrelated binaries and reported encode_blez NOT LINKED. Rust `cargo test --lib encode_blez` executes the production symbol (14 tests ran).
-**Effort tier:** standard
+**Modules tested:** encode_bgez
+**Tests:** 14 (12 property + 1 KAT + 1 regression)
+**Result:** 12 passing properties, 1 bug (extra operand; KAT pass; regression fails as witness)
+**Change surface:** 1 changed function (encode_bgez), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no line-level .gcda/.profraw and C++-only NOT LINKED for encode_bgez; Rust `cargo test --lib encode_bgez` executed the symbol (14 tests ran). Tier: standard.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_blez | 13 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, reference (KAT), negative_error |
+| encode_bgez | 14 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_blez silently ignores extra operands
+### B1: encode_bgez silently ignores extra operands
 
-**Formal:** ∀ rs ∈ GPR, ∀ tgt ∈ LabelIdents, ∀ extra ∈ Operand. encode_blez([Reg(rs), Symbol(tgt), extra]) = Err
-**Contract evidence:** documented src/backend/riscv/assembler/README.md:329 "`blez/bgez/...` | Corresponding `bge`/`blt` with x0" (two-operand form); llvm-mc rejects `blez a0, 0, a1`
-**Documentation conflict:** (none) — README states the two-operand expansion; code never checks arity
+**Formal:** ∀ rs ∈ GPR, ∀ tgt ∈ LabelIdents, ∀ extra. encode_bgez([Reg(rs), Symbol(tgt), extra]) is Err
+**Contract evidence:** inferred (README.md:329 documents two-operand `blez/bgez/...` → corresponding `bge`/`blt` with x0; llvm-mc rejects a third operand with "invalid operand for instruction"; public dispatch `mod.rs:893 "bgez" => encode_bgez` passes the operand slice through)
+**Documentation conflict:** (none) — no comment declares extra operands valid or out of domain; README states the two-operand form
 **Severity:** medium
-**Counterexample:** `encode_blez([Reg("a0"), Symbol("foo"), Reg("a1")])` (proptest shrunk: rs="zero", tgt="foo", extra=Reg("zero"))
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00a05063, reloc: Branch "foo" addend 0 })
-**Impact:** Typos and trailing commas in `blez` assemble without error and emit a valid branch relocation, masking assembler mistakes.
-**Root cause:** pseudo.rs:301-302 reads only operands[0] and operands[1]; no `operands.len()` check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:301`
+**Counterexample:** encode_bgez([Reg("a0"), Symbol("foo"), Reg("a1")])
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00055063, reloc: Branch/"foo"/0 })
+**Impact:** Typos and extra commas assemble without error and emit a valid branch relocation, masking assembler mistakes.
+**Root cause:** `pseudo.rs:310-311` reads only operands 0 and 1 and never checks `operands.len()`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:310`
 ```rust
-    let rs2 = get_reg(operands, 0)?;
+    let rs1 = get_reg(operands, 0)?;
     let label = get_branch_target(operands, 1)?;
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("blez: expected 2 operands, got {}", operands.len()));
+        return Err(format!("bgez: expected 2 operands, got {}", operands.len()));
     }
-    let rs2 = get_reg(operands, 0)?;
+    let rs1 = get_reg(operands, 0)?;
     let label = get_branch_target(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_blez_extra_operand.md
-**Repro seed:** cc b3165b59bb3df5fc96bf53179b95fc9d1ffe2762fcf6149f4ad635cb771c0430
+**Bug report:** bug_reports/encode_bgez_extra_operand.md
+**Repro seed:** proptest cc d8d5869712d1934055cb97117071d5a46858f8e8fd71dcf2cf211e66a0d92bc5 (rs="zero", tgt="foo", extra=Reg("zero"))
 **Raw output:**
 ```text
-Test failed: extra operand must Err for blez zero, foo (llvm-mc rejects: true)
-minimal failing input: rs = "zero", tgt = "foo", extra = Reg("zero",)
-blez a0, foo with a third operand must be rejected; got Ok(WordWithReloc { word: 10506339, ... })
+Test failed: extra operand must Err for bgez zero, foo (llvm-mc rejects: true)
+minimal failing input: rs = "zero", tgt = "foo", extra = Reg("zero")
+bgez a0, foo with a third operand must be rejected ... got Ok(WordWithReloc { word: 348259, ... })
 ```
 
 ## Design Caveats
@@ -60,21 +59,15 @@ blez a0, foo with a third operand must be rejected; got Ok(WordWithReloc { word:
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_blez_pbt.rs | 13 properties + KAT + regression |
-| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_blez_pbt;` registration |
+| src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs | 14 (KAT + 12 props + regression) |
+| src/backend/riscv/assembler/encoder/mod.rs | +1 `mod encode_bgez_pbt;` |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_blez -- --test-threads=1
-```
-
-Bug B1 (serial):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_blez_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_bgez -- --test-threads=1
+cargo test --lib test_encode_bgez_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
@@ -86,18 +79,18 @@ cargo test --lib test_encode_blez_regression_extra_operand -- --test-threads=1
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_blez_extra_operand.md
-- pbt-out/bug_reports/encode_blez_extra_operand.html (rendered from report.json)
-- pbt-out/run/encode_blez_test1.log
-- pbt-out/run/encode_blez_extra_serial.log
-- pbt-out/INVARIANTS.md (encode_blez section prepended)
+- pbt-out/bug_reports/encode_bgez_extra_operand.md
+- pbt-out/bug_reports/encode_bgez_extra_operand.html (rendered)
+- pbt-out/run/encode_bgez_test.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 05:01 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 247/383 total | PBT candidates: 247 | Tested: 247 (100%) | 1 pass, 247 fail
+> Last updated: 2026-10-07 05:12 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 248/383 total | PBT candidates: 248 | Tested: 248 (100%) | 1 pass, 248 fail
 
 ## Summary
 
@@ -106,10 +99,10 @@ cargo test --lib test_encode_blez_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 247 |
-| **Tested (of PBT candidates)** | **247 / 247 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 247 / -1 |
-| **Overall (tested / all functions)** | **247 / 383 (64%)** |
+| PBT candidates (from FUNCTION_INDEX) | 248 |
+| **Tested (of PBT candidates)** | **248 / 248 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 248 / -1 |
+| **Overall (tested / all functions)** | **248 / 383 (65%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -117,13 +110,13 @@ cargo test --lib test_encode_blez_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 247 | 247 | 0 | 100% |
+|  | 248 | 248 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 247 | 247 | 0 | 100% |
+| unknown | 248 | 248 | 0 | 100% |
 
 ## File Coverage
 
@@ -137,7 +130,7 @@ cargo test --lib test_encode_blez_regression_extra_operand -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 13 | 13 | 100% | covered |
+| pseudo.rs | 44 | 14 | 14 | 100% | covered |
 
 ## Recommended Focus
 
@@ -393,3 +386,4 @@ cargo test --lib test_encode_blez_regression_extra_operand -- --test-threads=1
 | encode_beqz | pseudo.rs |
 | encode_bnez | pseudo.rs |
 | encode_blez | pseudo.rs |
+| encode_bgez | pseudo.rs |
