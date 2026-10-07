@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PBT Report Overview: src/passes</title>
+<title>PBT 报告总览：src/passes</title>
 <style>
 body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
 h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
@@ -14,13 +14,13 @@ code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3r
 </style>
 </head>
 <body>
-<h1>PBT Report Overview: src/passes</h1>
-<p class="muted">Test date: 2026-10-05; Tested revision: <code>98e10b76f36962814c1d2ada0f26951037e79f54</code>; Campaign tier: standard</p>
-<h2>Test Results</h2>
-<table><tr><th>Properties</th><th>Passing</th><th>Failing</th><th>Confirmed Defects</th></tr><tr><td>4</td><td>2</td><td>2</td><td>2</td></tr></table>
-<h2>Defect List</h2>
-<table><tr><th>ID</th><th>Summary</th><th>Severity</th><th>Details</th></tr><tr><td><code>b1</code></td><td>constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)</td><td>medium</td><td><a href="bug_reports/passes_constant_fold_subint_logical_fold.html">View defect details</a></td></tr>
-<tr><td><code>b2</code></td><td>narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</td><td>medium</td><td><a href="bug_reports/passes_narrow_phase2_i64_use_miscompile.html">View defect details</a></td></tr></table>
-<p class="muted">For technical details, see REPORT.md and report.json in this directory.</p>
+<h1>PBT 报告总览：src/passes</h1>
+<p class="muted">测试日期: 2026-10-05; 测试版本: <code>98e10b76f36962814c1d2ada0f26951037e79f54</code>; 测试深度: standard</p>
+<h2>测试结果</h2>
+<table><tr><th>性质测试</th><th>通过</th><th>失败</th><th>确认缺陷</th></tr><tr><td>4</td><td>2</td><td>2</td><td>2</td></tr></table>
+<h2>缺陷列表</h2>
+<table><tr><th>编号</th><th>概述</th><th>严重性</th><th>详情</th></tr><tr><td><code>b1</code></td><td>constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)</td><td>medium</td><td><a href="bug_reports/passes_constant_fold_subint_logical_fold.html">查看缺陷详情</a></td></tr>
+<tr><td><code>b2</code></td><td>narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</td><td>medium</td><td><a href="bug_reports/passes_narrow_phase2_i64_use_miscompile.html">查看缺陷详情</a></td></tr></table>
+<p class="muted">技术明细请查看同目录的 REPORT.md 和 report.json。</p>
 </body>
 </html>

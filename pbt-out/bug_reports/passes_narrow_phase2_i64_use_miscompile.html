@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Defect Report: narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</title>
+<title>缺陷报告: narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</title>
 <style>
 body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
 h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
@@ -14,29 +14,29 @@ code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3r
 </style>
 </head>
 <body data-template="pbt-bug-report-v1">
-<p><a href="../REPORT.html">Return to report overview</a></p>
-<h1>Defect Report: narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</h1>
+<p><a href="../REPORT.html">返回报告总览</a></p>
+<h1>缺陷报告: narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</h1>
 <p><span class="badge">medium</span> <code>b2</code></p>
 <section data-section="issue-synopsis">
-<h2>Issue Synopsis</h2>
+<h2>问题概述</h2>
 <p>narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</p>
-<table><tr><th>Expected behavior</th><td>pipeline preserves the interpreted value: sext(a)|sext(b) = -1 for (1,-1)</td></tr><tr><th>Observed behavior</th><td>Or rewritten to I32 with no re-extension; the I64 return reads 4294967295</td></tr><tr><th>Impact assessment</th><td>run_passes(-O2, x86-64) compiles f(a,b){(i64)a | (i64)b} to return the zero-extended 32-bit Or: f(1,-1) = 4294967295 instead of -1</td></tr><tr><th>Minimal counterexample</th><td><code>f(a:i32,b:i32)-&gt;i64 { Or(sext a, sext b) at I64 } narrowed to Or@I32 with no re-extension; f(1,-1)=4294967295 != -1 (pipeline-confirmed)</code></td></tr></table>
-<p><strong>Documentation:</strong> The cited documentation states this behavior IS handled; the code violates the document it ships with.</p><p><strong>Author's text (verbatim):</strong> <code>&quot;narrows I64 bitwise operations (And, Or, Xor) to I32 when all operands are provably 32-bit values ... restricted to I32/U32 output to avoid sub-int register complications&quot; — src/passes/README.md Integer Narrowing, Phase 2</code></p>
+<table><tr><th>预期行为</th><td>pipeline preserves the interpreted value: sext(a)|sext(b) = -1 for (1,-1)</td></tr><tr><th>实际行为</th><td>Or rewritten to I32 with no re-extension; the I64 return reads 4294967295</td></tr><tr><th>影响评估</th><td>run_passes(-O2, x86-64) compiles f(a,b){(i64)a | (i64)b} to return the zero-extended 32-bit Or: f(1,-1) = 4294967295 instead of -1</td></tr><tr><th>最小反例</th><td><code>f(a:i32,b:i32)-&gt;i64 { Or(sext a, sext b) at I64 } narrowed to Or@I32 with no re-extension; f(1,-1)=4294967295 != -1 (pipeline-confirmed)</code></td></tr></table>
+<p><strong>文档依据:</strong> 所引文档声明该行为已支持，代码违反了随代码一起发布的文档。</p><p><strong>作者原文（逐字引用）:</strong> <code>&quot;narrows I64 bitwise operations (And, Or, Xor) to I32 when all operands are provably 32-bit values ... restricted to I32/U32 output to avoid sub-int register complications&quot; — src/passes/README.md Integer Narrowing, Phase 2</code></p>
 </section>
 <section data-section="detection-methodology">
-<h2>Detection and Validation Methodology</h2>
-<table><tr><th>Property test</th><td>narrow_preservation (<code>p13</code>)</td></tr><tr><th>Formal property</th><td>∀ pat ∈ documented narrowing patterns: interp(narrow_function(f[pat]), args) = interp(f[pat], args); unsigned cmps on signed source asserted NOT rewritten</td></tr><tr><th>Oracle</th><td>algebraic.invariant</td></tr><tr><th>System under test</th><td>passes::narrow::narrow_function</td></tr><tr><th>Source location</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/narrow.rs:57</code></td></tr><tr><th>Test file</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/narrow.rs</code></td></tr><tr><th>Test target</th><td><code>cargo test --lib passes::</code></td></tr></table>
+<h2>发现与验证方法</h2>
+<table><tr><th>性质测试</th><td>narrow_preservation (<code>p13</code>)</td></tr><tr><th>形式化性质</th><td>∀ pat ∈ documented narrowing patterns: interp(narrow_function(f[pat]), args) = interp(f[pat], args); unsigned cmps on signed source asserted NOT rewritten</td></tr><tr><th>预言机</th><td>algebraic.invariant</td></tr><tr><th>被测系统</th><td>passes::narrow::narrow_function</td></tr><tr><th>源文件位置</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/narrow.rs:57</code></td></tr><tr><th>测试文件</th><td><code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/narrow.rs</code></td></tr><tr><th>测试目标</th><td><code>cargo test --lib passes::</code></td></tr></table>
 </section>
 <section data-section="reproduction-protocol">
-<h2>Reproduction Protocol</h2>
-<p>Execute the following commands from <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler</code>:</p>
+<h2>复现步骤</h2>
+<p>请在以下目录执行命令 <code>/home/shuhao/fermat-users/leo/github/claudes-c-compiler</code>:</p>
 <pre><code>cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
 PATH=&quot;$HOME/.cargo/bin:$PATH&quot; cargo test --lib --no-run
 PATH=&quot;$HOME/.cargo/bin:$PATH&quot; RUST_TEST_THREADS=1 cargo test --lib passes::narrow::pbt_tests::test_narrow_regression_phase2_i64_bitwise_i64_use --exact --nocapture</code></pre>
-<p class="muted">No random seed is required for this deterministic reproduction.</p>
+<p class="muted">此复现为确定性执行，无需随机种子。</p>
 </section>
 <section data-section="remediation-strategy">
-<h2>Remediation Strategy</h2>
+<h2>修复建议</h2>
 <p>Check the single use consumes the value in an I32/U32 context before rewriting (or emit Cast target_ty→I64 after the narrowed op)</p>
 </section>
 </body>

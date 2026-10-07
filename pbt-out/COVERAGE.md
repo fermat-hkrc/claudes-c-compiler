@@ -195,3 +195,9 @@
 | switch tables ≤200 cases | passes mod.rs | ::pbt_switch_tables | 800 × 2 | green |
 | adversarial optimizer | passes mod.rs | ::pbt_opt_adversarial | 1000 × 3 | green |
 | cross-target + levels regression | passes mod.rs | ::pbt_cross_target | 270 | green after call-site repair |
+
+## Round 50 — encode deep fuzz (36+19 encoders × random operand vectors)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| 36 ARM encoders × random ops (edge reg names + extreme imms, 0..6 operands) | arm encoder mod.rs | ::pbt_encode_fuzz | p_encode_fuzz_no_panic | 20000 cases green after gating the KNOWN #74/#80 path (encode_add_sub i64::MIN negation overflow via cmp/cmn/ccmp) — no NEW panic |
+| 19 RISC-V encoders × random ops | riscv pseudo.rs | ::pbt_encode_fuzz_rv | p_rv_encode_fuzz_no_panic | 15000 cases — zero panic |

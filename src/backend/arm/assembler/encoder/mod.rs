@@ -991,3 +991,101 @@ fn get_symbol(operands: &[Operand], idx: usize) -> Result<(String, i64), String>
 fn sf_bit(is_64: bool) -> u32 {
     if is_64 { 1 } else { 0 }
 }
+
+#[cfg(test)]
+mod pbt_encode_fuzz {
+    //! Round-50: DEEP randomized operand-vector fuzz across ARM non-NEON encoders.
+    //! Thousands of random (encoder × operand-vector) combos; oracle = no panic.
+    //! Register pool spans all classes + edge names; immediates include extremes.
+    use proptest::prelude::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    const REGS: &[&str] = &[
+        "x0","x1","x15","x30","w0","w15","w30","sp","wsp","xzr","wzr",
+        "d0","d31","s0","s31","q0","q31","v0","v31","h0","b0",
+        "x31","w31","d32","s99","x-1","","X0","xD","f0","a0","t0","zero","ra",
+    ];
+    const IMMS: &[i64] = &[0,1,-1,2,31,32,63,64,127,128,255,256,4095,4096,8191,8192,
+        65535,65536,0x7FFFFFFF,-0x80000000i64 as i64,0x7FFFFFFFFFFFFFFF,i64::MIN,i64::MAX,
+        0xFFFFFFFFFFFFFFFFu64 as i64,-4096,16384,-8192];
+
+    fn arb_operand() -> BoxedStrategy<Operand> {
+        prop_oneof![
+            6 => (0usize..REGS.len()).prop_map(|i| Operand::Reg(REGS[i].to_string())),
+            4 => (0usize..IMMS.len()).prop_map(|i| Operand::Imm(IMMS[i])),
+            1 => "lbl_[a-z]{0,4}".prop_map(|s| Operand::Symbol(s)),
+            1 => ("[a-z]{1,3}").prop_map(|s| Operand::Label(s)),
+            2 => ((0usize..REGS.len()), (0usize..IMMS.len()))
+                .prop_map(|(r, i)| Operand::Mem { base: REGS[r].to_string(), offset: IMMS[i] }),
+        ].boxed()
+    }
+
+    type Enc = fn(&[Operand]) -> Result<crate::backend::arm::assembler::encoder::EncodeResult, String>;
+    // 能直接以 &[Operand] 调用的代表集（覆盖 6 文件各主路径）
+    fn encoders() -> Vec<(&'static str, Enc)> {
+        use crate::backend::arm::assembler::encoder::*;
+        vec![
+            ("neg", |o| data_processing::encode_neg(o)),
+            ("negs", |o| data_processing::encode_negs(o)),
+            ("mvn", |o| data_processing::encode_mvn(o)),
+            ("mul", |o| data_processing::encode_mul(o)),
+            ("madd", |o| data_processing::encode_madd(o)),
+            ("smull", |o| data_processing::encode_smull(o)),
+            ("sxtw", |o| data_processing::encode_sxtw(o)),
+            ("clz", |o| bitfield::encode_clz(o)),
+            ("rbit", |o| bitfield::encode_rbit(o)),
+            ("extr", |o| bitfield::encode_extr(o)),
+            ("crc32w", |o| bitfield::encode_crc32("crc32w", o)),
+            ("bfm", |o| bitfield::encode_bfm(o)),
+            ("bfi", |o| bitfield::encode_bfi(o)),
+            ("ubfiz", |o| bitfield::encode_ubfiz(o)),
+            ("ubfx", |o| bitfield::encode_ubfx(o)),
+            ("rev", |o| bitfield::encode_rev(o)),
+            ("cmp", |o| compare_branch::encode_cmp(o)),
+            ("csel", |o| compare_branch::encode_csel(o)),
+            ("cset", |o| compare_branch::encode_cset(o)),
+            ("ccmp", |o| compare_branch::encode_ccmp_ccmn(o, true)),
+            ("ldr_str", |o| load_store::encode_ldr_str_auto(o, true)),
+            ("ldp", |o| load_store::encode_ldp_stp(o, true)),
+            ("ldur", |o| load_store::encode_ldur_stur(o, true, 0)),
+            ("ldxr", |o| load_store::encode_ldxr_stxr(o, true, None)),
+            ("cas", |o| load_store::encode_cas("cas", o)),
+            ("prfm", |o| load_store::encode_prfm(o)),
+            ("dmb", |o| system::encode_dmb(o)),
+            ("dsb", |o| system::encode_dsb(o)),
+            ("svc", |o| system::encode_svc(o)),
+            ("hint", |o| system::encode_hint(o)),
+            ("fmadd", |o| fp_scalar::encode_fmadd_fmsub(o, false)),
+            ("fsqrt", |o| fp_scalar::encode_fsqrt(o)),
+            ("fcmp", |o| fp_scalar::encode_fcmp(o)),
+            ("fmov", |o| fp_scalar::encode_fmov(o)),
+            ("scvtf", |o| fp_scalar::encode_scvtf(o)),
+            ("ucvtf", |o| fp_scalar::encode_ucvtf(o)),
+            ("fp_arith", |o| fp_scalar::encode_fp_arith(o, 0)),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20000))]
+        #[test]
+        fn p_encode_fuzz_no_panic(
+            enc_idx in any::<usize>(),
+            n_ops in 0usize..7,
+            ops in prop::collection::vec(arb_operand(), 0..7),
+        ) {
+            let encs = encoders();
+            let (name, f) = encs[enc_idx % encs.len()];
+            let ops = if ops.len() > n_ops { ops[..n_ops].to_vec() } else { ops };
+            let ops_forpanic = ops.clone();
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(&ops_forpanic)));
+            if r.is_err() {
+                // 已知: cmp/cmn/ccmp + Imm(i64::MIN) → #74/#80 (encode_add_sub 负号溢出)
+                let known = (name == "cmp" || name == "ccmp" || name == "cmn")
+                    && ops.iter().any(|o| matches!(o, Operand::Imm(i) if *i == i64::MIN));
+                prop_assert!(known, "ENCODER PANIC (NEW): {} with {:?}", name, ops);
+                return Ok(());
+            }
+            // Ok/Err 都合法 —— 只禁 panic
+        }
+    }
+}

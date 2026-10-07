@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9bbfd3dc04d20123c613eb71609b6a2842054a734e13071afc034bfe3864f28c # shrinks to enc_idx = 9896150676297233345, n_ops = 2, ops = [Reg("x0"), Imm(-9223372036854775808)]
+cc 0446853f57dbee8d5b2b22875dc0616491a2a1e9bc7b44a193ab7e842d123a98 # shrinks to enc_idx = 16269937376699802948, n_ops = 4, ops = [Reg("x0"), Reg("x0"), Imm(9223372036854775807), Imm(1)]

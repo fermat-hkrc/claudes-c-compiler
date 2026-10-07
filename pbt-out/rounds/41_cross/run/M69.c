@@ -7,7 +7,7 @@ static int recfn(int n) { return n <= 0 ? 1 : recfn(n - 1) * 2 % 100003; }
 static int itfn(int n) { int r = 1; for (int i = 0; i < n; i++) r = r * 2 % 100003; return r; }
 struct BF { unsigned p:5; unsigned q:11; };
 int cmain(int rec) {
-    unsigned B1 = 6263476131680539806u, B2 = 1458329179u;
+    unsigned B1 = 16472973231051569403u, B2 = 3835412960u;
     for (int i = 0; i < 8; i++) {
         struct S s = mk(i * 7 + (int)(B1 % 13));
         mix((unsigned)(use(s) * 4.0) ^ B1);

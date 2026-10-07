@@ -903,3 +903,54 @@ mod pbt_rdcsr {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_encode_fuzz_rv {
+    use proptest::prelude::*;
+    use super::*;
+    use crate::backend::riscv::assembler::parser::Operand;
+    const REGS: &[&str] = &["x0","x1","x31","a0","a7","t0","t6","s0","s11","ra","sp","gp","tp",
+        "zero","f0","f31","fa0","ft0","v0","x32","f32","x-1","","X1","w0"];
+    const IMMS: &[i64] = &[0,1,-1,31,32,63,64,127,128,2047,2048,4095,4096,
+        0x7FFFFFFF,i64::MIN,i64::MAX,0xFFFFFFFFFFFFFFFFu64 as i64,-2048,32768];
+    fn arb_op() -> BoxedStrategy<Operand> {
+        prop_oneof![
+            6 => (0usize..REGS.len()).prop_map(|i| Operand::Reg(REGS[i].to_string())),
+            4 => (0usize..IMMS.len()).prop_map(|i| Operand::Imm(IMMS[i])),
+            1 => "L[0-9]{0,3}".prop_map(|s| Operand::Symbol(s)),
+            1 => "[a-z]{1,3}".prop_map(|s| Operand::Label(s)),
+            2 => ((0usize..REGS.len()), (0usize..IMMS.len()))
+                .prop_map(|(r,i)| Operand::Mem { base: REGS[r].to_string(), offset: IMMS[i] }),
+        ].boxed()
+    }
+    type Enc = fn(&[Operand]) -> Result<EncodeResult, String>;
+    fn encs() -> Vec<(&'static str, Enc)> {
+        vec![
+            ("not", |o| encode_not(o)), ("neg", |o| encode_neg(o)),
+            ("seqz", |o| encode_seqz(o)), ("snez", |o| encode_snez(o)),
+            ("sltz", |o| encode_sltz(o)), ("sgtz", |o| encode_sgtz(o)),
+            ("beqz", |o| encode_beqz(o)), ("bltz", |o| encode_bltz(o)),
+            ("bgt", |o| encode_bgt(o)), ("bleu", |o| encode_bleu(o)),
+            ("csrr", |o| encode_csrr(o)), ("csrw", |o| encode_csrw(o)),
+            ("fmv_s", |o| encode_fmv_s(o)), ("fabs_d", |o| encode_fabs_d(o)),
+            ("fneg_s", |o| encode_fneg_s(o)),
+            ("la", |o| encode_la(o)), ("lla", |o| encode_lla(o)),
+            ("mv", |o| encode_mv(o)), ("li", |o| encode_li(o)),
+        ]
+    }
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(15000))]
+        #[test]
+        fn p_rv_encode_fuzz_no_panic(
+            enc_idx in any::<usize>(), n_ops in 0usize..6,
+            ops in prop::collection::vec(arb_op(), 0..6),
+        ) {
+            let es = encs();
+            let (name, f) = es[enc_idx % es.len()];
+            let ops = if ops.len() > n_ops { ops[..n_ops].to_vec() } else { ops };
+            let o2 = ops.clone();
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(&o2)));
+            prop_assert!(r.is_ok(), "RV ENCODER PANIC: {} with {:?}", name, ops);
+        }
+    }
+}
