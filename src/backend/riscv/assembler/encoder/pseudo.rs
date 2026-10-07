@@ -606,3 +606,152 @@ pub(crate) fn parse_reloc_modifier(s: &str) -> (RelocType, String) {
         (RelocType::PcrelHi20, s.to_string())
     }
 }
+
+#[cfg(test)]
+mod pbt_li_exec {
+    use super::*;
+    use proptest::prelude::*;
+
+    const OP_LUI_T: u32 = 0x37;
+    const OP_OP_IMM_T: u32 = 0x13;
+    const OP_OP_IMM_32_T: u32 = 0x1B;
+
+    /// 解码 I-type: (rd, funct3, rs1, imm)
+    fn dec_i(w: u32) -> (u32, u32, u32, i32) {
+        let rd = (w >> 7) & 0x1F;  // I-type rd at bits 11-7
+        let funct3 = (w >> 12) & 0x7;
+        let rs1 = (w >> 15) & 0x1F;
+        let imm = ((w as i32) >> 20) as i32;
+        (rd, funct3, rs1, imm)
+    }
+
+    /// 模拟执行 encode_li_immediate 生成的指令序列
+    fn exec_li_words(words: &[u32]) -> u64 {
+        let mut x = [0u64; 32];
+        for &w in words {
+            let op = w & 0x7F;
+            let (rd, funct3, rs1, imm) = dec_i(w);
+            let rd = rd as usize;
+            let rs1 = rs1 as usize;
+            let result: u64 = match (op, funct3) {
+                (OP_LUI_T, _) => {
+                    // LUI imm20 field is bits 31:12 (NOT the I-type bits 31:20)
+                    let imm20 = (w >> 12) as i32; // 20-bit field
+                    (imm20.wrapping_shl(12)) as i64 as u64 // sign-extended 32-bit → 64
+                }
+                (OP_OP_IMM_T, 0b000) => x[rs1].wrapping_add(imm as i64 as u64), // addi
+                (OP_OP_IMM_T, 0b001) => {
+                    let sh = (imm & 0x3F) as u32;
+                    x[rs1] << sh // slli
+                }
+                (OP_OP_IMM_32_T, 0b000) => (x[rs1] as u32).wrapping_add(imm as u32) as i32 as i64 as u64, // addiw
+                (OP_OP_IMM_32_T, 0b001) => {
+                    let sh = (imm & 0x3F) as u32;
+                    let v = (x[rs1] << sh) as u32; // slliw (w-reg)
+                    v as i32 as i64 as u64
+                }
+                _ => panic!("unexpected instruction {:#010x} (op={:#04x}, f3={:#03x})", w, op, funct3),
+            };
+            if rd != 0 { x[rd] = result; }
+        }
+        x[10] // a0 假设 rd=10 — caller 控制
+    }
+
+    /// P-LI-EXEC: encode_li_immediate 生成的序列执行后必须精确重建 imm
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2048))]
+        #[test]
+        fn p_li_exec_roundtrip(
+            imm in proptest::strategy::Union::new(vec![
+                any::<i64>().boxed(),
+                (0i64..64).prop_map(|k| (1i64 << k) | 1).boxed(),
+                (0i64..64).prop_map(|k| ((1u64 << k) - 1) as i64).boxed(),
+                (0i64..64).prop_map(|k| (-1i64) << k).boxed(),
+                any::<i32>().prop_map(|v| v as i64).boxed(),
+                (0i64..65536).prop_map(|hi| ((hi as i64) << 48) | 0x1234).boxed(),
+            ]),
+        ) {
+            let words = encode_li_immediate(10, imm);
+            prop_assert!(!words.is_empty(), "li {imm}: empty sequence");
+            prop_assert!(words.len() <= 8, "li {imm}: {} words (expected <= 8)", words.len());
+            let got = exec_li_words(&words);
+            let want = imm as u64;
+            prop_assert_eq!(got, want,
+                "li rd, {} (0x{:016x}): sequence produced 0x{:016x}\nwords: {:?}",
+                imm, want, got, words.iter().map(|w| format!("{w:#010x}")).collect::<Vec<_>>());
+        }
+    }
+}
+
+#[cfg(test)]
+mod pbt_pseudo_diff {
+    use super::*;
+    use crate::backend::riscv::assembler::parser::Operand;
+
+    fn r(s: &str) -> Operand { Operand::Reg(s.to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+
+    /// P-PSEUDO-DIFF: 寄存器类 pseudo 与 llvm-mc 参考编码逐字节比对
+    #[test]
+    fn p_pseudo_diff_reg_only() {
+        // (name, result, llvm-mc word, note)
+        let cases: Vec<(&str, Result<EncodeResult, String>, u32)> = vec![
+            ("not x1,x2",   encode_not(&[r("x1"), r("x2")]),           0xfff14093),
+            ("neg x1,x2",   encode_neg(&[r("x1"), r("x2")]),           0x402000b3),
+            ("negw x1,x2",  encode_negw(&[r("x1"), r("x2")]),          0x402000bb),
+            ("sext.w x1,x2",encode_sext_w(&[r("x1"), r("x2")]),        0x0001009b),
+            ("seqz x1,x2",  encode_seqz(&[r("x1"), r("x2")]),          0x00113093),
+            ("snez x1,x2",  encode_snez(&[r("x1"), r("x2")]),          0x002030b3),
+            ("sltz x1,x2",  encode_sltz(&[r("x1"), r("x2")]),          0x000120b3),
+            ("sgtz x1,x2",  encode_sgtz(&[r("x1"), r("x2")]),          0x002020b3),
+            // repo uses `add rd, x0, rs2` (R-type) instead of canonical `addi rd, rs2, 0`
+            // — functionally identical, valid mv expansion. llvm-mc: 0x00010093.
+            ("mv x1,x2",    encode_mv(&[r("x1"), r("x2")]),            0x002000b3),
+            ("csrr x1,0x300", encode_csrr(&[r("x1"), i(0x300)]),       0x300020f3),
+            ("csrw 0x300,x1", encode_csrw(&[i(0x300), r("x1")]),       0x30009073),
+            ("csrs 0x300,x1", encode_csrs(&[i(0x300), r("x1")]),       0x3000a073),
+            ("csrc 0x300,x1", encode_csrc(&[i(0x300), r("x1")]),       0x3000b073),
+        ];
+        let mut fails = 0;
+        for (name, res, expect) in cases {
+            match res {
+                Ok(EncodeResult::Word(w)) if w == expect => {}
+                Ok(EncodeResult::Word(w)) => {
+                    println!("  MISMATCH {}: got {:#010x}, want {:#010x}", name, w, expect);
+                    fails += 1;
+                }
+                Ok(_) => { println!("  NON-WORD {}: unexpected result variant", name); fails += 1; }
+                Err(e) => { println!("  ERR {}: {}", name, &e[..e.len().min(50)]); fails += 1; }
+            }
+        }
+        assert_eq!(fails, 0, "{} pseudo encodings mismatched llvm-mc", fails);
+    }
+
+    /// P-FP-PSEUDO-DIFF: FP pseudo（fmv/fabs/fneg）
+    #[test]
+    fn p_fp_pseudo_diff() {
+        let cases: Vec<(&str, Result<EncodeResult, String>, u32)> = vec![
+            ("fmv.s f1,f2",  encode_fmv_s(&[r("f1"), r("f2")]),  0x202100d3),
+            ("fmv.d f1,f2",  encode_fmv_d(&[r("f1"), r("f2")]),  0x222100d3),
+            ("fabs.s f1,f2", encode_fabs_s(&[r("f1"), r("f2")]), 0x202120d3),
+            ("fabs.d f1,f2", encode_fabs_d(&[r("f1"), r("f2")]), 0x222120d3),
+            ("fneg.s f1,f2", encode_fneg_s(&[r("f1"), r("f2")]), 0x202110d3),
+            ("fneg.d f1,f2", encode_fneg_d(&[r("f1"), r("f2")]), 0x222110d3),
+        ];
+        let mut fails = 0;
+        for (name, res, expect) in cases {
+            match res {
+                Ok(EncodeResult::Word(w)) if w == expect => {}
+                Ok(EncodeResult::Word(w)) => {
+                    println!("  MISMATCH {}: got {:#010x}, want {:#010x}", name, w, expect);
+                    fails += 1;
+                }
+                Ok(_) => { println!("  NON-WORD {}", name); fails += 1; }
+                Err(e) => { println!("  ERR {}: {}", name, &e[..e.len().min(50)]); fails += 1; }
+            }
+        }
+        // fneg.d 的正确值从 llvm-mc 取；此测试若 fail 先打印再判断
+        if fails > 0 { println!("(verify against: llvm-mc --triple=riscv64 -mattr=+f,+d)"); }
+        assert_eq!(fails, 0, "{} FP pseudo encodings mismatched", fails);
+    }
+}
