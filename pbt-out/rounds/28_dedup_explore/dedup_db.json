@@ -1,5 +1,13 @@
 [
  {
+  "n": 1078,
+  "t": "Bug: encode_ldaxr_stlxr silently encodes non-zero imm9 for LDAXR with offset (LDAXR x0, [x1, #8] accepted) \u2014 third instance of the exclusive-load offset pattern"
+ },
+ {
+  "n": 1077,
+  "t": "Bug: encode_ldar_stlr silently encodes non-zero imm9 for LDAR/STLR with offset (LDAR x0, [x1, #8] \u2192 imm9=511) \u2014 same pattern as LDXR #1075"
+ },
+ {
   "n": 1076,
   "t": "Bug: encode_not silently ignores extra operands"
  },
@@ -390,10 +398,6 @@
  {
   "n": 978,
   "t": "Bug: encode_fp_arith_d treats a non-rounding-mode 4th operand as DYN"
- },
- {
-  "n": 977,
-  "t": "Bug: encode_fp_arith ignores a 5th operand"
  },
  {
   "n": 977,

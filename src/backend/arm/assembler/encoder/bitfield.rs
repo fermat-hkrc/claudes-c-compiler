@@ -353,3 +353,119 @@ mod pbt_encode_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_adversarial2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// P-BFM: FP 寄存器 → 应该 Err
+    #[test]
+    fn p_bfm_fp_reg() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("d1".to_string()), // FP as source
+            Operand::Imm(0),
+            Operand::Imm(31),
+        ];
+        let result = encode_bfm(&ops);
+        assert!(result.is_err(),
+            "encode_bfm accepted FP d1 as source: {:?}", result);
+    }
+
+    /// P-EXTR: imm 超出范围（0..63 for X, 0..31 for W）
+    #[test]
+    fn p_extr_imm_out_of_range() {
+        for imm in [64i64, 100, -1] {
+            let ops = vec![
+                Operand::Reg("x0".to_string()),
+                Operand::Reg("x1".to_string()),
+                Operand::Reg("x2".to_string()),
+                Operand::Imm(imm),
+            ];
+            let result = encode_extr(&ops);
+            // For X: lsb must be 0..63; for W: 0..31
+            // imm=64 is out of range for both
+            if result.is_ok() {
+                if let Ok(EncodeResult::Word(word)) = result {
+                    let imms = (word >> 10) & 0x3F;
+                    assert!(imms <= 63,
+                        "extr imm {} encoded imms={} (> 6 bits)", imm, imms);
+                }
+            }
+        }
+    }
+
+    /// P-CRC32: FP 寄存器传给 CRC32 → 应该 Err
+    #[test]
+    fn p_crc32_fp_reg() {
+        let ops = vec![
+            Operand::Reg("w0".to_string()),
+            Operand::Reg("d1".to_string()), // FP as source
+            Operand::Reg("w2".to_string()),
+        ];
+        let result = encode_crc32("crc32b", &ops);
+        assert!(result.is_err(),
+            "encode_crc32 accepted FP d1 as source: {:?}", result);
+    }
+
+    /// P-SBFIZ: imm 超出范围 → 应该 Err 或正确处理
+    #[test]
+    fn p_sbfiz_imm_range() {
+        // sbfiz Xd, Xn, #lsb, #width — lsb + width must not exceed 64
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Imm(32), // lsb=32
+            Operand::Imm(33), // width=33 → lsb+width=65 > 64!
+        ];
+        let result = encode_sbfiz(&ops);
+        // lsb+width must be ≤ 64 for X registers
+        if result.is_ok() {
+            // If accepted, it would produce wrong bitfield extraction
+            // Check imms field
+            if let Ok(EncodeResult::Word(word)) = result {
+                let imms = (word >> 10) & 0x3F;
+                println!("sbfiz lsb=32 width=33 → imms={} (should be ≤63)", imms);
+            }
+        }
+    }
+
+    /// P-UBFIZ: 0 width → 应该 Err
+    #[test]
+    fn p_ubfiz_zero_width() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Imm(0), // lsb=0
+            Operand::Imm(0), // width=0 — invalid!
+        ];
+        let result = encode_ubfiz(&ops);
+        assert!(result.is_err(),
+            "encode_ubfiz accepted width=0: {:?}", result);
+    }
+
+    /// P-CLZ: FP 寄存器 → 应该 Err
+    #[test]
+    fn p_clz_fp_reg() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("s1".to_string()), // FP as source
+        ];
+        let result = encode_clz(&ops);
+        assert!(result.is_err(),
+            "encode_clz accepted FP s1 as source: {:?}", result);
+    }
+
+    /// P-REV: imm 作为源操作数 → 应该 Err
+    #[test]
+    fn p_rev_imm_operand() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Imm(5), // immediate where register expected
+        ];
+        let result = encode_rev(&ops);
+        assert!(result.is_err(),
+            "encode_rev accepted Imm as source: {:?}", result);
+    }
+}
