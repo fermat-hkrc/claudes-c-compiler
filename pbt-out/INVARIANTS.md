@@ -1,3 +1,29 @@
+# Confirmed invariants (encode_v_arith_vx)
+
+- Valid 3-operand unmasked OPIVX with vd, vs2 ∈ {v0..v31}, rs1 ∈ {x0..x31}, (mnem,funct6) ∈ {(vadd.vx,000000),(vsub.vx,000010),(vand.vx,001001),(vor.vx,001010),(vxor.vx,001011),(vslideup.vx,001110),(vslidedown.vx,001111)} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` except vslideup/vslidedown when vd overlaps vs2 (llvm-mc architectural overlap check; skipped). KAT pins vadd.vx v0, v0, x0 = 0x02004057; vadd.vx v1, v2, x3 = 0x0221c0d7; vadd.vx v31, v30, x29 = 0x03eecfd7; vsub.vx v1, v2, x3 = 0x0a21c0d7; vand.vx v1, v2, x3 = 0x2621c0d7; vor.vx v1, v2, x3 = 0x2a21c0d7; vxor.vx v1, v2, x3 = 0x2e21c0d7; vslideup.vx v1, v2, x3 = 0x3a21c0d7; vslidedown.vx v1, v2, x3 = 0x3e21c0d7.
+- Format layout holds: opcode=1010111, funct3=100, vm=1, vd in [11:7], rs1 in [19:15], vs2 in [24:20], funct6 in [31:26] (1000 cases over funct6 0..63).
+- Field isolation: vd/vs2/rs1/funct6 bits independent of the other fields (1000 cases).
+- vs2/rs1 swap: swapping operands 1 and 2 swaps bits [24:20] and [19:15] and preserves all other bits (1000 cases).
+- ABI alias: encoding rs1 as zero/ra/sp/.../t6 equals encoding rs1 as xN (1000 cases).
+- Too few operands, non-vector vd/vs2, and non-GPR rs1 return Err (1000 cases).
+- Extra operand and trailing v0.t currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_v_arith_vx)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_v_arith_vx_pbt.rs, cargo test --lib encode_v_arith_vx, proptest cases=1000.
+- Dispatch: encoder/mod.rs:976-994 vadd.vx/vsub.vx/vand.vx/vor.vx/vxor.vx/vslideup.vx/vslidedown.vx => encode_v_arith_vx(operands, funct6). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_v_arith_vx NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 3-op / format / isolation / vs2-rs1-swap / ABI / arity-bad-regs / extra / mask-v0.t. Closed: tier round spent; remaining documented gaps are the extra-operand and mask-v0.t bugs.
+
+## Quirks (encode_v_arith_vx)
+
+- vreg_num lowercases; llvm-mc rejects uppercase register names.
+- get_vreg does not accept Imm(0..=31) as a bare vector register number; get_reg does accept Imm(0..=31) as a GPR number for rs1.
+- vm is hardcoded to 1 (unmasked). Dispatcher TODO encoder/mod.rs:952: masked variants (v0.t) are not yet supported.
+- Assembly order is vd, vs2, rs1 (RISC-V V). Operand 2 is a GPR, not a vector register.
+- llvm-mc rejects vslideup.vx / vslidedown.vx when vd overlaps vs2 ("destination vector register group cannot overlap the source vector register group"). That is an architectural constraint, not an encoding-layout rule; the SUT still encodes those combinations.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_v_arith_vv)
 
 - Valid 3-operand unmasked OPIVV with vd, vs2, vs1 ∈ {v0..v31}, (mnem,funct6) ∈ {(vadd.vv,000000),(vsub.vv,000010),(vand.vv,001001),(vor.vv,001010),(vxor.vv,001011)} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vadd.vv v0, v0, v0 = 0x02000057; vadd.vv v1, v2, v3 = 0x022180d7; vadd.vv v31, v30, v29 = 0x03ee8fd7; vsub.vv v1, v2, v3 = 0x0a2180d7; vand.vv v1, v2, v3 = 0x262180d7; vor.vv v1, v2, v3 = 0x2a2180d7; vxor.vv v1, v2, v3 = 0x2e2180d7.
