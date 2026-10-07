@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_seqz)
+
+- Valid 2-operand `seqz rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `seqz rd, rs` and of `sltiu rd, rs, 1` byte-for-byte (1000 cases). KAT pins seqz a0, a1 = sltiu a0, a1, 1 = 0x0015b513; seqz zero, zero = 0x00103013; seqz t6, ra = 0x0010bf93; seqz fp, s0 = 0x00143413.
+- I-type OP-IMM layout: opcode 0010011, funct3=011, imm12=1, rd and rs1 in their fields, including bounds 0 and 31 (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd/rs matches xN (get_reg GCC bare-number path). encode_seqz(rd, rs) equals encode_alu_imm SLTIU on [rd, rs, Imm(1)] (1000 cases).
+- Field isolation: rd bits independent of rs1; opcode/funct3/rs1/imm bits independent of rd (1000 cases).
+- Too few operands and invalid/FP/non-GPR names return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_seqz)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding assembling `seqz rd, rs` and `sltiu rd, rs, 1`.
+- Harness: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs, cargo test --lib encode_seqz_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:870 "seqz" => encode_seqz(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw for this Rust target (C++ reporter listed unrelated binaries and reported encode_seqz NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/sltiu/I-type/ABI/isolation/arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_seqz)
+
+- encode_seqz has no rustdoc; contract is README.md:324 plus the inline SLTIU comment at pseudo.rs:260.
+- RISC-V Unprivileged ISA SEQZ pseudo is SLTIU rd, rs, 1; this assembler matches that expansion (and llvm-mc).
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_sext_w)
 
 - Valid 2-operand `sext.w rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `sext.w rd, rs` and of `addiw rd, rs, 0` byte-for-byte (1000 cases). KAT pins sext.w a0, a1 = addiw a0, a1, 0 = 0x0005851b; sext.w zero, zero = 0x0000001b; sext.w t6, ra = 0x00008f9b; sext.w fp, s0 = 0x0004041b; sext.w x1, x2 = 0x0001009b.
