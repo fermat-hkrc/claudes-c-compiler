@@ -1072,3 +1072,104 @@ int main(void) {{\n    {ty} probes[] = {{ {} }};\n    for (unsigned i = 0; i < s
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_cross_target {
+    //! Round-41: CROSS-TARGET runtime differential — rich C bodies compiled for
+    //! ARM64/RISC-V (ccc) and executed under qemu, compared against native gcc-x64.
+    //! First-ever runtime E2E on non-x86 targets.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/41_cross/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    fn body(seed: u64) -> String {
+        // 确定性富计算（无 UB）：结构体/浮点/位域/联合/switch/循环
+        format!("\
+struct S {{ int a; double b; char c[4]; }};
+static unsigned h = 2166136261u;
+static void mix(unsigned x) {{ h = (h ^ x) * 16777619u; }}
+static struct S mk(int s) {{ struct S r = {{ s, s * 1.5, {{1,2,3,4}} }}; return r; }}
+static double use(struct S s) {{ return s.a * 2.0 + s.b + s.c[3]; }}
+struct BF {{ unsigned p:5; unsigned q:11; }};
+int cmain(void) {{
+    unsigned B1 = {s1}u, B2 = {s2}u;
+    for (int i = 0; i < 8; i++) {{
+        struct S s = mk(i * 7 + (int)(B1 % 13));
+        mix((unsigned)(use(s) * 4.0) ^ B1);
+        struct BF bf = {{ i % 32, (B2 >> (i % 11)) % 2048 }};
+        mix((bf.p << 11) + bf.q + i);
+        unsigned v[3] = {{ (unsigned)i, h, h >> 3 }};
+        mix(v[i % 3] + B2);
+        switch (i) {{ case 2: mix(0xAA); break; case 5: mix(0xBB); break; default: mix(i + B1 % 7); }}
+    }}
+    union {{ unsigned u; unsigned char b[4]; }} u = {{ B1 * 0x9E3779B9u }};
+    mix(u.b[2]);
+    double d = (B1 % 1000) / 7.0; float f = (float)d;
+    mix((unsigned)(d * 1000.0) + (unsigned)(f * 100.0f));
+    long prod = 1;
+    for (int k = 0; k < 6; k++) prod = prod * (k + (long)(B2 % 5) + 1) % 1000003L;
+    mix((unsigned)prod);
+    return (int)(h % 251);
+}}", s1 = seed, s2 = seed >> 32)
+    }
+
+    /// P-CROSS-TARGET: 随机体 → ccc-arm/ccc-riscv qemu == gcc-x64 原生
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(150))]
+        #[test]
+        fn p_cross_target_vs_gcc_x64(seed in any::<u64>()) {
+            let b = body(seed);
+            let dir = run_dir();
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            // x64 基准
+            let x64 = dir.join(format!("X{}.c", case));
+            std::fs::write(&x64, format!("#include <stdio.h>\n{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            let gx = dir.join(format!("X{}g", case));
+            let gc = Command::new("gcc").args(["-w","-O2","-o"]).arg(&gx).arg(&x64).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+            let want = Command::new(&gx).output().unwrap();
+            prop_assert!(!want.status.to_string().contains("signal"), "gcc binary crashed");
+            let expected = want.status.code().unwrap_or(-1);
+            let _ = std::fs::remove_file(&gx);
+
+            // freestanding 入口（ARM64 / RISC-V）
+            let fs = format!("\n{}int cmain(void);\nvoid _start(void) {{\n\
+#if defined(__aarch64__)\n    register int x0v asm(\"x0\") = cmain();\n    register int x8v asm(\"x8\") = 93;\n    asm volatile(\"svc #0\" : \"+r\"(x0v) : \"r\"(x8v) : \"memory\");\n\
+#elif defined(__riscv)\n    register int a0v asm(\"a0\") = cmain();\n    register int a7v asm(\"a7\") = 93;\n    asm volatile(\"ecall\" : \"+r\"(a0v) : \"r\"(a7v) : \"memory\");\n\
+#else\n    asm volatile(\"mov $60, %eax\");\n#endif\n    __builtin_unreachable();\n}}\n", b);
+            let fsrc = dir.join(format!("F{}.c", case));
+            std::fs::write(&fsrc, &fs).unwrap();
+            let msrc = dir.join(format!("M{}.c", case));
+            std::fs::write(&msrc, format!("{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            for (bin, cc, extra, qemu) in [
+                (dir.join(format!("F{}arm", case)), "ccc-arm", "-static", Some("qemu-aarch64-static")),
+                (dir.join(format!("F{}rv", case)), "ccc-riscv", "-static", Some("qemu-riscv64-static")),
+                (dir.join(format!("M{}i32", case)), "ccc-i686", "-m32", None),
+            ] {
+                let ccpath = format!("./target/debug/{}", cc);
+                let srcfile = if qemu.is_none() { &msrc } else { &fsrc };
+                let comp = Command::new(&ccpath).args(["-O2", extra, srcfile.to_str().unwrap(), "-o", bin.to_str().unwrap()]).output().unwrap();
+                prop_assert!(comp.status.success(), "{} compile failed: {}", cc, String::from_utf8_lossy(&comp.stderr));
+                let run = match qemu {
+                    Some(q) => Command::new(q).arg(&bin).output().unwrap(),
+                    None => Command::new(&bin).output().unwrap(),
+                };
+                let _ = std::fs::remove_file(&bin);
+                // qemu: 非零退出可能是程序退出码也可能是崩溃 — 看是否被信号杀
+                let code = run.status.code().unwrap_or(-1);
+                prop_assert!(code == expected,
+                    "CROSS-TARGET MISMATCH {} (seed {:#x}): got exit {} want {} (crashed={})\nbody:\n{}",
+                    cc, seed, code, expected, run.status.to_string().contains("signal"), b);
+            }
+            let _ = std::fs::remove_file(&x64); let _ = std::fs::remove_file(&fsrc);
+        }
+    }
+}

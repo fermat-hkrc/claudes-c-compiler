@@ -142,3 +142,4 @@
 | 40 | src/frontend/sema | linkage/label constraints absent — static-after-nonstatic decl, int-then-do | **new issue filed** | [#1142](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1142) |
 | 40 | src/frontend/preprocessor | directive structure constraints absent (6 forms) | **new issue filed** | [#1143](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1143) |
 | 40 | src/ir/lowering expr_sizeof/fold | sizeof(VLA) folds to 1024 in arithmetic — sizeof(v)/sizeof(v[0])=256 | **new issue filed** | [#1144](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1144) |
+| 41 | compiler runtime (linker_common) | long double fails to LINK on ARM64/RISC-V (__addtf3 family undefined) | **new issue filed** | [#1145](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1145) |
