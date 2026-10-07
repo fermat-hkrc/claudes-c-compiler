@@ -857,3 +857,126 @@ tail:
         }
     }
 }
+
+
+#[cfg(test)]
+mod pbt_high_value {
+    //! Round-38: struct-by-value ABI — member-level oracle (padding-safe) +
+    //! CROSS-COMPILER interop (gcc caller ↔ ccc callee): SysV classification.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/38_high_value/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 成员池（含 ABI 关键组合：double/float 混 int/long）
+    fn members(seed: u32) -> Vec<&'static str> {
+        let pool = ["double", "float", "int", "long", "long long", "short", "char"];
+        let n = 2 + (seed % 3) as usize;
+        (0..n).map(|k| pool[(seed >> (k * 3)) as usize % pool.len()]).collect()
+    }
+
+    /// 生成 callee.c（mk + take，由 ccc 编译）与 caller.c（main，由 gcc 编译）
+    fn render(seed: u32, v: u64) -> (String, String) {
+        let ms = members(seed);
+        let decl = ms.iter().enumerate().map(|(k, t)| format!("{} m{};", t, k)).collect::<Vec<_>>().join(" ");
+        let ty = format!("struct S_{}", seed % 977);
+        let callee = format!("#include <string.h>\n{ty_decl}\n{ty} mk(void);\n",
+            ty_decl = format!("{} {{ {} }};", ty, decl));
+        let _ = v;
+        let init = ms.iter().enumerate().map(|(k, t)| {
+            match *t {
+                "double" => format!("{:.6}", (k as f64) + 0.5),
+                "float" => format!("{:.3}f", (k as f32) + 0.25),
+                "char" => format!("'{}'", (b'A' + k as u8) as char),
+                _ => format!("{}", 100 + k),
+            }
+        }).collect::<Vec<_>>().join(", ");
+        let init = init;
+        let print = ms.iter().enumerate().map(|(k, t)| {
+            match *t {
+                "double" | "float" => format!("%:.17g", ).replace(":", ""), // 占位
+                _ => String::new(),
+            }
+        }).collect::<Vec<_>>();
+        let _ = print;
+        let member_checks = ms.iter().enumerate().map(|(k, t)| {
+            match *t {
+                "double" => format!("chk &= s.m{k} == ({k}.5);"),
+                "float" => format!("chk &= s.m{k} == ({k}.25f);"),
+                "char" => format!("chk &= s.m{k} == '{}';", (b'A' + k as u8) as char),
+                _ => format!("chk &= s.m{k} == {};", 100 + k),
+            }
+        }).collect::<Vec<_>>().join(" ");
+        let callee = format!(
+"{callee_decl}
+int verify_mk_ok = 0;
+{ty} mk(void) {{
+    {ty} s = {{ {init} }};
+    return s;
+}}
+unsigned long long take({ty} s) {{
+    unsigned long long chk = 1;
+    {member_checks}
+    verify_mk_ok = (int)chk;
+    return chk * 0x{chk_hex}ULL + sizeof(s);
+}}", callee_decl = format!("{} {{ {} }};", ty, decl), ty = ty, init = init, member_checks = member_checks, chk_hex = format!("{:x}", 0xDEAD0000 + seed % 977));
+        let caller = format!(
+"#include <stdio.h>\n{ty_fwd}\nextern {ty} mk(void);\nextern unsigned long long take({ty});\nextern int verify_mk_ok;\nint main(void) {{
+    {ty} a = mk();
+    unsigned long long r1 = take(a);
+    printf(\"take=%llx verify=%d sizeof=%zu\\n\", r1, verify_mk_ok, sizeof({ty}));
+    {ty} c = mk();
+    unsigned long long r2 = take(c);
+    printf(\"ret=%llx\\n\", r2);
+    return 0;
+}}", ty_fwd = format!("{} {{ {} }};", ty, decl), ty = ty);
+        (callee, caller)
+    }
+
+    /// P-INTEROP: gcc 编 caller + ccc 编 callee —— SysV 分类一致性
+    /// （padding 不确定 → 只比较成员语义 + 确定性返回值）
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(250))]
+        #[test]
+        fn p_struct_interop_gcc_calls_ccc(seed in any::<u32>(), v in any::<u64>()) {
+            let (callee, caller) = render(seed, v);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let fc = dir.join(format!("I{}_callee.c", case));
+            let fm = dir.join(format!("I{}_caller.c", case));
+            std::fs::write(&fc, &callee).unwrap();
+            std::fs::write(&fm, &caller).unwrap();
+            let cobj = dir.join(format!("I{}_ccc.o", case));
+            // gcc caller
+            let gbin = dir.join(format!("I{}_gcc", case));
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&gbin)
+                .arg(&fm).arg(&fc).output().unwrap(); // 纯 gcc 作基准
+            prop_assume!(gc.status.success(), "gcc self-reject");
+            let want = Command::new(&gbin).output().unwrap();
+            let want = String::from_utf8_lossy(&want.stdout).into_owned();
+            // ccc callee + gcc caller 链接（interop!）
+            let ccv = vec!["ccc".to_string(), fc.to_string_lossy().into_owned(), "-c".to_string(),
+                "-o".to_string(), cobj.to_string_lossy().into_owned()];
+            let mut d = crate::driver::Driver::new();
+            let cc = match d.parse_cli_args(&ccv) { Ok(false) => d.run(), Ok(true) => Err("cli".into()), Err(e) => Err(e) };
+            prop_assert!(cc.is_ok(), "ccc -c callee failed:\n{}", callee);
+            let ibin = dir.join(format!("I{}_mix", case));
+            let mix = Command::new("gcc").args(["-w","-O0","-o"]).arg(&ibin)
+                .arg(&fm).arg(&cobj).output().unwrap();
+            prop_assert!(mix.status.success(), "gcc link with ccc .o failed: {}", String::from_utf8_lossy(&mix.stderr));
+            let got = Command::new(&ibin).output().unwrap();
+            prop_assert!(got.status.success(), "interop binary crashed");
+            prop_assert_eq!(String::from_utf8_lossy(&got.stdout), want.as_str(),
+                "STRUCT-ABI INTEROP MISMATCH (gcc caller, ccc callee)\ncallee:\n{}\ncaller:\n{}", callee, caller);
+            let _ = std::fs::remove_file(&fc); let _ = std::fs::remove_file(&fm);
+            let _ = std::fs::remove_file(&cobj); let _ = std::fs::remove_file(&gbin); let _ = std::fs::remove_file(&ibin);
+        }
+    }
+}

@@ -115,3 +115,4 @@
 | 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_fneg_d silently ignores extra operands | **new issue filed** | [#1110](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1110) |
 | 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_la silently ignores extra operands | **new issue filed** | [#1111](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1111) |
 | 37 | src/backend/riscv/assembler/encoder/pseudo.rs | encode_lla silently ignores extra operands | **new issue filed** | [#1112](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1112) |
+| 38 | src/backend/x86/codegen/returns.rs | SSE-class ≤8B struct returns in RAX not XMM0 — gcc interop garbage | **new issue filed** | [#1114](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1114) |
