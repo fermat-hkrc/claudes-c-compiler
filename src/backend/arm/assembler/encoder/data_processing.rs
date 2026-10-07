@@ -1650,3 +1650,161 @@ mod pbt_adversarial3 {
             "encode_rbit accepted Imm as source: {:?}", result);
     }
 }
+
+#[cfg(test)]
+mod pbt_extra_operand_sweep {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// 系统性扫描：每个 encode 函数传入多余操作数
+    #[test]
+    fn p_extra_operand_sweep() {
+        let x0 = || Operand::Reg("x0".to_string());
+        let x1 = || Operand::Reg("x1".to_string());
+        let x2 = || Operand::Reg("x2".to_string());
+        let imm0 = || Operand::Imm(0);
+        let imm31 = || Operand::Imm(31);
+
+        println!("=== Extra Operand Sweep: ARM data_processing ===");
+        println!("(testing: correct 2-op + extra 3rd operand)\\n");
+
+        // 2-operand functions: (rd, rn) + extra
+        let fns_2op: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("encode_neg", Box::new(|| encode_neg(&[x0(), x1()] ))),
+            ("encode_negs", Box::new(|| encode_negs(&[x0(), x1()]))),
+            ("encode_mvn", Box::new(|| encode_mvn(&[x0(), x1()]))),
+        ];
+        let fns_2op_extra: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("encode_neg+3", Box::new(|| encode_neg(&[x0(), x1(), x2()]))),
+            ("encode_negs+3", Box::new(|| encode_negs(&[x0(), x1(), x2()]))),
+            ("encode_mvn+3", Box::new(|| encode_mvn(&[x0(), x1(), x2()]))),
+        ];
+
+        for i in 0..fns_2op.len() {
+            let (name, f) = &fns_2op[i];
+            let (name_x, fx) = &fns_2op_extra[i];
+            let r2 = f();
+            let r3 = fx();
+            match (r2, r3) {
+                (Ok(EncodeResult::Word(w2)), Ok(EncodeResult::Word(w3))) => {
+                    if w2 == w3 {
+                        println!("  {}: extra operand IGNORED (same encoding)", name);
+                    } else {
+                        println!("  {}: extra operand CHANGED encoding ({} vs {})", name, w2, w3);
+                    }
+                }
+                (Ok(_), Err(e)) => println!("  {}: extra operand REJECTED ({})", name, &e[..e.len().min(40)]),
+                (Err(_), _) => println!("  {}: base case already fails", name),
+                _ => println!("  {}: non-Word result (reloc/words/skip)", name),
+            }
+        }
+
+        // 3-operand functions: (rd, rn, rm) + extra 4th
+        let fns_3op: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("encode_mul", Box::new(|| encode_mul(&[x0(), x1(), x2()]))),
+            ("encode_smull", Box::new(|| encode_smull(&[x0(), Operand::Reg("w1".into()), Operand::Reg("w2".into())]))),
+        ];
+        let fns_3op_extra: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("encode_mul+4", Box::new(|| encode_mul(&[x0(), x1(), x2(), Operand::Reg("x3".into())]))),
+            ("encode_smull+4", Box::new(|| encode_smull(&[x0(), Operand::Reg("w1".into()), Operand::Reg("w2".into()), Operand::Reg("w3".into())]))),
+        ];
+
+        for i in 0..fns_3op.len() {
+            let (name, f) = &fns_3op[i];
+            let (name_x, fx) = &fns_3op_extra[i];
+            let r3 = f();
+            let r4 = fx();
+            match (r3, r4) {
+                (Ok(EncodeResult::Word(w3)), Ok(EncodeResult::Word(w4))) => {
+                    if w3 == w4 {
+                        println!("  {}: extra operand IGNORED (same encoding)", name);
+                    } else {
+                        println!("  {}: extra operand CHANGED encoding", name);
+                    }
+                }
+                (Ok(_), Err(_)) => println!("  {}: extra operand REJECTED", name),
+                (Err(_), _) => println!("  {}: base case already fails", name),
+                _ => println!("  {}: non-Word result (reloc/words/skip)", name),
+            }
+        }
+
+        // 4-operand functions: (rd, rn, rm, ra) + extra 5th
+        let r4 = encode_madd(&[x0(), x1(), x2(), Operand::Reg("x3".into())]);
+        let r5 = encode_madd(&[x0(), x1(), x2(), Operand::Reg("x3".into()), Operand::Reg("x4".into())]);
+        match (r4, r5) {
+            (Ok(EncodeResult::Word(w4)), Ok(EncodeResult::Word(w5))) => {
+                if w4 == w5 {
+                    println!("  encode_madd: extra 5th operand IGNORED");
+                } else {
+                    println!("  encode_madd: extra 5th operand CHANGED encoding");
+                }
+            }
+            (Ok(_), Err(_)) => println!("  encode_madd: extra 5th operand REJECTED"),
+            (Err(_), _) => println!("  encode_madd: base case fails"),
+            _ => println!("  encode_madd: non-Word result"),
+        }
+
+        println!();
+    }
+
+    /// Symbol 传给需要寄存器的编码器 → 应该 Err
+    #[test]
+    fn p_symbol_as_reg() {
+        println!("=== Symbol as Register ===");
+        let ops = vec![
+            Operand::Symbol("label".to_string()), // Symbol as dest
+            Operand::Reg("x1".to_string()),
+        ];
+        let r = encode_neg(&ops);
+        println!("  encode_neg(Symbol, x1): {:?}", if r.is_ok() { "OK (should Err)" } else { "Err (correct)" });
+
+        let ops2 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Symbol("label".to_string()), // Symbol as source
+        ];
+        let r2 = encode_neg(&ops2);
+        println!("  encode_neg(x0, Symbol): {:?}", if r2.is_ok() { "OK (should Err)" } else { "Err (correct)" });
+    }
+
+    /// Mem 传给需要寄存器的编码器 → 应该 Err
+    #[test]
+    fn p_mem_as_reg() {
+        println!("=== Mem as Register ===");
+        let ops = vec![
+            Operand::Mem { base: "x0".to_string(), offset: 0 }, // Mem as dest
+            Operand::Reg("x1".to_string()),
+        ];
+        let r = encode_neg(&ops);
+        println!("  encode_neg(Mem, x1): {:?}", if r.is_ok() { "OK (should Err)" } else { "Err (correct)" });
+
+        let ops2 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Mem { base: "x1".to_string(), offset: 8 }, // Mem as source
+        ];
+        let r2 = encode_neg(&ops2);
+        println!("  encode_neg(x0, Mem): {:?}", if r2.is_ok() { "OK (should Err)" } else { "Err (correct)" });
+    }
+
+    /// 空操作数列表 → 所有编码器都应该 Err
+    #[test]
+    fn p_empty_operands() {
+        println!("=== Empty Operand List ===");
+        let ops: Vec<Operand> = vec![];
+        let fns: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("encode_neg", Box::new(|| encode_neg(&ops))),
+            ("encode_negs", Box::new(|| encode_negs(&ops))),
+            ("encode_mvn", Box::new(|| encode_mvn(&ops))),
+            ("encode_mul", Box::new(|| encode_mul(&ops))),
+            ("encode_madd", Box::new(|| encode_madd(&ops))),
+            ("encode_div_s", Box::new(|| encode_div(&ops, false))),
+            ("encode_sxtw", Box::new(|| encode_sxtw(&ops))),
+            ("encode_clz", Box::new(|| encode_clz(&ops))),
+            ("encode_rbit", Box::new(|| encode_rbit(&ops))),
+            ("encode_extr", Box::new(|| encode_extr(&ops))),
+        ];
+        for (name, f) in fns {
+            let r = f();
+            println!("  {}: {:?}", name, if r.is_ok() { "OK (PANIC RISK)" } else { "Err (correct)" });
+        }
+    }
+}
