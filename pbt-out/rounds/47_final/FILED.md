@@ -19,3 +19,13 @@
 checklist + 6 flag probes + 2 new mines (namespace/.s-interop) + big-program
 stress — all green or non-defect divergences. Saturation confirmed on both
 axes: bug-density AND feature-coverage.
+
+## Round-47b deepening — complete form-matrices for filed families
+- #1144 context matrix (9 contexts): arithmetic-only trigger; array-declarator
+  dimension ALSO broken (256-int stack slot for 7!) — comment posted
+- #1118 HFA shape matrix: 8/8 directions bad (F1-F4, D1-D2, args+returns) — comment
+- #1135 lvalue wave 2: +10 forms (compound assigns, pre/post, ternary/comma-as-lvalue) 7→17 — comment
+- #1114 x86: args fully GREEN across mixed shapes — scope confirmed return-only
+- #1140: +3 static non-const init forms (scalar/array/struct) — comment
+- #1088: +function-call syntax in #if — comment
+- #1147: pointer-to-typedef-VLA WORKS — scope narrowed — comment
