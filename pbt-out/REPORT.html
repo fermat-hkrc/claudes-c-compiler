@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PBT Report Overview: src/ir</title>
+<title>PBT Report Overview: src/passes</title>
 <style>
 body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; color: #172033; font: 16px/1.6 system-ui, sans-serif; }
 h1 { color: #0d3b66; } h2 { margin-top: 2rem; color: #174a7c; } table { width: 100%; border-collapse: collapse; }
@@ -14,16 +14,13 @@ code, pre { background: #f3f6fa; border-radius: 4px; } code { padding: .1rem .3r
 </style>
 </head>
 <body>
-<h1>PBT Report Overview: src/ir</h1>
-<p class="muted">Test date: 2026-10-05; Tested revision: <code>8bf7a66c5c633aead94effcb58f14ad08e3e915c</code>; Campaign tier: standard</p>
+<h1>PBT Report Overview: src/passes</h1>
+<p class="muted">Test date: 2026-10-05; Tested revision: <code>98e10b76f36962814c1d2ada0f26951037e79f54</code>; Campaign tier: standard</p>
 <h2>Test Results</h2>
-<table><tr><th>Properties</th><th>Passing</th><th>Failing</th><th>Confirmed Defects</th></tr><tr><td>13</td><td>8</td><td>5</td><td>5</td></tr></table>
+<table><tr><th>Properties</th><th>Passing</th><th>Failing</th><th>Confirmed Defects</th></tr><tr><td>4</td><td>2</td><td>2</td><td>2</td></tr></table>
 <h2>Defect List</h2>
-<table><tr><th>ID</th><th>Summary</th><th>Severity</th><th>Details</th></tr><tr><td><code>b1</code></td><td>cast_float_to_target / cast_long_double_to_target store U8/U16 constants in sign-extending native variants, violating the documented zero-extension convention</td><td>high</td><td><a href="rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.html">View defect details</a></td></tr>
-<tr><td><code>b2</code></td><td>coerce_to_with_src early-return keeps the forbidden sign-extending I8/I16 variant for U8/U16 targets</td><td>high</td><td><a href="rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.html">View defect details</a></td></tr>
-<tr><td><code>b3</code></td><td>f64 subnormals misencoded by f64_to_f128_bytes and f64_to_x87_bytes (treated as normals of the source width)</td><td>medium</td><td><a href="rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.html">View defect details</a></td></tr>
-<tr><td><code>b4</code></td><td>build_cfg records duplicate predecessor entries for CondBranch with equal targets and Switch with duplicate case labels</td><td>medium</td><td><a href="rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.html">View defect details</a></td></tr>
-<tr><td><code>b5</code></td><td>compute_dominance_frontiers can never contain the entry block in its own frontier (entry cycles skipped by join gate and runner stop)</td><td>low</td><td><a href="rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.html">View defect details</a></td></tr></table>
+<table><tr><th>ID</th><th>Summary</th><th>Severity</th><th>Details</th></tr><tr><td><code>b1</code></td><td>constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)</td><td>medium</td><td><a href="bug_reports/passes_constant_fold_subint_logical_fold.html">View defect details</a></td></tr>
+<tr><td><code>b2</code></td><td>narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)</td><td>medium</td><td><a href="bug_reports/passes_narrow_phase2_i64_use_miscompile.html">View defect details</a></td></tr></table>
 <p class="muted">For technical details, see REPORT.md and report.json in this directory.</p>
 </body>
 </html>

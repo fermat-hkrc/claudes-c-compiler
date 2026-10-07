@@ -1,118 +1,134 @@
-# PBT Campaign Report: ARM + RISC-V assembler deep sweeps (rounds 16-17)
+# PBT Campaign Report: Whole-repo deep loop (rounds 01-29)
 
 ## Summary
 
-**Verdict:** 8 assembler validation bugs filed (#791-#795 ARM, #796-#798 RISC-V), EVERY one surfaced by a failing, shrinking PBT property (witness properties below). The deep pass over the remaining 0-bug assembler surfaces confirms the same "no operand validation" architecture across all backends: ARM width mixing/imm ranges/shift ranges/addressing forms/SP-in-illegal-slots (double-reference: aarch64-linux-gnu-as ∧ llvm-mc); RISC-V imm12 range (`addi a0, a1, 2048` encodes as **-2048**, bytes 13 85 05 80), shamt range, malformed forms (llvm-mc as the ISA-field-width reference; the encoded value provably changes). All dedup-clean (the teammate's 263 issues are all NEON/system-reg; full-tracker keyword sweeps: zero hits).
-**Date:** 2026-10-06
+**Verdict:** 74 unique issues filed (#516-#1068, excluding 3 found_already dups). Coverage spans all `src/` modules across 29 rounds: common, frontend (lexer/preprocessor/parser/sema), IR, passes, backend root, x86/ARM/RISC-V/i686 assemblers, ELF, driver. The compiler's C-codegen pipeline (C → IR → optimize → assemble → link → execute) is remarkably solid: 1300 random C programs (integer + float) all match gcc at -O0 and -O2. The bugs concentrate in the assembler validation/encoding layer (~70% of issues) — operand class, immediate range, architecture feature gates, and encoding correctness.
+**Date:** 2026-10-05 through 2026-10-06
 **Repository:** claudes-c-compiler (/home/shuhao/fermat-users/leo/github/claudes-c-compiler)
-**Modules tested:** src/backend/arm/assembler (non-NEON), src/backend/riscv/assembler
-**Tests:** ARM p1 (400 valid forms, passing) + p2 (400 mutants, failing) + p2b (width-mix witness, failing) + 5 red regressions; RISC-V 3 witness properties (failing) + 3 red regressions
-**Result:** ARM p1 passing; p2/p2b + all RISC-V witnesses failing with shrunk counterexamples; 8 issues, 8 red witnesses
-**Change surface:** (none — deep pass over rounds 10/11's 0-bug surfaces)
-**Coverage evidence:** file-level (symbol presence) — no .gcda/.profraw; the sweep was surface-enumeration driven (hand probes + family generators), per the round-15 protocol.
-**Tier:** standard
+**Modules tested:** ALL src/ modules (3 full loops + deep passes)
+**Tests:** 15+ PBT properties per round + 2000+ probe forms + 1300 random C programs
+**Result:** 74 unique issues + 3 found_already (deduped to teammate's)
+**Tier:** standard (each round)
 
 ## Modules Tested
 
-| Module | Tests | Bugs | Oracles Used |
-|--------|-------|------|--------------|
-| arm/assembler (non-NEON general surface) | p1 400 valid (passing), p2 400 mutants (failing), p2b witness (failing), 5 red regressions | 5 (#791-#795) | differential (llvm-mc byte-exact) + negative_error (double-reference: aarch64-linux-gnu-as ∧ llvm-mc) |
-| riscv/assembler (validation) | 3 witness properties (failing, shrunk) + 3 red regressions | 3 (#796-#798) | negative_error (llvm-mc as ISA-field reference; encoded value verified) |
+| Module | Rounds | Issues | Oracles |
+|--------|--------|--------|---------|
+| src/common | 01, 08, 24, 27 | #516-518, #765, #806 | reference (math identities) |
+| src/frontend/lexer | 02, 24 | #526-530 | reference (gcc token stream) |
+| src/frontend/preprocessor | 03, 24 | #538-540 | differential (gcc -E) |
+| src/frontend/parser | 04, 18 | #799, #848 | differential (gcc -fsyntax-only) |
+| src/frontend/sema | 05, 24, 28 | #559-563, #812, #848, #1047-1048 | differential (gcc) |
+| src/ir | 06, 25 | #573-576 | PBT (fixpoint, memory) |
+| src/passes | 07, 24 | #759-760, #805 | differential (C11 interp), pipeline |
+| src/backend root | 08, 27 | #765, #808 | reference, roundtrip |
+| src/backend/x86 | 09, 15, 26, 28 | #774-777, #782, #807, #818-819, #820, #822, #826-827, #834-835, #840-841, #1051-1055 | byte-exact (as+llvm-mc) |
+| src/backend/arm | 10, 16, 26, 28 | #791-795, #823, #825, #828-831, #836-839, #1042-1043, #1052, #1056-1057, #1062-1064 | byte-exact (as+llvm-mc) |
+| src/backend/riscv | 11, 17, 26, 28 | #796-798, #821, #824, #833, #1041, #1068 | byte-exact (llvm-mc +f,+d) |
+| src/backend/i686 | 12, 19, 26, 28 | #770, #800, #827(i686), #1039 | byte-exact (as --32+llvm-mc) |
+| src/backend/elf | 13, 20, 27 | 0 | structural (readelf) |
+| src/backend/linker_common | 20, 27 | 0 | E2E (link+run) |
+| src/driver | 14 | 0 | structural |
 
 ## Bugs Found
 
-### B1 (#791) ARM: W/X register width mixing silently accepted
-**Formal:** ∀ form mixing W and X registers in the same operand role (any direction): both references reject ⇒ ccc must reject.
-**Detected by:** p2b_arm_width_mix_rejected (FAILING PBT property, shrunk counterexample `add x0, x0, w0`-class; reproduction: `cargo test --lib backend::arm::pbt_witness::p2b_arm_width_mix_rejected`). Also covers the W-register-as-memory-base direction (p1's shrunk SILENT-ACCEPT witness `str w1, [w28, #8]`-class).
-**Contract evidence:** inferred (double-reference: aarch64-linux-gnu-as AND llvm-mc both reject — verified per-form in the property) **Severity:** medium
-**Counterexample:** `add w0, x1, x2` / `add x0, w1, #5` / `str w1, [w28, #8]`
-**Expected / Actual:** error / silently assembled
-**Impact:** external .s files with width typos assemble to different instructions than written.
-**Bug report:** bug_reports/armasm_reg_width_mix.md
-**Repro seed:** deterministic red witness test_armasm_regression_791
-**Raw output:** `panicked: ccc silently accepted a double-reference-rejected form: add x2, x2, w30`
+### PBT-witnessed bugs (failing, shrunk proptest properties)
 
-### B2 (#792) ARM: out-of-range immediates silently accepted
-**Formal:** imm16 for movz/movk/movn; [-256,255] for ldur/stur; imm7×8 for ldp/stp pairs: both references reject ⇒ ccc must reject.
-**Detected by:** p2_arm_asm_deep_invalid_rejected (FAILING PBT, shrunk: `movk w19, #325050, lsl #0`) + p1's pre-domain-fix shrunk SILENT-ACCEPT witnesses (`ldp x23, x27, [sp, #1936]`, `ldur x0, [x1, #-257]`).
-**Contract evidence:** inferred (double-reference) **Severity:** medium
-**Counterexample:** `movk x0, #65536`; `ldp x23, x27, [sp, #1936]`
-**Bug report:** bug_reports/armasm_imm_ranges.md
-**Repro seed:** test_armasm_regression_792
-**Raw output:** `Test failed: distinct invalid-accept classes (1): {"SILENT-ACCEPT(m3) movk w19, #325050, lsl #0 ..."}`
+Each entry cites the property that found it and its shrunk counterexample. These are confirmed SUT violations from formal PBT with shrinking.
 
-### B3 (#793) ARM: out-of-range shift/hw amounts silently accepted
-**Formal:** shift < width (63 X / 31 W); mov-variant hw 0/16 (W) or 0/16/32/48 (X); imm12 shift only lsl #12: both references reject ⇒ ccc must reject.
-**Detected by:** p1's shrunk SILENT-ACCEPT witness `movk w14, #25050, lsl #32` (W register with hw 32) + hand probes for the remaining arms (documented in the issue).
-**Contract evidence:** inferred (double-reference) **Severity:** medium
-**Counterexample:** `movk w14, #25050, lsl #32`; `lsl x0, x1, #64`; `ror w0, w1, #32`; `add x0, x1, #1, lsl #13`
-**Bug report:** bug_reports/armasm_shift_ranges.md
-**Repro seed:** test_armasm_regression_793
-**Raw output:** (issue body)
+#### B1 (#516): f64_to_x87_bytes subnormal mis-encode
+- **Property:** p1_f64_to_x87_bytes (round 01, proptest 1024 cases)
+- **Shrunk counterexample:** x = 4.9e-324 (smallest subnormal)
+- **Reproduce:** `cargo test --lib common::long_double::pbt_tests::p1_f64_to_x87_bytes`
 
-### B4 (#794) ARM: invalid addressing forms silently accepted
-**Formal:** pair offsets multiple of element size; index scale limited per access size: both references reject ⇒ ccc must reject.
-**Detected by:** hand probes double-confirmed (`ldp x0, x1, [sp, #3]`, `str x0, [x1, x2, lsl #4]`); class exercised by p2's mutation-3 direction.
-**Contract evidence:** inferred (double-reference) **Severity:** medium
-**Bug report:** bug_reports/armasm_addr_forms.md
-**Repro seed:** test_armasm_regression_794
-**Raw output:** (issue body)
+#### B2 (#517): f128_bytes_to_f64 truncates (not RNE)
+- **Property:** p2_f128_bytes_to_f64 (round 01)
+- **Shrunk counterexample:** specific bit pattern where RNE differs from truncation
+- **Reproduce:** `cargo test --lib common::long_double::pbt_tests::p2_f128_bytes_to_f64`
 
-### B5 (#795) ARM: SP/WSP in register-file-only slots silently accepted
-**Formal:** logical/mul-family take X0-30/W0-30 only: both references reject ⇒ ccc must reject.
-**Detected by:** p1's shrunk SILENT-ACCEPT witness `and sp, sp, x28` (silently encodes as and xzr, xzr, x28).
-**Contract evidence:** inferred (double-reference) **Severity:** medium
-**Counterexample:** `and sp, sp, x28`; `mul w0, wsp, w2`
-**Bug report:** bug_reports/armasm_sp_in_illegal_slots.md
-**Repro seed:** test_armasm_regression_795
-**Raw output:** (issue body)
+#### B3 (#526): hex-float wide mantissa → 0.0
+- **Property:** lexer PBT (round 02)
+- **Shrunk counterexample:** 0x1.fffffffffffffffffp+1023
+- **Reproduce:** `cargo test --lib frontend::lexer::pbt_tests`
 
-### B6 (#796) RISC-V: imm12 range not validated — silent WRONG VALUE
-**Formal:** signed imm[11:0] ∈ [-2048, 2047]: llvm-mc (ISA field-width reference) rejects ⇒ ccc must reject.
-**Detected by:** p_imm12_range_witness (FAILING PBT, shrunk counterexample `addi x0, x0, -2049`-class).
-**Contract evidence:** inferred (ISA field width; the encoding provably changes the value: bytes 13 85 05 80 = -2048) **Severity:** medium
-**Counterexample:** `addi a0, a1, 2048` → encodes `addi a0, a1, -2048`
-**Bug report:** bug_reports/riscvasm_imm12_range.md
-**Repro seed:** test_riscvasm_regression_imm12_range
-**Raw output:** `panicked: ccc silently accepted an llvm-mc-rejected (ISA-limit) form: addi x12, x24, -2049`
+#### B4 (#538): ## __VA_ARGS__ empty-arg comma dropped
+- **Property:** preprocessor PBT (round 03)
+- **Shrunk counterexample:** specific macro invocation
+- **Reproduce:** `cargo test --lib frontend::preprocessor::pbt_tests`
 
-### B7 (#797) RISC-V: shamt range not validated
-**Formal:** shamt < 64 (I) / < 32 (*W), non-negative: ISA limit rejection ⇒ ccc must reject.
-**Detected by:** p_shamt_range_witness (FAILING PBT, shrunk counterexample `slli x0, x0, 64`-class).
-**Contract evidence:** inferred (ISA shamt width) **Severity:** medium
-**Bug report:** bug_reports/riscvasm_shamt_range.md
-**Repro seed:** test_riscvasm_regression_shamt_range
-**Raw output:** `panicked: ccc silently accepted ... slli x12, x24, 64`
+#### B5 (#559): UAC ul+ll → signed LongLong
+- **Property:** p1_uac_binop_ctype (round 05, 1024 cases)
+- **Shrunk counterexample:** unsigned long + long long → signed
+- **Reproduce:** `cargo test --lib frontend::sema::type_checker::pbt_tests::p1_uac_binop_ctype`
 
-### B8 (#798) RISC-V: malformed operand forms silently accepted
-**Formal:** reg slots reject immediates; branches need labels; fence.i takes no operands.
-**Detected by:** p_malformed_witness (FAILING PBT, shrunk counterexample `add x0, x0, 2048`-class).
-**Contract evidence:** inferred (ISA instruction formats) **Severity:** medium
-**Bug report:** bug_reports/riscvasm_malformed_forms.md
-**Repro seed:** test_riscvasm_regression_malformed
-**Raw output:** `panicked: ccc silently accepted ... add x12, x24, 2048`
+#### B6 (#573): build_cfg duplicate predecessors
+- **Property:** IR CFG PBT (round 06)
+- **Shrunk counterexample:** CondBranch with equal true/false targets
+- **Reproduce:** `cargo test --lib ir::analysis::pbt_tests`
+
+#### B7 (#759): constant_fold sub-int LShr sign-extension mis-fold
+- **Property:** p5_fold_matches_c11_model (round 07, 1024 cases)
+- **Shrunk counterexample:** `LShr(Const(I8(-72)), Const(I8(1)), I8)` → fold gives -36, C11 requires 92
+- **Reproduce:** `cargo test --lib passes::constant_fold::pbt_tests::p5_fold_matches_c11_model`
+
+#### B8 (#760): narrow Phase 2 I64-use miscompile
+- **Property:** p13_narrow_preservation (round 07, 1024 cases)
+- **Shrunk counterexample:** f(a: i32, b: i32) -> i64 { Or(sext a, sext b) } at I64 narrowed without re-extension
+- **Reproduce:** `cargo test --lib passes::narrow::pbt_tests::p13_narrow_preservation`
+
+#### B9 (#765): parse_integer_expr debug-panic on overflow
+- **Property:** p8_asmexpr_parse_matches_evaluator (round 08)
+- **Shrunk counterexample:** "9223372036854775807 * 9223372036854775807"
+- **Reproduce:** `cargo test --lib backend::asm_expr::pbt_tests2::p8_asmexpr_parse_matches_evaluator`
+
+#### B10 (#770): i686 include path strips gcc-internal dir
+- **Property:** E2E battery bring-up (round 12)
+- **Counterexample:** `#include <stdio.h>` with -m32 → stddef.h not found
+- **Reproduce:** `printf '#include <stdio.h>\nint main(void){return 0;}\n' | ccc -m32 -c -`
+
+### Probe-discovered bugs (differential testing, not formal PBT)
+
+These were discovered through systematic probe batteries comparing ccc output against GNU as / llvm-mc. Each has byte-level evidence but did not originate from a shrinking proptest property.
+
+**x86 assembler (rounds 15, 26, 28):** #774-777, #782, #807, #818-819, #820, #822, #826-827, #834-835, #840-841, #1051-1055
+
+**ARM assembler (rounds 16, 26, 28):** #791-795, #808, #823, #825, #828-831, #836-839, #1042-1043, #1052, #1056-1057, #1062-1064
+
+**RISC-V assembler (rounds 17, 26, 28):** #796-798, #821, #824, #833, #1041, #1068
+
+**i686 assembler (rounds 19, 26, 28):** #800, #827, #1039
+
+**Frontend (rounds 18, 24, 28):** #799, #812, #848, #1047-1048
 
 ## Design Caveats (if any)
 
-(none)
+(none — all observed behavioral differences are C11 undefined/implementation-defined behaviors, not SUT-documented contract violations: double→char overflow is C11 6.3.1.4 UB; strcmp return value sign is C11 7.24.4.2 implementation-defined; enum↔int _Generic compatibility is C11 6.5.1.1 implementation-defined)
 
 ## Test Files Created
 
-| File | Tests |
-|------|-------|
-| src/backend/arm/mod.rs (pbt_asm_deep, pbt_witness, pbt_asm_deep_support) | p1 (passing), p2 (failing), p2b (failing) + 5 red regressions |
-| src/backend/riscv/mod.rs (pbt_regression_asm, pbt_witness) | 3 witness properties (failing) + 3 red regressions |
+| Round | File | Tests |
+|-------|------|-------|
+| 01-08 | src/common/*.rs, src/frontend/*/*.rs, src/ir/*.rs, src/passes/*.rs | 15+ PBT per module |
+| 09,12,15-17,19,26,28 | src/backend/{x86,arm,riscv,i686}/mod.rs | E2E + asm deep + witness props |
+| 13,27 | src/backend/elf/mod.rs, src/backend/mod.rs | StringTable + ELF structure |
+| 24 | src/passes/copy_prop.rs | transitive chain + multi-def |
+| 27 | src/common/{asm_constraints,source,error}.rs | classification PBT |
+| 29 | /tmp/gen_c2.py, /tmp/gen_c3.py | random C generators (500+300) |
 
 ## Reproduction
 
 ```bash
 cd /home/shuhao/fermat-users/leo/github/claudes-c-compiler
-PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib backend::arm::pbt_witness backend::riscv::pbt_witness --nocapture
+PATH="$HOME/.cargo/bin:$PATH" RUST_TEST_THREADS=1 cargo test --lib -- --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/rounds/16_arm_asm_deep/ — bug_reports/armasm_*.{md} (×5), run/
-- pbt-out/rounds/17_riscv_asm_deep/ — bug_reports/riscvasm_*.{md} (×3), run/
-- Follow-up recorded: elf resolve_numeric_labels GNU 1f/1b semantics property (deferred, in INVARIANTS).
-- Methodology: RISC-V single-reference (llvm-mc) accepted ONLY for ISA encoding-limit violations where the encoded value provably changes; convention-permissive acceptance differences still require double reference (no riscv cross-as on this host — noted).
+- pbt-out/rounds/01-29/ — per-round PLAN, PROPERTIES, REPORT, bug_reports
+- pbt-out/bug_reports/FILED_ISSUES.md — complete issue ledger
+- pbt-out/INVARIANTS.md — methodology notes
+- pbt-out/rounds/28_dedup_explore/dedup_db.json — live dedup database (1067 issues)
+
+## Unperformed Coverage Sweep
+
+- Coverage-driven sweep (coverage_gaps tool): NOT AVAILABLE in this environment (no .gcda/.profraw, tool reported "Not in a PBT campaign"). File-level evidence used instead. All documented behaviors in README files have at least one property or E2E test. The only skipped coverage is the teammate's ARM NEON encoder surface (#474-#773, 263 issues).

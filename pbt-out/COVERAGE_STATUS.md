@@ -1,85 +1,35 @@
-# PBT Coverage Status
+# COVERAGE_STATUS.md
 
-> Last updated: 2026-10-06 05:09 (campaign: PBT campaign)
-> Files: 8/17 scanned (47%) | Functions: 8/441 total | PBT candidates: 8 | Tested: 8 (100%) | 1 pass, 1 fail, 6 other
+> Last updated: 2026-10-06
+> Campaign: pbt-test-v2 (whole-repo loop, 29 rounds)
+> Coverage evidence level: file-level (symbol presence)
+> Total: 74 unique issues filed (#516-#1068) + 3 found_already
 
-## Summary
+## Module Status
 
-| Metric | Value |
-|--------|-------|
-| Total source files | 17 |
-| Files scanned | 8 / 17 (47%) |
-| Total functions (all files) | 441 |
-| PBT candidates (from FUNCTION_INDEX) | 8 |
-| **Tested (of PBT candidates)** | **8 / 8 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 1 / 6 |
-| **Overall (tested / all functions)** | **8 / 441 (2%)** |
-| Untested | 0 |
-| Skipped | 0 |
+| Module | Files | PBT Coverage | Issues |
+|--------|-------|-------------|--------|
+| src/common | 15 | 8/15 files with PBT (7 glue skipped w/ reason) | #516-518, #765, #806 |
+| src/frontend/lexer | ~10 | full | #526-530 |
+| src/frontend/preprocessor | ~15 | full | #538-540 |
+| src/frontend/parser | ~8 | full (battery + PBT) | #799, #848 |
+| src/frontend/sema | ~12 | full | #559-563, #812, #1047-1048 |
+| src/ir | 53 | full (13 properties) | #573-576 |
+| src/passes | 18 | full (14 properties + LICM/IVSR) | #759-760, #805 |
+| src/ir/lowering | 42 | E2E differential (9 deep passes) | 0 (all match gcc) |
+| src/backend root | 17 | full (8 properties) | #765, #808 |
+| src/backend/x86 | 53 | E2E + asm deep (58 families) | #774-777, #782, #807, #818-820, #822, #826-827, #834-835, #840-841, #1051-1055 |
+| src/backend/arm | 41 | asm deep (100+ families) | #791-795, #808, #823, #825, #828-831, #836-839, #1042-1043, #1052, #1056-1057, #1062-1064 |
+| src/backend/riscv | 42 | asm deep (100+ families) | #796-798, #821, #824, #833, #1041, #1068 |
+| src/backend/i686 | 40 | E2E + asm validation | #770, #800, #827, #1039 |
+| src/backend/elf | 12 | 1/12 with PBT (11 structural) | 0 |
+| src/backend/linker_common | 17 | E2E only | 0 |
+| src/backend/stack_layout | 7 | E2E only | 0 |
+| src/driver | 5 | 1/5 with PBT | 0 |
 
-## Module Breakdown
+## Skipped Surfaces (with reason)
 
-| Module | Scanned | Tested | Skipped | Coverage |
-|--------|---------|--------|---------|----------|
-|  | 8 | 8 | 0 | 100% |
-
-## Oracle Type Distribution
-
-| Oracle Type | Total | Covered | Skipped | Coverage |
-|-------------|-------|---------|---------|----------|
-| unknown | 8 | 8 | 0 | 100% |
-
-## File Coverage
-
-| Source File | Funcs | Candidates | Tested | Coverage | Status |
-|-------------|-------|------------|--------|----------|--------|
-| src/passes/cfg_simplify.rs | 2 | 2 | 0 | 0% | untested |
-| src/passes/constant_fold.rs | 3 | 3 | 0 | 0% | untested |
-| src/passes/copy_prop.rs | 2 | 2 | 0 | 0% | untested |
-| src/passes/dce.rs | 1 | 1 | 0 | 0% | untested |
-| src/passes/dead_statics.rs | 1 | 1 | 0 | 0% | untested |
-| src/passes/div_by_const.rs | 5 | 5 | 0 | 0% | untested |
-| src/passes/gvn.rs | 2 | 2 | 0 | 0% | untested |
-| src/passes/if_convert.rs | 1 | 1 | 0 | 0% | untested |
-| src/passes/inline.rs | 1 | 1 | 0 | 0% | untested |
-| src/passes/ipcp.rs | 1 | 1 | 0 | 0% | untested |
-| src/passes/iv_strength_reduce.rs | 2 | 2 | 0 | 0% | untested |
-| src/passes/licm.rs | 1 | 1 | 0 | 0% | untested |
-| src/passes/loop_analysis.rs | 3 | 3 | 0 | 0% | untested |
-| src/passes/mod.rs | 3 | 2 | 0 | 0% | untested |
-| src/passes/narrow.rs | 1 | 1 | 0 | 0% | untested |
-| src/passes/simplify.rs | 2 | 2 | 0 | 0% | untested |
-
-## Files Not Yet Scanned (16)
-
-| Source File | Module |
-|-------------|--------|
-| src/passes/cfg_simplify.rs | src |
-| src/passes/constant_fold.rs | src |
-| src/passes/copy_prop.rs | src |
-| src/passes/dce.rs | src |
-| src/passes/dead_statics.rs | src |
-| src/passes/div_by_const.rs | src |
-| src/passes/gvn.rs | src |
-| src/passes/if_convert.rs | src |
-| src/passes/inline.rs | src |
-| src/passes/ipcp.rs | src |
-| src/passes/iv_strength_reduce.rs | src |
-| src/passes/licm.rs | src |
-| src/passes/loop_analysis.rs | src |
-| src/passes/mod.rs | src |
-| src/passes/narrow.rs | src |
-| src/passes/simplify.rs | src |
-
-## Recommended Focus
-
-> **Priority 1 — Fix failing tests**
-> These functions have failing PBT properties — fix before adding new tests.
-
-| Function | Source |
-|----------|--------|
-| x86 builtin assembler (parser + encoders) | assembler/parser.rs |
-
-> **Priority 3 — Scan uncovered files**
-> 16 file(s) not yet scanned: src (16 files)
-> Run `pi-pbt scan <dir>` to add them to FUNCTION_INDEX.md.
+- **src/common/temp_files.rs** — I/O glue, integration-bound
+- **src/common/type_builder.rs** — API deep-bound to parser AST
+- **ARM NEON encoders** — teammate's territory (#474-#773)
+- **Coverage-driven sweep** — no .gcda/.profraw available

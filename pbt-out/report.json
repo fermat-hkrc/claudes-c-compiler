@@ -1,139 +1,127 @@
 {
-  "schemaVersion": 3,
-  "generator": { "tool": "pi-pbt", "version": "0.1.25 (pi 0.87.1)" },
-  "run": {
-    "date": "2026-10-05",
-    "revision": "8bf7a66c5c633aead94effcb58f14ad08e3e915c",
-    "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
-    "target": "src/ir",
-    "tier": "standard"
+ "schemaVersion": 3,
+ "generator": {
+  "tool": "pi-pbt",
+  "version": "0.1.25 (pi 0.87.1)"
+ },
+ "run": {
+  "date": "2026-10-05",
+  "revision": "98e10b76f36962814c1d2ada0f26951037e79f54",
+  "repository": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "target": "src/passes",
+  "tier": "standard"
+ },
+ "build": {
+  "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+  "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+  "result": "success"
+ },
+ "properties": [
+  {
+   "id": "p1",
+   "name": "udiv32_magic_differential",
+   "formal": "∀ d ∈ u32 divisors (edge-skewed), ∀ x ∈ u32 edges, ∀ shape ∈ {U32Native, U32InI64}: interp(div_by_const_function(f[x /u d])) = x /u d",
+   "oracle": "reference",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/div_by_const.rs",
+   "sourceLine": 58,
+   "functionName": "passes::div_by_const::div_by_const_function",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/div_by_const.rs",
+   "testTarget": "cargo test --lib passes::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
   },
-  "build": {
-    "command": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo check --lib",
+  {
+   "id": "p5",
+   "name": "fold_matches_c11_model",
+   "formal": "∀ E ∈ all-const DAGs over I8..U64 (well-typed Value uses, sign-matched cmps, no div-by-zero): fold∘copy_prop to fixpoint leaves Return = Const(interp(E))",
+   "oracle": "differential",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/constant_fold.rs",
+   "sourceLine": 73,
+   "functionName": "passes::constant_fold::fold_function",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/constant_fold.rs",
+   "testTarget": "cargo test --lib passes::",
+   "status": "failing",
+   "counterexample": "I8 DAG LShr(Const(I8(-72)), Const(I8(1)), I8): fold gives -36, C11 requires 92",
+   "bugId": "b1"
+  },
+  {
+   "id": "p13",
+   "name": "narrow_preservation",
+   "formal": "∀ pat ∈ documented narrowing patterns: interp(narrow_function(f[pat]), args) = interp(f[pat], args); unsigned cmps on signed source asserted NOT rewritten",
+   "oracle": "algebraic.invariant",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/narrow.rs",
+   "sourceLine": 57,
+   "functionName": "passes::narrow::narrow_function",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/narrow.rs",
+   "testTarget": "cargo test --lib passes::",
+   "status": "failing",
+   "counterexample": "f(a:i32,b:i32)->i64 { Or(sext a, sext b) at I64 } narrowed to Or@I32 with no re-extension; f(1,-1)=4294967295 != -1 (pipeline-confirmed)",
+   "bugId": "b2"
+  },
+  {
+   "id": "p14",
+   "name": "pipeline_value_preservation",
+   "formal": "∀ shape ∈ {linear, diamond, loop, random CFG, div32}, ∀ args: interp(run_passes(shape), args) = interp(shape, args); no panic",
+   "oracle": "algebraic.invariant",
+   "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/mod.rs",
+   "sourceLine": 272,
+   "functionName": "passes::run_passes",
+   "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/passes/mod.rs",
+   "testTarget": "cargo test --lib passes::",
+   "status": "passing",
+   "counterexample": null,
+   "bugId": null
+  }
+ ],
+ "bugs": [
+  {
+   "id": "b1",
+   "propertyId": "p5",
+   "summary": "constant_fold sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)",
+   "severity": "medium",
+   "impact": "latent silent miscompile: I8/I16-typed logical shifts / unsigned div-rem of negative constants fold to wrong constants",
+   "expected": "LShr((I8)0xB8, 1) folds to 92 (logical shift of the 8-bit pattern)",
+   "actual": "folds to -36 — the is_32bit fast path's `as u32` sign-extends 0xB8 to 0xFFFFFFB8 before the logical op",
+   "counterexample": "I8 DAG LShr(Const(I8(-72)), Const(I8(1)), I8): fold gives -36, C11 requires 92",
+   "fix": "In fold_binop's is_32bit logical arms, zero-extend the sub-int operand pattern (mask to the operand type's width before widening)",
+   "reportPath": "bug_reports/passes_constant_fold_subint_logical_fold.md",
+   "contractBasis": "inferred",
+   "documentedBehavior": null,
+   "reproduction": {
+    "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+    "run": "PATH=\"$HOME/.cargo/bin:$PATH\" RUST_TEST_THREADS=1 cargo test --lib passes::constant_fold::pbt_tests::test_constant_fold_regression_subint_lshr_zero_extend --exact --nocapture",
     "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
-    "result": "success"
+    "seed": null,
+    "path": null
+   }
   },
-  "properties": [
-    { "id": "p1", "name": "p1_div_rem_c11_identity", "formal": "forall a in i64, b in i64, b != 0: eval_i64(SDiv,a,b)*b + eval_i64(SRem,a,b) == a (wrapping) && |SRem| < |b| && sign(r) in {0, sign(a)}; same over u64 bits for UDiv/URem", "oracle": "algebraic.invariant", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "sourceLine": 72, "functionName": "IrBinOp::eval_i64", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "testTarget": "cargo test --lib ir::ops", "status": "passing", "counterexample": null, "bugId": null },
-    { "id": "p2", "name": "p2_div_by_zero_none_iff_zero_rhs", "formal": "forall op in {SDiv,UDiv,SRem,URem}, a, b: eval_i64(op,a,b).is_none() iff b == 0; can_trap(op) iff op in that set", "oracle": "negative_error", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "sourceLine": 63, "functionName": "IrBinOp::eval_i64", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "testTarget": "cargo test --lib ir::ops", "status": "passing", "counterexample": null, "bugId": null },
-    { "id": "p3", "name": "p3_eval_i64_i128_consistency", "formal": "forall op in IrBinOp, a >= 0, b >= 0 with exact result fitting i64: eval_i128(op,a,b) == eval_i64(op,a,b) (shifts: k < 64)", "oracle": "algebraic.metamorphic", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "sourceLine": 88, "functionName": "IrBinOp::eval_i128", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "testTarget": "cargo test --lib ir::ops", "status": "passing", "counterexample": null, "bugId": null },
-    { "id": "p4", "name": "p4_cmp_coherence_f64 (+p4b_cmp_coherence_i64)", "formal": "forall a,b in f64 (incl NaN/inf/-0): eval_f64(Slt,a,b) == eval_f64(Ult,a,b) (all 4 pairs) && Ne == (a != b); forall a,b in i64: duality/reflection laws and two's-complement sign-region laws", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "sourceLine": 187, "functionName": "IrCmpOp::eval_f64", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/ops.rs", "testTarget": "cargo test --lib ir::ops", "status": "passing", "counterexample": null, "bugId": null },
-    { "id": "p5", "name": "p5_unsigned_repr_writer_differential", "formal": "forall ty in {U8,U16,U32}, v in [0, 2^bits): from_i64(v,ty).to_i64() == v && cast_float_to_target(v as f64,ty).to_i64() == v && cast_long_double_to_target(v,bytes,ty).to_i64() == v", "oracle": "differential", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "sourceLine": 277, "functionName": "IrConst::cast_float_to_target", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "testTarget": "cargo test --lib ir::constants", "status": "failing", "counterexample": "cast_float_to_target(200.0, IrType::U8) = I8(-56), to_i64() = -56 != 200 (also cast_long_double_to_target)", "bugId": "b1" },
-    { "id": "p6", "name": "p6_coerce_to_unsigned_normalization", "formal": "forall ty in {U8,U16}, v in (2^(bits-1), 2^bits): from_i64(v, signed(ty)).coerce_to(ty).to_i64() == v", "oracle": "differential", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "sourceLine": 384, "functionName": "IrConst::coerce_to_with_src", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "testTarget": "cargo test --lib ir::constants", "status": "failing", "counterexample": "I8(200 as i8).coerce_to(U8) = I8(-56), to_i64() = -56 != 200", "bugId": "b2" },
-    { "id": "p7", "name": "p7_f128_x87_encoding_roundtrip (+p7b_special_values)", "formal": "forall v in finite f64 (incl subnormals): ieee_decode_f128(f64_to_f128_bytes(v)) == v && ieee_decode_x87(f64_to_x87_bytes(v)) == v; sign bits preserved; inf/NaN fields correct", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "sourceLine": 50, "functionName": "f64_to_f128_bytes", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "testTarget": "cargo test --lib ir::constants", "status": "failing", "counterexample": "f64_to_f128_bytes(5e-324) decodes to 1.1125369292536e-308 != 5e-324 (x87 twin equally wrong for subnormals)", "bugId": "b3" },
-    { "id": "p8", "name": "p8_zero_one_bool_contracts", "formal": "forall ty in IrType (15 enumerators): zero(ty).is_zero() && one(ty).is_nonzero(); from_i64/to_i64 round-trip for signed; forall c in IrConst: bool_normalize(c) == I8(is_zero(c) ? 0 : 1)", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "sourceLine": 557, "functionName": "IrConst::bool_normalize", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/constants.rs", "testTarget": "cargo test --lib ir::constants", "status": "passing", "counterexample": null, "bugId": null },
-    { "id": "p9", "name": "p9_build_cfg_transpose_consistency", "formal": "forall CFG F over blocks with resolved labels: forall i,b: multiplicity of edge (i->b) in succs equals its multiplicity in preds && no duplicate entries in either", "oracle": "algebraic.invariant", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs", "sourceLine": 110, "functionName": "build_cfg", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs", "testTarget": "cargo test --lib ir::analysis", "status": "failing", "counterexample": "block0: CondBranch{true:L1,false:L1}; block1: Return -> preds[1] = [0,0], succs[0] = [1]", "bugId": "b4" },
-    { "id": "p10", "name": "p10_dominators_vs_naive_reference", "formal": "forall graph G (1..=8 nodes, entry 0): idom_SUT(G) == idom_naive(G) on reachable nodes && idom[b] == MAX iff b unreachable && idom[0] == 0; RPO covers each reachable block once", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs", "sourceLine": 238, "functionName": "compute_dominators", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs", "testTarget": "cargo test --lib ir::analysis", "status": "passing", "counterexample": null, "bugId": null },
-    { "id": "p11", "name": "p11_frontiers_vs_definition (+p11b_entry_selfloop_df red witness)", "formal": "forall graph G without edges into entry: DF_SUT(b) == {d reachable : exists p in preds(d), b dominates p, and (d == b or b does not strictly dominate d)}; witness p11b (red): entry in any cycle => entry in DF(entry)", "oracle": "reference", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs", "sourceLine": 302, "functionName": "compute_dominance_frontiers", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/analysis.rs", "testTarget": "cargo test --lib ir::analysis", "status": "failing", "counterexample": "n=1, succs=[[0]] (entry self-loop): DF(0) = {} but definition requires {0}; also 0->1->{0,1} cycle form", "bugId": "b5" },
-    { "id": "p12", "name": "p12_promote_yields_valid_ssa", "formal": "forall alloca-based IR F (random CFG, k in 0..=4 allocas, random load/store): promote(F) has (a) no remaining use of a promoted alloca, (b) every reachable-block phi has exactly one incoming per unique reachable predecessor, (c) every use dominated by its def (phi uses at the incoming block), (d) next_value_id bounds all ids", "oracle": "algebraic.invariant", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/mem2reg/promote.rs", "sourceLine": 58, "functionName": "promote_allocas", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/mem2reg/promote.rs", "testTarget": "cargo test --lib ir::mem2reg", "status": "passing", "counterexample": null, "bugId": null },
-    { "id": "p13", "name": "p13_phi_elimination_structural_preservation", "formal": "forall F' = eliminate_phis(promote(F)): (a) no Phi remains, (b) every terminator label resolves, (c) trampolines are pure copy blocks branching to original labels, (d) every USED former phi dest is defined by some Copy", "oracle": "algebraic.invariant", "sourceFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/mem2reg/phi_eliminate.rs", "sourceLine": 30, "functionName": "eliminate_phis", "testFile": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/src/ir/mem2reg/phi_eliminate.rs", "testTarget": "cargo test --lib ir::mem2reg", "status": "passing", "counterexample": null, "bugId": null }
-  ],
-  "bugs": [
-    {
-      "id": "b1",
-      "propertyId": "p5",
-      "summary": "cast_float_to_target / cast_long_double_to_target store U8/U16 constants in sign-extending native variants, violating the documented zero-extension convention",
-      "severity": "high",
-      "impact": "constant folding / GVN / algebraic simplification read unsigned constants above the signed range (U8 > 127, U16 > 32767) as negative after any float->int constant cast — silent wrong folded values",
-      "expected": "cast_float_to_target(200.0, U8).to_i64() == Some(200) (I64(200) per the from_i64 convention)",
-      "actual": "IrConst::I8(-56), to_i64() == Some(-56)",
-      "counterexample": "cast_float_to_target(200.0, IrType::U8) = I8(-56), to_i64() = -56 != 200 (also cast_long_double_to_target)",
-      "fix": "Store U8/U16 as IrConst::I64(v as u8 as i64) / I64(v as u16 as i64) in both cast functions, mirroring from_i64 and narrowed_to",
-      "reportPath": "rounds/06_ir/bug_reports/ir_constants_unsigned_repr_cast_float.md",
-      "contractBasis": "documented-and-violated",
-      "documentedBehavior": "\"Store unsigned sub-64-bit types (U8, U16, U32) as I64 with zero-extended values to preserve unsigned semantics.\" — src/ir/constants.rs:437",
-      "reproduction": {
-        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants --no-run",
-        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants::pbt_tests::p5_unsigned_repr_writer_differential",
-        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/constants.rs (shrunk: ty_idx=0, raw=272865408)",
-        "path": null
-      }
-    },
-    {
-      "id": "b2",
-      "propertyId": "p6",
-      "summary": "coerce_to_with_src early-return keeps the forbidden sign-extending I8/I16 variant for U8/U16 targets",
-      "severity": "high",
-      "impact": "the universal constant-to-instruction-type coercion step produces constants that read back negative through to_i64() for U8/U16 values above their signed range",
-      "expected": "I8(200 as i8).coerce_to(U8).to_i64() == Some(200)",
-      "actual": "IrConst::I8(-56), to_i64() == Some(-56)",
-      "counterexample": "I8(200 as i8).coerce_to(U8) = I8(-56), to_i64() = -56 != 200",
-      "fix": "Split the early-return arms: (I8(_), I8) may return *self but (I8(_), U8) must fall through to from_i64 normalization (same for I16/U16)",
-      "reportPath": "rounds/06_ir/bug_reports/ir_constants_coerce_unsigned_early_return.md",
-      "contractBasis": "documented-and-violated",
-      "documentedBehavior": "\"Store unsigned sub-64-bit types (U8, U16, U32) as I64 with zero-extended values to preserve unsigned semantics.\" — src/ir/constants.rs:437",
-      "reproduction": {
-        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants --no-run",
-        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants::pbt_tests::p6_coerce_to_unsigned_normalization",
-        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/constants.rs (shrunk: kind=0, raw=0)",
-        "path": null
-      }
-    },
-    {
-      "id": "b3",
-      "propertyId": "p7",
-      "summary": "f64 subnormals misencoded by f64_to_f128_bytes and f64_to_x87_bytes (treated as normals of the source width)",
-      "severity": "medium",
-      "impact": "subnormal constants flowing into long-double data emission produce wrong bytes on ARM64/RISC-V (f128 emitted verbatim) and wrong x87 constants on x86",
-      "expected": "decode(f64_to_f128_bytes(5e-324)) == 5e-324 (normal f128 encoding of 2^-1074)",
-      "actual": "decodes to 1.1125369292536e-308 (~2^-1023) — ~2^51 times too large",
-      "counterexample": "f64_to_f128_bytes(5e-324) decodes to 1.1125369292536e-308 != 5e-324 (x87 twin equally wrong for subnormals)",
-      "fix": "Normalize subnormals (exp11 == 0 && mantissa52 != 0) before packing: find the leading one of mantissa52 and adjust the exponent; do not set the implicit integer bit from the raw mantissa",
-      "reportPath": "rounds/06_ir/bug_reports/ir_constants_subnormal_f128_x87_encoding.md",
-      "contractBasis": "documented-and-violated",
-      "documentedBehavior": "\"Convert an f64 value to IEEE 754 binary128 (quad-precision) encoding (16 bytes, little-endian).\" — src/ir/constants.rs:50",
-      "reproduction": {
-        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants --no-run",
-        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::constants::pbt_tests::p7_f128_x87_encoding_roundtrip",
-        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/constants.rs (shrunk: v=5e-324)",
-        "path": null
-      }
-    },
-    {
-      "id": "b4",
-      "propertyId": "p9",
-      "summary": "build_cfg records duplicate predecessor entries for CondBranch with equal targets and Switch with duplicate case labels",
-      "severity": "medium",
-      "impact": "six passes consume preds counts (if_convert diamond gates, GVN join detection, mem2reg DF join gate and phi-cost estimate); currently masked effects but the transpose invariant they build on is violated",
-      "expected": "preds and succs are exact transposes with no duplicates: preds[1] == [0]",
-      "actual": "preds[1] == [0, 0] while succs[0] == [1]",
-      "counterexample": "block0: CondBranch{true:L1,false:L1}; block1: Return -> preds[1] = [0,0], succs[0] = [1]",
-      "fix": "Deduplicate the preds push symmetrically to the contains-guarded succs push in the CondBranch/Switch/IndirectBranch arms",
-      "reportPath": "rounds/06_ir/bug_reports/ir_analysis_build_cfg_pred_dup.md",
-      "contractBasis": "documented-and-violated",
-      "documentedBehavior": "\"Build predecessor and successor lists from the function's CFG. Returns (preds, succs) as flat adjacency lists (CSR format).\" — src/ir/analysis.rs:106",
-      "reproduction": {
-        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::analysis --no-run",
-        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::analysis::pbt_tests::p9_build_cfg_transpose_consistency",
-        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": "proptest-regressions/src/ir/analysis.rs",
-        "path": null
-      }
-    },
-    {
-      "id": "b5",
-      "propertyId": "p11",
-      "summary": "compute_dominance_frontiers can never contain the entry block in its own frontier (entry cycles skipped by join gate and runner stop)",
-      "severity": "low",
-      "impact": "if a future pass creates an entry cycle, mem2reg would omit the entry phi for loop-carried variables -> silent miscompile; not reachable from today's C lowering (no in-tree producer of edges into entry)",
-      "expected": "DF(entry) contains entry whenever entry is in any cycle (Cytron DF_local)",
-      "actual": "DF(0) == {} for succs=[[0]] and for 0->1->{0,1}",
-      "counterexample": "n=1, succs=[[0]] (entry self-loop): DF(0) = {} but definition requires {0}; also 0->1->{0,1} cycle form",
-      "fix": "Add the local-frontier pass: for every block b and successor y, if b does not strictly dominate y, insert y into DF(b) (subsumes the entry case)",
-      "reportPath": "rounds/06_ir/bug_reports/ir_analysis_df_entry_cycle.md",
-      "contractBasis": "documented-and-violated",
-      "documentedBehavior": "\"Compute dominance frontiers for each block. DF(b) = set of blocks where b's dominance ends (join points).\" — src/ir/analysis.rs:302",
-      "reproduction": {
-        "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::analysis --no-run",
-        "run": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib ir::analysis::pbt_tests::p11b_entry_selfloop_df",
-        "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler/pbt-out/rounds/06_ir/run",
-        "seed": null,
-        "path": null
-      }
-    }
-  ],
-  "totals": { "properties": 13, "passing": 8, "failing": 5, "bugs": 5 }
+  {
+   "id": "b2",
+   "propertyId": "p13",
+   "summary": "narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use — I64 consumers get the zero-extended value (pipeline miscompile)",
+   "severity": "medium",
+   "impact": "run_passes(-O2, x86-64) compiles f(a,b){(i64)a | (i64)b} to return the zero-extended 32-bit Or: f(1,-1) = 4294967295 instead of -1",
+   "expected": "pipeline preserves the interpreted value: sext(a)|sext(b) = -1 for (1,-1)",
+   "actual": "Or rewritten to I32 with no re-extension; the I64 return reads 4294967295",
+   "counterexample": "f(a:i32,b:i32)->i64 { Or(sext a, sext b) at I64 } narrowed to Or@I32 with no re-extension; f(1,-1)=4294967295 != -1 (pipeline-confirmed)",
+   "fix": "Check the single use consumes the value in an I32/U32 context before rewriting (or emit Cast target_ty→I64 after the narrowed op)",
+   "reportPath": "bug_reports/passes_narrow_phase2_i64_use_miscompile.md",
+   "contractBasis": "documented-and-violated",
+   "documentedBehavior": "\"narrows I64 bitwise operations (And, Or, Xor) to I32 when all operands are provably 32-bit values ... restricted to I32/U32 output to avoid sub-int register complications\" — src/passes/README.md Integer Narrowing, Phase 2",
+   "reproduction": {
+    "build": "PATH=\"$HOME/.cargo/bin:$PATH\" cargo test --lib --no-run",
+    "run": "PATH=\"$HOME/.cargo/bin:$PATH\" RUST_TEST_THREADS=1 cargo test --lib passes::narrow::pbt_tests::test_narrow_regression_phase2_i64_bitwise_i64_use --exact --nocapture",
+    "workdir": "/home/shuhao/fermat-users/leo/github/claudes-c-compiler",
+    "seed": null,
+    "path": null
+   }
+  }
+ ],
+ "totals": {
+  "properties": 4,
+  "passing": 2,
+  "failing": 2,
+  "bugs": 2
+ }
 }
