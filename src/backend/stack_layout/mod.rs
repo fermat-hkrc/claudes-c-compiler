@@ -311,3 +311,127 @@ fn build_layout_context(
         immediately_consumed,
     }
 }
+
+#[cfg(test)]
+mod pbt_stack_stress {
+    //! Round-34: stack_layout deep PBT — deep frames, many locals, spills,
+    //! nested calls, alloca, alignment-sensitive locals (long double/16B).
+    //! Oracle: gcc -O0 execution differential.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/34_stack_deep/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 生成一个"多局部 + 深计算链"的函数体
+    fn render_body(n: usize, v: u64) -> String {
+        let mut s = String::new();
+        // 16 个不同类型的局部（含 long double / double / 数组 / 结构）
+        s.push_str("long double ld0 = 1.25L; long double ld1 = 2.5L;\n");
+        s.push_str("double d0 = 3.5; float f0 = 4.5f;\n");
+        s.push_str("int i0 = 1; int i1 = 2; long l0 = 3; short sh0 = 4; char c0 = 5;\n");
+        s.push_str("int a0[8] = {1,2,3,4,5,6,7,8};\n");
+        s.push_str("struct { double x; int y; } st0 = {6.5, 7};\n");
+        s.push_str("unsigned u0 = 8; long long ll0 = 9;\n");
+        // 计算链跨所有局部（强制 spill + reload）
+        let mut acc = String::from("ld0");
+        for k in 0..n {
+            let op = match (v >> (k % 60)) % 6 {
+                0 => format!(" + (long double)(i{} + {})", (k % 2) as u32, k as i64 + 1),
+                1 => format!(" + d{} * {}", k % 1, k + 1),
+                2 => format!(" + (long double)a0[{}]", k % 8),
+                3 => format!(" + (long double)st0.{}", if k % 2 == 0 { "y" } else { "x" } ),
+                _ => format!(" + (long double){} * {}", if k % 3 == 0 { "f0" } else if k % 3 == 1 { "u0" } else { "ll0" }, k + 1),
+            };
+            acc.push_str(&op);
+        }
+        s.push_str(&format!("long double total = {};\n", acc));
+        s.push_str(&format!(
+            "return (int)(total * 1000) + (i0+i1+l0+sh0+c0+u0) + (int)(ld1*10) + (int)(d0*10) + (int)(f0*10) + (int)(ll0%100);\n"));
+        s
+    }
+
+    /// P-STACK-DEEP: 深帧 + 混合类型局部 + 计算链 == gcc
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(250))]
+        #[test]
+        fn p_stack_deep_vs_gcc(
+            depth in 2usize..9, v in any::<u64>(), n2 in 0usize..5,
+        ) {
+            let prog = format!("#include <stdio.h>\nlong deep_body(int depth) {{\n    if (depth <= 0) {{\n        {}\n    }}\n    return deep_body(depth - 1) + 1;\n}}\nint main(void) {{ printf(\"%lld\\n\", (long long)deep_body({})); return 0; }}\n",
+                render_body(n2 * 2 + 2, v), depth);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("S{}.c", case));
+            let ccc_out = dir.join(format!("S{}c", case));
+            let gcc_out = dir.join(format!("S{}g", case));
+            std::fs::write(&src, &prog).unwrap();
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&gcc_out).arg(&src).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+            let argv = vec!["ccc".to_string(), src.to_string_lossy().into_owned(),
+                "-o".to_string(), ccc_out.to_string_lossy().into_owned()];
+            let mut d = crate::driver::Driver::new();
+            let cc = match d.parse_cli_args(&argv) { Ok(true) => Err("cli".into()), Ok(false) => d.run(), Err(e) => Err(e) };
+            match cc {
+                Ok(()) => {}
+                Err(e) => prop_assert!(false, "ccc failed: {}\n{}", &e[..e.len().min(150)], prog),
+            }
+            let r1 = Command::new(&ccc_out).output().unwrap();
+            let r2 = Command::new(&gcc_out).output().unwrap();
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&ccc_out); let _ = std::fs::remove_file(&gcc_out);
+            prop_assert!(r1.status.success(), "ccc binary crashed");
+            prop_assert_eq!(String::from_utf8_lossy(&r1.stdout), String::from_utf8_lossy(&r2.stdout),
+                "deep-frame result differs\n{}", prog);
+        }
+    }
+
+    /// P-ALLOCA: VLA + alloca 混用 == gcc
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+        #[test]
+        fn p_vla_alloca_vs_gcc(
+            n in 1usize..40, seed in any::<u32>(),
+        ) {
+            let prog = format!("#include <stdio.h>\n#include <string.h>\nlong vla_test(int n, unsigned seed) {{\n\
+                int v[n];\n\
+                for (int i = 0; i < n; i++) v[i] = (int)((seed * (unsigned)(i + 1)) % 97);\n\
+                char *buf = __builtin_alloca(n + 8);\n\
+                memset(buf, 'A', n + 8);\n\
+                buf[n] = 0;\n\
+                double vd[n > 4 ? n - 1 : 1];\n\
+                vd[0] = 1.5; if (n > 2) vd[n - 2] = 2.5;\n\
+                long sum = 0;\n\
+                for (int i = 0; i < n; i++) sum += v[i];\n\
+                return sum + (long)strlen(buf) + (long)(vd[0] * 10) + (n > 2 ? (long)vd[n - 2] : 0);\n}}\n\
+                int main(void) {{ printf(\"%ld\\n\", vla_test({}, {}u)); return 0; }}\n", n, seed);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("V{}.c", case));
+            let ccc_out = dir.join(format!("V{}c", case));
+            let gcc_out = dir.join(format!("V{}g", case));
+            std::fs::write(&src, &prog).unwrap();
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&gcc_out).arg(&src).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+            let argv = vec!["ccc".to_string(), src.to_string_lossy().into_owned(),
+                "-o".to_string(), ccc_out.to_string_lossy().into_owned()];
+            let mut d = crate::driver::Driver::new();
+            let cc = match d.parse_cli_args(&argv) { Ok(true) => Err("cli".into()), Ok(false) => d.run(), Err(e) => Err(e) };
+            match cc {
+                Ok(()) => {}
+                Err(e) => prop_assert!(false, "ccc failed: {}\n{}", &e[..e.len().min(150)], prog),
+            }
+            let r1 = Command::new(&ccc_out).output().unwrap();
+            let r2 = Command::new(&gcc_out).output().unwrap();
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&ccc_out); let _ = std::fs::remove_file(&gcc_out);
+            prop_assert!(r1.status.success(), "ccc binary crashed");
+            prop_assert_eq!(String::from_utf8_lossy(&r1.stdout), String::from_utf8_lossy(&r2.stdout),
+                "VLA/alloca result differs\n{}", prog);
+        }
+    }
+}

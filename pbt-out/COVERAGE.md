@@ -63,3 +63,9 @@
 |----------|-------------|-----------|--------------|-------|
 | multi-TU symbol resolution | src/backend/linker_common/*.rs (17 files) | mod.rs ::pbt_multitu_link | p_multitu_link_vs_gcc | 200 cases green: extern/cross-fn/tentative/fn-ptr-tables |
 | weak symbols (manual probe) | symbols.rs | manual /tmp/w1.c+w2.c | — | matches gcc |
+
+## Round 34 — stack_layout deep PBT
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| slot_assignment/analysis | src/backend/stack_layout/*.rs (7 files) | mod.rs ::pbt_stack_stress | p_stack_deep_vs_gcc | 250 deep-frame cases green |
+| alloca_coalescing | src/backend/stack_layout/alloca_coalescing.rs | mod.rs ::pbt_stack_stress | p_vla_alloca_vs_gcc | 200 VLA+alloca cases green |
