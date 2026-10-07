@@ -1,15 +1,20 @@
-# PBT Campaign: encode_bltz
+# PBT Campaign: encode_bgtz
 
 ## Scan findings
-- **Spec:** (none found as a separate requirement doc) — contract from README.md:329 (`blez/bgez/...` → corresponding `bge`/`blt` with x0), inline comment `// blt rs, x0` at pseudo.rs:322, RISC-V Unprivileged ISA BLTZ = BLT rs, x0, offset, and llvm-mc as independent assembler reference.
-- **Test layout:** Project-owned Rust lib tests via `#[cfg(test)]` modules under `src/backend/riscv/assembler/encoder/`, discovered by `cargo test --lib`. Sibling pattern: `encode_bgez_pbt.rs` / `encode_blez_pbt.rs` registered in `encoder/mod.rs`. Filename convention: `encode_<mnemonic>_pbt.rs`. Framework: proptest 1.11 (`Cargo.toml`).
-- **Buildability probe:** `cargo test --lib encode_bgez_kat_llvm_mc -- --test-threads=1` → pass (1 passed). User build contract: `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` (prebuilt OK, log: pbt-out/build.log).
-- **Harness placement:** extend existing Cargo lib-test target (rung 1) — new file `src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs` + one `#[cfg(test)] mod encode_bltz_pbt;` line in `encoder/mod.rs`.
-- **Candidate modules:** encode_bltz (pseudo.rs:318) — sole `--func` / change-surface target.
-- **Skipped modules:** (none within HARD scope). Other functions in pseudo.rs are out of `--func` scope by campaign instruction. HEAD changes outside `src/backend/riscv/assembler/encoder/pseudo.rs` skipped.
+- **Spec:** (none found beyond in-tree README/ISA comments) — RISC-V Unprivileged ISA BGTZ rs, offset = BLT x0, rs, offset; README.md:329 documents `blez/bgez/...` → corresponding `bge`/`blt` with x0 (two-operand form).
+- **Test layout:** Cargo lib tests; sibling encoder PBT modules live as `src/backend/riscv/assembler/encoder/encode_*_pbt.rs`, registered with `#[cfg(test)] mod encode_*_pbt;` in `encoder/mod.rs`. Framework: proptest 1.11.0 (dev-dependency).
+- **Buildability probe:** `cargo test --lib encode_blez_kat_llvm_mc -- --test-threads=1` → PASS (1 passed). User build contract `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` pre-built successfully (pbt-out/build.log).
+- **Harness placement:** extend existing Cargo lib test target — new file `src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs` + one `#[cfg(test)] mod encode_bgtz_pbt;` line in `encoder/mod.rs` (rung 1).
+- **Candidate modules:** encode_bgtz (pseudo.rs:327) — sole campaign target.
+- **Skipped modules:** all other functions in pseudo.rs and outside `src/backend/riscv/assembler/encoder/pseudo.rs` — HARD scope is encode_bgtz only; HEAD changes outside this path skipped.
 
-## Module: encode_bltz
+## Module: encode_bgtz
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
 - [x] Test: write and run
 - [x] Review: triage results
+
+## Review notes
+- Results: 11 properties passing, 1 failing (encode_bgtz_neg_extra) + KAT pass + regression fail witness.
+- Serial reconfirm of extra-operand failure: FAIL with PBT_TEST_JOBS=1 / --test-threads=1.
+- coverage_gaps: no Rust profraw; C++ binaries report encode_bgtz NOT LINKED. Sweep closed via manual documented-surface audit (tier standard: 1 round). Remaining gap is the filed extra-operand bug.

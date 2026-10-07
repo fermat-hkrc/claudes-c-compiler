@@ -205,7 +205,7 @@
 | encode_blez | pseudo.rs | 300 | function | yes | - |
 | encode_bgez | pseudo.rs | 309 | function | yes | change surface --func |
 | encode_bltz | pseudo.rs | 318 | function | yes | change surface --func |
-| encode_bgtz | pseudo.rs | 327 | function | no | out of campaign scope |
+| encode_bgtz | pseudo.rs | 327 | function | yes | primary campaign target |
 | encode_bgt | pseudo.rs | 336 | function | no | out of campaign scope |
 | encode_ble | pseudo.rs | 346 | function | no | out of campaign scope |
 | encode_bgtu | pseudo.rs | 356 | function | no | out of campaign scope |
