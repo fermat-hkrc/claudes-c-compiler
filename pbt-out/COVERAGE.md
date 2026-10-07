@@ -111,3 +111,10 @@
 | hint imm range / msr field validation | system.rs | round-39 probes | llvm-mc diff | both GREEN (hint #100 valid ≤127; msr xyzzy errors) |
 | volatile local folding | src/passes (storage classification) | round-38 /tmp/vol2.c f6 | access-count vs gcc | constants folded, 1/6 accesses survive → **#1115** |
 | long double runtime arith / >16B MEMORY structs | x86 backend | round-38 probes | interop | both GREEN (exact mul/div/cmp; 5×double hidden-pointer ✓) |
+
+
+## Round 41 — cross-target runtime differential
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| ARM64/RISC-V/i686 codegen at runtime | all backends | src/passes/mod.rs::pbt_cross_target | p_cross_target_vs_gcc_x64 | 150 × 3 targets green (qemu exit-code diff) |
+| fp128 runtime linkage | linker_common/resolve_lib | round-41 probe | long double link | __addtf3 family undefined → **#1145** |
