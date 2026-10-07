@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_blez)
+
+- Valid 2-operand `blez rs, tgt` with rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `blez rs, 0` and of `bge x0, rs, 0` byte-for-byte (1000 cases). KAT pins blez a0, 0 = bge x0, a0, 0 = 0x00a05063; blez zero, 0 = 0x00005063; blez t6, 0 = 0x01f05063; blez fp, 0 = 0x00805063; blez ra, 0 = 0x00105063.
+- B-type BRANCH layout: opcode 1100011, funct3=101 (BGE), rs1=x0, rs2=rs, imm=0 deferred to Branch reloc (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rs matches xN (get_reg GCC bare-number path). encode_blez(rs, label) equals encode_branch_instr BGE on [x0, rs, label] (1000 cases).
+- Symbol / Label / Reg-as-label targets with the same string are equivalent; Imm target stringifies into reloc symbol (1000 cases).
+- Too few operands and invalid/FP/non-GPR names / invalid targets return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_blez)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15) assembling `blez rs, 0` and `bge x0, rs, 0`.
+- Harness: src/backend/riscv/assembler/encoder/encode_blez_pbt.rs, cargo test --lib encode_blez, proptest cases=1000.
+- Dispatch: encoder/mod.rs:889 "blez" => encode_blez(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw for this Rust target (C++ reporter listed unrelated binaries and reported encode_blez NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/bge/B-type/ABI/isolation/arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_blez)
+
+- encode_blez has no rustdoc; contract is README.md:329 plus the inline BGE comment at pseudo.rs:304.
+- RISC-V Unprivileged ISA BLEZ pseudo is BGE x0, rs, offset (rs in rs2 field, not rs1 — opposite of beqz); this assembler matches that expansion (and llvm-mc).
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_sgtz)
 
 - Valid 2-operand `sgtz rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `sgtz rd, rs` and of `slt rd, x0, rs` byte-for-byte (1000 cases). KAT pins sgtz a0, a1 = slt a0, x0, a1 = 0x00b02533; sgtz zero, zero = 0x00002033; sgtz t6, ra = 0x00102fb3; sgtz fp, s0 = 0x00802433.

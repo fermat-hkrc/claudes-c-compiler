@@ -1,18 +1,25 @@
-# Coverage Status — encode_bnez campaign
+# Coverage status — encode_blez campaign
 
-**Coverage evidence:** file-level (symbol presence / cargo execution) — not line-level.
-- `coverage_gaps` found no `.gcda`/`.profraw` (C++ reporter; Rust cargo run is not instrumented for that tool).
-- Tool listed `encode_bnez` as NOT LINKED against unrelated C++ OH pbt binaries — false negative for this Rust campaign.
-- Execution evidence: `cargo test --lib encode_bnez` ran 14 tests against `encode_bnez` (12 proptest + KAT + regression); 12 passed, 2 failed (expected extra-operand bug).
+**Tier:** standard
+**Coverage evidence:** file-level (symbol presence) — no Rust .profraw/.gcda consumed by `coverage_gaps`; C++ reporter listed unrelated host PBT binaries and marked `encode_blez` NOT LINKED.
+**Execution evidence:** `cargo test --lib encode_blez -- --test-threads=1` ran 14 tests against production `encode_blez` in `pseudo.rs` (12 property passes, 1 property fail, 1 KAT pass, 1 regression fail).
 
 | Metric | Value |
 |--------|-------|
-| Target function | encode_bnez (pseudo.rs:291) |
-| Properties | 12 (11 passing, 1 failing) |
-| KAT / regression | 1 / 1 |
-| Bugs | 1 (extra operand ignored) |
-| Sweep rounds completed | 1/1 (standard) |
-| Sweep close reason | documented behaviors have properties; line-level data unavailable |
+| Target function | encode_blez |
+| Properties | 13 |
+| Passing | 12 |
+| Failing | 1 (extra operand) |
+| Bugs filed | 1 |
+| Sweep rounds used | 1 / 1 |
 
-## Untested in-scope branches
-(none documented) — encode_bnez body is straight-line with `?` error paths; all exercised.
+Documented behaviors with a property:
+- llvm-mc `blez rs, 0` differential
+- llvm-mc `bge x0, rs, 0` expansion differential
+- in-tree `encode_branch_instr` BGE metamorphic
+- B-type ISA field layout (rs1=x0, rs2=rs, funct3=BGE)
+- ABI / xN / fp alias
+- Symbol / Label / Reg / Imm targets
+- Imm-as-rs bare register number
+- arity < 2, invalid rs, invalid target negatives
+- extra operand negative (failing → bug)

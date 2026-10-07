@@ -1,60 +1,55 @@
-# PBT Campaign Report: encode_bnez
+# PBT Campaign Report: encode_blez
 
 ## Summary
 
-**Verdict:** 1 medium: `encode_bnez` silently ignores extra operands, so `bnez a0, foo, a1` encodes as `bnez a0, foo` instead of diagnosing invalid assembly (llvm-mc rejects).
+**Verdict:** 1 medium: `encode_blez` silently ignores a third (or later) operand, so `blez a0, foo, a1` encodes as a valid `bge x0, a0, foo` with no diagnostic — same class as `beqz`/`bnez`.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bnez (src/backend/riscv/assembler/encoder/pseudo.rs)
-**Tests:** 12 properties + 1 KAT + 1 regression witness
-**Result:** 11 passing, 1 bug
-**Change surface:** 1 changed function (encode_bnez), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence / cargo execution) — `coverage_gaps` reported no line-level data and C++-only NOT LINKED; Rust `cargo test --lib encode_bnez` executed the symbol (14 tests). Sweep 1/1 closed: all documented behaviors have properties.
+**Modules tested:** encode_blez
+**Tests:** 13 properties (12 passing, 1 failing) + 1 KAT + 1 regression witness
+**Result:** 12 passing, 1 bug
+**Change surface:** 1 changed function (encode_blez), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no line-level .gcda/.profraw for this Rust cargo lib test; C++ reporter listed unrelated binaries and reported encode_blez NOT LINKED. Rust `cargo test --lib encode_blez` executes the production symbol (14 tests ran).
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bnez | 12 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_blez | 13 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, reference (KAT), negative_error |
 
 ## Bugs Found
 
-### B1: encode_bnez silently ignores extra operands
+### B1: encode_blez silently ignores extra operands
 
-**Formal:** ∀ rs ∈ GPRNames, tgt ∈ LabelIdents, extra ∈ Operand. encode_bnez([Reg(rs), Symbol(tgt), extra]) = Err
-**Contract evidence:** documented src/backend/riscv/assembler/README.md:328 "`beqz/bnez` | `beq/bne rs, x0, label`" (two-operand form); differential with llvm-mc which rejects a third operand
-**Documentation conflict:** (none) — README asserts the two-operand expansion; it does not declare extra operands valid
+**Formal:** ∀ rs ∈ GPR, ∀ tgt ∈ LabelIdents, ∀ extra ∈ Operand. encode_blez([Reg(rs), Symbol(tgt), extra]) = Err
+**Contract evidence:** documented src/backend/riscv/assembler/README.md:329 "`blez/bgez/...` | Corresponding `bge`/`blt` with x0" (two-operand form); llvm-mc rejects `blez a0, 0, a1`
+**Documentation conflict:** (none) — README states the two-operand expansion; code never checks arity
 **Severity:** medium
-**Counterexample:** `encode_bnez([Reg("a0"), Symbol("foo"), Reg("a1")])` (PBT shrunk also: rs="zero", tgt="foo", extra=Reg("zero"))
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00051063, reloc: Branch/"foo"/0 })
-**Impact:** Invalid assembly with a trailing operand is accepted; the third operand is dropped and never diagnosed, matching the sibling `encode_beqz` defect.
-**Root cause:** pseudo.rs:292-293 reads only operands[0] and operands[1] and never checks `operands.len() == 2`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:291`
+**Counterexample:** `encode_blez([Reg("a0"), Symbol("foo"), Reg("a1")])` (proptest shrunk: rs="zero", tgt="foo", extra=Reg("zero"))
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00a05063, reloc: Branch "foo" addend 0 })
+**Impact:** Typos and trailing commas in `blez` assemble without error and emit a valid branch relocation, masking assembler mistakes.
+**Root cause:** pseudo.rs:301-302 reads only operands[0] and operands[1]; no `operands.len()` check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:301`
 ```rust
-pub(crate) fn encode_bnez(operands: &[Operand]) -> Result<EncodeResult, String> {
-    let rs1 = get_reg(operands, 0)?;
+    let rs2 = get_reg(operands, 0)?;
     let label = get_branch_target(operands, 1)?;
-    Ok(EncodeResult::WordWithReloc {
-        word: encode_b(OP_BRANCH, 0b001, rs1, 0, 0),
-        reloc: Relocation { reloc_type: RelocType::Branch, symbol: label, addend: 0 },
-    })
-}
 ```
-**Suggested fix:** Reject arity other than 2 before encoding.
+**Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
-if operands.len() != 2 {
-    return Err(format!("bnez: expected 2 operands, got {}", operands.len()));
-}
+    if operands.len() != 2 {
+        return Err(format!("blez: expected 2 operands, got {}", operands.len()));
+    }
+    let rs2 = get_reg(operands, 0)?;
+    let label = get_branch_target(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_bnez_extra_operand.md
-**Repro seed:** proptest cc ba3d72b5261265e80c38ed52dfdf833e20bb2d283da6a33d215e0b355576ba84
+**Bug report:** bug_reports/encode_blez_extra_operand.md
+**Repro seed:** cc b3165b59bb3df5fc96bf53179b95fc9d1ffe2762fcf6149f4ad635cb771c0430
 **Raw output:**
-```
-test_encode_bnez_regression_extra_operand ... FAILED
-bnez a0, foo with a third operand must be rejected ... got Ok(WordWithReloc { word: 331875, ... })
-encode_bnez_neg_extra ... FAILED
-minimal failing input: rs = "zero", tgt = "foo", extra = Reg("zero")
+```text
+Test failed: extra operand must Err for blez zero, foo (llvm-mc rejects: true)
+minimal failing input: rs = "zero", tgt = "foo", extra = Reg("zero",)
+blez a0, foo with a third operand must be rejected; got Ok(WordWithReloc { word: 10506339, ... })
 ```
 
 ## Design Caveats
@@ -65,28 +60,21 @@ minimal failing input: rs = "zero", tgt = "foo", extra = Reg("zero")
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_bnez_pbt.rs | 11 proptest properties + KAT + regression |
-| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_bnez_pbt;` registration |
+| src/backend/riscv/assembler/encoder/encode_blez_pbt.rs | 13 properties + KAT + regression |
+| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_blez_pbt;` registration |
 
 ## Reproduction
 
-Whole suite (expects 1 failing property + 1 failing regression):
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bnez -- --test-threads=1
+cargo test --lib encode_blez -- --test-threads=1
 ```
 
-Bug B1 only:
+Bug B1 (serial):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_bnez_regression -- --test-threads=1
-cargo test --lib encode_bnez_neg_extra -- --test-threads=1
-```
-
-Build contract (canonical):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1
+cargo test --lib test_encode_blez_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
@@ -98,18 +86,18 @@ cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_bnez_extra_operand.md
-- pbt-out/bug_reports/encode_bnez_extra_operand.html
-- pbt-out/run/ (test logs)
+- pbt-out/bug_reports/encode_blez_extra_operand.md
+- pbt-out/bug_reports/encode_blez_extra_operand.html (rendered from report.json)
+- pbt-out/run/encode_blez_test1.log
+- pbt-out/run/encode_blez_extra_serial.log
+- pbt-out/INVARIANTS.md (encode_blez section prepended)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 04:50 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 246/383 total | PBT candidates: 246 | Tested: 246 (100%) | 1 pass, 246 fail
+> Last updated: 2026-10-07 05:01 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 247/383 total | PBT candidates: 247 | Tested: 247 (100%) | 1 pass, 247 fail
 
 ## Summary
 
@@ -118,10 +106,10 @@ cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 246 |
-| **Tested (of PBT candidates)** | **246 / 246 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 246 / -1 |
-| **Overall (tested / all functions)** | **246 / 383 (64%)** |
+| PBT candidates (from FUNCTION_INDEX) | 247 |
+| **Tested (of PBT candidates)** | **247 / 247 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 247 / -1 |
+| **Overall (tested / all functions)** | **247 / 383 (64%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -129,13 +117,13 @@ cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 246 | 246 | 0 | 100% |
+|  | 247 | 247 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 246 | 246 | 0 | 100% |
+| unknown | 247 | 247 | 0 | 100% |
 
 ## File Coverage
 
@@ -149,7 +137,7 @@ cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 12 | 12 | 100% | covered |
+| pseudo.rs | 44 | 13 | 13 | 100% | covered |
 
 ## Recommended Focus
 
@@ -404,3 +392,4 @@ cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1
 | encode_sgtz | pseudo.rs |
 | encode_beqz | pseudo.rs |
 | encode_bnez | pseudo.rs |
+| encode_blez | pseudo.rs |

@@ -202,7 +202,7 @@
 | encode_sgtz | pseudo.rs | 275 | function | yes | primary --func target |
 | encode_beqz | pseudo.rs | 282 | function | yes | sole --func target; beqz = beq rs,x0,label |
 | encode_bnez | pseudo.rs | 291 | function | yes | sole --func target; bnez = bne rs, x0, label |
-| encode_blez | pseudo.rs | 300 | function | no | out of campaign scope |
+| encode_blez | pseudo.rs | 300 | function | yes | - |
 | encode_bgez | pseudo.rs | 309 | function | no | out of campaign scope |
 | encode_bltz | pseudo.rs | 318 | function | no | out of campaign scope |
 | encode_bgtz | pseudo.rs | 327 | function | no | out of campaign scope |
