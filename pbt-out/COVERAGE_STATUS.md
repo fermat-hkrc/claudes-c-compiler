@@ -1,27 +1,33 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 (campaign: encode_vmv_v_x)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vmv_v_x NOT LINKED in C++ reporter binaries. The function executed under `cargo test --lib encode_vmv_v_x`.
+> Last updated: 2026-10-07 (campaign: encode_vmv_v_i, English)
+> Files: 16/16 scanned | Functions: 383 total | PBT candidates: 232 | This campaign tested: encode_vmv_v_i
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Campaign target | encode_vmv_v_x |
-| Source file | vector.rs |
-| PBT properties | 8 |
-| Passing | 6 |
-| Failing (bugs) | 2 |
-| KAT | 3 passing |
-| Regression witnesses | 2 failing |
-| Sweep | 1 round (standard); remaining gaps are the extra-operand and v0.t bugs |
+| Total source files | 16 |
+| Files scanned | 16 / 16 |
+| Total functions (all files) | 383 |
+| PBT candidates (from FUNCTION_INDEX) | 232 |
+| This campaign target | encode_vmv_v_i (vector.rs:172) |
+| This campaign properties | 8 (5 passing, 3 failing) |
+| Coverage evidence | file-level (symbol presence) — no .gcda/.profraw; C++ reporter listed encode_vmv_v_i NOT LINKED; function executed under cargo test --lib encode_vmv_v_i |
 
 ## This campaign
 
-| Function | Source | Tested | Notes |
-|----------|--------|--------|-------|
-| encode_vmv_v_x | vector.rs | yes | 6 passing / 2 failing; extra operand and trailing v0.t filed as bugs |
+| Function | Source | Tested | Result |
+|----------|--------|--------|--------|
+| encode_vmv_v_i | vector.rs | yes | 5 pass / 3 fail (extra, v0.t, imm-oob) |
 
-## Other vector.rs symbols
+Sweep (standard, 1 round): documented 2-op / format / isolation / simm5 / arity paths have passing properties; extra / v0.t / imm-oob have failing properties with bug reports. No further documented branch without a property.
 
-HARD-scope excluded this campaign (test only encode_vmv_v_x). Already-covered symbols were not re-tested.
+## Oracle Type Distribution (this campaign)
+
+| Oracle Type | Count | Status |
+|-------------|-------|--------|
+| differential | 1 | passing |
+| algebraic.invariant | 2 | passing |
+| algebraic.metamorphic | 1 | passing |
+| negative_error | 4 | 1 passing, 3 failing |

@@ -1,57 +1,57 @@
-# PBT Campaign Report: encode_vmv_v_x
+# PBT Campaign Report: encode_vmv_v_i
 
 ## Summary
 
-**Verdict:** 2 medium: encode_vmv_v_x silently ignores extra operands and trailing `v0.t`, so invalid `vmv.v.x` assembly is encoded as a valid unmasked move instead of an assembler error.
+**Verdict:** 3 medium: encode_vmv_v_i silently ignores extra operands and trailing `v0.t`, and truncates out-of-range immediates, so invalid `vmv.v.i` assembly is encoded as a valid unmasked move instead of an assembler error.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_vmv_v_x
-**Tests:** 8 properties (plus 3 KAT + 2 regression witnesses)
-**Result:** 6 passing, 2 bugs
+**Modules tested:** encode_vmv_v_i
+**Tests:** 8 properties (plus 5 KAT + 4 regression witnesses)
+**Result:** 5 passing, 3 bugs
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vmv_v_x NOT LINKED in C++ reporter binaries; the function did execute under `cargo test --lib encode_vmv_v_x`.
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_vmv_v_i NOT LINKED in C++ reporter binaries; the function did execute under `cargo test --lib encode_vmv_v_i`.
 **Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_vmv_v_x | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_vmv_v_i | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_vmv_v_x ignores extra operands
+### B1: encode_vmv_v_i ignores extra operands
 
-**Formal:** ∀ vd, rs1 ∈ 0..31, extra ∈ Operand. encode_vmv_v_x([Reg(v{vd}), Reg(x{rs1}), extra]) is Err
-**Contract evidence:** inferred (llvm-mc rejects a third operand with "invalid operand for instruction"; encoder/mod.rs:1005 passes operands through; RISC-V V 1.0 form is vd plus one GPR)
+**Formal:** ∀ vd ∈ {0..31}, simm ∈ {-16..15}, extra ∈ Operand. encode_vmv_v_i([Reg("v{vd}"), Imm(simm), extra]) is Err
+**Contract evidence:** inferred (llvm-mc rejects a third operand with "invalid operand for instruction"; encoder/mod.rs:1008 passes operands through; RISC-V V 1.0 form is vd plus one simm5)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_vmv_v_x([Reg("v0"), Reg("x0"), Imm(0)])
-**Expected / Actual:** Err / Ok(Word(0x5e004057)) — same as `vmv.v.x v0, x0`
-**Impact:** Invalid assembly with a stray third operand is assembled into a valid-looking unmasked vmv.v.x word instead of an assembler error.
-**Root cause:** vector.rs:164-169 encode_vmv_v_x reads only operands 0 and 1 via get_vreg/get_reg and never checks operands.len() == 2, so extra tokens are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:164`
+**Counterexample:** encode_vmv_v_i([Reg("v0"), Imm(-16), Imm(0)])
+**Expected / Actual:** Err / Ok(Word(0x5e083057)) — same as `vmv.v.i v0, -16`
+**Impact:** Invalid assembly with a stray third operand is assembled into a valid-looking unmasked vmv.v.i word instead of an assembler error.
+**Root cause:** vector.rs:173-177 encode_vmv_v_i reads only operands 0 and 1 via get_vreg/get_imm and never checks operands.len() == 2, so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:173`
 ```rust
     let vd = get_vreg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
+    let simm5 = get_imm(operands, 1)? as u32 & 0x1F;
     // funct6=010111, vm=1, vs2=0
-    let word = (0b010111u32 << 26) | (1u32 << 25) | (rs1 << 15) | (0b100 << 12) | (vd << 7) | OP_V;
+    let word = (0b010111u32 << 26) | (1u32 << 25) | (simm5 << 15) | (0b011 << 12) | (vd << 7) | OP_V;
     Ok(EncodeResult::Word(word))
 ```
 **Suggested fix:** Reject any operand list that is not exactly two operands.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("vmv.v.x expects 2 operands, got {}", operands.len()));
+        return Err(format!("vmv.v.i expects 2 operands, got {}", operands.len()));
     }
     let vd = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_vmv_v_x_extra_operand.md
-**Repro seed:** cc 13288b6a3187311986caf2ecb425ea4ae5c0e1c3b089294a7675a84c61747467
+**Bug report:** bug_reports/encode_vmv_v_i_extra_operand.md
+**Repro seed:** cc 2417367e6420684f3af120bde8d42903ccea5e59ba918e2874d4010cd8b93bc4
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_vmv_v_x_pbt::encode_vmv_v_x_neg_extra' (2886141) panicked at src/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.rs:240:1:
-Test failed: extra operand Imm(0) must Err for vmv.v.x (llvm-mc rejects extra); got Ok(Word(1577074775)) at src/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.rs:360.
-minimal failing input: vd = 0, rs1 = 0, extra = Imm(
+thread 'backend::riscv::assembler::encoder::encode_vmv_v_i_pbt::encode_vmv_v_i_neg_extra' (2888382) panicked at src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs:266:1:
+Test failed: extra operand Imm(0) must Err for vmv.v.i (llvm-mc rejects extra); got Ok(Word(1577594967)) at src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs:370.
+minimal failing input: vd = 0, simm = -16, extra = Imm(
     0,
 )
 	successes: 0
@@ -59,38 +59,72 @@ minimal failing input: vd = 0, rs1 = 0, extra = Imm(
 	global rejects: 0
 ```
 
-### B2: encode_vmv_v_x ignores trailing v0.t
+### B2: encode_vmv_v_i ignores trailing v0.t
 
-**Formal:** ∀ vd, rs1 ∈ 0..31. encode_vmv_v_x([Reg(v{vd}), Reg(x{rs1}), Symbol("v0.t")]) is Err
-**Contract evidence:** inferred (RISC-V V 1.0 vmv.v.x is unmasked-only with vm=1 and vs2=0; llvm-mc rejects `vmv.v.x v0, x0, v0.t` as "invalid operand for instruction"; encoder/mod.rs:1005 passes operands through)
-**Documentation conflict:** vector.rs:162 "vmv.v.x vd, rs1: OPIVX, funct6=010111, vm=1, vs2=0" asserts the unmasked two-operand encoding; it does not declare v0.t invalid as an input-domain restriction, nor admit a masked form. (none as a limitation quote for this instruction — vmv.v.x has no masked encoding.)
+**Formal:** ∀ vd ∈ {0..31}, simm ∈ {-16..15}. encode_vmv_v_i([Reg("v{vd}"), Imm(simm), Symbol("v0.t")]) is Err
+**Contract evidence:** inferred (RISC-V V 1.0 vmv.v.i is unmasked-only with vm=1 and vs2=0; llvm-mc rejects `vmv.v.i v0, 0, v0.t` as "invalid operand for instruction"; encoder/mod.rs:1008 passes operands through)
+**Documentation conflict:** vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" asserts the unmasked two-operand encoding; it does not declare v0.t invalid as an input-domain restriction, nor admit a masked form. encoder/mod.rs:956 TODO "masked variants (v0.t) are not yet supported" is a limitation on instructions that have a masked encoding; vmv.v.i has none.
 **Severity:** medium
-**Counterexample:** encode_vmv_v_x([Reg("v0"), Reg("x0"), Symbol("v0.t")])
-**Expected / Actual:** Err / Ok(Word(0x5e004057)) — same as `vmv.v.x v0, x0`
-**Impact:** A trailing `v0.t` on vmv.v.x (which has no masked form) is assembled into a valid-looking unmasked word instead of an assembler error.
-**Root cause:** vector.rs:164-169 encode_vmv_v_x reads only operands 0 and 1 via get_vreg/get_reg, hardcodes vm=1, and never inspects a third operand, so a trailing v0.t is ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:164`
+**Counterexample:** encode_vmv_v_i([Reg("v0"), Imm(-16), Symbol("v0.t")])
+**Expected / Actual:** Err / Ok(Word(0x5e083057)) — same as `vmv.v.i v0, -16`
+**Impact:** A trailing `v0.t` on vmv.v.i (which has no masked form) is assembled into a valid-looking unmasked word instead of an assembler error.
+**Root cause:** vector.rs:173-177 encode_vmv_v_i reads only operands 0 and 1 via get_vreg/get_imm, hardcodes vm=1, and never inspects a third operand, so a trailing v0.t is ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:173`
 ```rust
     let vd = get_vreg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
+    let simm5 = get_imm(operands, 1)? as u32 & 0x1F;
     // funct6=010111, vm=1, vs2=0
-    let word = (0b010111u32 << 26) | (1u32 << 25) | (rs1 << 15) | (0b100 << 12) | (vd << 7) | OP_V;
+    let word = (0b010111u32 << 26) | (1u32 << 25) | (simm5 << 15) | (0b011 << 12) | (vd << 7) | OP_V;
     Ok(EncodeResult::Word(word))
 ```
-**Suggested fix:** Reject any operand list that is not exactly two operands (vmv.v.x has no masked form).
+**Suggested fix:** Reject any operand list that is not exactly two operands (vmv.v.i has no masked form).
 ```rust
     if operands.len() != 2 {
-        return Err(format!("vmv.v.x expects 2 operands, got {}", operands.len()));
+        return Err(format!("vmv.v.i expects 2 operands, got {}", operands.len()));
     }
     let vd = get_vreg(operands, 0)?;
 ```
-**Bug report:** bug_reports/encode_vmv_v_x_mask_v0t.md
+**Bug report:** bug_reports/encode_vmv_v_i_mask_v0t.md
 **Repro seed:** (none — deterministic regression)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_vmv_v_x_pbt::encode_vmv_v_x_neg_mask_v0t' (2886142) panicked at src/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.rs:240:1:
-Test failed: trailing v0.t must Err for vmv.v.x (llvm-mc rejects mask on vmv.v.x); got Ok(Word(1577074775)) at src/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.rs:372.
-minimal failing input: vd = 0, rs1 = 0
+thread 'backend::riscv::assembler::encoder::encode_vmv_v_i_pbt::encode_vmv_v_i_neg_mask_v0t' (2888384) panicked at src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs:266:1:
+Test failed: trailing v0.t must Err for vmv.v.i (llvm-mc rejects mask on vmv.v.i); got Ok(Word(1577594967)) at src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs:382.
+minimal failing input: vd = 0, simm = -16
+	successes: 0
+	local rejects: 0
+	global rejects: 0
+```
+
+### B3: encode_vmv_v_i truncates out-of-range immediates
+
+**Formal:** ∀ vd ∈ {0..31}, imm ∈ ℤ \ {-16..15}. encode_vmv_v_i([Reg("v{vd}"), Imm(imm)]) is Err
+**Contract evidence:** inferred (llvm-mc requires simm5 in [-16, 15] with "immediate must be an integer in the range [-16, 15]"; rustdoc names the field simm5; encoder/mod.rs:1008 passes the Imm through)
+**Documentation conflict:** vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" names simm5 but does not declare values outside [-16, 15] invalid. It is not an input-domain restriction quote.
+**Severity:** medium
+**Counterexample:** encode_vmv_v_i([Reg("v0"), Imm(16)])
+**Expected / Actual:** Err / Ok(Word(0x5e083057)) — same as `vmv.v.i v0, -16`
+**Impact:** An immediate outside the signed 5-bit range is silently wrapped (`16` becomes `-16`, `-17` becomes `15`) and assembled as a different in-range vmv.v.i.
+**Root cause:** vector.rs:174 packs `get_imm(operands, 1)? as u32 & 0x1F` with no range check, so values outside the signed 5-bit field wrap.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:174`
+```rust
+    let simm5 = get_imm(operands, 1)? as u32 & 0x1F;
+```
+**Suggested fix:** Reject immediates outside the signed 5-bit range [-16, 15] before packing.
+```rust
+    let imm = get_imm(operands, 1)?;
+    if imm < -16 || imm > 15 {
+        return Err(format!("simm5 out of range: {}", imm));
+    }
+    let simm5 = (imm as u32) & 0x1F;
+```
+**Bug report:** bug_reports/encode_vmv_v_i_imm_oob.md
+**Repro seed:** (none — deterministic regression at bound+1)
+**Raw output:**
+```text
+thread 'backend::riscv::assembler::encoder::encode_vmv_v_i_pbt::encode_vmv_v_i_neg_imm_oob' (2888383) panicked at src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs:266:1:
+Test failed: vmv.v.i v0, 16 must Err (llvm-mc immediate out of range [-16, 15]); got Ok(Word(1577594967)) at src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs:392.
+minimal failing input: vd = 0, imm = 16
 	successes: 0
 	local rejects: 0
 	global rejects: 0
@@ -104,53 +138,60 @@ minimal failing input: vd = 0, rs1 = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.rs | 8 properties + 3 KAT + 2 regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs | 8 properties + 5 KAT + 4 regression witnesses |
 
 ## Reproduction
 
-Whole suite (expected: 6 properties + 3 KAT passing; extra/v0.t properties and regressions failing):
+Whole suite (expected: 5 properties + 5 KAT passing; extra/v0.t/oob properties and regressions failing):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_vmv_v_x -- --test-threads=1
+cargo test --lib encode_vmv_v_i -- --test-threads=1
 ```
 
 B1 extra operand:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_vmv_v_x_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_vmv_v_i_regression_extra_operand -- --test-threads=1
 ```
 
 B2 trailing v0.t:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_vmv_v_x_regression_mask_v0t -- --test-threads=1
+cargo test --lib test_encode_vmv_v_i_regression_mask_v0t -- --test-threads=1
+```
+
+B3 immediate out of range:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_vmv_v_i_regression_simm_oob_16 -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_vmv_v_x_extra_operand.md
-- pbt-out/bug_reports/encode_vmv_v_x_extra_operand.html
-- pbt-out/bug_reports/encode_vmv_v_x_mask_v0t.md
-- pbt-out/bug_reports/encode_vmv_v_x_mask_v0t.html
-- pbt-out/run/encode_vmv_v_x.log
-- src/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.rs
-- proptest-regressions/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.txt
+- pbt-out/REPORT.md — this campaign report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/INVARIANTS.md — confirmed invariants
+- pbt-out/report.json — machine-readable report
+- pbt-out/bug_reports/encode_vmv_v_i_extra_operand.md
+- pbt-out/bug_reports/encode_vmv_v_i_extra_operand.html
+- pbt-out/bug_reports/encode_vmv_v_i_mask_v0t.md
+- pbt-out/bug_reports/encode_vmv_v_i_mask_v0t.html
+- pbt-out/bug_reports/encode_vmv_v_i_imm_oob.md
+- pbt-out/bug_reports/encode_vmv_v_i_imm_oob.html
+- pbt-out/FUNCTION_INDEX.md — merged function index
+- pbt-out/CHANGE_SURFACE.md — encode_vmv_v_i
+- proptest-regressions/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.txt — proptest failure corpus (framework-owned, same location as sibling encoder campaigns)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 01:07 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 230/383 total | PBT candidates: 230 | Tested: 230 (100%) | 1 pass, 230 fail
+> Last updated: 2026-10-07 01:28 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 231/383 total | PBT candidates: 231 | Tested: 231 (100%) | 1 pass, 231 fail
 
 ## Summary
 
@@ -159,10 +200,10 @@ cargo test --lib test_encode_vmv_v_x_regression_mask_v0t -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 230 |
-| **Tested (of PBT candidates)** | **230 / 230 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 230 / -1 |
-| **Overall (tested / all functions)** | **230 / 383 (60%)** |
+| PBT candidates (from FUNCTION_INDEX) | 231 |
+| **Tested (of PBT candidates)** | **231 / 231 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 231 / -1 |
+| **Overall (tested / all functions)** | **231 / 383 (60%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -170,13 +211,13 @@ cargo test --lib test_encode_vmv_v_x_regression_mask_v0t -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 230 | 230 | 0 | 100% |
+|  | 231 | 231 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 230 | 230 | 0 | 100% |
+| unknown | 231 | 231 | 0 | 100% |
 
 ## File Coverage
 
@@ -429,3 +470,4 @@ cargo test --lib test_encode_vmv_v_x_regression_mask_v0t -- --test-threads=1
 | encode_v_arith_vi | vector.rs |
 | encode_vmv_v_v | vector.rs |
 | encode_vmv_v_x | vector.rs |
+| encode_vmv_v_i | vector.rs |

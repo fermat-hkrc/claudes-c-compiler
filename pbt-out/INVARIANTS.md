@@ -1,3 +1,29 @@
+# Confirmed invariants (encode_vmv_v_i)
+
+- Valid 2-operand unmasked vmv.v.i with vd ∈ {v0..v31} and simm5 ∈ [-16, 15] matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vmv.v.i v0, 0 = 0x5e003057; vmv.v.i v1, 2 = 0x5e0130d7; vmv.v.i v31, 15 = 0x5e07bfd7; vmv.v.i v1, -1 = 0x5e0fb0d7; vmv.v.i v1, -16 = 0x5e0830d7.
+- Format layout holds: opcode=1010111, funct3=011, vm=1, vs2=0, vd in [11:7], simm5 in [19:15], funct6=010111 (1000 cases).
+- Field isolation: vd/simm5 bits independent of the other field (1000 cases).
+- simm5 two's complement: bits[19:15] = (simm as u32) & 0x1F for simm ∈ [-16, 15] (1000 cases; bounds -16/-1/0/15 forced).
+- Too few operands, non-vector vd, and non-Imm at operand 1 return Err (1000 cases).
+- Extra operand, trailing v0.t, and out-of-range immediates currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_vmv_v_i)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs, cargo test --lib encode_vmv_v_i, proptest cases=1000.
+- Dispatch: encoder/mod.rs:1008 "vmv.v.i" => encode_vmv_v_i(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vmv_v_i NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / format / isolation / simm5 / arity-bad-regs / extra / mask-v0.t / imm-oob. Closed: tier round spent; remaining documented gaps are the extra-operand, v0.t, and imm-oob bugs.
+
+## Quirks (encode_vmv_v_i)
+
+- vreg_num lowercases; llvm-mc rejects uppercase register names.
+- get_vreg does not accept Imm(0..=31) as a bare vector register number.
+- get_imm accepts only Operand::Imm.
+- vm is hardcoded to 1 (unmasked). RISC-V V 1.0 vmv.v.i has no masked form; llvm-mc rejects trailing v0.t.
+- Assembly order is vd (vector), simm5 (signed 5-bit). vs2 is encoded as 0. funct3 is 011 (OPIVI).
+- llvm-mc signed simm5 range is [-16, 15]. The SUT truncates with `& 0x1F` and does not range-check.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vmv_v_x)
 
 - Valid 2-operand unmasked vmv.v.x with vd ∈ {v0..v31} and rs1 ∈ {x0..x31} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vmv.v.x v0, x0 = 0x5e004057; vmv.v.x v1, x2 = 0x5e0140d7; vmv.v.x v31, x30 = 0x5e0f4fd7.
