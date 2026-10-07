@@ -134,3 +134,5 @@
 | 40 | src/ir/lowering + sema | & on bit-field accepted (C11 6.5.3.2p1 violation); gcc/clang reject | **new issue filed** | [#1134](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1134) |
 | 40 | src/frontend/sema + lowering | assignment/++/-- targets are never validated as modifiable lvalues — 7 | **new issue filed** | [#1135](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1135) |
 | 40 | src/frontend/sema + lowering | sizeof on a bit-field accepted (sizeof(s.a)) — C11 6.5.3.4p1 constrain | **new issue filed** | [#1136](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1136) |
+| 40 | src/frontend parser+sema | statement-placement constraints absent — break/continue/case/default o | **new issue filed** | [#1137](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1137) |
+| 40 | src/frontend parser+sema | declaration constraints absent — same-scope var redefinition, void var | **new issue filed** | [#1138](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1138) |
