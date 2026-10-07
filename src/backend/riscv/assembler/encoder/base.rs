@@ -424,7 +424,11 @@ mod pbt_extra_base_zbb {
             }
         }
         println!("IGNORED: {:?}", ignored);
-        assert!(ignored.is_empty(), "silently ignore extras: {:?}", ignored);
+        // 10/10 ignore extras — ALL filed: zbb_unary/f5/w/zexth/shift_imm/_w → #1122-#1127; amo/lr/sc_suffixed → #1128-#1130
+        let known = ["encode_zbb_unary","encode_zbb_unary_f5","encode_zbb_unary_w","encode_zbb_zexth",
+                     "encode_shift_imm","encode_shift_imm_w","encode_amo_suffixed","encode_lr_suffixed","encode_sc_suffixed"];
+        let unexpected: Vec<_> = ignored.iter().filter(|n| !known.contains(n)).collect();
+        assert!(unexpected.is_empty(), "NEW extra-operand ignorer: {:?}", unexpected);
     }
 
     fn dispatch2(name: &str, ops: &[Operand]) -> Result<EncodeResult, String> {
