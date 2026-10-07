@@ -168,3 +168,14 @@
 | -E round-trip | preprocessor | /tmp/rt1.c | recompile identity | green (ccc→ccc, gcc→ccc) |
 | strong/strong resolution | linker symbols | /tmp/lk | gcc diff | silent link → #1166 |
 | archive lazy/whole/cross-addr | linker archive | /tmp/lk lazy.a | order matrix | lazy+deps+addr green; --whole-archive → #1165 ext |
+
+## Rounds 47-48 — deepening + final mines
+| Mine | Result | Issues |
+|------|--------|--------|
+| family matrices (7 filed bugs) | complete form matrices posted | comments on #1144/#1118/#1135/#1140/#1088/#1147/#1114 |
+| C: enum wide values | ccc truncates >int to 0 | #1173 |
+| D: variadic default promotions | green | — |
+| E: error-recovery cascade | benign (≤3.5x gcc) | — |
+| F: multi-TU static interplay | green | — |
+| G: wide/unicode char values | exact match | — |
+| H: deep recursive types | valid green; member-on-int → #1139 ext | comment |
