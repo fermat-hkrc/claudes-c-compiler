@@ -1,60 +1,55 @@
-# PBT Campaign Report: encode_sltz
+# PBT Campaign Report: encode_sgtz
 
 ## Summary
 
-**Verdict:** 1 medium: `encode_sltz` silently ignores a third operand, so `sltz a0, a1, a2` encodes as `slt a0, a1, x0` with no diagnostic (llvm-mc and the README two-operand form both reject it).
+**Verdict:** 1 medium: `encode_sgtz` silently ignores extra operands, so `sgtz rd, rs, extra` encodes as `slt rd, x0, rs` with no diagnostic (README two-operand form; llvm-mc rejects).
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sltz
-**Tests:** 9 properties (plus 1 KAT gate + 1 regression witness)
+**Modules tested:** encode_sgtz
+**Tests:** 9 properties (+ 1 KAT + 1 regression witness)
 **Result:** 8 passing, 1 bug
-**Change surface:** 1 changed function (encode_sltz), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw for this Rust cargo run; C++ reporter listed unrelated OH binaries and encode_sltz as NOT LINKED there. Rust execution evidence is the cargo test binary `ccc-70d56e2a1978a8d3` running `encode_sltz_pbt` (9/11 cases exercised the symbol; 2 failed on extra-operand contract).
+**Change surface:** 1 changed function (encode_sgtz), 1 with properties, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no LLVM profraw for this Rust target and listed encode_sgtz NOT LINKED among unrelated C++ pbt binaries; Rust `cargo test --lib encode_sgtz` exercises the real symbol. Sweep: one standard-tier manual audit of documented behaviors.
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sltz | 9 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_sgtz | 9 (+KAT+regression) | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_sltz silently ignores extra operands
+### B1: encode_sgtz silently ignores extra operands
 
-**Formal:** ∀ rd, rs ∈ GPRNames, ∀ extra. encode_sltz([Reg(rd), Reg(rs), extra]) is Err
-**Contract evidence:** documented README.md:326 "`sltz rd, rs` | `slt rd, rs, x0`" (exactly two operands); llvm-mc rejects `sltz a0, a1, a2`
-**Documentation conflict:** (none) — README states the two-operand form; it does not declare extra operands valid
+**Formal:** ∀ rd, rs ∈ GPRNames, extra ∈ Operand. encode_sgtz([Reg(rd), Reg(rs), extra]) = Err(_)
+**Contract evidence:** documented README.md:327 "`sgtz rd, rs`  | `slt rd, x0, rs`" (two-operand form); llvm-mc rejects `sgtz a0, a1, a2`
+**Documentation conflict:** (none) — README asserts the two-operand form; it does not declare extra operands valid
 **Severity:** medium
-**Counterexample:** `encode_sltz([Reg("zero"), Reg("zero"), Reg("zero")])`
+**Counterexample:** `encode_sgtz([Reg("zero"), Reg("zero"), Reg("zero")])` then expect Err
 **Expected / Actual:** Err / Ok(Word(0x00002033))
-**Impact:** Typos and trailing commas assemble without error; the third operand is dropped and the encoding is still emitted as `slt rd, rs, x0`.
-**Root cause:** `pseudo.rs:270-271` reads only operands 0 and 1 via `get_reg` and never checks `operands.len()`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:270`
+**Impact:** Typos and stray operands assemble without error, silently dropping the third operand and encoding `slt rd, x0, rs`.
+**Root cause:** `pseudo.rs:276-277` reads only operands 0 and 1 via `get_reg` and never checks `operands.len()`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:276`
 ```rust
     let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
+    let rs2 = get_reg(operands, 1)?;
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("sltz: expected 2 operands, got {}", operands.len()));
+        return Err(format!("sgtz: expected 2 operands, got {}", operands.len()));
     }
     let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
+    let rs2 = get_reg(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_sltz_extra_operand.md
-**Repro seed:** proptest cc 023334b4d0c28e663a616efd1f35c5bcbe01647094021692d44ed250d2a107ad (rd="zero", rs="zero", extra=Reg("zero"))
+**Bug report:** bug_reports/encode_sgtz_extra_operand.md
+**Repro seed:** cc 73f69bb79d5ce6be84d02513ebe919fec72f886db4d1a4106adfe45e9a3d3653
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_sltz_pbt::encode_sltz_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_sltz_pbt.rs:269:1:
-Test failed: extra operand must Err for sltz zero, zero (llvm-mc rejects: true) at src/backend/riscv/assembler/encoder/encode_sltz_pbt.rs:402.
-minimal failing input: rd = "zero", rs = "zero", extra = Reg(
-    "zero",
-)
-
-thread 'backend::riscv::assembler::encoder::encode_sltz_pbt::test_encode_sltz_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_sltz_pbt.rs:262:5:
-sltz zero, zero with a third operand must be rejected (llvm-mc rejects; README documents `sltz rd, rs`); got Ok(Word(8243))
+Test failed: extra operand must Err for sgtz zero, zero (llvm-mc rejects: true)
+minimal failing input: rd = "zero", rs = "zero", extra = Reg("zero")
+sgtz zero, zero with a third operand must be rejected; got Ok(Word(8243))
 ```
 
 ## Design Caveats
@@ -65,44 +60,38 @@ sltz zero, zero with a third operand must be rejected (llvm-mc rejects; README d
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_sltz_pbt.rs | 9 properties + KAT + regression |
-| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_sltz_pbt;` registration |
+| src/backend/riscv/assembler/encoder/encode_sgtz_pbt.rs | 9 proptest properties + KAT + regression |
+| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_sgtz_pbt;` registration |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_sltz -- --test-threads=1
-```
-
-Bug B1 (deterministic regression):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_sltz_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_sgtz -- --test-threads=1
+cargo test --lib test_encode_sgtz_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/REPORT.html
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
+- pbt-out/bug_reports/encode_sgtz_extra_operand.md
+- pbt-out/bug_reports/encode_sgtz_extra_operand.html
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_sltz_extra_operand.md
-- pbt-out/bug_reports/encode_sltz_extra_operand.html (rendered from report.json)
-- pbt-out/run/encode_sltz_test.log
+- pbt-out/run/encode_sgtz_test1.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 04:09 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 243/383 total | PBT candidates: 243 | Tested: 243 (100%) | 1 pass, 243 fail
+> Last updated: 2026-10-07 04:21 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 244/383 total | PBT candidates: 244 | Tested: 244 (100%) | 1 pass, 244 fail
 
 ## Summary
 
@@ -111,10 +100,10 @@ cargo test --lib test_encode_sltz_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 243 |
-| **Tested (of PBT candidates)** | **243 / 243 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 243 / -1 |
-| **Overall (tested / all functions)** | **243 / 383 (63%)** |
+| PBT candidates (from FUNCTION_INDEX) | 244 |
+| **Tested (of PBT candidates)** | **244 / 244 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 244 / -1 |
+| **Overall (tested / all functions)** | **244 / 383 (64%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -122,13 +111,13 @@ cargo test --lib test_encode_sltz_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 243 | 243 | 0 | 100% |
+|  | 244 | 244 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 243 | 243 | 0 | 100% |
+| unknown | 244 | 244 | 0 | 100% |
 
 ## File Coverage
 
@@ -142,7 +131,7 @@ cargo test --lib test_encode_sltz_regression_extra_operand -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 9 | 9 | 100% | covered |
+| pseudo.rs | 44 | 10 | 10 | 100% | covered |
 
 ## Recommended Focus
 
@@ -394,3 +383,4 @@ cargo test --lib test_encode_sltz_regression_extra_operand -- --test-threads=1
 | encode_seqz | pseudo.rs |
 | encode_snez | pseudo.rs |
 | encode_sltz | pseudo.rs |
+| encode_sgtz | pseudo.rs |

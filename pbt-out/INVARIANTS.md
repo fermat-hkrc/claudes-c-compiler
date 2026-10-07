@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_sgtz)
+
+- Valid 2-operand `sgtz rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `sgtz rd, rs` and of `slt rd, x0, rs` byte-for-byte (1000 cases). KAT pins sgtz a0, a1 = slt a0, x0, a1 = 0x00b02533; sgtz zero, zero = 0x00002033; sgtz t6, ra = 0x00102fb3; sgtz fp, s0 = 0x00802433.
+- R-type OP layout: opcode 0110011, funct3=010 (SLT), funct7=0000000, rs1=x0, rd and rs2 in their fields, including bounds 0 and 31 (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd/rs matches xN (get_reg GCC bare-number path). encode_sgtz(rd, rs) equals encode_alu_reg SLT on [rd, x0, rs] (1000 cases).
+- Field isolation: rd bits independent of rs2; non-rd bits independent of rd (1000 cases).
+- Too few operands and invalid/FP/non-GPR names return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_sgtz)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15) assembling `sgtz rd, rs` and `slt rd, x0, rs`.
+- Harness: src/backend/riscv/assembler/encoder/encode_sgtz_pbt.rs, cargo test --lib encode_sgtz_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:879 "sgtz" => encode_sgtz(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw for this Rust target (C++ reporter listed unrelated binaries and reported encode_sgtz NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/slt/R-type/ABI/isolation/arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_sgtz)
+
+- encode_sgtz has no rustdoc; contract is README.md:327 plus the inline SLT comment at pseudo.rs:278.
+- RISC-V Unprivileged ISA SGTZ pseudo is SLT rd, x0, rs; this assembler matches that expansion (and llvm-mc).
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_sltz)
 
 - Valid 2-operand `sltz rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `sltz rd, rs` and of `slt rd, rs, x0` byte-for-byte (1000 cases). KAT pins sltz a0, a1 = slt a0, a1, x0 = 0x0005a533; sltz zero, zero = 0x00002033; sltz t6, ra = 0x0000afb3; sltz fp, s0 = 0x00042433.

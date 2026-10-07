@@ -140,6 +140,8 @@ mod encode_seqz_pbt;
 mod encode_snez_pbt;
 #[cfg(test)]
 mod encode_sltz_pbt;
+#[cfg(test)]
+mod encode_sgtz_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;
