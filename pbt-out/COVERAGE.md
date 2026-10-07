@@ -201,3 +201,4 @@
 |----------|-------------|-----------|--------------|-------|
 | 36 ARM encoders × random ops (edge reg names + extreme imms, 0..6 operands) | arm encoder mod.rs | ::pbt_encode_fuzz | p_encode_fuzz_no_panic | 20000 cases green after gating the KNOWN #74/#80 path (encode_add_sub i64::MIN negation overflow via cmp/cmn/ccmp) — no NEW panic |
 | 19 RISC-V encoders × random ops | riscv pseudo.rs | ::pbt_encode_fuzz_rv | p_rv_encode_fuzz_no_panic | 15000 cases — zero panic |
+| memgraph regression (call-site collateral repair) | passes mod.rs | ::pbt_memgraph | 300×3 levels | green after cmain(0) fix — zero SUT bugs |

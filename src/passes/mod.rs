@@ -1356,7 +1356,7 @@ int cmain(int rec) {{
     for (int i = 0; i < 6; i++) h = h * 31 + arr[i];
     return (int)((h ^ (h >> 32)) % 251);
 }}
-int main(void){{ return cmain(); }}", ops = ops)
+int main(void){{ return cmain(0); }}", ops = ops, fdefs = fdefs)
     }
 
     proptest! {
@@ -1371,6 +1371,9 @@ int main(void){{ return cmain(); }}", ops = ops)
             std::fs::write(&src, &prog).unwrap();
             let g = dir.join(format!("G{}g", case));
             let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&g).arg(&src).output().unwrap();
+            if !gc.status.success() {
+                let _ = std::fs::write("/tmp/mg_fail.c", &prog);
+            }
             prop_assume!(gc.status.success(), "gcc reject");
             let want = Command::new(&g).output().unwrap();
             let expected = want.status.code().unwrap_or(-1);

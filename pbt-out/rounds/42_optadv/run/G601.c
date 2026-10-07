@@ -1,17 +1,33 @@
+static int f1(int *p, int *q) { *p += 715; return *q * 2; }
+static int f2(int *p, int *q) { *p += 798; return *q * 2; }
+static int f3(int *p, int *q) { *p += 213; return *q * 2; }
+static int f4(int *p, int *q) { *p += 938; return *q * 2; }
 static int cells[8];
 static int arr[6];
 static long sum;
 int cmain(int rec) {
     for (int i = 0; i < 8; i++) cells[i] = i * 13 % 101;
     for (int i = 0; i < 6; i++) arr[i] = i * 7;
-    cells[4] = cells[7] + 415;
-    sum += cells[7] > cells[4] ? cells[7] : -cells[4];
-    cells[6] = cells[2] + 554;
+    for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + 2) % 8] % 97;
+    cells[5] = cells[3] + 655;
+    { struct { int v; int *np; } box = { cells[5], &cells[1] }; box.v += *box.np; cells[5] = box.v; }
+    cells[2] = cells[7] + 203;
+    sum += f1(&cells[5], &cells[0]);
+    sum += f2(&cells[4], &cells[0]);
+    arr[1 % 6] = 850; cells[7] += arr[1 % 6];
+    cells[3] = cells[4] + 608;
+    { struct { int v; int *np; } box = { cells[3], &cells[5] }; box.v += *box.np; cells[3] = box.v; }
     for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + 5) % 8] % 97;
-    cells[0] = cells[0] + 76;
-    arr[7 % 6] = 852; cells[3] += arr[7 % 6];
-    for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + 1) % 8] % 97;
-    { struct { int v; int *np; } box = { cells[7], &cells[0] }; box.v += *box.np; cells[7] = box.v; }
+    sum += cells[1] > cells[5] ? cells[1] : -cells[5];
+    cells[4] = cells[2] + 825;
+    { int *p = &cells[6]; int *q = p + 0; if (q >= cells && q < cells + 8) *q ^= 56u; }
+    { struct { int v; int *np; } box = { cells[4], &cells[2] }; box.v += *box.np; cells[4] = box.v; }
+    sum += f3(&cells[1], &cells[5]);
+    cells[7] = cells[0] + 28;
+    arr[7 % 6] = 74; cells[5] += arr[7 % 6];
+    sum += cells[5] > cells[3] ? cells[5] : -cells[3];
+    sum += f4(&cells[3], &cells[5]);
+    sum += cells[6] > cells[5] ? cells[6] : -cells[5];
     long h = sum;
     for (int i = 0; i < 8; i++) h = h * 1099511628211L + cells[i];
     for (int i = 0; i < 6; i++) h = h * 31 + arr[i];

@@ -1,24 +1,23 @@
-static int f1(int *p, int *q) { *p += 710; return *q * 2; }
-static int f2(int *p, int *q) { *p += 399; return *q * 2; }
-static int f3(int *p, int *q) { *p += 429; return *q * 2; }
+static int f1(int *p, int *q) { *p += 39; return *q * 2; }
 static int cells[8];
 static int arr[6];
 static long sum;
 int cmain(int rec) {
     for (int i = 0; i < 8; i++) cells[i] = i * 13 % 101;
     for (int i = 0; i < 6; i++) arr[i] = i * 7;
-    for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + 1) % 8] % 97;
-    sum += cells[5] > cells[0] ? cells[5] : -cells[0];
-    cells[1] = cells[2] + 330;
-    sum += cells[0] > cells[5] ? cells[0] : -cells[5];
-    sum += f1(&cells[3], &cells[1]);
-    arr[6 % 6] = 461; cells[0] += arr[6 % 6];
-    { struct { int v; int *np; } box = { cells[5], &cells[2] }; box.v += *box.np; cells[5] = box.v; }
-    { struct { int v; int *np; } box = { cells[2], &cells[2] }; box.v += *box.np; cells[2] = box.v; }
-    sum += f2(&cells[5], &cells[1]);
-    { int *p = &cells[5]; int *q = p + 2; if (q >= cells && q < cells + 8) *q ^= 428u; }
-    sum += cells[6] > cells[1] ? cells[6] : -cells[1];
-    sum += f3(&cells[0], &cells[0]);
+    sum += cells[2] > cells[7] ? cells[2] : -cells[7];
+    arr[7 % 6] = 892; cells[2] += arr[7 % 6];
+    cells[0] = cells[5] + 397;
+    { int *p = &cells[0]; int *q = p + 5; if (q >= cells && q < cells + 8) *q ^= 842u; }
+    sum += f1(&cells[4], &cells[1]);
+    for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + 3) % 8] % 97;
+    sum += cells[0] > cells[6] ? cells[0] : -cells[6];
+    cells[5] = cells[3] + 95;
+    for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + 6) % 8] % 97;
+    arr[7 % 6] = 225; cells[6] += arr[7 % 6];
+    sum += cells[3] > cells[3] ? cells[3] : -cells[3];
+    for (int t = 0; t < 3; t++) cells[t % 8] += cells[(t + 0) % 8] % 97;
+    arr[3 % 6] = 893; cells[7] += arr[3 % 6];
     long h = sum;
     for (int i = 0; i < 8; i++) h = h * 1099511628211L + cells[i];
     for (int i = 0; i < 6; i++) h = h * 31 + arr[i];

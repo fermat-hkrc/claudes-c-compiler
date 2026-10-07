@@ -4,15 +4,15 @@ static int a = 11;
 static int arr[6] = {10,20,30,40,50,60};
 static struct S { char c; int x[4]; double d; } s = {'Q', {1,2,3,4}, 9.5};
 static int *p1 = &a;
-static int *p2 = &arr[2];
-static int *p3 = arr[0];
+static int *p2 = &arr[3];
+static int *p3 = arr[3];
 static int *p4 = s.x;
 static void *p5 = &s.d;
-static int *p6 = &arr[2] + 0;
-static int *ps[3] = {&a, &arr[2], s.x + 2};
-static char *msg = "alpha";
+static int *p6 = &arr[2] + 3;
+static int *ps[3] = {&a, &arr[3], s.x + 3};
+static char *msg = "gammaXY";
 static char *tab[3] = {"alpha", "beta7", "gammaXY"};
-static char *sel = tab[0];
+static char *sel = tab[2];
 int main(void) {
     printf("%ld %ld %ld %ld %ld %ld\n",
         (long)((char*)p1 - (char*)&a),

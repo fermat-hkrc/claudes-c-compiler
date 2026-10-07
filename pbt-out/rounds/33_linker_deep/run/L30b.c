@@ -1,10 +1,10 @@
-int g0 = -53337;
+int g0 = -76381;
+int g1 = -61243;
 extern int deep2(int);
-int mid2(int x) { return deep2(x + 11) * 2; }
-extern int deep3(int);
-int mid3(int x) { return deep3(x + 0) * 2; }
+int mid2(int x) { return deep2(x + -4) * 2; }
+int g3 = 31814;
 extern int h4b(int);
 typeedef int (*fp4)(int);
 fp4 tbl4[2] = { 0, h4b };
-extern int deep5(int);
-int mid5(int x) { return deep5(x + 5) * 2; }
+int tent5;
+int init_tent5() { tent5 = 227; return tent5; }

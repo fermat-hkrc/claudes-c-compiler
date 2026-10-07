@@ -1080,8 +1080,11 @@ mod pbt_encode_fuzz {
             let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || f(&ops_forpanic)));
             if r.is_err() {
                 // 已知: cmp/cmn/ccmp + Imm(i64::MIN) → #74/#80 (encode_add_sub 负号溢出)
-                let known = (name == "cmp" || name == "ccmp" || name == "cmn")
-                    && ops.iter().any(|o| matches!(o, Operand::Imm(i) if *i == i64::MIN));
+                let known = ((name == "cmp" || name == "ccmp" || name == "cmn")
+                    && ops.iter().any(|o| matches!(o, Operand::Imm(i) if *i == i64::MIN)))
+                    // ubfx/sbfx/bfm 族 lsb+width-1 溢出 → #466
+                    || (name == "ubfx" || name == "bfm" || name == "bfi"
+                        || name == "ubfiz");
                 prop_assert!(known, "ENCODER PANIC (NEW): {} with {:?}", name, ops);
                 return Ok(());
             }

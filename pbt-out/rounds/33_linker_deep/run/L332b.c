@@ -1,8 +1,7 @@
-int g0 = -80387;
-extern int h1b(int);
-typeedef int (*fp1)(int);
-fp1 tbl1[2] = { 0, h1b };
-int g3 = -25406;
-extern int h4b(int);
-typeedef int (*fp4)(int);
-fp4 tbl4[2] = { 0, h4b };
+int g0 = 69827;
+extern int deep2(int);
+int mid2(int x) { return deep2(x + -7) * 2; }
+int g3 = 69832;
+extern int h5b(int);
+typeedef int (*fp5)(int);
+fp5 tbl5[2] = { 0, h5b };

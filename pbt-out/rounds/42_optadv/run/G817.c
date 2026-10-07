@@ -4,12 +4,12 @@ static long sum;
 int cmain(int rec) {
     for (int i = 0; i < 8; i++) cells[i] = i * 13 % 101;
     for (int i = 0; i < 6; i++) arr[i] = i * 7;
-    { int *p = &cells[3]; int *q = p + 6; if (q >= cells && q < cells + 8) *q ^= 275u; }
-    sum += cells[4] > cells[0] ? cells[4] : -cells[0];
-    arr[3 % 6] = 829; cells[6] += arr[3 % 6];
-    { int *p = &cells[5]; int *q = p + 1; if (q >= cells && q < cells + 8) *q ^= 623u; }
-    { int *p = &cells[2]; int *q = p + 6; if (q >= cells && q < cells + 8) *q ^= 410u; }
-    { int *p = &cells[3]; int *q = p + 4; if (q >= cells && q < cells + 8) *q ^= 96u; }
+    { struct { int v; int *np; } box = { cells[7], &cells[5] }; box.v += *box.np; cells[7] = box.v; }
+    { struct { int v; int *np; } box = { cells[2], &cells[2] }; box.v += *box.np; cells[2] = box.v; }
+    arr[4 % 6] = 357; cells[3] += arr[4 % 6];
+    { int *p = &cells[1]; int *q = p + 2; if (q >= cells && q < cells + 8) *q ^= 90u; }
+    sum += cells[0] > cells[0] ? cells[0] : -cells[0];
+    { int *p = &cells[5]; int *q = p + 5; if (q >= cells && q < cells + 8) *q ^= 224u; }
     long h = sum;
     for (int i = 0; i < 8; i++) h = h * 1099511628211L + cells[i];
     for (int i = 0; i < 6; i++) h = h * 31 + arr[i];

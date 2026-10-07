@@ -1,8 +1,8 @@
-int g0 = -67606;
-int tent1;
-int init_tent1() { tent1 = -352; return tent1; }
-int g2 = 55177;
-extern int h3b(int);
-typeedef int (*fp3)(int);
-fp3 tbl3[2] = { 0, h3b };
-int g4 = -22064;
+int g0 = 22724;
+extern int deep1(int);
+int mid1(int x) { return deep1(x + 0) * 2; }
+int tent2;
+int init_tent2() { tent2 = 303; return tent2; }
+extern int h4b(int);
+typeedef int (*fp4)(int);
+fp4 tbl4[2] = { 0, h4b };

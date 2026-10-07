@@ -1,6 +1,7 @@
-int g0 = -12769;
+int g0 = 42410;
 extern int h1b(int);
 typeedef int (*fp1)(int);
 fp1 tbl1[2] = { 0, h1b };
-int g2 = -86967;
-int g3 = 16888;
+extern int h2b(int);
+typeedef int (*fp2)(int);
+fp2 tbl2[2] = { 0, h2b };

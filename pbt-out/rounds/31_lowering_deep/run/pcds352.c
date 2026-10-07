@@ -1,15 +1,15 @@
 #include <stdio.h>
 #include <string.h>
-static int *cp = (int[]){ 932461826 % 97, 187385575 % 89, 7, 8 };
+static int *cp = (int[]){ 2469957935 % 97, 2566435541 % 89, 7, 8 };
 static char *cs = (char[]){ 'h', 'i', 0 };
 static struct N { int a[4]; struct { int x, y; } b; char t[3]; } n = {
-    .a[0] = 932461826 % 1000, .b.y = 187385575 % 500, .a[1] = 99, .t[1] = 'Z', .b.x = -3
+    .a[0] = 2469957935 % 1000, .b.y = 2566435541 % 500, .a[2] = 99, .t[1] = 'Z', .b.x = -3
 };
 static struct { int u_sel; union { long l; char c[8]; } u; } au = { 5, 0x4142434445 };
-static struct { unsigned p:5, q:11, r:16; } bf = { 932461826 % 32, 187385575 % 2048, 932461826 % 65536 };
+static struct { unsigned p:5, q:11, r:16; } bf = { 2469957935 % 32, 2566435541 % 2048, 2469957935 % 65536 };
 int count(void) {
     static int ctr = 0;
-    static int tbl[3] = { -2074296174 % 100, 2, 3 };
+    static int tbl[3] = { 1483185933 % 100, 2, 3 };
     ctr++;
     return ctr * 10 + tbl[0] % 7;
 }
