@@ -126,6 +126,8 @@ mod encode_v_crypto_vv_pbt;
 mod encode_v_crypto_vs_pbt;
 #[cfg(test)]
 mod encode_li_pbt;
+#[cfg(test)]
+mod encode_mv_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

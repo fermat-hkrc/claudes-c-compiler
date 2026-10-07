@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_mv)
+
+- Valid 2-operand `mv rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `add rd, x0, rs` byte-for-byte (1000 cases). KAT pins mv a0, a1 = add a0, x0, a1 = 0x00b00533; mv zero, zero = 0x00000033; mv t6, ra = 0x00100fb3; mv fp, s0 = 0x00800433.
+- Semantic copy: executing the SUT ADD word leaves init[rs] in rd for rd ∈ {x1..x31} and matches llvm-mc `mv` (ADDI expansion) simulated result (1000 cases).
+- R-type layout: opcode 0110011, funct3=000, funct7=0000000, rs1=x0, rd and rs2 in their fields, including bounds 0 and 31 (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd/rs matches xN (get_reg GCC bare-number path). encode_mv(rd, rs) equals encode_alu_reg ADD on [rd, x0, rs] (1000 cases).
+- Field isolation: rd bits independent of rs; non-rd bits independent of rd (1000 cases).
+- Too few operands and invalid/FP/non-GPR names return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_mv)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6) assembling `add rd, x0, rs`. llvm-mc `mv rd, rs` is ADDI (`addi rd, rs, 0`); this assembler documents ADD (README.md:319, pseudo.rs:228-229).
+- Harness: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs, cargo test --lib encode_mv_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:857 "mv" | "move" => encode_mv(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_mv NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of ADD encoding / semantic mv / R-type / ABI / isolation / ADD-x0 / arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_mv)
+
+- encode_mv has no rustdoc; contract is README.md:319 plus the inline ADD-vs-ADDI comment at pseudo.rs:228-229.
+- RISC-V Unprivileged ISA MV pseudo is ADDI; this project uses ADD so the word is eligible for C.MV compression. Encoding mismatch with uncompressed llvm-mc `mv` is documented, not a SUT bug. Semantic copy still agrees.
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_li)
 
 - Valid 2-operand `li rd, imm` with rd a GPR and imm in i32 matches llvm-mc `-triple=riscv64 -show-encoding` byte-for-byte (1000 cases). KAT pins li a0, 0 = 0x00000513; li a0, 1 = 0x00100513; li a0, 2047 = 0x7ff00513; li a0, -2048 = 0x80000513; li a0, 2048 = lui+addiw [0x00001537, 0x8005051b]; li a0, 2147483647 = [0x80000537, 0xfff5051b]; li x0, 0 = 0x00000013.

@@ -1,223 +1,231 @@
-# Properties: encode_li
+# Properties: encode_mv
 
-## encode_li_diff_llvm_mc_i32
+## encode_mv_diff_llvm_mc_add
 - Tier: 5
-- Rationale: Strongest oracle for the 32-bit (including 12-bit) domain is encoding agreement with llvm-mc, an independent assembler that implements the same `li rd, imm` job. encode_li_32bit rustdoc claims GAS `lui+addiw` / 12-bit `addi` compatibility on RV64. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree LI decoder). 64-bit encoding equality rejected as primary here because llvm-mc and the SUT may choose different 64-bit expansions; that domain is covered by the semantic differential.
-- Doc contract: (none) — encode_li has no function rustdoc
-- Seed: (none) — no project-owned encode_li unit test; llvm-mc KAT `li a0, 0` = 0x00000513
-- Formal: ∀ rd ∈ GPR, ∀ imm ∈ i32. encode_li([Reg(rd), Imm(imm)]) bytes = llvm-mc("li rd, imm") bytes
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
+- Rationale: Strongest oracle for the documented expansion is encoding agreement with llvm-mc assembling `add rd, x0, rs`, an independent assembler of the same ADD word the README claims. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree MV/ADD decoder). Encoding-equality vs llvm-mc `mv` rejected as primary — llvm-mc expands MV to ADDI (`addi rd, rs, 0`) while README.md:319 and pseudo.rs:228-229 claim ADD for RV64C/C.MV eligibility (different encoding contract; semantic agreement is a separate property). Differential vs encode_alu_reg(add) rejected as primary — shared encode_r/get_reg (used as a weaker metamorphic instead).
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
+- Seed: (none) — no project-owned encode_mv unit test; llvm-mc KAT `add a0, x0, a1` = 0x00b00533
+- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_mv([Reg(rd), Reg(rs)]) = llvm-mc("add rd, x0, rs")
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_li
+function: encoder.encode_mv
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, imm]
-  domain: { rd: gpr_name, imm: i32 }
+  vars: [rd, rs]
+  domain: { rd: gpr_name, rs: gpr_name }
   relation:
     op: eq
-    lhs: encode_li([Reg(rd), Imm(imm)]).words
-    rhs: llvm_mc("li rd, imm").words
+    lhs: encode_mv([Reg(rd), Reg(rs)]).word
+    rhs: llvm_mc("add rd, x0, rs").word
 generators:
   rd: { gen: string }
-  imm: { gen: int, min: -2147483648, max: 2147483647, type: i32 }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:22-27 GAS lui+addiw; assembler/README.md:318; encoder/mod.rs:854
+  rs: { gen: string }
+evidence: src/backend/riscv/assembler/README.md:319; pseudo.rs:228-229; encoder/mod.rs:857
 ```
 
-## encode_li_sem_i64
+## encode_mv_sem_vs_llvm_mc_mv
 - Tier: 5
-- Rationale: For the full i64 domain, encoding sequences may differ from llvm-mc. The shared contract is that executing the expansion leaves `imm` in `rd` (RISC-V Unprivileged ISA LI pseudo; rustdoc "arbitrary 64-bit immediate"). Independent RISC-V interpreter of LUI/ADDI/ADDIW/SLLI (not a copy of the decomposer) plus llvm-mc sequence simulation. State machine rejected. Encoding-equality differential rejected on 64-bit (different expansions). Round-trip rejected (lossy encode, no decoder).
-- Doc contract: (none) — encode_li has no function rustdoc
+- Rationale: Metamorphic/differential required at standard tier. llvm-mc `mv` uses ADDI while the SUT uses ADD; both must leave `rs` in `rd` (RISC-V MV semantics; x0 writes discarded). Independent interpreter of ADD/ADDI (not a copy of encode_mv). State machine rejected. Encoding-equality vs llvm-mc `mv` rejected (documented ADD vs ADDI). Round-trip rejected (no decoder).
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
 - Seed: (none)
-- Formal: ∀ rd ∈ GPR\{x0}, ∀ imm ∈ i64. sim(encode_li([Reg(rd), Imm(imm)]))[rd] = imm ∧ sim(llvm-mc("li rd, imm"))[rd] = imm ∧ |encode_li(...)| ≤ 16
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
+- Formal: ∀ rd ∈ GPR\{x0}, ∀ rs ∈ GPR. sim(encode_mv([Reg(rd), Reg(rs)]))[rd] = sim(llvm-mc("mv rd, rs"))[rd] = init[rs]
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_li
+function: encoder.encode_mv
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rd, imm]
-  domain: { rd: gpr_nonzero, imm: i64 }
+  vars: [rd, rs]
+  domain: { rd: gpr_nonzero, rs: gpr }
   relation:
     op: eq
-    lhs: sim(encode_li([Reg(rd), Imm(imm)]))[rd]
-    rhs: imm
+    lhs: sim(encode_mv([Reg(xN(rd)), Reg(xN(rs))]))[rd]
+    rhs: sim(llvm_mc("mv xN(rd), xN(rs)"))[rd]
 generators:
   rd: { gen: int, min: 1, max: 31, type: u32 }
-  imm: { gen: int, min: -9223372036854775808, max: 9223372036854775807, type: i64 }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:47-51; RISC-V Unprivileged ISA LI; assembler/README.md:318
+  rs: { gen: int, min: 0, max: 31, type: u32 }
+evidence: RISC-V Unprivileged ISA MV copies rs to rd; assembler/README.md:319 ADD expansion is semantically the copy
 ```
 
-## encode_li_12bit_fields
+## encode_mv_isa_fields
 - Tier: 4
-- Rationale: Documented 12-bit path is a single `addi rd, x0, imm` (encode_li_32bit rustdoc; README). Field unpack from RISC-V I-type, not from the encoder body. Stronger encoding differential covers this domain; this pins the ISA layout.
-- Doc contract: (none) — encode_li has no function rustdoc
+- Rationale: Documented expansion is R-type ADD (opcode OP-OP, funct3=000, funct7=0000000, rs1=x0). Field unpack from RISC-V R-type, not from the encoder body. Stronger encoding differential covers this domain; this pins the ISA layout including bounds rd/rs ∈ {0,31}.
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
 - Seed: (none)
-- Formal: ∀ rd ∈ 0..31, ∀ imm ∈ [-2048, 2047]. encode_li = Word(w) ∧ opcode(w)=0010011 ∧ rd(w)=rd ∧ funct3(w)=000 ∧ rs1(w)=0 ∧ imm12(w)=imm
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
+- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. encode_mv = Word(w) ∧ opcode(w)=0110011 ∧ rd(w)=rd ∧ funct3(w)=000 ∧ rs1(w)=0 ∧ rs2(w)=rs ∧ funct7(w)=0000000
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_li
+function: encoder.encode_mv
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rd, imm]
-  domain: { rd: u32_0_31, imm: i64_simm12 }
+  vars: [rd, rs]
+  domain: { rd: u32_0_31, rs: u32_0_31 }
   relation:
     op: holds
-    expr: is_addi_x0(encode_li([Reg(xN(rd)), Imm(imm)]), rd, imm)
+    expr: is_add_x0(encode_mv([Reg(xN(rd)), Reg(xN(rs))]), rd, rs)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, min: -2048, max: 2047, type: i64 }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:26-27; assembler/README.md:318
+  rs: { gen: int, min: 0, max: 31, type: u32 }
+evidence: RISC-V Unprivileged ISA R-type ADD; assembler/README.md:319; pseudo.rs:228-229
 ```
 
-## encode_li_abi_xn_alias
+## encode_mv_abi_xn_alias
 - Tier: 4
-- Rationale: Metamorphic: ABI names, xN, and fp/s0 alias the same 5-bit encoding (reg_num). Same encoding for the same (rd_num, imm).
-- Doc contract: (none) — encode_li has no function rustdoc
+- Rationale: ABI names, xN, fp/s0, and zero/x0 are the same GPR. Metamorphic invariance under name alias. Stronger encoding differential already uses mixed names; this pins alias equality including Imm(0..=31) as GCC bare register numbers (get_reg).
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
 - Seed: (none)
-- Formal: ∀ n,m ∈ 0..31, ∀ imm ∈ i64. encode_li([Reg(ABI[n]), Imm(imm)]) = encode_li([Reg(xN), Imm(imm)])
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
+- Formal: ∀ n,m ∈ 0..31. encode_mv([ABI(n), ABI(m)]) = encode_mv([xN(n), xN(m)]) ∧ encode_mv([Imm(n), Imm(m)]) = encode_mv([xN(n), xN(m)]) ∧ (n=8 ⇒ encode_mv([fp, xN(m)]) = encode_mv([xN(8), xN(m)]))
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_li
+function: encoder.encode_mv
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, imm]
-  domain: { n: u32_0_31, imm: i64 }
+  vars: [n, m]
+  domain: { n: u32_0_31, m: u32_0_31 }
   relation:
     op: eq
-    lhs: encode_li([Reg(ABI[n]), Imm(imm)])
-    rhs: encode_li([Reg(xN), Imm(imm)])
+    lhs: encode_mv([Reg(ABI(n)), Reg(ABI(m))]).word
+    rhs: encode_mv([Reg(xN(n)), Reg(xN(m))]).word
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, type: i64 }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:254-266 reg_num ABI/xN/fp
+  m: { gen: int, min: 0, max: 31, type: u32 }
+evidence: encoder/mod.rs:457-465 get_reg ABI/xN/Imm(0..=31); parser.rs:22-23 register names
 ```
 
-## encode_li_neg_arity
-- Tier: 3
-- Rationale: README two-operand form `li rd, imm`; llvm-mc "too few operands". Missing rd or imm must Err.
-- Doc contract: (none) — encode_li has no function rustdoc
-- Seed: (none)
-- Formal: ∀ ops. |ops| < 2 ⇒ encode_li(ops) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_li
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [ops]
-  domain: { ops: operand_lists_len_lt_2 }
-  relation:
-    op: throws
-    expr: encode_li(ops)
-expected_error: String
-generators:
-  ops: { gen: list, maxLen: 1 }
-evidence: assembler/README.md:318; llvm-mc too few operands
-```
-
-## encode_li_neg_invalid
-- Tier: 3
-- Rationale: get_reg rejects non-GPR names; get_imm rejects non-Imm. Invalid rd or non-immediate second operand must Err (llvm-mc rejects).
-- Doc contract: (none) — encode_li has no function rustdoc
-- Seed: (none)
-- Formal: ∀ bad operand in {FP/vec/invalid name, Symbol, Label, Mem, Csr, …}. encode_li with that operand at rd or imm position is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_li
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [bad, good_rd, good_imm, which]
-  domain: { bad: non_gpr_or_non_imm }
-  relation:
-    op: throws
-    expr: encode_li(ops_with_bad)
-expected_error: String
-generators:
-  bad: { gen: string }
-evidence: encoder/mod.rs:455-464 get_reg; encoder/mod.rs:495-500 get_imm
-```
-
-## encode_li_neg_extra
-- Tier: 3
-- Rationale: README documents exactly `li rd, imm`. llvm-mc errors on a third operand. encode_li has no arity check (same class as encode_neg extra-operand). Extra operand must Err.
-- Doc contract: (none) — encode_li has no function rustdoc
-- Seed: (none)
-- Formal: ∀ rd ∈ GPR, ∀ imm ∈ i64, ∀ extra. encode_li([Reg(rd), Imm(imm), extra]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
-- Status: failing
-- Counterexample: encode_li([Reg("zero"), Imm(0), Reg("zero")]) returns Ok (li zero, 0 encoded) instead of Err. Deterministic witness: encode_li([Reg("a0"), Imm(1), Reg("a1")]).
-- Bug report: pbt-out/bug_reports/encode_li_extra_operand.md
-
-```property
-function: encoder.encode_li
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rd, imm, extra]
-  domain: { rd: gpr_name, imm: i64, extra: operand }
-  relation:
-    op: throws
-    expr: encode_li([Reg(rd), Imm(imm), extra])
-expected_error: String
-generators:
-  rd: { gen: string }
-  imm: { gen: int, type: i64 }
-  extra: { gen: string }
-evidence: assembler/README.md:318; llvm-mc invalid operand for instruction
-```
-
-## encode_li_imm_regnum
+## encode_mv_field_isolation
 - Tier: 4
-- Rationale: Metamorphic: get_reg accepts Imm(0..=31) as a bare register number (mod.rs:461-462, GCC inline asm). encode_li([Imm(n), Imm(v)]) = encode_li([Reg(xN), Imm(v)]).
-- Doc contract: (none) — encode_li has no function rustdoc
+- Rationale: R-type rd and rs2 occupy disjoint bit fields; changing one operand must not perturb the other field or the constant opcode/funct3/rs1/funct7 bits.
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
 - Seed: (none)
-- Formal: ∀ n ∈ 0..31, ∀ imm ∈ i64. encode_li([Imm(n), Imm(imm)]) = encode_li([Reg(xN), Imm(imm)])
-- Test file: src/backend/riscv/assembler/encoder/encode_li_pbt.rs
+- Formal: ∀ rd, rs_a, rs_b, rd_a, rd_b, rs ∈ 0..31. rd_field(encode_mv(rd, rs_a)) = rd_field(encode_mv(rd, rs_b)) ∧ (encode_mv(rd_a, rs) & ~rd_mask) = (encode_mv(rd_b, rs) & ~rd_mask)
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_li
+function: encoder.encode_mv
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, imm]
-  domain: { n: 0..31, imm: i64 }
+  vars: [rd, rs_a, rs_b, rd_a, rd_b, rs]
+  domain: { rd: u32_0_31, rs_a: u32_0_31, rs_b: u32_0_31, rd_a: u32_0_31, rd_b: u32_0_31, rs: u32_0_31 }
+  relation:
+    op: holds
+    expr: rd_field_independent_of_rs and rs_field_independent_of_rd
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rs_a: { gen: int, min: 0, max: 31, type: u32 }
+  rs_b: { gen: int, min: 0, max: 31, type: u32 }
+  rd_a: { gen: int, min: 0, max: 31, type: u32 }
+  rd_b: { gen: int, min: 0, max: 31, type: u32 }
+  rs: { gen: int, min: 0, max: 31, type: u32 }
+evidence: RISC-V Unprivileged ISA R-type layout; assembler/README.md:319
+```
+
+## encode_mv_eq_add_x0
+- Tier: 4
+- Rationale: README expansion `add rd, x0, rs` is the same job as encode_alu_reg(funct3=000, funct7=0000000) on [rd, x0, rs]. Shared encode_r/get_reg weakens independence, so this is metamorphic not primary differential. llvm-mc ADD is the independent encoding check.
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
+- Seed: encode_neg_eq_sub_x0 in pseudo.rs encode_neg_pbt (same expansion shape)
+- Formal: ∀ rd, rs ∈ 0..31. encode_mv([xN(rd), xN(rs)]) = encode_alu_reg([xN(rd), x0, xN(rs)], funct3=000, funct7=0000000)
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_mv
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rs]
+  domain: { rd: u32_0_31, rs: u32_0_31 }
   relation:
     op: eq
-    lhs: encode_li([Imm(n), Imm(imm)])
-    rhs: encode_li([Reg(xN), Imm(imm)])
+    lhs: encode_mv([Reg(xN(rd)), Reg(xN(rs))]).word
+    rhs: encode_alu_reg([Reg(xN(rd)), Reg(x0), Reg(xN(rs))], 0, 0).word
 generators:
-  n: { gen: int, min: 0, max: 31, type: i64 }
-  imm: { gen: int, type: i64 }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:461-462
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rs: { gen: int, min: 0, max: 31, type: u32 }
+evidence: assembler/README.md:319; encoder/base.rs:260 encode_alu_reg ADD
+```
+
+## encode_mv_neg_extra
+- Tier: 3
+- Rationale: README documents a two-operand form; llvm-mc rejects a third operand. Negative/error contract: extra operand must Err. No documented "ignore extra" exclusion.
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
+- Seed: test_encode_neg_regression_extra_operand (pseudo.rs encode_neg_pbt)
+- Formal: ∀ rd, rs ∈ GPR, ∀ extra. encode_mv([Reg(rd), Reg(rs), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Status: failing
+- Counterexample: encode_mv([Reg("zero"), Reg("zero"), Reg("zero")]) = Ok(Word(0x00000033))
+- Bug report: pbt-out/bug_reports/encode_mv_extra_operand.md
+
+```property
+function: encoder.encode_mv
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [rd, rs, extra]
+  domain: { rd: gpr_name, rs: gpr_name, extra: operand }
+  relation:
+    op: throws
+    expr: encode_mv([Reg(rd), Reg(rs), extra])
+    error: String
+generators:
+  rd: { gen: string }
+  rs: { gen: string }
+  extra: { gen: string }
+expected_error: String
+evidence: assembler/README.md:319 two-operand `mv rd, rs`; llvm-mc rejects extra
+```
+
+## encode_mv_neg_arity_invalid
+- Tier: 3
+- Rationale: llvm-mc rejects too-few operands and FP/non-GPR names. get_reg returns Err for missing/invalid slots. Documented error path.
+- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
+- Seed: encode_neg_neg_arity / encode_neg_neg_invalid
+- Formal: ∀ ops. |ops|<2 ⇒ encode_mv(ops) is Err ∧ ∀ bad ∈ non-GPR. encode_mv([bad, good]) is Err ∧ encode_mv([good, bad]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_mv
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops, bad, good]
+  domain: { ops: short_ops, bad: invalid_operand, good: gpr_name }
+  relation:
+    op: throws
+    expr: encode_mv(ops_or_mixed)
+    error: String
+generators:
+  ops: { gen: string }
+  bad: { gen: string }
+  good: { gen: string }
+expected_error: String
+evidence: encoder/mod.rs:457-465 get_reg Err on missing/invalid; llvm-mc too few / invalid operand
 ```

@@ -1,87 +1,88 @@
-# PBT Campaign Report: encode_li
+# PBT Campaign Report: encode_mv
 
 ## Summary
 
-**Verdict:** 1 medium: encode_li ignores extra operands, so `li a0, 1, a1` encodes as `li a0, 1` with no diagnostic.
+**Verdict:** 1 medium: encode_mv silently ignores extra operands, so `mv a0, a1, a2` encodes as `add a0, x0, a1` instead of being rejected.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_li
+**Modules tested:** encode_mv
 **Tests:** 8
 **Result:** 7 passing, 1 bug
-**Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_li NOT LINKED in C++ reporter binaries (Rust cargo tests are not those binaries). Manual sweep of encode_li branches: 12-bit Word/addi, 32-bit llvm-mc encoding, 64-bit semantic, ABI/xN, Imm-rd, arity/invalid (executed); extra-operand rejection is the remaining documented gap (filed).
-**Effort tier:** standard
+**Change surface:** 1 changed function (encode_mv), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_mv NOT LINKED in C++ reporter binaries; Rust cargo tests executed the symbol (12 lib tests: 7 properties + 5 KAT)
+
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_li | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_mv | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_li silently ignores extra operands
+### B1: encode_mv silently ignores extra operands
 
-**Formal:** ∀ rd ∈ GPR, ∀ imm ∈ i64, ∀ extra. encode_li([Reg(rd), Imm(imm), extra]) is Err
-**Contract evidence:** inferred (assembler/README.md:318 documents the two-operand form `li rd, imm`; llvm-mc 15.0.6 rejects a third operand; encoder/mod.rs:854 `"li" => encode_li(operands)` passes the operand slice through with no sanitizing wrapper)
-**Documentation conflict:** (none) — encode_li has no rustdoc. README.md:318 states the valid form `li rd, imm` and does not declare extra operands accepted.
+**Formal:** ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_mv([Reg(rd), Reg(rs), extra]) is Err
+**Contract evidence:** inferred (README.md:319 documents the two-operand form `mv rd, rs`; llvm-mc 15.0.6 rejects a third operand; encode_instruction passes operands through unchanged)
+**Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_li([Reg("zero"), Imm(0), Reg("zero")]) ; also encode_li([Reg("a0"), Imm(1), Reg("a1")])
-**Expected / Actual:** Err / Ok (encodes as `li zero, 0` / `li a0, 1`)
-**Impact:** An extra operand is dropped with no diagnostic, so typos and extra commas assemble as a shorter `li`.
-**Root cause:** pseudo.rs:6 reads operand 0 as rd and operand 1 as imm and never checks `operands.len()`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:6`
+**Counterexample:** encode_mv([Reg("zero"), Reg("zero"), Reg("zero")]) then encode_mv([Reg("a0"), Reg("a1"), Imm(0)])
+**Expected / Actual:** Err / Ok(Word(0x00000033)) and Ok(Word(0x00b00533))
+**Impact:** Typos and extra commas assemble without error; `mv a0, a1, a2` is encoded as `add a0, x0, a1`.
+**Root cause:** pseudo.rs:226 reads only operands 0 and 1 via get_reg and never checks operands.len(), so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:226`
 ```rust
     let rd = get_reg(operands, 0)?;
-    let imm = get_imm(operands, 1)?;
+    let rs = get_reg(operands, 1)?;
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("li: expected 2 operands, got {}", operands.len()));
+        return Err(format!("mv: expected 2 operands, got {}", operands.len()));
     }
     let rd = get_reg(operands, 0)?;
-    let imm = get_imm(operands, 1)?;
+    let rs = get_reg(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_li_extra_operand.md
-**Repro seed:** cc 22547b27eddfa80deea2d8334bd1e77fe0653c6328a14a336557ec6e970e6ae6
+**Bug report:** bug_reports/encode_mv_extra_operand.md
+**Repro seed:** cc 969c709026a403447688aeba302d5581679bd236607fb00bfad158245a9895bc
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_li_pbt::encode_li_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_li_pbt.rs:395:1:
-Test failed: extra operand must Err for li zero, 0 (README two-operand; llvm-mc rejects) at src/backend/riscv/assembler/encoder/encode_li_pbt.rs:514.
-minimal failing input: rd = "zero", imm = 0, extra = Reg(
+thread 'backend::riscv::assembler::encoder::encode_mv_pbt::encode_mv_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_mv_pbt.rs:327:1:
+Test failed: extra operand must Err for mv zero, zero (llvm-mc rejects: true); got Ok(Word(51)) at src/backend/riscv/assembler/encoder/encode_mv_pbt.rs:455.
+minimal failing input: rd = "zero", rs = "zero", extra = Reg(
     "zero",
 )
 	successes: 0
 	local rejects: 0
 	global rejects: 0
 
-thread 'backend::riscv::assembler::encoder::encode_li_pbt::test_encode_li_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_li_pbt.rs:389:5:
-li a0, 1 with a third operand must be rejected (llvm-mc rejects; README documents `li rd, imm`)
+thread 'backend::riscv::assembler::encoder::encode_mv_pbt::test_encode_mv_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_mv_pbt.rs:320:5:
+mv a0, a1 with a third operand must be rejected (llvm-mc rejects; README documents `mv rd, rs`); got Ok(Word(11535667))
 ```
 
 ## Design Caveats
 
-(none)
+- llvm-mc 15.0.6 encodes `mv rd, rs` as ADDI (`addi rd, rs, 0`, e.g. `mv a0, a1` = 0x00058513). This assembler encodes ADD (`add rd, x0, rs`, 0x00b00533). **Doc evidence:** README.md:319 "`mv rd, rs` | `add rd, x0, rs` (uses ADD form for RV64C eligibility)" and pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." Encoding-equality vs llvm-mc `mv` was not used as a bug oracle; semantic copy still agrees. RISC-V Unprivileged ISA MV is ADDI — spec-vs-codebase, SUT matches its README.
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_li_pbt.rs | 8 properties + 1 KAT + 1 regression witness |
+| src/backend/riscv/assembler/encoder/encode_mv_pbt.rs | 8 properties + 5 KAT + 1 failing regression |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_li -- --test-threads=1
+cargo test --lib encode_mv_pbt -- --test-threads=1
 ```
 
-Bug B1 (extra operand):
+Bug B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_li_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_mv_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
@@ -93,19 +94,18 @@ cargo test --lib test_encode_li_regression_extra_operand -- --test-threads=1
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
-- pbt-out/report.json
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_li_extra_operand.md
-- pbt-out/bug_reports/encode_li_extra_operand.html
-- src/backend/riscv/assembler/encoder/encode_li_pbt.rs
-- proptest-regressions/backend/riscv/assembler/encoder/encode_li_pbt.txt
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_mv_extra_operand.md
+- pbt-out/bug_reports/encode_mv_extra_operand.html
+- pbt-out/CHANGE_SURFACE.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 02:43 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 236/383 total | PBT candidates: 236 | Tested: 236 (100%) | 1 pass, 236 fail
+> Last updated: 2026-10-07 02:57 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 237/383 total | PBT candidates: 237 | Tested: 237 (100%) | 1 pass, 237 fail
 
 ## Summary
 
@@ -114,10 +114,10 @@ cargo test --lib test_encode_li_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 236 |
-| **Tested (of PBT candidates)** | **236 / 236 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 236 / -1 |
-| **Overall (tested / all functions)** | **236 / 383 (62%)** |
+| PBT candidates (from FUNCTION_INDEX) | 237 |
+| **Tested (of PBT candidates)** | **237 / 237 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 237 / -1 |
+| **Overall (tested / all functions)** | **237 / 383 (62%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -125,13 +125,13 @@ cargo test --lib test_encode_li_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 236 | 236 | 0 | 100% |
+|  | 237 | 237 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 236 | 236 | 0 | 100% |
+| unknown | 237 | 237 | 0 | 100% |
 
 ## File Coverage
 
@@ -145,7 +145,7 @@ cargo test --lib test_encode_li_regression_extra_operand -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 2 | 2 | 100% | covered |
+| pseudo.rs | 44 | 3 | 3 | 100% | covered |
 
 ## Recommended Focus
 
@@ -390,3 +390,4 @@ cargo test --lib test_encode_li_regression_extra_operand -- --test-threads=1
 | encode_v_crypto_vv | vector.rs |
 | encode_v_crypto_vs | vector.rs |
 | encode_li | pseudo.rs |
+| encode_mv | pseudo.rs |
