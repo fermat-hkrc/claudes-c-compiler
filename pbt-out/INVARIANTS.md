@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_li)
+
+- Valid 2-operand `li rd, imm` with rd a GPR and imm in i32 matches llvm-mc `-triple=riscv64 -show-encoding` byte-for-byte (1000 cases). KAT pins li a0, 0 = 0x00000513; li a0, 1 = 0x00100513; li a0, 2047 = 0x7ff00513; li a0, -2048 = 0x80000513; li a0, 2048 = lui+addiw [0x00001537, 0x8005051b]; li a0, 2147483647 = [0x80000537, 0xfff5051b]; li x0, 0 = 0x00000013.
+- Full i64 domain: executing the SUT expansion (RISC-V LUI/ADDI/ADDIW/SLLI/SRLI interpreter) leaves imm in rd for rd ∈ {x1..x31}, and matches llvm-mc's simulated result (1000 cases, sequence length ≤ 16).
+- 12-bit immediates [-2048, 2047] encode as a single ADDI rd, x0, imm (opcode 0010011, funct3=000, rs1=x0).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd matches xN (get_reg GCC bare-number path).
+- Too few operands and invalid rd / non-Imm second operand return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_li)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_li_pbt.rs, cargo test --lib encode_li, proptest cases=1000.
+- Dispatch: encoder/mod.rs:854 "li" => encode_li(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_li NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 12-bit Word/addi, 32-bit llvm-mc encoding, 64-bit semantic, ABI/xN, Imm-rd, arity/invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_li)
+
+- encode_li has no rustdoc; contract is README.md:318 plus encode_li_32bit / encode_li_immediate comments.
+- 12-bit path is addi (OP_OP_IMM); 32-bit path is lui + addiw (OP_OP_IMM_32) to match GAS on RV64; lo==0 omits addiw.
+- 64-bit expansions may differ from llvm-mc (llvm-mc uses srli for i64::MAX); semantic agreement is the shared contract.
+- README "up to 3-instruction sequences for 64-bit constants" is inaccurate vs both SUT and llvm-mc (dense immediates use more); not treated as a SUT bound.
+- get_reg accepts Imm(0..=31) as a bare register number; get_imm accepts only Operand::Imm.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_v_crypto_vs)
 
 - Valid 2-operand unmasked vsm4r.vs with vd, vs2 ∈ {v0..v31} packs funct6, vm=1, vs2, vs1=10000, funct3=010, vd (1000 cases). Rustdoc KAT pins vsm4r.vs v0, v0 = 0xa6082077; vsm4r.vs v1, v2 = 0xa62820f7; vsm4r.vs v31, v30 = 0xa7e82ff7 (these words use OP_V_CRYPTO=1110111).

@@ -1,129 +1,63 @@
-# PBT Campaign Report: encode_v_crypto_vs
+# PBT Campaign Report: encode_li
 
 ## Summary
 
-**Verdict:** 1 high: encode_v_crypto_vs packs vsm4r.vs with OP-P (1110111) instead of Volume II OP-V (1010111), so assembled SM4 round instructions will not execute on a spec-compliant Zvksed core; also 2 medium: extra operands and trailing v0.t are silently ignored.
+**Verdict:** 1 medium: encode_li ignores extra operands, so `li a0, 1, a1` encodes as `li a0, 1` with no diagnostic.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_v_crypto_vs
-**Tests:** 7
-**Result:** 4 passing, 3 bugs
+**Modules tested:** encode_li
+**Tests:** 8
+**Result:** 7 passing, 1 bug
 **Change surface:** 1 changed function, 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_v_crypto_vs NOT LINKED in C++ reporter binaries (Rust cargo tests are not those binaries). Manual audit of documented behaviors completed.
-**Tier:** standard
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_li NOT LINKED in C++ reporter binaries (Rust cargo tests are not those binaries). Manual sweep of encode_li branches: 12-bit Word/addi, 32-bit llvm-mc encoding, 64-bit semantic, ABI/xN, Imm-rd, arity/invalid (executed); extra-operand rejection is the remaining documented gap (filed).
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_v_crypto_vs | 7 | 3 | reference, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_li | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_v_crypto_vs uses OP-P (1110111) instead of OP-V (1010111)
+### B1: encode_li silently ignores extra operands
 
-**Formal:** ∀ vd, vs2 ∈ {0..31}. encode_v_crypto_vs([v{vd}, v{vs2}], 0b101001) = Word(w) ∧ (w & 0x7F) = 0b1010111 ∧ w = spec_word(vd, vs2, 0b101001)
-**Contract evidence:** documented-and-violated encoder/mod.rs:449 "Vector crypto (Zvk*) — uses OP-P encoding space per RVV Crypto spec" plus assembler/README.md:14 Zvksh/Zvksed; Volume II encodes vsm4r.vs in OP-V 1010111
-**Documentation conflict:** encoder/mod.rs:449 "Vector crypto (Zvk*) — uses OP-P encoding space per RVV Crypto spec" — the comment claims the RVV Crypto spec uses OP-P, but RISC-V Cryptography Extensions Volume II uses OP-V 1010111. The comment states the behavior IS handled "per spec"; the packing violates that spec. Marked (not independently verified) against a local Volume II copy; the SUT's own README and OP_V_CRYPTO comment claim that spec.
-**Severity:** high
-**Counterexample:** encode_v_crypto_vs([Reg("v0"), Reg("v0")], 0b101001)
-**Expected / Actual:** opcode 0b1010111 (Word 0xa6082057) / opcode 0b1110111 (Word 0xa6082077)
-**Impact:** Assembled vsm4r.vs will not execute as SM4 round on a spec-compliant Zvksed core.
-**Root cause:** vector.rs:214 ORs OP_V_CRYPTO, defined as 0b1110111 at encoder/mod.rs:449, instead of OP-V 0b1010111.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:214`
-```rust
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (0b10000u32 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
-```
-**Suggested fix:** Pack OP-V (1010111), the Volume II major opcode, instead of OP_V_CRYPTO.
-```rust
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (0b10000u32 << 15) | (0b010 << 12) | (vd << 7) | OP_V;
-```
-**Bug report:** bug_reports/encode_v_crypto_vs_spec_opcode.md
-**Repro seed:** vd=0, vs2=0
-**Raw output:**
-```text
-thread 'backend::riscv::assembler::encoder::encode_v_crypto_vs_pbt::encode_v_crypto_vs_spec_opcode' (2893435) panicked at src/backend/riscv/assembler/encoder/encode_v_crypto_vs_pbt.rs:176:1:
-Test failed: assertion failed: `(left == right)` 
-  left: `119`, 
- right: `87`: opcode must be OP-V 1010111 per RISC-V Crypto Volume II; got 0b1110111 at src/backend/riscv/assembler/encoder/encode_v_crypto_vs_pbt.rs:186.
-minimal failing input: vd = 0, vs2 = 0
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-```
-
-### B2: encode_v_crypto_vs ignores extra operands
-
-**Formal:** ∀ vd, vs2 ∈ {0..31}, extra. encode_v_crypto_vs([v{vd}, v{vs2}, extra], 0b101001) = Err(_)
-**Contract evidence:** inferred (Volume II assembly is `vsm4r.vs vd, vs2`; encoder/mod.rs:1026 passes operands through unchanged)
-**Documentation conflict:** (none)
+**Formal:** ∀ rd ∈ GPR, ∀ imm ∈ i64, ∀ extra. encode_li([Reg(rd), Imm(imm), extra]) is Err
+**Contract evidence:** inferred (assembler/README.md:318 documents the two-operand form `li rd, imm`; llvm-mc 15.0.6 rejects a third operand; encoder/mod.rs:854 `"li" => encode_li(operands)` passes the operand slice through with no sanitizing wrapper)
+**Documentation conflict:** (none) — encode_li has no rustdoc. README.md:318 states the valid form `li rd, imm` and does not declare extra operands accepted.
 **Severity:** medium
-**Counterexample:** encode_v_crypto_vs([Reg("v0"), Reg("v0"), Imm(0)], 0b101001)
-**Expected / Actual:** Err / Ok(Word(0xa6082077))
-**Impact:** A stray third token is assembled as a complete vsm4r.vs instead of an assembler error.
-**Root cause:** vector.rs:212-215 reads only operands 0..1 via get_vreg and never checks operands.len() == 2.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:212`
+**Counterexample:** encode_li([Reg("zero"), Imm(0), Reg("zero")]) ; also encode_li([Reg("a0"), Imm(1), Reg("a1")])
+**Expected / Actual:** Err / Ok (encodes as `li zero, 0` / `li a0, 1`)
+**Impact:** An extra operand is dropped with no diagnostic, so typos and extra commas assemble as a shorter `li`.
+**Root cause:** pseudo.rs:6 reads operand 0 as rd and operand 1 as imm and never checks `operands.len()`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:6`
 ```rust
-    let vd = get_vreg(operands, 0)?;
-    let vs2 = get_vreg(operands, 1)?;
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (0b10000u32 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
-    Ok(EncodeResult::Word(word))
+    let rd = get_reg(operands, 0)?;
+    let imm = get_imm(operands, 1)?;
 ```
-**Suggested fix:** Reject any operand list that is not exactly two operands (vd, vs2).
+**Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("vsm4r.vs expects 2 operands, got {}", operands.len()));
+        return Err(format!("li: expected 2 operands, got {}", operands.len()));
     }
-    let vd = get_vreg(operands, 0)?;
+    let rd = get_reg(operands, 0)?;
+    let imm = get_imm(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_v_crypto_vs_extra_operand.md
-**Repro seed:** cc 6fddc69063b105bb95119c063f4ba4dd95dfbc17e1058fc7c3bfd1dce9171518
+**Bug report:** bug_reports/encode_li_extra_operand.md
+**Repro seed:** cc 22547b27eddfa80deea2d8334bd1e77fe0653c6328a14a336557ec6e970e6ae6
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_v_crypto_vs_pbt::encode_v_crypto_vs_neg_extra' (2893424) panicked at src/backend/riscv/assembler/encoder/encode_v_crypto_vs_pbt.rs:176:1:
-Test failed: extra operand Imm(0) must Err for crypto VS; got Ok(Word(2785550455)) at src/backend/riscv/assembler/encoder/encode_v_crypto_vs_pbt.rs:313.
-minimal failing input: vd = 0, vs2 = 0, extra = Imm(
-    0,
+thread 'backend::riscv::assembler::encoder::encode_li_pbt::encode_li_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_li_pbt.rs:395:1:
+Test failed: extra operand must Err for li zero, 0 (README two-operand; llvm-mc rejects) at src/backend/riscv/assembler/encoder/encode_li_pbt.rs:514.
+minimal failing input: rd = "zero", imm = 0, extra = Reg(
+    "zero",
 )
 	successes: 0
 	local rejects: 0
 	global rejects: 0
-```
 
-### B3: encode_v_crypto_vs ignores trailing v0.t on a non-maskable instruction
-
-**Formal:** ∀ vd, vs2 ∈ {0..31}. encode_v_crypto_vs([v{vd}, v{vs2}, Symbol("v0.t")], 0b101001) = Err(_)
-**Contract evidence:** inferred (vector.rs:210 vm=1; Volume II Zvksed VS is not maskable; encode_instruction passes operands through)
-**Documentation conflict:** (none) — vector.rs:210 asserts vm=1 packing, which does not declare v0.t invalid; the input is still accepted.
-**Severity:** medium
-**Counterexample:** encode_v_crypto_vs([Reg("v0"), Reg("v0"), Symbol("v0.t")], 0b101001)
-**Expected / Actual:** Err / Ok(Word(0xa6082077)) with vm=1
-**Impact:** vsm4r.vs vd, vs2, v0.t assembles as unmasked instead of being rejected.
-**Root cause:** vector.rs:212-215 never inspects operands past index 1, and vm is hardcoded to 1.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/vector.rs:212`
-```rust
-    let vd = get_vreg(operands, 0)?;
-    let vs2 = get_vreg(operands, 1)?;
-    let word = (funct6 << 26) | (1u32 << 25) | (vs2 << 20) | (0b10000u32 << 15) | (0b010 << 12) | (vd << 7) | OP_V_CRYPTO;
-    Ok(EncodeResult::Word(word))
-```
-**Suggested fix:** Reject a third v0.t (and any other extra operand). These instructions are not maskable.
-```rust
-    if operands.len() != 2 {
-        return Err(format!("vsm4r.vs expects 2 operands (not maskable), got {}", operands.len()));
-    }
-    let vd = get_vreg(operands, 0)?;
-```
-**Bug report:** bug_reports/encode_v_crypto_vs_mask_v0t.md
-**Repro seed:** vd=0, vs2=0
-**Raw output:**
-```text
-thread 'backend::riscv::assembler::encoder::encode_v_crypto_vs_pbt::encode_v_crypto_vs_neg_mask_v0t' (2893425) panicked at src/backend/riscv/assembler/encoder/encode_v_crypto_vs_pbt.rs:176:1:
-Test failed: trailing v0.t must Err (Zvksed VS is not maskable); got Ok(Word(2785550455)) at src/backend/riscv/assembler/encoder/encode_v_crypto_vs_pbt.rs:328.
-minimal failing input: vd = 0, vs2 = 0
-	successes: 0
-	local rejects: 0
-	global rejects: 0
+thread 'backend::riscv::assembler::encoder::encode_li_pbt::test_encode_li_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_li_pbt.rs:389:5:
+li a0, 1 with a third operand must be rejected (llvm-mc rejects; README documents `li rd, imm`)
 ```
 
 ## Design Caveats
@@ -134,44 +68,44 @@ minimal failing input: vd = 0, vs2 = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_v_crypto_vs_pbt.rs | 7 properties + 3 passing rustdoc KAT + 1 failing spec KAT + 3 failing regression witnesses |
+| src/backend/riscv/assembler/encoder/encode_li_pbt.rs | 8 properties + 1 KAT + 1 regression witness |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_v_crypto_vs -- --test-threads=1
+cargo test --lib encode_li -- --test-threads=1
 ```
 
-B1 opcode:
+Bug B1 (extra operand):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_crypto_vs_regression_spec_opcode -- --test-threads=1
-```
-
-B2 extra operand:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_crypto_vs_regression_extra_operand -- --test-threads=1
-```
-
-B3 trailing v0.t:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_v_crypto_vs_regression_mask_v0t -- --test-threads=1
+cargo test --lib test_encode_li_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
-pbt-out/PLAN.md, pbt-out/PROPERTIES.md, pbt-out/REPORT.md, pbt-out/REPORT.html, pbt-out/report.json, pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md, pbt-out/FUNCTION_INDEX.md, pbt-out/INVARIANTS.md, pbt-out/CHANGE_SURFACE.md, pbt-out/run/encode_v_crypto_vs.log, pbt-out/bug_reports/encode_v_crypto_vs_spec_opcode.md, pbt-out/bug_reports/encode_v_crypto_vs_spec_opcode.html, pbt-out/bug_reports/encode_v_crypto_vs_extra_operand.md, pbt-out/bug_reports/encode_v_crypto_vs_extra_operand.html, pbt-out/bug_reports/encode_v_crypto_vs_mask_v0t.md, pbt-out/bug_reports/encode_v_crypto_vs_mask_v0t.html
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/INVARIANTS.md
+- pbt-out/report.json
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_li_extra_operand.md
+- pbt-out/bug_reports/encode_li_extra_operand.html
+- src/backend/riscv/assembler/encoder/encode_li_pbt.rs
+- proptest-regressions/backend/riscv/assembler/encoder/encode_li_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 02:24 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 235/383 total | PBT candidates: 235 | Tested: 235 (100%) | 1 pass, 235 fail
+> Last updated: 2026-10-07 02:43 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 236/383 total | PBT candidates: 236 | Tested: 236 (100%) | 1 pass, 236 fail
 
 ## Summary
 
@@ -180,10 +114,10 @@ pbt-out/PLAN.md, pbt-out/PROPERTIES.md, pbt-out/REPORT.md, pbt-out/REPORT.html, 
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 235 |
-| **Tested (of PBT candidates)** | **235 / 235 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 235 / -1 |
-| **Overall (tested / all functions)** | **235 / 383 (61%)** |
+| PBT candidates (from FUNCTION_INDEX) | 236 |
+| **Tested (of PBT candidates)** | **236 / 236 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 236 / -1 |
+| **Overall (tested / all functions)** | **236 / 383 (62%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -191,13 +125,13 @@ pbt-out/PLAN.md, pbt-out/PROPERTIES.md, pbt-out/REPORT.md, pbt-out/REPORT.html, 
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 235 | 235 | 0 | 100% |
+|  | 236 | 236 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 235 | 235 | 0 | 100% |
+| unknown | 236 | 236 | 0 | 100% |
 
 ## File Coverage
 
@@ -211,7 +145,7 @@ pbt-out/PLAN.md, pbt-out/PROPERTIES.md, pbt-out/REPORT.md, pbt-out/REPORT.html, 
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 1 | 1 | 100% | covered |
+| pseudo.rs | 44 | 2 | 2 | 100% | covered |
 
 ## Recommended Focus
 
@@ -455,3 +389,4 @@ pbt-out/PLAN.md, pbt-out/PROPERTIES.md, pbt-out/REPORT.md, pbt-out/REPORT.html, 
 | encode_v_crypto_vi | vector.rs |
 | encode_v_crypto_vv | vector.rs |
 | encode_v_crypto_vs | vector.rs |
+| encode_li | pseudo.rs |
