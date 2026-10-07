@@ -69,3 +69,6 @@
 | 26 | src/backend/x86/assembler | suffix-less movzx/movsx + cwde/cdqe rejected (8 forms; suffixed forms all byte-exact) | **new issue filed** | [#841](https://github.com/fermat-hkrc/claudes-c-compiler/issues/841) |
 | 26 | src/backend/arm/assembler | ldursb/ldursh/ldursw unscaled sign-ext loads missing | **new issue filed** (21-form battery) | [#842](https://github.com/fermat-hkrc/claudes-c-compiler/issues/842) |
 | 26 | src/frontend/sema | named zero-width bit-field accepted (C11 constraint violation) | **new issue filed** | [#848](https://github.com/fermat-hkrc/claudes-c-compiler/issues/848) |
+| 28 | src/backend/i686/assembler | 12 system/legacy instructions missing (shrdl/xlat/enter/into/bound/arpl/lldt/sldt/str/verr/verw/lar) | **new issue filed** (dedup-clean) | [#1039](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1039) |
+| 28 | src/backend/x86/assembler | lzcnt/tzcnt (ABM) + adcx/adox (ADX) missing (4 forms) | **new issue filed** (dedup-clean) | [#1040](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1040) |
+| 28 | src/backend/riscv/assembler | Zbb instructions (andn/clz/rol/min etc.) without +zbb gate (15 forms) | **new issue filed** (dedup-clean) | [#1041](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1041) |

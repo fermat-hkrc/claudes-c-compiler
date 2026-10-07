@@ -1,0 +1,2274 @@
+[
+ [
+  1038,
+  "Bug: encode_vmv_v_x ignores trailing v0.t"
+ ],
+ [
+  1037,
+  "Bug: encode_vmv_v_x ignores extra operands"
+ ],
+ [
+  1036,
+  "Bug: encode_vmv_v_v ignores trailing v0.t"
+ ],
+ [
+  1035,
+  "Bug: encode_vmv_v_v ignores extra operands"
+ ],
+ [
+  1034,
+  "Bug: encode_v_arith_vi drops v0.t and encodes unmasked"
+ ],
+ [
+  1033,
+  "Bug: encode_v_arith_vi truncates out-of-range immediates"
+ ],
+ [
+  1032,
+  "Bug: encode_v_arith_vi ignores extra operands"
+ ],
+ [
+  1031,
+  "Bug: encode_v_arith_vx drops v0.t and encodes unmasked"
+ ],
+ [
+  1030,
+  "Bug: encode_v_arith_vx ignores extra operands"
+ ],
+ [
+  1029,
+  "Bug: encode_v_arith_vv drops v0.t and encodes unmasked"
+ ],
+ [
+  1028,
+  "Bug: encode_v_arith_vv ignores extra operands"
+ ],
+ [
+  1027,
+  "Bug: encode_vstore ignores extra operands"
+ ],
+ [
+  1026,
+  "Bug: encode_vload ignores extra operands"
+ ],
+ [
+  1025,
+  "Bug: encode_vsetvl ignores extra operands"
+ ],
+ [
+  1024,
+  "Bug: encode_vsetivli rejects RVV 1.0 wide SEW e128/e256/e512/e1024"
+ ],
+ [
+  1023,
+  "Bug: encode_vsetivli silently truncates raw vtypei above 10 bits"
+ ],
+ [
+  1022,
+  "Bug: encode_vsetivli silently truncates AVL outside 0..=31"
+ ],
+ [
+  1021,
+  "Bug: encode_vsetivli ignores or last-wins extra operands"
+ ],
+ [
+  1020,
+  "Bug: encode_vsetivli accepts two operands and defaults vtypei to 0"
+ ],
+ [
+  1019,
+  "Bug: encode_vsetvli rejects RVV 1.0 SEW e128/e256/e512/e1024"
+ ],
+ [
+  1018,
+  "Bug: encode_vsetvli ignores or last-wins extra operands"
+ ],
+ [
+  1017,
+  "Bug: encode_vsetvli accepts two-operand form (missing vtypei)"
+ ],
+ [
+  1016,
+  "Bug: encode_c_jalr encodes rs1=x0 as C.EBREAK instead of rejecting it"
+ ],
+ [
+  1015,
+  "Bug: encode_c_jalr ignores extra operands"
+ ],
+ [
+  1014,
+  "Bug: encode_c_jr encodes rs1=x0 as a reserved halfword instead of rejecting it"
+ ],
+ [
+  1013,
+  "Bug: encode_c_jr ignores extra operands"
+ ],
+ [
+  1012,
+  "Bug: encode_c_add encodes rs2=x0 as C.JALR / C.EBREAK instead of rejecting it"
+ ],
+ [
+  1011,
+  "Bug: encode_c_add ignores extra operands"
+ ],
+ [
+  1010,
+  "Bug: encode_c_mv encodes rs2=x0 as C.JR instead of rejecting it"
+ ],
+ [
+  1009,
+  "Bug: encode_c_mv ignores extra operands"
+ ],
+ [
+  1008,
+  "Bug: encode_c_addi truncates out-of-range immediates to 6 bits"
+ ],
+ [
+  1007,
+  "Bug: encode_c_addi ignores extra operands"
+ ],
+ [
+  1006,
+  "Bug: encode_c_li truncates out-of-range immediates to 6 bits"
+ ],
+ [
+  1005,
+  "Bug: encode_c_li ignores extra operands"
+ ],
+ [
+  1004,
+  "Bug: encode_c_lui truncates out-of-range immediates to 6 bits"
+ ],
+ [
+  1003,
+  "Bug: encode_c_lui ignores extra operands"
+ ],
+ [
+  1002,
+  "Bug: encode_fma maps a non-RoundingMode 5th operand to rm=DYN"
+ ],
+ [
+  1001,
+  "Bug: encode_fma ignores a 6th operand"
+ ],
+ [
+  1000,
+  "Bug: encode_fmv_f_x ignores a 3rd RoundingMode"
+ ],
+ [
+  999,
+  "Bug: encode_fmv_f_x ignores a 3rd operand"
+ ],
+ [
+  998,
+  "Bug: encode_fmv_x_f ignores a 3rd RoundingMode"
+ ],
+ [
+  997,
+  "Bug: encode_fmv_x_f ignores a 3rd operand"
+ ],
+ [
+  996,
+  "Bug: encode_fcvt_fp treats a non-rounding-mode 3rd operand as DYN"
+ ],
+ [
+  995,
+  "Bug: encode_fcvt_fp ignores a 4th operand"
+ ],
+ [
+  994,
+  "Bug: encode_fcvt_fp encodes omitted rm as DYN on FCVT.D.S; llvm-mc encodes RNE"
+ ],
+ [
+  993,
+  "Bug: encode_fcvt_from_int treats a non-rounding-mode 3rd operand as DYN"
+ ],
+ [
+  992,
+  "Bug: encode_fcvt_from_int ignores a 4th operand"
+ ],
+ [
+  991,
+  "Bug: encode_fcvt_from_int encodes omitted rm as DYN on FCVT.D.W/WU; llvm-mc encodes RNE"
+ ],
+ [
+  990,
+  "Bug: encode_fcvt_int treats a non-rounding-mode 3rd operand as DYN"
+ ],
+ [
+  989,
+  "Bug: encode_fcvt_int ignores a 4th operand"
+ ],
+ [
+  988,
+  "Bug: encode_fclass ignores a 3rd RoundingMode"
+ ],
+ [
+  987,
+  "Bug: encode_fclass ignores a 3rd operand"
+ ],
+ [
+  986,
+  "Bug: encode_fp_cmp ignores a 4th RoundingMode"
+ ],
+ [
+  985,
+  "Bug: encode_fp_cmp ignores a 4th operand"
+ ],
+ [
+  983,
+  "Bug: encode_fp_sgnj ignores a 4th RoundingMode"
+ ],
+ [
+  982,
+  "Bug: encode_fp_sgnj ignores a 4th operand"
+ ],
+ [
+  981,
+  "Bug: encode_fp_unary treats a non-rounding-mode 3rd operand as DYN"
+ ],
+ [
+  980,
+  "Bug: encode_fp_unary ignores a 4th operand"
+ ],
+ [
+  979,
+  "Bug: encode_fp_arith_d ignores a 5th operand"
+ ],
+ [
+  978,
+  "Bug: encode_fp_arith_d treats a non-rounding-mode 4th operand as DYN"
+ ],
+ [
+  977,
+  "Bug: encode_fp_arith ignores a 5th operand"
+ ],
+ [
+  976,
+  "Bug: encode_fp_arith treats a non-rounding-mode 4th operand as DYN"
+ ],
+ [
+  975,
+  "Bug: encode_float_store emits I-type lo relocs on S-type STORE-FP"
+ ],
+ [
+  974,
+  "Bug: encode_float_store silently truncates out-of-range S-type immediates"
+ ],
+ [
+  973,
+  "Bug: encode_float_store accepts %hi/%pcrel_hi/%tprel_hi on STORE-FP memory operands"
+ ],
+ [
+  972,
+  "Bug: encode_float_store ignores extra operands"
+ ],
+ [
+  971,
+  "Bug: encode_float_load silently truncates out-of-range I-type immediates"
+ ],
+ [
+  970,
+  "Bug: encode_float_load accepts %hi/%pcrel_hi/%tprel_hi on FLW/FLD"
+ ],
+ [
+  969,
+  "Bug: encode_float_load ignores extra operands"
+ ],
+ [
+  968,
+  "Bug: encode_csri masks out-of-range zimm instead of rejecting"
+ ],
+ [
+  967,
+  "Bug: encode_csri ignores extra operands"
+ ],
+ [
+  966,
+  "Bug: encode_csri masks out-of-range CSR numbers instead of rejecting"
+ ],
+ [
+  965,
+  "Bug: encode_sfence_vma ignores extra operands"
+ ],
+ [
+  964,
+  "Bug: encode_sc silently drops a nonzero memory offset"
+ ],
+ [
+  963,
+  "Bug: encode_sc ignores extra operands"
+ ],
+ [
+  962,
+  "Bug: encode_lr silently drops a nonzero memory offset"
+ ],
+ [
+  961,
+  "Bug: encode_lr ignores extra operands"
+ ],
+ [
+  960,
+  "Bug: encode_amo silently drops a nonzero memory offset"
+ ],
+ [
+  959,
+  "Bug: encode_amo ignores extra operands"
+ ],
+ [
+  958,
+  "Bug: encode_fence accepts out-of-order and duplicate iorw letters"
+ ],
+ [
+  957,
+  "Bug: encode_fence maps registers and non-zero immediates to iorw"
+ ],
+ [
+  956,
+  "Bug: encode_fence treats Imm(0) as iorw (full barrier)"
+ ],
+ [
+  955,
+  "Bug: encode_fence ignores extra operands"
+ ],
+ [
+  954,
+  "Bug: encode_fence with one operand encodes fence iorw, iorw"
+ ],
+ [
+  953,
+  "Bug: encode_csr masks out-of-range zimm instead of rejecting"
+ ],
+ [
+  952,
+  "Bug: encode_csr ignores extra operands"
+ ],
+ [
+  951,
+  "Bug: encode_csr truncates CSR numbers outside 0..=4095"
+ ],
+ [
+  950,
+  "Bug: encode_alu_reg_w ignores extra operands"
+ ],
+ [
+  949,
+  "Bug: encode_alu_imm_w rejects I-type %lo/%pcrel_lo/%tprel_lo"
+ ],
+ [
+  948,
+  "Bug: encode_alu_imm_w wraps out-of-range immediates"
+ ],
+ [
+  947,
+  "Bug: encode_alu_imm_w ignores extra operands"
+ ],
+ [
+  946,
+  "Bug: encode_alu_reg ignores extra operands"
+ ],
+ [
+  945,
+  "Bug: encode_alu_imm accepts GOT/TLS/plain symbols as OP-IMM immediates"
+ ],
+ [
+  944,
+  "Bug: encode_alu_imm wraps out-of-range OP-IMM immediates"
+ ],
+ [
+  943,
+  "Bug: encode_alu_imm accepts %hi/%pcrel_hi/%tprel_hi on OP-IMM immediates"
+ ],
+ [
+  942,
+  "Bug: encode_alu_imm ignores extra operands"
+ ],
+ [
+  941,
+  "Bug: encode_store accepts GOT/TLS/plain MemSymbol modifiers"
+ ],
+ [
+  940,
+  "Bug: encode_store emits I-type lo relocs on S-type stores"
+ ],
+ [
+  939,
+  "Bug: encode_store wraps out-of-range store offsets"
+ ],
+ [
+  938,
+  "Bug: encode_store accepts %hi/%pcrel_hi/%tprel_hi on store memory operands"
+ ],
+ [
+  937,
+  "Bug: encode_store ignores extra operands"
+ ],
+ [
+  936,
+  "Bug: encode_load rejects ld rd, symbol+addend"
+ ],
+ [
+  935,
+  "Bug: encode_load wraps out-of-range I-type offsets"
+ ],
+ [
+  934,
+  "Bug: encode_load accepts %hi/%pcrel_hi/%tprel_hi as Lo12I"
+ ],
+ [
+  933,
+  "Bug: encode_load ignores extra operands"
+ ],
+ [
+  932,
+  "Bug: encode_branch_instr rejects SymbolOffset (symbol+addend) as a branch target"
+ ],
+ [
+  931,
+  "Bug: encode_branch_instr silently truncates odd and out-of-range immediates"
+ ],
+ [
+  930,
+  "Bug: encode_branch_instr ignores a fourth operand"
+ ],
+ [
+  929,
+  "Bug: encode_jalr rejects %pcrel_lo/%lo mem-symbol operands"
+ ],
+ [
+  928,
+  "Bug: encode_jalr rejects 1-operand mem form jalr off(rs1)"
+ ],
+ [
+  927,
+  "Bug: encode_jalr silently truncates out-of-range immediates"
+ ],
+ [
+  926,
+  "Bug: encode_jal rejects SymbolOffset instead of emitting R_RISCV_JAL with addend"
+ ],
+ [
+  925,
+  "Bug: encode_jal silently truncates odd and out-of-range immediates"
+ ],
+ [
+  924,
+  "Bug: encode_jal ignores a third operand"
+ ],
+ [
+  923,
+  "Bug: encode_auipc treats %pcrel_hi(foo+4) as symbol \"foo+4\" with addend 0"
+ ],
+ [
+  922,
+  "Bug: encode_auipc silently truncates immediates outside [0, 1048575]"
+ ],
+ [
+  921,
+  "Bug: encode_auipc ignores a third operand"
+ ],
+ [
+  920,
+  "Bug: encode_auipc accepts plain symbols and non-AUIPC reloc modifiers"
+ ],
+ [
+  919,
+  "Bug: encode_lui silently truncates immediates outside [0, 1048575]"
+ ],
+ [
+  918,
+  "Bug: encode_lui treats %hi(foo+4) as symbol \"foo+4\" with addend 0"
+ ],
+ [
+  917,
+  "Bug: encode_lui ignores extra operands"
+ ],
+ [
+  916,
+  "Bug: encode_lui accepts plain symbols and non-%hi modifiers as R_RISCV_HI20"
+ ],
+ [
+  915,
+  "Bug: encode_ldr_str_auto accepts SP as LDR/STR Rt and encodes it as D31"
+ ],
+ [
+  914,
+  "Bug: encode_ldr_str_auto rejects the GNU fp alias of X29"
+ ],
+ [
+  913,
+  "Bug: encode_ldr_str_auto encodes Bt/Ht as 64-bit D-form"
+ ],
+ [
+  912,
+  "Bug: encode_ldr_str_auto encodes bare Vn as D-form instead of rejecting it"
+ ],
+ [
+  911,
+  "Bug: encode_cond_branch accepts :lo12: modifiers as branch targets"
+ ],
+ [
+  910,
+  "Bug: encode_cond_branch rejects a valid immediate PC offset"
+ ],
+ [
+  909,
+  "Bug: encode_cond_branch ignores extra operands"
+ ],
+ [
+  908,
+  "Bug: encode_mov treats WSP as WZR (ORR) instead of ADD #0"
+ ],
+ [
+  907,
+  "Bug: encode_mov WSP form is not ADD (S bit / 10001 layout)"
+ ],
+ [
+  906,
+  "Bug: encode_mov truncates a 64-bit immediate on a W destination"
+ ],
+ [
+  905,
+  "Bug: encode_mov encodes mov v0.4s, v1.4s with Q=0"
+ ],
+ [
+  904,
+  "Bug: encode_mov encodes mov sp, #imm as MOVZ XZR"
+ ],
+ [
+  903,
+  "Bug: encode_mov accepts mixed X/W register MOV"
+ ],
+ [
+  902,
+  "Bug: encode_mov wraps out-of-range NEON lane indices"
+ ],
+ [
+  901,
+  "Bug: encode_mov encodes FP scalar registers as integer ORR"
+ ],
+ [
+  900,
+  "Bug: encode_mov ignores extra operands"
+ ],
+ [
+  899,
+  "Bug: encode_mov accepts mismatched NEON arrangements"
+ ],
+ [
+  898,
+  "Bug: encode_adrp accepts W, SP, and FP/SIMD destinations"
+ ],
+ [
+  897,
+  "Bug: encode_adrp rejects :got:symbol+addend"
+ ],
+ [
+  896,
+  "Bug: encode_adrp ignores extra operands"
+ ],
+ [
+  895,
+  "Bug: encode_ldnp_stnp encodes SIMD S/D/Q pairs as integer (V=0)"
+ ],
+ [
+  894,
+  "Bug: encode_ldnp_stnp accepts invalid register forms that llvm-mc rejects"
+ ],
+ [
+  893,
+  "Bug: encode_ldnp_stnp masks out-of-range and unaligned offsets instead of rejecting them"
+ ],
+ [
+  892,
+  "Bug: encode_ldnp_stnp ignores a fourth operand"
+ ],
+ [
+  891,
+  "Bug: encode_ldp_stp accepts XZR/x31 as the memory base"
+ ],
+ [
+  890,
+  "Bug: encode_ldp_stp encodes writeback when Rn is also Rt1 or Rt2"
+ ],
+ [
+  889,
+  "Bug: encode_ldp_stp accepts a 32-bit W register as the memory base"
+ ],
+ [
+  888,
+  "Bug: encode_ldp_stp accepts SP as Rt1/Rt2"
+ ],
+ [
+  887,
+  "Bug: encode_ldp_stp accepts a mixed X/W pair"
+ ],
+ [
+  886,
+  "Bug: encode_ldp_stp encodes LDP with Rt1 == Rt2"
+ ],
+ [
+  885,
+  "Bug: encode_ldp_stp accepts invalid register forms that llvm-mc rejects"
+ ],
+ [
+  884,
+  "Bug: encode_ldp_stp wraps out-of-range and unaligned pair offsets"
+ ],
+ [
+  883,
+  "Bug: encode_ldp_stp ignores a fourth operand"
+ ],
+ [
+  882,
+  "Bug: encode_ldr_str treats XZR/x31 as SP for the base register"
+ ],
+ [
+  881,
+  "Bug: encode_ldr_str encodes pre/post writeback when Rt == Rn"
+ ],
+ [
+  880,
+  "Bug: encode_ldr_str accepts a W index without uxtw/sxtw"
+ ],
+ [
+  879,
+  "Bug: encode_ldr_str accepts a W-register memory base"
+ ],
+ [
+  878,
+  "Bug: encode_ldr_str accepts SP as Rt and classifies it as SIMD"
+ ],
+ [
+  877,
+  "Bug: encode_ldr_str truncates out-of-range offsets into imm9"
+ ],
+ [
+  876,
+  "Bug: encode_ldr_str ignores extra operands"
+ ],
+ [
+  875,
+  "Bug: encode_ldr_str encodes byte LSL #0 with S=0 instead of S=1"
+ ],
+ [
+  874,
+  "Bug: encode_uxtb accepts an X-register source"
+ ],
+ [
+  873,
+  "Bug: encode_uxtb emits 64-bit UBFM for an X destination"
+ ],
+ [
+  872,
+  "Bug: encode_uxtb treats SP/WSP as ZR"
+ ],
+ [
+  871,
+  "Bug: encode_uxtb accepts FP/SIMD registers as GPRs"
+ ],
+ [
+  870,
+  "Bug: encode_uxtb silently ignores a 3rd operand"
+ ],
+ [
+  869,
+  "Bug: encode_uxth accepts an X-register source"
+ ],
+ [
+  868,
+  "Bug: encode_uxth emits 64-bit UBFM for an X destination"
+ ],
+ [
+  867,
+  "Bug: encode_uxth treats SP/WSP as ZR"
+ ],
+ [
+  866,
+  "Bug: encode_uxth accepts FP/SIMD registers as GPRs"
+ ],
+ [
+  865,
+  "Bug: encode_uxth silently ignores a 3rd operand"
+ ],
+ [
+  864,
+  "Bug: encode_sxtb accepts SXTB Wd, Xn"
+ ],
+ [
+  863,
+  "Bug: encode_sxtb treats SP/WSP as ZR"
+ ],
+ [
+  862,
+  "Bug: encode_sxtb accepts FP/SIMD registers as GPRs"
+ ],
+ [
+  861,
+  "Bug: encode_sxtb silently ignores a 3rd operand"
+ ],
+ [
+  860,
+  "Bug: encode_mneg encodes SP/WSP as ZR"
+ ],
+ [
+  859,
+  "Bug: encode_mneg accepts mixed W/X register widths"
+ ],
+ [
+  858,
+  "Bug: encode_mneg encodes FP/SIMD registers as GPRs"
+ ],
+ [
+  857,
+  "Bug: encode_mneg silently ignores a 4th operand"
+ ],
+ [
+  856,
+  "Bug: encode_smaddl accepts W/X mixes that llvm-mc rejects"
+ ],
+ [
+  855,
+  "Bug: encode_smaddl encodes SP/WSP as XZR/WZR"
+ ],
+ [
+  854,
+  "Bug: encode_smaddl accepts FP/SIMD registers as GPRs"
+ ],
+ [
+  853,
+  "Bug: encode_smaddl silently ignores a 5th operand"
+ ],
+ [
+  852,
+  "Bug: encode_crc32 ignores W vs X register width"
+ ],
+ [
+  851,
+  "Bug: encode_crc32 accepts SP/WSP as register 31"
+ ],
+ [
+  850,
+  "Bug: encode_crc32 accepts FP/SIMD registers as GPRs"
+ ],
+ [
+  849,
+  "Bug: encode_crc32 ignores extra operands"
+ ],
+ [
+  847,
+  "Bug: encode_tbz accepts SP/WSP as Rt and encodes it as ZR"
+ ],
+ [
+  846,
+  "Bug: encode_tbz rejects immediate PC-offset form `tbz/tbnz Rt, #bit, #imm`"
+ ],
+ [
+  845,
+  "Bug: encode_tbz accepts FP/SIMD registers as Rt"
+ ],
+ [
+  844,
+  "Bug: encode_tbz ignores extra operands"
+ ],
+ [
+  843,
+  "Bug: encode_tbz masks out-of-range bit numbers instead of rejecting them"
+ ],
+ [
+  817,
+  "Bug: encode_tst encodes SP/WSP as XZR/WZR"
+ ],
+ [
+  816,
+  "Bug: encode_tst wraps out-of-range shift amounts"
+ ],
+ [
+  815,
+  "Bug: encode_tst accepts mixed W/X register pairs"
+ ],
+ [
+  814,
+  "Bug: encode_tst accepts FP/SIMD registers as GPRs"
+ ],
+ [
+  813,
+  "Bug: encode_tst ignores extra operands"
+ ],
+ [
+  811,
+  "Bug: encode_fnmadd_fnmsub accepts mixed S/D, GPR, Q/V/B, and SP operands"
+ ],
+ [
+  810,
+  "Bug: encode_fnmadd_fnmsub encodes H registers as ftype=00 (single) instead of ftype=11 (half)"
+ ],
+ [
+  809,
+  "Bug: encode_fnmadd_fnmsub ignores extra operands"
+ ],
+ [
+  804,
+  "Bug: encode_stop accepts SP as Rs and XZR/W as base"
+ ],
+ [
+  803,
+  "Bug: encode_stop ignores a nonzero Mem offset"
+ ],
+ [
+  802,
+  "Bug: encode_stop accepts FP/SIMD Rs and X registers on STADDB/STADDH"
+ ],
+ [
+  801,
+  "Bug: encode_stop ignores a third operand"
+ ],
+ [
+  790,
+  "Bug: encode_ldop accepts SP/WSP as Rs or Rt and W/XZR as base"
+ ],
+ [
+  789,
+  "Bug: encode_ldop ignores a nonzero Mem offset"
+ ],
+ [
+  788,
+  "Bug: encode_ldop accepts mixed W/X, FP registers, and X registers on byte/half variants"
+ ],
+ [
+  787,
+  "Bug: encode_ldop ignores a fourth operand"
+ ],
+ [
+  786,
+  "Bug: encode_swp accepts SP/WSP as Rs or Rt"
+ ],
+ [
+  785,
+  "Bug: encode_swp ignores a nonzero memory offset"
+ ],
+ [
+  784,
+  "Bug: encode_swp accepts mixed W/X data registers"
+ ],
+ [
+  783,
+  "Bug: encode_swp ignores a fourth operand"
+ ],
+ [
+  781,
+  "Bug: encode_tlbi accepts W/SP/SIMD registers as TLBI Xt"
+ ],
+ [
+  780,
+  "Bug: encode_tlbi rejects ARM default-CPU TLBI ops llvm-mc/gas assemble"
+ ],
+ [
+  779,
+  "Bug: encode_tlbi defaults a missing Xt to XZR instead of rejecting Xt-required ops"
+ ],
+ [
+  778,
+  "Bug: encode_tlbi accepts a register on no-Xt TLBI ops"
+ ],
+ [
+  773,
+  "Bug: encode_at accepts W/SP/SIMD registers as AT Xt"
+ ],
+ [
+  772,
+  "Bug: encode_at rejects ARM AT ops S1E2/S1E3/S12E*"
+ ],
+ [
+  771,
+  "Bug: encode_at encodes AT without Xt as AT XZR"
+ ],
+ [
+  769,
+  "Bug: encode_sys accepts W/SP/SIMD Xt as if they were X registers"
+ ],
+ [
+  768,
+  "Bug: encode_sys masks out-of-range op1/CRn/CRm/op2 instead of rejecting"
+ ],
+ [
+  767,
+  "Bug: encode_sys rejects the GNU Xt alias fp"
+ ],
+ [
+  766,
+  "Bug: encode_sys ignores a sixth operand"
+ ],
+ [
+  764,
+  "Bug: encode_dc accepts W, SP, and SIMD registers as Xt"
+ ],
+ [
+  763,
+  "Bug: encode_dc matches DC op names by substring"
+ ],
+ [
+  762,
+  "Bug: encode_dc encodes a missing Xt as x0"
+ ],
+ [
+  761,
+  "Bug: encode_dc ignores a third operand"
+ ],
+ [
+  758,
+  "Bug: encode_ic accepts W/SP/SIMD registers as IVAU Xt"
+ ],
+ [
+  757,
+  "Bug: encode_ic encodes IC IVAU without Xt as IVAU XZR"
+ ],
+ [
+  756,
+  "Bug: encode_ic accepts a register on IALLUIS/IALLU"
+ ],
+ [
+  755,
+  "Bug: encode_hint masks immediates outside 0..=127 instead of rejecting"
+ ],
+ [
+  754,
+  "Bug: encode_hint ignores extra operands"
+ ],
+ [
+  753,
+  "Bug: encode_brk masks immediates outside 0..=65535 instead of rejecting"
+ ],
+ [
+  752,
+  "Bug: encode_brk ignores extra operands"
+ ],
+ [
+  751,
+  "Bug: encode_smc masks immediates outside 0..=65535 instead of rejecting"
+ ],
+ [
+  750,
+  "Bug: encode_smc ignores extra operands"
+ ],
+ [
+  749,
+  "Bug: encode_hvc masks immediates outside 0..=65535 instead of rejecting"
+ ],
+ [
+  748,
+  "Bug: encode_hvc ignores extra operands"
+ ],
+ [
+  747,
+  "Bug: encode_svc masks immediates outside 0..=65535 instead of rejecting"
+ ],
+ [
+  746,
+  "Bug: encode_svc ignores extra operands"
+ ],
+ [
+  745,
+  "Bug: encode_msr accepts Wt/SP/FP as Xt"
+ ],
+ [
+  744,
+  "Bug: encode_msr encodes read-only OSLSR_EL1"
+ ],
+ [
+  743,
+  "Bug: encode_msr masks PSTATE immediates outside 0..=15 instead of rejecting"
+ ],
+ [
+  742,
+  "Bug: encode_msr masks out-of-range generic S-form fields instead of rejecting"
+ ],
+ [
+  741,
+  "Bug: encode_msr ignores extra operands"
+ ],
+ [
+  740,
+  "Bug: encode_msr encodes CNTV_CVAL_EL0 with the wrong sysreg field"
+ ],
+ [
+  739,
+  "Bug: encode_mrs accepts a 32-bit Wt destination"
+ ],
+ [
+  738,
+  "Bug: encode_mrs encodes write-only OSLAR_EL1"
+ ],
+ [
+  737,
+  "Bug: encode_mrs masks out-of-range generic sysreg fields"
+ ],
+ [
+  736,
+  "Bug: encode_mrs ignores extra operands"
+ ],
+ [
+  735,
+  "Bug: encode_mrs encodes CNTV_CVAL_EL0 with the wrong sysreg field"
+ ],
+ [
+  734,
+  "Bug: encode_dsb encodes non-barrier operands as SY"
+ ],
+ [
+  733,
+  "Bug: encode_dsb ignores Operand::Imm and encodes SY"
+ ],
+ [
+  732,
+  "Bug: encode_dsb ignores extra operands"
+ ],
+ [
+  731,
+  "Bug: encode_dsb encodes omitted option as SY"
+ ],
+ [
+  730,
+  "Bug: encode_dmb encodes non-barrier operands as SY"
+ ],
+ [
+  729,
+  "Bug: encode_dmb ignores Operand::Imm and encodes SY"
+ ],
+ [
+  728,
+  "Bug: encode_dmb ignores extra operands"
+ ],
+ [
+  727,
+  "Bug: encode_dmb encodes omitted option as SY"
+ ],
+ [
+  726,
+  "Bug: encode_neon_two_misc_narrow accepts dest 8H with source 4S on XTN (Q=0)"
+ ],
+ [
+  725,
+  "Bug: encode_neon_two_misc_narrow silently encodes a third operand"
+ ],
+ [
+  724,
+  "Bug: encode_neon_two_misc_narrow encodes a bare V dest as XTN Vd.8B"
+ ],
+ [
+  723,
+  "Bug: encode_neon_scalar_qshrn ignores dest/src scalar class pairing"
+ ],
+ [
+  722,
+  "Bug: encode_neon_scalar_qshrn silently encodes a fourth operand"
+ ],
+ [
+  721,
+  "Bug: encode_neon_scalar_qshrn bits[28:24] are 01111 instead of ARM 11111"
+ ],
+ [
+  720,
+  "Bug: encode_neon_scalar_qshrn packs scalar SQSHRN as vector SQSHRN2"
+ ],
+ [
+  719,
+  "Bug: encode_neon_scalar_qshrn uppercase SQSHRN disagrees with llvm-mc"
+ ],
+ [
+  718,
+  "Bug: encode_neon_scalar_two_misc encodes mismatched dest/src SIMD class"
+ ],
+ [
+  717,
+  "Bug: encode_neon_scalar_two_misc silently encodes a third operand"
+ ],
+ [
+  716,
+  "Bug: encode_neon_scalar_addp encodes non-D dest and non-V source as scalar ADDP"
+ ],
+ [
+  715,
+  "Bug: encode_neon_scalar_addp silently encodes a third operand"
+ ],
+ [
+  714,
+  "Bug: encode_neon_scalar_three_same encodes non-D sources as Dd"
+ ],
+ [
+  713,
+  "Bug: encode_neon_scalar_three_same silently encodes a fourth operand"
+ ],
+ [
+  712,
+  "Bug: encode_neon_faddp scalar form does not check dest size against source T"
+ ],
+ [
+  711,
+  "Bug: encode_neon_faddp ignores source arrangements"
+ ],
+ [
+  710,
+  "Bug: encode_neon_faddp silently encodes a fourth operand"
+ ],
+ [
+  709,
+  "Bug: encode_neon_bitwise_insert ignores mismatched source arrangements"
+ ],
+ [
+  708,
+  "Bug: encode_neon_bitwise_insert encodes T outside {8B,16B}"
+ ],
+ [
+  707,
+  "Bug: encode_neon_bitwise_insert accepts GPR, SP, bare V, and FP scalars"
+ ],
+ [
+  706,
+  "Bug: encode_neon_bitwise_insert ignores a fourth operand"
+ ],
+ [
+  705,
+  "Bug: encode_neon_fcvtn accepts dest 8B and source 2S"
+ ],
+ [
+  704,
+  "Bug: encode_neon_fcvtn ignores a third operand"
+ ],
+ [
+  703,
+  "Bug: encode_neon_fcvtn encodes a bare V dest as FCVTN Vd.4H"
+ ],
+ [
+  702,
+  "Bug: encode_neon_fcvtl accepts dest 2S and ignores source arrangement"
+ ],
+ [
+  701,
+  "Bug: encode_neon_fcvtl encodes an X-prefixed destination as a V register"
+ ],
+ [
+  700,
+  "Bug: encode_neon_fcvtl ignores a third operand"
+ ],
+ [
+  699,
+  "Bug: encode_neon_float_elem accepts an X-prefixed destination as Vd"
+ ],
+ [
+  698,
+  "Bug: encode_neon_float_elem ARM size field is 00/01 instead of 10/11"
+ ],
+ [
+  697,
+  "Bug: encode_neon_float_elem leaves ARM size bit 23 clear"
+ ],
+ [
+  696,
+  "Bug: encode_neon_float_elem ignores a mismatched source arrangement"
+ ],
+ [
+  695,
+  "Bug: encode_neon_float_elem ignores a mismatched lane element size"
+ ],
+ [
+  694,
+  "Bug: encode_neon_float_elem accepts an out-of-range lane index"
+ ],
+ [
+  693,
+  "Bug: encode_neon_float_elem ignores a fourth operand"
+ ],
+ [
+  692,
+  "Bug: encode_neon_elem accepts an X-prefixed arranged destination as a V register"
+ ],
+ [
+  691,
+  "Bug: encode_neon_elem ignores a mismatched source arrangement"
+ ],
+ [
+  690,
+  "Bug: encode_neon_elem ignores RegLane elem_size"
+ ],
+ [
+  689,
+  "Bug: encode_neon_elem wraps an out-of-range lane index instead of rejecting it"
+ ],
+ [
+  688,
+  "Bug: encode_neon_elem truncates H-lane Rm v16-v31 to v0-v15"
+ ],
+ [
+  687,
+  "Bug: encode_neon_elem ignores a fourth operand"
+ ],
+ [
+  686,
+  "Bug: encode_neon_elem_long ignores destination arrangement"
+ ],
+ [
+  685,
+  "Bug: encode_neon_elem_long ignores the lane element size"
+ ],
+ [
+  684,
+  "Bug: encode_neon_elem_long silently truncates H-lane Rm v16\u2013v31 to v0\u2013v15"
+ ],
+ [
+  683,
+  "Bug: encode_neon_elem_long accepts a GPR destination as a NEON register"
+ ],
+ [
+  682,
+  "Bug: encode_neon_elem_long ignores a fourth operand"
+ ],
+ [
+  681,
+  "Bug: encode_neon_cmp_zero encodes reserved .1d (size:Q=11:0)"
+ ],
+ [
+  680,
+  "Bug: encode_neon_cmp_zero accepts GPR/non-V names as NEON registers"
+ ],
+ [
+  679,
+  "Bug: encode_neon_cmp_zero ignores source arrangement mismatch"
+ ],
+ [
+  678,
+  "Bug: encode_neon_cmp_zero ignores a fourth operand"
+ ],
+ [
+  677,
+  "Bug: encode_neon_logical ignores mismatched source arrangements"
+ ],
+ [
+  676,
+  "Bug: encode_neon_logical accepts arrangements other than .8b/.16b"
+ ],
+ [
+  675,
+  "Bug: encode_neon_logical encodes GPR/SP/bare/FP sources as NEON registers"
+ ],
+ [
+  674,
+  "Bug: encode_neon_logical ignores a fourth operand"
+ ],
+ [
+  673,
+  "Bug: encode_neon_logical encodes ANDS vector form as EOR"
+ ],
+ [
+  672,
+  "Bug: encode_neon_three_diff takes WIDE size/Q from Vn instead of narrow Vm"
+ ],
+ [
+  671,
+  "Bug: encode_neon_three_diff ignores Vm arrangement"
+ ],
+ [
+  670,
+  "Bug: encode_neon_three_diff accepts a GPR as Vm"
+ ],
+ [
+  669,
+  "Bug: encode_neon_three_diff ignores a fourth operand"
+ ],
+ [
+  668,
+  "Bug: encode_neon_three_diff discards destination arrangement"
+ ],
+ [
+  667,
+  "Bug: encode_neon_three_same encodes reserved .1d (size:Q = 11:0)"
+ ],
+ [
+  666,
+  "Bug: encode_neon_three_same ignores source arrangements"
+ ],
+ [
+  665,
+  "Bug: encode_neon_three_same encodes a GPR name as Vd"
+ ],
+ [
+  664,
+  "Bug: encode_neon_three_same ignores a fourth operand"
+ ],
+ [
+  663,
+  "Bug: encode_neon_three_same accepts a bare Vn/Vm without arrangement"
+ ],
+ [
+  662,
+  "Bug: encode_neon_mls encodes reserved .1d/.2d MLS"
+ ],
+ [
+  661,
+  "Bug: encode_neon_mls ignores source arrangement mismatch"
+ ],
+ [
+  660,
+  "Bug: encode_neon_mls accepts bare V / GPR as NEON MLS operands"
+ ],
+ [
+  659,
+  "Bug: encode_neon_mls ignores a fourth operand"
+ ],
+ [
+  658,
+  "Bug: encode_neon_mla encodes reserved .1d/.2d MLA"
+ ],
+ [
+  657,
+  "Bug: encode_neon_mla ignores source arrangement mismatch"
+ ],
+ [
+  656,
+  "Bug: encode_neon_mla accepts bare V / GPR as NEON MLA operands"
+ ],
+ [
+  655,
+  "Bug: encode_neon_mla ignores a fourth operand"
+ ],
+ [
+  654,
+  "Bug: encode_neon_pmul encodes reserved non-byte T as 8B"
+ ],
+ [
+  653,
+  "Bug: encode_neon_pmul ignores source arrangement mismatch"
+ ],
+ [
+  652,
+  "Bug: encode_neon_pmul encodes GPR and bare-V operands as NEON registers"
+ ],
+ [
+  651,
+  "Bug: encode_neon_pmul ignores a fourth operand"
+ ],
+ [
+  650,
+  "Bug: encode_neon_mul encodes reserved .1d/.2d MUL"
+ ],
+ [
+  649,
+  "Bug: encode_neon_mul ignores source arrangements"
+ ],
+ [
+  648,
+  "Bug: encode_neon_mul ignores a fourth operand"
+ ],
+ [
+  647,
+  "Bug: encode_neon_mul accepts a bare Vn / GPR dest as a NEON register"
+ ],
+ [
+  646,
+  "Bug: encode_neon_xtl encodes mismatched UXTL/SXTL arrangements"
+ ],
+ [
+  645,
+  "Bug: encode_neon_xtl encodes GPR or bare-V destinations as SIMD V registers"
+ ],
+ [
+  644,
+  "Bug: encode_neon_xtl ignores extra operands"
+ ],
+ [
+  643,
+  "Bug: encode_neon_two_misc encodes opcode-reserved arrangements"
+ ],
+ [
+  642,
+  "Bug: encode_neon_two_misc encodes SADDLP/UADDLP/SADALP/UADALP size from dest T, not source"
+ ],
+ [
+  641,
+  "Bug: encode_neon_two_misc ignores source arrangement"
+ ],
+ [
+  640,
+  "Bug: encode_neon_two_misc ignores a third operand"
+ ],
+ [
+  639,
+  "Bug: encode_neon_shrn truncates i64 shift via `as u32`"
+ ],
+ [
+  638,
+  "Bug: encode_neon_shrn ignores destination arrangement Tb"
+ ],
+ [
+  637,
+  "Bug: encode_neon_shrn ignores a fourth operand"
+ ],
+ [
+  636,
+  "Bug: encode_neon_shrn accepts a bare V dest without arrangement"
+ ],
+ [
+  635,
+  "Bug: encode_neon_sri encodes out-of-range shift immediates"
+ ],
+ [
+  634,
+  "Bug: encode_neon_sri encodes mismatched dest/src arrangements"
+ ],
+ [
+  633,
+  "Bug: encode_neon_sri accepts a bare V source without arrangement"
+ ],
+ [
+  632,
+  "Bug: encode_neon_sri ignores a fourth operand"
+ ],
+ [
+  631,
+  "Bug: encode_neon_shl accepts a shift outside [0, esize-1] (debug overflow / wrap)"
+ ],
+ [
+  630,
+  "Bug: encode_neon_shl ignores the source arrangement"
+ ],
+ [
+  629,
+  "Bug: encode_neon_shl ignores a fourth operand"
+ ],
+ [
+  628,
+  "Bug: encode_neon_shl accepts a bare (non-arrangement) source register"
+ ],
+ [
+  627,
+  "Bug: encode_neon_sshr accepts a shift of 0 (and other values outside [1, esize])"
+ ],
+ [
+  626,
+  "Bug: encode_neon_sshr ignores the source arrangement"
+ ],
+ [
+  625,
+  "Bug: encode_neon_sshr ignores a fourth operand"
+ ],
+ [
+  624,
+  "Bug: encode_neon_sshr accepts a bare (non-arrangement) source register"
+ ],
+ [
+  623,
+  "Bug: encode_neon_ushr accepts a shift of 0 (and other values outside [1, esize])"
+ ],
+ [
+  622,
+  "Bug: encode_neon_ushr ignores a mismatched source arrangement"
+ ],
+ [
+  621,
+  "Bug: encode_neon_ushr accepts a GPR destination as a NEON register"
+ ],
+ [
+  620,
+  "Bug: encode_neon_ushr ignores a fourth operand"
+ ],
+ [
+  619,
+  "Bug: encode_neon_add_sub encodes mismatched and reserved arrangements"
+ ],
+ [
+  618,
+  "Bug: encode_neon_add_sub ignores a fourth operand"
+ ],
+ [
+  617,
+  "Bug: encode_neon_add_sub encodes bare V and GPR operands as NEON registers"
+ ],
+ [
+  616,
+  "Bug: encode_neon_pmull accepts invalid arrangements"
+ ],
+ [
+  615,
+  "Bug: encode_neon_pmull encodes a GPR destination as a NEON register"
+ ],
+ [
+  614,
+  "Bug: encode_neon_pmull ignores a fourth operand"
+ ],
+ [
+  613,
+  "Bug: encode_neon_pmull encodes 8-bit PMULL as 64-bit PMULL"
+ ],
+ [
+  612,
+  "Bug: encode_neon_eor3 ignores mismatched arrangements"
+ ],
+ [
+  611,
+  "Bug: encode_neon_eor3 encodes arrangements other than .16B"
+ ],
+ [
+  610,
+  "Bug: encode_neon_eor3 accepts GPR, bare V, and non-arrangement operands"
+ ],
+ [
+  609,
+  "Bug: encode_neon_eor3 ignores a fifth operand"
+ ],
+ [
+  608,
+  "Bug: encode_neon_zip_uzp encodes reserved 1D arrangement"
+ ],
+ [
+  607,
+  "Bug: encode_neon_zip_uzp ignores mismatched source arrangements"
+ ],
+ [
+  606,
+  "Bug: encode_neon_zip_uzp ignores a fourth operand"
+ ],
+ [
+  605,
+  "Bug: encode_neon_zip_uzp encodes a bare V or GPR source"
+ ],
+ [
+  604,
+  "Bug: encode_neon_across encodes reserved across-lanes arrangements"
+ ],
+ [
+  603,
+  "Bug: encode_neon_across accepts a GPR destination"
+ ],
+ [
+  602,
+  "Bug: encode_neon_across ignores a third operand"
+ ],
+ [
+  601,
+  "Bug: encode_neon_addv places ADDV opcode bits incorrectly"
+ ],
+ [
+  600,
+  "Bug: encode_neon_addv encodes reserved ADDV arrangements"
+ ],
+ [
+  599,
+  "Bug: encode_neon_addv accepts a GPR destination"
+ ],
+ [
+  598,
+  "Bug: encode_neon_addv ignores a third operand"
+ ],
+ [
+  597,
+  "Bug: encode_neon_bsl ignores mismatched Vn/Vm arrangements"
+ ],
+ [
+  596,
+  "Bug: encode_neon_bsl encodes illegal BSL arrangements as .8b"
+ ],
+ [
+  595,
+  "Bug: encode_neon_bsl accepts GPR, SP, bare V, and FP as BSL operands"
+ ],
+ [
+  594,
+  "Bug: encode_neon_bsl ignores a fourth operand"
+ ],
+ [
+  593,
+  "Bug: encode_neon_rev64 ignores source arrangement mismatch"
+ ],
+ [
+  592,
+  "Bug: encode_neon_rev64 encodes reserved .1d/.2d arrangements"
+ ],
+ [
+  591,
+  "Bug: encode_neon_rev64 treats a GPR source as a NEON register"
+ ],
+ [
+  590,
+  "Bug: encode_neon_rev64 ignores a third operand"
+ ],
+ [
+  589,
+  "Bug: encode_neon_not ignores a mismatched source arrangement"
+ ],
+ [
+  588,
+  "Bug: encode_neon_not encodes illegal arrangements as NOT .8b"
+ ],
+ [
+  587,
+  "Bug: encode_neon_not accepts GPR, SP, bare V, and FP scalar operands"
+ ],
+ [
+  586,
+  "Bug: encode_neon_not ignores a third operand"
+ ],
+ [
+  585,
+  "Bug: encode_cnt ignores a mismatched source arrangement"
+ ],
+ [
+  584,
+  "Bug: encode_cnt encodes illegal arrangements as CNT .8b"
+ ],
+ [
+  583,
+  "Bug: encode_cnt accepts GPR, SP, bare V, and FP scalar operands"
+ ],
+ [
+  582,
+  "Bug: encode_cnt ignores a third operand"
+ ],
+ [
+  581,
+  "Bug: encode_neon_mvni treats LSR (and other non-LSL/MSL shifts) as no-shift"
+ ],
+ [
+  580,
+  "Bug: encode_neon_mvni truncates out-of-range immediates"
+ ],
+ [
+  579,
+  "Bug: encode_neon_mvni accepts illegal LSL amounts on .4h/.8h"
+ ],
+ [
+  578,
+  "Bug: encode_neon_mvni ignores LSL #8 on .4h/.8h (wrong cmode)"
+ ],
+ [
+  577,
+  "Bug: encode_neon_mvni ignores extra operands"
+ ],
+ [
+  572,
+  "Bug: encode_neon_movi encodes MSL as unshifted LSL #0"
+ ],
+ [
+  571,
+  "Bug: encode_neon_movi truncates out-of-range 8-bit immediates"
+ ],
+ [
+  570,
+  "Bug: encode_neon_movi ignores LSL #8 on .4h/.8h"
+ ],
+ [
+  569,
+  "Bug: encode_neon_movi ignores surplus operands"
+ ],
+ [
+  568,
+  "Bug: encode_neon_ext ignores mismatched source arrangements"
+ ],
+ [
+  567,
+  "Bug: encode_neon_ext encodes invalid arrangements as 8B EXT"
+ ],
+ [
+  566,
+  "Bug: encode_neon_ext masks an out-of-range EXT index instead of rejecting it"
+ ],
+ [
+  565,
+  "Bug: encode_neon_ext encodes a GPR or bare-V dest as 8B EXT"
+ ],
+ [
+  564,
+  "Bug: encode_neon_ext ignores a surplus fifth operand"
+ ],
+ [
+  558,
+  "Bug: encode_neon_umov accepts the wrong GPR width for UMOV"
+ ],
+ [
+  557,
+  "Bug: encode_neon_umov encodes SP/WSP and FP names as the UMOV GPR dest"
+ ],
+ [
+  556,
+  "Bug: encode_neon_umov masks an out-of-range lane index instead of rejecting it"
+ ],
+ [
+  555,
+  "Bug: encode_neon_umov ignores a surplus third operand"
+ ],
+ [
+  554,
+  "Bug: encode_neon_ins accepts the wrong GPR width for INS (general)"
+ ],
+ [
+  553,
+  "Bug: encode_neon_ins encodes SP/WSP and FP names as the INS GPR source"
+ ],
+ [
+  552,
+  "Bug: encode_neon_ins masks an out-of-range lane index instead of rejecting it"
+ ],
+ [
+  551,
+  "Bug: encode_neon_ins ignores a surplus third operand"
+ ],
+ [
+  550,
+  "Bug: encode_neon_tbx accepts a table arrangement other than .16b"
+ ],
+ [
+  549,
+  "Bug: encode_neon_tbx ignores non-sequential table register names"
+ ],
+ [
+  548,
+  "Bug: encode_neon_tbx ignores Vm.Ta vs Vd.Ta mismatch"
+ ],
+ [
+  547,
+  "Bug: encode_neon_tbx encodes Ta other than 8b/16b as Q=0"
+ ],
+ [
+  546,
+  "Bug: encode_neon_tbx encodes a GPR/FP dest as Vd"
+ ],
+ [
+  545,
+  "Bug: encode_neon_tbx wraps table lists longer than 4 into len&3"
+ ],
+ [
+  544,
+  "Bug: encode_neon_tbx ignores a surplus fourth operand"
+ ],
+ [
+  543,
+  "Bug: encode_neon_tbx panics on an empty register list"
+ ],
+ [
+  542,
+  "Bug: encode_neon_tbx encodes a bare GPR as Vm"
+ ],
+ [
+  541,
+  "Bug: encode_neon_tbx accepts a bare Reg as a table-list member"
+ ],
+ [
+  537,
+  "Bug: encode_neon_ld_st_multi rejects uppercase arrangement specifiers that gas/llvm-mc accept"
+ ],
+ [
+  536,
+  "Bug: encode_neon_ld_st_multi encodes LD2/ST2/LD3/ST3/LD4/ST4 with .1d, which llvm-mc/gas reject"
+ ],
+ [
+  535,
+  "Bug: encode_neon_ld_st_multi encodes an illegal post-index immediate as the legal #imm form"
+ ],
+ [
+  534,
+  "Bug: encode_neon_ld_st_multi accepts W, XZR, x31, and FP bases"
+ ],
+ [
+  533,
+  "Bug: encode_neon_ld_st_multi ignores a surplus non-post-index operand"
+ ],
+ [
+  532,
+  "Bug: encode_neon_ld_st_multi ignores non-consecutive registers and encodes from the first only"
+ ],
+ [
+  531,
+  "Bug: encode_neon_ld_st_multi encodes LD2/ST2/LD3/ST3/LD4/ST4 with the wrong list length"
+ ],
+ [
+  525,
+  "Bug: encode_neon_ld_st_single accepts a non-consecutive register list"
+ ],
+ [
+  524,
+  "Bug: encode_neon_ld_st_single accepts illegal post-index immediates"
+ ],
+ [
+  523,
+  "Bug: encode_neon_ld_st_single accepts an out-of-range lane index"
+ ],
+ [
+  522,
+  "Bug: encode_neon_ld_st_single rejects uppercase arrangement (V0.B)"
+ ],
+ [
+  521,
+  "Bug: encode_neon_ld_st_single accepts W, XZR, x31, and FP bases"
+ ],
+ [
+  520,
+  "Bug: encode_neon_ld_st_single ignores a surplus operand"
+ ],
+ [
+  519,
+  "Bug: encode_neon_ld_st_single encodes register post-index as no-offset"
+ ],
+ [
+  515,
+  "Bug: encode_neon_ld1r accepts illegal post-index immediates"
+ ],
+ [
+  514,
+  "Bug: encode_neon_ld1r accepts W, XZR, x31, and FP bases"
+ ],
+ [
+  513,
+  "Bug: encode_neon_ld1r ignores a surplus operand"
+ ],
+ [
+  512,
+  "Bug: encode_neon_ld1r encodes register post-index as no-offset"
+ ],
+ [
+  511,
+  "Bug: ccc-i686 -static emits entry = main with no C runtime \u2014 every static i686 binary crashes"
+ ],
+ [
+  510,
+  "Bug: invalid float\u2194pointer casts silently accepted; float\u2192pointer compiled as raw bit reinterpretation"
+ ],
+ [
+  509,
+  "Bug: ccc-i686 -static emits entry = main with no C runtime \u2014 every static i686 binary crashes"
+ ],
+ [
+  508,
+  "Bug: PUA encoding silently corrupts source files containing literal U+E080..U+E0FF characters (3 bytes -> 1 byte)"
+ ],
+ [
+  507,
+  "Bug: XZR and x31 are accepted as ldNr base (encoded as SP)"
+ ],
+ [
+  506,
+  "Bug: W-register base is accepted for ld2r/ld3r/ld4r"
+ ],
+ [
+  505,
+  "Bug: LD2R/LD4R S bit encoded at bit 12 instead of bit 21"
+ ],
+ [
+  504,
+  "Bug: Register post-index `[Xn], Xm` is ignored"
+ ],
+ [
+  503,
+  "Bug: Non-consecutive / mixed-arrangement register lists are accepted"
+ ],
+ [
+  502,
+  "Bug: `[Xn, #imm]` (non-zero unsigned offset) is accepted as no-offset ldNr"
+ ],
+ [
+  501,
+  "Bug: SIMD/FP register accepted as ldNr base"
+ ],
+ [
+  500,
+  "Bug: Surplus operand on ld2r/ld3r/ld4r is ignored"
+ ],
+ [
+  499,
+  "Bug: Illegal post-index immediate is accepted"
+ ],
+ [
+  498,
+  "Bug: encode_ldrs accepts XZR as the memory base"
+ ],
+ [
+  497,
+  "Bug: encode_ldrs encodes pre/post-index when Rt==Rn (Rn!=SP)"
+ ],
+ [
+  496,
+  "Bug: encode_ldrs accepts a W index without uxtw/sxtw"
+ ],
+ [
+  495,
+  "Bug: encode_ldrs accepts a W register as the memory base"
+ ],
+ [
+  494,
+  "Bug: encode_ldrs accepts SP/WSP as the destination"
+ ],
+ [
+  493,
+  "Bug: encode_ldrs truncates out-of-range offsets instead of rejecting them"
+ ],
+ [
+  492,
+  "Bug: encode_ldrs accepts SIMD/FP destination registers"
+ ],
+ [
+  491,
+  "Bug: encode_ldrs ignores operands beyond the second"
+ ],
+ [
+  490,
+  "Bug: encode_ldrs accepts illegal register-offset shift/extend"
+ ],
+ [
+  489,
+  "Bug: encode_neon_dup accepts wrong-width and non-GPR sources"
+ ],
+ [
+  488,
+  "Bug: encode_neon_dup ignores dest arrangement vs element-size mismatch"
+ ],
+ [
+  487,
+  "Bug: encode_neon_dup masks out-of-range lane indices"
+ ],
+ [
+  486,
+  "Bug: encode_neon_dup ignores extra operands"
+ ],
+ [
+  485,
+  "Bug: encode_fsqrt encodes mixed S/D (and GPR/SP/QVB) instead of rejecting"
+ ],
+ [
+  484,
+  "Bug: encode_fsqrt encodes H registers as ftype=00 (single)"
+ ],
+ [
+  483,
+  "Bug: encode_fsqrt ignores extra operands"
+ ],
+ [
+  482,
+  "Bug: encode_fneg encodes mixed S/D (and GPR/SP/QVB) instead of rejecting"
+ ],
+ [
+  481,
+  "Bug: encode_fneg encodes H registers as ftype=00 (single)"
+ ],
+ [
+  480,
+  "Bug: encode_fneg ignores extra operands"
+ ],
+ [
+  479,
+  "Bug: encode_fmadd_fmsub encodes mixed S/D (and GPR/SP/QVB) instead of rejecting"
+ ],
+ [
+  478,
+  "Bug: encode_fmadd_fmsub encodes H registers as ftype=00 (single)"
+ ],
+ [
+  477,
+  "Bug: encode_fmadd_fmsub ignores extra operands"
+ ],
+ [
+  476,
+  "Bug: encode_fabs encodes mixed S/D (and GPR/SP/QVB) instead of rejecting"
+ ],
+ [
+  475,
+  "Bug: encode_fabs encodes H registers as ftype=00 (single)"
+ ],
+ [
+  474,
+  "Bug: encode_fabs ignores extra operands"
+ ],
+ [
+  473,
+  "Bug: encode_neon_float_two_misc encodes SP/WSP/XZR/WZR/LR as a SIMD register"
+ ],
+ [
+  472,
+  "Bug: encode_neon_float_two_misc accepts non-V register prefixes"
+ ],
+ [
+  471,
+  "Bug: encode_neon_float_two_misc ignores extra operands"
+ ],
+ [
+  470,
+  "Bug: encode_neon_float_two_misc accepts a bare source register"
+ ],
+ [
+  469,
+  "Bug: encode_neon_float_two_misc ignores source arrangement"
+ ],
+ [
+  468,
+  "Bug: encode_ubfx treats SP/WSP as ZR"
+ ],
+ [
+  467,
+  "Bug: encode_ubfx accepts mixed W/X registers"
+ ],
+ [
+  466,
+  "Bug: encode_ubfx panics or encodes out-of-range #lsb/#width"
+ ],
+ [
+  465,
+  "Bug: encode_ubfx accepts FP/SIMD registers as GPR operands"
+ ],
+ [
+  464,
+  "Bug: encode_ubfx ignores extra operands"
+ ],
+ [
+  463,
+  "Bug: encode_ubfm accepts SP/WSP as Rd or Rn"
+ ],
+ [
+  462,
+  "Bug: encode_ubfm accepts mixed W/X registers"
+ ],
+ [
+  461,
+  "Bug: encode_ubfm accepts out-of-range immr/imms"
+ ],
+ [
+  460,
+  "Bug: encode_ubfm accepts FP/SIMD registers as GPR operands"
+ ],
+ [
+  459,
+  "Bug: encode_ubfm ignores extra operands"
+ ],
+ [
+  458,
+  "Bug: encode_sbfx treats SP/WSP as ZR"
+ ],
+ [
+  457,
+  "Bug: encode_sbfx accepts mixed W/X registers"
+ ],
+ [
+  456,
+  "Bug: encode_sbfx panics or encodes out-of-range #lsb/#width"
+ ],
+ [
+  455,
+  "Bug: encode_sbfx accepts FP/SIMD registers as GPR operands"
+ ],
+ [
+  454,
+  "Bug: encode_sbfx ignores extra operands"
+ ],
+ [
+  453,
+  "Bug: encode_sbfm treats SP/WSP as ZR"
+ ],
+ [
+  452,
+  "Bug: encode_sbfm accepts mixed W/X registers"
+ ],
+ [
+  451,
+  "Bug: encode_sbfm accepts out-of-range immr/imms"
+ ],
+ [
+  450,
+  "Bug: encode_sbfm accepts FP/SIMD registers as GPR operands"
+ ],
+ [
+  449,
+  "Bug: encode_sbfm ignores extra operands"
+ ],
+ [
+  448,
+  "Bug: encode_bfm treats SP/WSP as ZR"
+ ],
+ [
+  447,
+  "Bug: encode_bfm accepts mixed W/X registers"
+ ],
+ [
+  446,
+  "Bug: encode_bfm accepts out-of-range immr/imms"
+ ],
+ [
+  445,
+  "Bug: encode_bfm accepts FP/SIMD registers as GPR operands"
+ ],
+ [
+  444,
+  "Bug: encode_bfm ignores extra operands"
+ ],
+ [
+  443,
+  "Bug: encode_ubfiz accepts SP/WSP as register 31"
+ ],
+ [
+  442,
+  "Bug: encode_ubfiz accepts mixed W/X register widths"
+ ],
+ [
+  441,
+  "Bug: encode_ubfiz panics or encodes out-of-range #lsb/#width"
+ ],
+ [
+  440,
+  "Bug: encode_ubfiz accepts FP/SIMD registers as GPR operands"
+ ],
+ [
+  439,
+  "Bug: encode_ubfiz silently ignores a 5th operand"
+ ],
+ [
+  438,
+  "Bug: encode_sbfiz accepts SP/WSP as register 31"
+ ],
+ [
+  437,
+  "Bug: encode_sbfiz accepts mixed W/X register widths"
+ ],
+ [
+  436,
+  "Bug: encode_sbfiz panics or encodes out-of-range #lsb/#width"
+ ],
+ [
+  435,
+  "Bug: encode_sbfiz accepts FP/SIMD registers as GPR"
+ ],
+ [
+  434,
+  "Bug: encode_sbfiz silently ignores a 5th operand"
+ ],
+ [
+  433,
+  "Bug: encode_rev encodes SP/WSP as ZR"
+ ],
+ [
+  432,
+  "Bug: encode_rev accepts mixed W/X register widths"
+ ],
+ [
+  431,
+  "Bug: encode_rev accepts FP/SIMD register names as GPRs"
+ ],
+ [
+  430,
+  "Bug: encode_rev silently ignores a third operand"
+ ],
+ [
+  429,
+  "Bug: encode_rev32 accepts 32-bit W registers"
+ ],
+ [
+  428,
+  "Bug: encode_rev32 accepts SP/WSP as register 31"
+ ],
+ [
+  427,
+  "Bug: encode_rev32 NEON path accepts invalid arrangements 2s/4s/2d/1d"
+ ],
+ [
+  426,
+  "Bug: encode_rev32 accepts mixed W/X register widths"
+ ],
+ [
+  425,
+  "Bug: encode_rev32 accepts FP/SIMD registers as GPR operands"
+ ],
+ [
+  424,
+  "Bug: encode_rev32 ignores extra operands"
+ ],
+ [
+  423,
+  "Bug: encode_rev16 encodes SP/WSP as ZR"
+ ],
+ [
+  422,
+  "Bug: encode_rev16 accepts mixed W/X register widths"
+ ],
+ [
+  421,
+  "Bug: encode_rev16 accepts FP/SIMD register names as GPRs"
+ ],
+ [
+  420,
+  "Bug: encode_rev16 silently ignores a third operand"
+ ],
+ [
+  419,
+  "Bug: encode_rbit accepts SP/WSP as a GPR"
+ ],
+ [
+  418,
+  "Bug: encode_rbit accepts mixed W/X register widths"
+ ],
+ [
+  417,
+  "Bug: encode_rbit accepts FP/SIMD registers as scalar RBIT operands"
+ ],
+ [
+  416,
+  "Bug: encode_rbit ignores extra operands"
+ ],
+ [
+  415,
+  "Bug: encode_fp_arith encodes mixed S/D (and GPR/SP/QVB) instead of rejecting"
+ ],
+ [
+  414,
+  "Bug: encode_fp_arith encodes H registers as ftype=00 (single)"
+ ],
+ [
+  413,
+  "Bug: encode_fp_arith ignores extra operands"
+ ],
+ [
+  412,
+  "Bug: encode_fmov encodes incompatible register classes instead of rejecting"
+ ],
+ [
+  411,
+  "Bug: encode_fmov does not encode FMOV Xd, Vn.D[1] / FMOV Vd.D[1], Xn"
+ ],
+ [
+  410,
+  "Bug: encode_fmov encodes SP/WSP as an FP or ZR register"
+ ],
+ [
+  409,
+  "Bug: encode_fmov encodes H registers as ftype=00 (single)"
+ ],
+ [
+  408,
+  "Bug: encode_fmov ignores extra operands"
+ ],
+ [
+  407,
+  "Bug: encode_extr accepts SP/WSP as a GPR"
+ ],
+ [
+  406,
+  "Bug: encode_extr accepts mixed W/X registers"
+ ],
+ [
+  405,
+  "Bug: encode_extr panics or encodes out-of-range #lsb"
+ ],
+ [
+  404,
+  "Bug: encode_extr accepts FP/SIMD registers as GPRs"
+ ],
+ [
+  403,
+  "Bug: encode_extr ignores extra operands"
+ ],
+ [
+  402,
+  "Bug: encode_clz accepts SP/WSP as a GPR"
+ ],
+ [
+  401,
+  "Bug: encode_clz accepts mixed W/X register widths"
+ ],
+ [
+  400,
+  "Bug: encode_clz accepts FP/SIMD registers as scalar CLZ operands"
+ ]
+]
