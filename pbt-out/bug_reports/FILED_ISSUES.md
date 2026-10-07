@@ -130,3 +130,7 @@
 | 39 | src/backend/riscv/assembler/encoder | encode_lr_suffixed silently ignores extra operands | **new issue filed** | [#1129](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1129) |
 | 39 | src/backend/riscv/assembler/encoder | encode_sc_suffixed silently ignores extra operands | **new issue filed** | [#1130](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1130) |
 | 39 | src/backend/arm/assembler/encoder/system.rs | dmb/dsb accept empty+wrong-type operands → silent sy barrier | **new issue filed** | [#1131](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1131) |
+| 40 | src/frontend (sema/parser) | same-TU inline+non-inline redefinition accepted; inline body silently wins | **new issue filed** | [#1133](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1133) |
+| 40 | src/ir/lowering + sema | & on bit-field accepted (C11 6.5.3.2p1 violation); gcc/clang reject | **new issue filed** | [#1134](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1134) |
+| 40 | src/frontend/sema + lowering | assignment/++/-- targets are never validated as modifiable lvalues — 7 | **new issue filed** | [#1135](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1135) |
+| 40 | src/frontend/sema + lowering | sizeof on a bit-field accepted (sizeof(s.a)) — C11 6.5.3.4p1 constrain | **new issue filed** | [#1136](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1136) |

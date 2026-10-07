@@ -980,3 +980,95 @@ unsigned long long take({ty} s) {{
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_switch_tables {
+    //! Round-40: switch lowering at -O2 — jump tables, binary trees, sparse
+    //! gaps, long/unsigned selectors, fallthrough chains. Silent wrong-control-flow
+    //! class. Oracle: gcc -O0.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/40_new_axes/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 随机 case 集 → switch 函数 + 全域扫描
+    fn render(seed: u64, n_cases: usize, ty_idx: usize, sparse: bool, fallthrough: bool) -> String {
+        use std::collections::BTreeSet;
+        let mut rng = seed | 1;
+        let mut next = move || { rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); rng };
+        let mut cases = BTreeSet::new();
+        let mut lo: i128 = 0;
+        while cases.len() < n_cases {
+            let gap = if sparse { (next() % 97) as i128 } else { 1 };
+            lo += gap;
+            cases.insert(lo);
+        }
+        let (ty, cast) = match ty_idx % 4 {
+            0 => ("int", format!("{}", 0)),
+            1 => ("unsigned", format!("{}", 0)),
+            2 => ("long", format!("{}", 0)),
+            _ => ("char", format!("{}", 0)),
+        };
+        let _ = cast;
+        let body: Vec<String> = cases.iter().enumerate().map(|(i, &c)| {
+            let val = ((c as i64).wrapping_mul(2654435761) % 1000003) as i64;
+            if fallthrough && i % 3 == 0 && i + 1 < cases.len() {
+                format!("    case {c}: r += {v}; // fallthrough\n", c = c as i64, v = val)
+            } else {
+                format!("    case {c}: r = {v}; break;\n", c = c as i64, v = val)
+            }
+        }).collect();
+        // 扫描域: 覆盖 case 值 ±邻域 + 边界
+        let mut probes: Vec<i64> = Vec::new();
+        for &c in &cases { let ci = c as i64; for d in [-1i64, 0, 1] { probes.push(ci + d); } }
+        probes.extend([-3, -2, -1, 0, 1, 2, 3]);
+        probes.sort(); probes.dedup();
+        let probes_lit: Vec<String> = probes.iter().map(|p| format!("({ty}){}", p, ty = ty)).collect();
+        format!("#include <stdio.h>\n\
+static long f({ty} x) {{\n    long r = -77;\n    switch (x) {{\n{}    default: r = -1; break;\n    }}\n    return r;\n}}\n\
+int main(void) {{\n    {ty} probes[] = {{ {} }};\n    for (unsigned i = 0; i < sizeof(probes)/sizeof(probes[0]); i++) printf(\"%ld \", f(probes[i]));\n    putchar('\\n');\n    return 0;\n}}\n",
+            body.join(""), probes_lit.join(", "))
+    }
+
+    /// P-SWITCH: 跳转表/稀疏/类型变体 @-O2 全域扫描 == gcc
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(300))]
+        #[test]
+        fn p_switch_tables_vs_gcc(
+            seed in any::<u64>(), n in 4usize..60, ty in 0usize..4,
+            sparse in any::<bool>(), ft in any::<bool>(),
+        ) {
+            let prog = render(seed, n, ty, sparse, ft);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("W{}.c", case));
+            std::fs::write(&src, &prog).unwrap();
+            let g = dir.join(format!("W{}g", case));
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&g).arg(&src).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+            let want = Command::new(&g).output().unwrap();
+            let want = String::from_utf8_lossy(&want.stdout).into_owned();
+            for lvl in ["-O1", "-O2"] {
+                let out = dir.join(format!("W{}c{}", case, if lvl == "-O1" { 1 } else { 2 }));
+                let argv = vec!["ccc".to_string(), lvl.to_string(),
+                    src.to_string_lossy().into_owned(), "-o".to_string(), out.to_string_lossy().into_owned()];
+                let mut d = crate::driver::Driver::new();
+                let cc = match d.parse_cli_args(&argv) { Ok(false) => d.run(), Ok(true) => Err("cli".into()), Err(e) => Err(e) };
+                prop_assert!(cc.is_ok(), "ccc {} failed\n{}", lvl, prog);
+                let r = Command::new(&out).output().unwrap();
+                let _ = std::fs::remove_file(&out);
+                prop_assert!(r.status.success(), "crash at {}", lvl);
+                prop_assert_eq!(String::from_utf8_lossy(&r.stdout), want.as_str(),
+                    "SWITCH MISMATCH at {} (gcc -O0)\n{}", lvl, prog);
+            }
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&g);
+        }
+    }
+}
