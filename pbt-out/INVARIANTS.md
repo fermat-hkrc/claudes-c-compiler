@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_snez)
+
+- Valid 2-operand `snez rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `snez rd, rs` and of `sltu rd, x0, rs` byte-for-byte (1000 cases). KAT pins snez a0, a1 = sltu a0, x0, a1 = 0x00b03533; snez zero, zero = 0x00003033; snez t6, ra = 0x00103fb3; snez fp, s0 = 0x00803433.
+- R-type OP layout: opcode 0110011, funct3=011, funct7=0000000, rs1=x0, rd and rs2 in their fields, including bounds 0 and 31 (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd/rs matches xN (get_reg GCC bare-number path). encode_snez(rd, rs) equals encode_alu_reg SLTU on [rd, x0, rs] (1000 cases).
+- Field isolation: rd bits independent of rs2; non-rd bits independent of rd (1000 cases).
+- Too few operands and invalid/FP/non-GPR names return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_snez)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15) assembling `snez rd, rs` and `sltu rd, x0, rs`.
+- Harness: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs, cargo test --lib encode_snez_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:873 "snez" => encode_snez(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw for this Rust target (C++ reporter listed unrelated binaries and reported encode_snez NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/sltu/R-type/ABI/isolation/arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_snez)
+
+- encode_snez has no rustdoc; contract is README.md:325 plus the inline SLTU comment at pseudo.rs:266.
+- RISC-V Unprivileged ISA SNEZ pseudo is SLTU rd, x0, rs; this assembler matches that expansion (and llvm-mc).
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_seqz)
 
 - Valid 2-operand `seqz rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `seqz rd, rs` and of `sltiu rd, rs, 1` byte-for-byte (1000 cases). KAT pins seqz a0, a1 = sltiu a0, a1, 1 = 0x0015b513; seqz zero, zero = 0x00103013; seqz t6, ra = 0x0010bf93; seqz fp, s0 = 0x00143413.

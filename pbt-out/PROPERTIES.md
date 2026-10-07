@@ -1,18 +1,18 @@
-# Properties: encode_seqz
+# Properties: encode_snez
 
-## encode_seqz_diff_llvm_mc
+## encode_snez_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest runnable oracle is differential vs independent llvm-mc (RISC-V assembler). State machine N/A (pure). Round-trip N/A (no decoder). encode_alu_imm shares encode_i/get_reg so is metamorphic, not primary differential.
-- Doc contract: src/backend/riscv/assembler/README.md:324 "`seqz rd, rs` → `sltiu rd, rs, 1`" — asserted fingerprint bfb844fb
-- Seed: (none) — pattern generalized from encode_not_pbt
-- Formal: ∀ rd, rs ∈ GPRNames. word(encode_seqz([Reg(rd), Reg(rs)])) = llvm_mc("seqz rd, rs")
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Strongest applicable is Differential vs independent llvm-mc assembling `snez rd, rs`. State machine rejected (pure encoder). Algebraic round-trip rejected (no in-tree SNEZ/SLTU decoder). encode_alu_reg(sltu) shares encode_r/get_reg so is metamorphic, not primary differential. README.md:325 and RISC-V ISA pin SNEZ = SLTU rd, x0, rs; llvm-mc is an independent assembler reference.
+- Doc contract: src/backend/riscv/assembler/README.md:325 "`snez rd, rs` → `sltu rd, x0, rs`" — asserted fingerprint 1d0a48e1
+- Seed: encode_seqz_pbt.rs encode_seqz_diff_llvm_mc (sibling two-operand set-flag pseudo)
+- Formal: ∀ rd, rs ∈ GPRNames. encode_snez([Reg(rd), Reg(rs)]) = Word(w) ∧ llvm_mc("snez rd, rs") = w
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: differential
 predicate:
   quantifier: forall
@@ -20,27 +20,27 @@ predicate:
   domain: { rd: gpr_name, rs: gpr_name }
   relation:
     op: eq
-    lhs: "encode_seqz_word([Reg(rd), Reg(rs)])"
-    rhs: "llvm_mc_word(format!(\"seqz {}, {}\", rd, rs))"
+    lhs: "sut_word([Reg(rd), Reg(rs)])"
+    rhs: "llvm_mc_word(format!(\"snez {}, {}\", rd, rs))"
 generators:
   rd: { gen: gpr_name }
   rs: { gen: gpr_name }
-evidence: src/backend/riscv/assembler/README.md:324
+evidence: src/backend/riscv/assembler/README.md:325
 ```
 
-## encode_seqz_diff_llvm_mc_sltiu
+## encode_snez_diff_llvm_mc_sltu
 - Tier: 5
-- Rationale: Documented expansion `sltiu rd, rs, 1` must match the same machine word as seqz under llvm-mc (independent of in-tree encode_alu_imm).
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:260 "sltiu rd, rs1, 1" — asserted fingerprint d520aff8
-- Seed: encode_not_diff_llvm_mc_xori
-- Formal: ∀ rd, rs ∈ GPRNames. word(encode_seqz([Reg(rd), Reg(rs)])) = llvm_mc("sltiu rd, rs, 1")
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Differential vs llvm-mc on the documented expansion `sltu rd, x0, rs` (independent of the SNEZ mnemonic path). Strengthens the expansion contract separately from the mnemonic.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:266 "// sltu rd, x0, rs2" — asserted fingerprint 7a1fc959
+- Seed: encode_seqz_pbt.rs encode_seqz_diff_llvm_mc_sltiu
+- Formal: ∀ rd, rs ∈ GPRNames. encode_snez([Reg(rd), Reg(rs)]) = Word(w) ∧ llvm_mc("sltu rd, x0, rs") = w
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: differential
 predicate:
   quantifier: forall
@@ -48,27 +48,27 @@ predicate:
   domain: { rd: gpr_name, rs: gpr_name }
   relation:
     op: eq
-    lhs: "encode_seqz_word([Reg(rd), Reg(rs)])"
-    rhs: "llvm_mc_word(format!(\"sltiu {}, {}, 1\", rd, rs))"
+    lhs: "sut_word([Reg(rd), Reg(rs)])"
+    rhs: "llvm_mc_word(format!(\"sltu {}, x0, {}\", rd, rs))"
 generators:
   rd: { gen: gpr_name }
   rs: { gen: gpr_name }
-evidence: src/backend/riscv/assembler/README.md:324
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:266
 ```
 
-## encode_seqz_eq_sltiu_1
+## encode_snez_eq_sltu_x0
 - Tier: 4
-- Rationale: Algebraic metamorphic — documented expansion equals in-tree SLTIU (funct3=011, imm=1). Weaker than llvm-mc differential (shared helpers) but pins the project-local expansion.
-- Doc contract: src/backend/riscv/assembler/README.md:324 — asserted fingerprint bfb844fb
-- Seed: encode_not_eq_xori_m1
-- Formal: ∀ rd, rs ∈ 0..31. encode_seqz([xN(rd), xN(rs)]) = encode_alu_imm([xN(rd), xN(rs), Imm(1)], 0b011)
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Algebraic metamorphic — same-job expansion via encode_alu_reg(SLTU) on [rd, x0, rs]. Shared encode_r so weaker than llvm-mc differential; still checks the expansion wiring.
+- Doc contract: src/backend/riscv/assembler/README.md:325 "`snez rd, rs` → `sltu rd, x0, rs`" — asserted fingerprint 1d0a48e1
+- Seed: encode_negw_pbt encode_negw_eq_subw_x0
+- Formal: ∀ rd, rs ∈ 0..31. encode_snez([xN(rd), xN(rs)]) = encode_alu_reg([xN(rd), x0, xN(rs)], funct3=0b011, funct7=0)
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
@@ -76,86 +76,83 @@ predicate:
   domain: { rd: "0..=31", rs: "0..=31" }
   relation:
     op: eq
-    lhs: "encode_seqz_word([xN(rd), xN(rs)])"
-    rhs: "encode_alu_imm_word([xN(rd), xN(rs), Imm(1)], 0b011)"
+    lhs: "sut_word([xN(rd), xN(rs)])"
+    rhs: "sltu_word([xN(rd), x0, xN(rs)])"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/README.md:324
+evidence: src/backend/riscv/assembler/README.md:325
 ```
 
-## encode_seqz_isa_fields
+## encode_snez_isa_fields
 - Tier: 4
-- Rationale: I-type invariant for SLTIU: opcode OP-IMM, funct3=011, imm12=1, rd/rs1 fields.
-- Doc contract: pseudo.rs:260 "sltiu rd, rs1, 1" — asserted fingerprint d520aff8
-- Seed: encode_not_isa_fields
-- Formal: ∀ rd, rs ∈ 0..31. let w = encode_seqz([xN(rd), xN(rs)]). opcode(w)=0010011 ∧ rd(w)=rd ∧ funct3(w)=011 ∧ rs1(w)=rs ∧ imm12(w)=1
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Algebraic invariant — R-type OP layout for SLTU rd, x0, rs2: opcode=0110011, funct3=011, funct7=0000000, rs1=0, rd/rs2 in fields. Documented bounds 0 and 31 sampled exactly via reg_num.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:266 "// sltu rd, x0, rs2" — asserted fingerprint 7a1fc959
+- Seed: encode_negw_pbt R-type fields
+- Formal: ∀ rd, rs ∈ 0..31. let w = encode_snez([xN(rd), xN(rs)]). w[6:0]=0110011 ∧ w[11:7]=rd ∧ w[14:12]=011 ∧ w[19:15]=0 ∧ w[24:20]=rs ∧ w[31:25]=0000000
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rd, rs]
   domain: { rd: "0..=31", rs: "0..=31" }
-  body: "opcode/rd/funct3/rs1/imm12 match SLTIU rd,rs,1"
+  body: "opcode/funct3/funct7/rs1=0/rd/rs2 fields of sut_word match SLTU rd,x0,rs"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:260
+evidence: src/backend/riscv/assembler/encoder/mod.rs:395
 ```
 
-## encode_seqz_abi_xn_alias
+## encode_snez_abi_xn_alias
 - Tier: 4
-- Rationale: ABI names, xN, fp/s0, zero/x0, and Imm(0..=31) bare numbers must encode identically.
-- Doc contract: README.md:324 two-operand form — asserted fingerprint bfb844fb
-- Seed: encode_not_abi_xn_alias
-- Formal: ∀ n,m ∈ 0..31. encode_seqz(ABI(n),ABI(m)) = encode_seqz(xN(n),xN(m)) = encode_seqz(Imm(n),Imm(m)) (and fp/zero aliases when n/m ∈ {0,8})
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Algebraic metamorphic — ABI names, xN, fp/s0, zero/x0, and Imm(0..=31) bare-number path must yield the same word.
+- Doc contract: src/backend/riscv/assembler/README.md:325 "`snez rd, rs` → `sltu rd, x0, rs`" — asserted fingerprint 1d0a48e1
+- Seed: encode_seqz_pbt encode_seqz_abi_xn_alias
+- Formal: ∀ n,m ∈ 0..31. encode_snez([ABI(n), ABI(m)]) = encode_snez([xN(n), xN(m)]) = encode_snez([Imm(n), Imm(m)]) (and fp/zero aliases when n or m ∈ {0,8})
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [n, m]
   domain: { n: "0..=31", m: "0..=31" }
-  relation:
-    op: eq
-    lhs: "encode_seqz_word(ABI)"
-    rhs: "encode_seqz_word(xN)"
+  body: "ABI/xN/fp/zero/Imm aliases produce equal words"
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   m: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:465
+evidence: src/backend/riscv/assembler/encoder/mod.rs:467
 ```
 
-## encode_seqz_field_isolation
+## encode_snez_field_isolation
 - Tier: 4
-- Rationale: Strengthening — rd bits independent of rs1; non-rd bits independent of rd.
-- Doc contract: pseudo.rs:260 I-type layout — asserted fingerprint d520aff8
-- Seed: encode_not_field_isolation
-- Formal: ∀ rd, rs_a, rs_b. rd_field(seqz(rd,rs_a))=rd_field(seqz(rd,rs_b)); ∀ rd_a, rd_b, rs. (seqz(rd_a,rs) & ~rd_mask) = (seqz(rd_b,rs) & ~rd_mask)
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Algebraic invariant — rd bits independent of rs2; non-rd bits independent of rd.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:266 "// sltu rd, x0, rs2" — asserted fingerprint 7a1fc959
+- Seed: encode_seqz_pbt encode_seqz_field_isolation
+- Formal: ∀ rd, rs_a, rs_b. rd-field(encode_snez(rd,rs_a)) = rd-field(encode_snez(rd,rs_b)); ∀ rd_a, rd_b, rs. (encode_snez(rd_a,rs) & ~rd_mask) = (encode_snez(rd_b,rs) & ~rd_mask)
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
-oracle: algebraic.metamorphic
+function: encoder.encode_snez
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rd, rs_a, rs_b, rd_a, rd_b, rs]
-  domain: { all: "0..=31" }
-  body: "rd field independent of rs1; non-rd bits independent of rd"
+  domain: { rd: "0..=31", rs_a: "0..=31", rs_b: "0..=31", rd_a: "0..=31", rd_b: "0..=31", rs: "0..=31" }
+  body: "rd field independent of rs2; non-rd bits independent of rd"
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs_a: { gen: int, min: 0, max: 31, type: u32 }
@@ -163,22 +160,22 @@ generators:
   rd_a: { gen: int, min: 0, max: 31, type: u32 }
   rd_b: { gen: int, min: 0, max: 31, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:398
+evidence: src/backend/riscv/assembler/encoder/mod.rs:395
 ```
 
-## encode_seqz_neg_arity
+## encode_snez_neg_arity
 - Tier: 3
-- Rationale: Negative/error — fewer than 2 operands must Err (get_reg missing).
-- Doc contract: README.md:324 two-operand `seqz rd, rs` — asserted fingerprint bfb844fb
-- Seed: encode_not_neg_arity
-- Formal: ∀ ops. |ops| < 2 ⇒ encode_seqz(ops) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Negative/error — fewer than 2 operands must Err (README two-operand form; llvm-mc "too few operands").
+- Doc contract: src/backend/riscv/assembler/README.md:325 "`snez rd, rs`" — domain-restriction fingerprint 1d0a48e1
+- Seed: encode_seqz_pbt encode_seqz_neg_arity
+- Formal: ∀ ops. |ops| < 2 ⇒ encode_snez(ops) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -186,26 +183,26 @@ predicate:
   domain: { ops: "len < 2" }
   relation:
     op: holds
-    expr: encode_seqz(ops).is_err()
+    expr: "encode_snez(ops).is_err()"
 generators:
   ops: { gen: short_ops }
 expected_error: String
-evidence: src/backend/riscv/assembler/README.md:324
+evidence: src/backend/riscv/assembler/README.md:325
 ```
 
-## encode_seqz_neg_invalid
+## encode_snez_neg_invalid
 - Tier: 3
-- Rationale: Non-GPR / invalid operand kinds must Err.
-- Doc contract: get_reg expects integer register — mod.rs:465 — other fingerprint 4a1a5b19
-- Seed: encode_not_neg_invalid
-- Formal: ∀ bad ∈ InvalidOperand, good ∈ GPRNames, which ∈ {both,bad_rd,bad_rs}. encode_seqz(ops(which)) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Negative/error — non-GPR / FP / Mem / Csr / out-of-range Imm must Err.
+- Doc contract: src/backend/riscv/assembler/README.md:325 "`snez rd, rs`" (GPR operands) — domain-restriction fingerprint 1d0a48e1
+- Seed: encode_seqz_pbt encode_seqz_neg_invalid
+- Formal: ∀ bad ∈ InvalidOperand, good ∈ GPRNames, which ∈ {0,1,2}. encode_snez(ops(which,bad,good)) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -213,28 +210,28 @@ predicate:
   domain: { bad: invalid_operand, good: gpr_name, which: "0..=2" }
   relation:
     op: holds
-    expr: encode_seqz(ops).is_err()
+    expr: "encode_snez(ops).is_err()"
 generators:
   bad: { gen: invalid_operand }
   good: { gen: gpr_name }
   which: { gen: int, min: 0, max: 2, type: u8 }
 expected_error: String
-evidence: src/backend/riscv/assembler/encoder/mod.rs:465
+evidence: src/backend/riscv/assembler/README.md:325
 ```
 
-## encode_seqz_neg_extra
+## encode_snez_neg_extra
 - Tier: 3
-- Rationale: README documents exactly two operands; llvm-mc rejects a third. encode_seqz currently only reads indices 0 and 1 — fails the property (same class as encode_not/encode_mv extra-operand bugs).
-- Doc contract: README.md:324 `seqz rd, rs` (two operands) — asserted fingerprint bfb844fb
-- Seed: encode_not_neg_extra
-- Formal: ∀ rd, rs ∈ GPRNames, extra ∈ Operand. encode_seqz([Reg(rd), Reg(rs), extra]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs
+- Rationale: Negative/error — a third operand must be rejected. README documents exactly two operands; llvm-mc rejects `snez a0, a1, a2`. Same class as the encode_seqz extra-operand bug.
+- Doc contract: src/backend/riscv/assembler/README.md:325 "`snez rd, rs`" — domain-restriction fingerprint 1d0a48e1
+- Seed: encode_seqz_pbt encode_seqz_neg_extra / bug_reports/encode_seqz_extra_operand.md
+- Formal: ∀ rd, rs ∈ GPRNames, ∀ extra. encode_snez([Reg(rd), Reg(rs), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_snez_pbt.rs
 - Status: failing
-- Counterexample: encode_seqz([Reg("zero"), Reg("zero"), Reg("zero")]) → Ok(Word(0x00103013))
-- Bug report: bug_reports/encode_seqz_extra_operand.md
+- Counterexample: encode_snez([Reg("zero"), Reg("zero"), Reg("zero")]) → Ok(Word(0x00003033))
+- Bug report: bug_reports/encode_snez_extra_operand.md
 
 ```property
-function: encoder.pseudo.encode_seqz
+function: encoder.encode_snez
 oracle: negative_error
 predicate:
   quantifier: forall
@@ -242,11 +239,11 @@ predicate:
   domain: { rd: gpr_name, rs: gpr_name, extra: extra_operand }
   relation:
     op: holds
-    expr: encode_seqz([rd, rs, extra]).is_err()
+    expr: "encode_snez([Reg(rd), Reg(rs), extra]).is_err()"
 generators:
   rd: { gen: gpr_name }
   rs: { gen: gpr_name }
   extra: { gen: extra_operand }
 expected_error: String
-evidence: src/backend/riscv/assembler/README.md:324
+evidence: src/backend/riscv/assembler/README.md:325
 ```

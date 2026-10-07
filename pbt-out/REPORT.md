@@ -1,63 +1,57 @@
-# PBT Campaign Report: encode_seqz
+# PBT Campaign Report: encode_snez
 
 ## Summary
 
-**Verdict:** 1 medium: encode_seqz silently ignores extra operands, so `seqz a0, a1, a2` encodes as `sltiu a0, a1, 1` instead of being rejected.
+**Verdict:** 1 medium: `encode_snez` silently ignores extra operands, so `snez a0, a1, a2` assembles as `sltu a0, x0, a1` with no diagnostic (same class as prior two-operand RISC-V pseudos).
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_seqz
-**Tests:** 9 properties (+ 1 KAT + 1 regression witness)
+**Modules tested:** encode_snez
+**Tests:** 9 properties (+ 1 KAT + 1 regression)
 **Result:** 8 passing, 1 bug
-**Change surface:** 1 changed function (encode_seqz), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries); encode_seqz listed NOT LINKED against those binaries. Execution evidence is the cargo test run of encode_seqz_pbt (9/11 ok, 2 fail on extra operand).
-**Tier:** standard
+**Change surface:** 1 changed function (encode_snez), 1 with properties, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no LLVM profraw for this Rust target (C++ reporter listed unrelated binaries and reported encode_snez NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/sltu/R-type/ABI/isolation/arity-invalid (passing) and extra operand (filed bug).
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_seqz | 9 | 1 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_snez | 9 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_seqz silently ignores extra operands
+### B1: encode_snez silently ignores extra operands
 
-**Formal:** ∀ rd, rs ∈ GPRNames, extra ∈ Operand. encode_seqz([Reg(rd), Reg(rs), extra]) = Err(_)
-**Contract evidence:** documented src/backend/riscv/assembler/README.md:324 `seqz rd, rs` (exactly two operands); llvm-mc rejects a third operand
-**Documentation conflict:** (none) — README states the two-operand form; no comment declares extra operands valid
+**Formal:** ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_snez([Reg(rd), Reg(rs), extra]) is Err
+**Contract evidence:** documented src/backend/riscv/assembler/README.md:325 "`snez rd, rs` → `sltu rd, x0, rs`" (exactly two operands); llvm-mc rejects a third operand
+**Documentation conflict:** (none) — README states the two-operand form; it does not declare extra operands valid
 **Severity:** medium
-**Counterexample:** `encode_seqz([Reg("zero"), Reg("zero"), Reg("zero")])` then expect Err
-**Expected / Actual:** Err / Ok(Word(0x00103013))
-**Impact:** Typos and extra commas assemble without error; `seqz a0, a1, a2` is encoded as `sltiu a0, a1, 1`.
-**Root cause:** pseudo.rs:258 reads only operands 0 and 1 via get_reg and never checks operands.len(), so extra tokens are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:258`
+**Counterexample:** `encode_snez([Reg("zero"), Reg("zero"), Reg("zero")])` then expect Err
+**Expected / Actual:** Err / Ok(Word(0x00003033))
+**Impact:** Typos and stray commas in `snez` assemble without error, encoding as if the extra operand were absent
+**Root cause:** `pseudo.rs:264-265` reads only operands 0 and 1 via `get_reg` and never checks `operands.len()`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:264`
 ```rust
     let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
+    let rs2 = get_reg(operands, 1)?;
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("seqz: expected 2 operands, got {}", operands.len()));
+        return Err(format!("snez: expected 2 operands, got {}", operands.len()));
     }
     let rd = get_reg(operands, 0)?;
-    let rs1 = get_reg(operands, 1)?;
+    let rs2 = get_reg(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_seqz_extra_operand.md
-**Repro seed:** cc e91762ab96630958e98d4bb6ae776b8008e4a7884e1dd0abeac411e2445ebd57
+**Bug report:** bug_reports/encode_snez_extra_operand.md
+**Repro seed:** proptest cc 7f4f9ac1b5927632f36f2d2f4f71574a250a5bb52fb3e946124fd7cf212f95a5
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_seqz_pbt::encode_seqz_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs:266:1:
-Test failed: extra operand must Err for seqz zero, zero (llvm-mc rejects: true) at src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs:394.
+thread 'backend::riscv::assembler::encoder::encode_snez_pbt::encode_snez_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_snez_pbt.rs:269:1:
+Test failed: extra operand must Err for snez zero, zero (llvm-mc rejects: true) at src/backend/riscv/assembler/encoder/encode_snez_pbt.rs:398.
 minimal failing input: rd = "zero", rs = "zero", extra = Reg(
     "zero",
 )
-	successes: 0
-	local rejects: 0
-	global rejects: 0
-
-thread 'backend::riscv::assembler::encoder::encode_seqz_pbt::test_encode_seqz_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs:259:5:
-seqz zero, zero with a third operand must be rejected (llvm-mc rejects; README documents `seqz rd, rs`); got Ok(Word(1060883))
 ```
 
 ## Design Caveats
@@ -68,37 +62,44 @@ seqz zero, zero with a third operand must be rejected (llvm-mc rejects; README d
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs | 9 properties + KAT + regression |
-| src/backend/riscv/assembler/encoder/mod.rs (mod register) | encode_seqz_pbt |
+| src/backend/riscv/assembler/encoder/encode_snez_pbt.rs | 9 properties + KAT + regression |
+| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_snez_pbt;` registration |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_seqz_pbt -- --test-threads=1
-cargo test --lib test_encode_seqz_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_snez_pbt -- --test-threads=1
+```
+
+Bug B1 (regression):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_snez_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (auto-rendered from report.json)
+- pbt-out/REPORT.html (rendered from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_seqz_extra_operand.md
-- pbt-out/bug_reports/encode_seqz_extra_operand.html (auto-rendered)
-- pbt-out/run/encode_seqz_pbt.log
+- pbt-out/bug_reports/encode_snez_extra_operand.md
+- pbt-out/bug_reports/encode_snez_extra_operand.html (rendered from report.json)
+- pbt-out/run/encode_snez_pbt.log
+- pbt-out/INVARIANTS.md (updated)
+- pbt-out/FUNCTION_INDEX.md (updated)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 03:49 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 241/383 total | PBT candidates: 241 | Tested: 241 (100%) | 1 pass, 241 fail
+> Last updated: 2026-10-07 03:59 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 242/383 total | PBT candidates: 242 | Tested: 242 (100%) | 1 pass, 242 fail
 
 ## Summary
 
@@ -107,10 +108,10 @@ cargo test --lib test_encode_seqz_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 241 |
-| **Tested (of PBT candidates)** | **241 / 241 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 241 / -1 |
-| **Overall (tested / all functions)** | **241 / 383 (63%)** |
+| PBT candidates (from FUNCTION_INDEX) | 242 |
+| **Tested (of PBT candidates)** | **242 / 242 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 242 / -1 |
+| **Overall (tested / all functions)** | **242 / 383 (63%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -118,13 +119,13 @@ cargo test --lib test_encode_seqz_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 241 | 241 | 0 | 100% |
+|  | 242 | 242 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 241 | 241 | 0 | 100% |
+| unknown | 242 | 242 | 0 | 100% |
 
 ## File Coverage
 
@@ -138,7 +139,7 @@ cargo test --lib test_encode_seqz_regression_extra_operand -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 7 | 7 | 100% | covered |
+| pseudo.rs | 44 | 8 | 8 | 100% | covered |
 
 ## Recommended Focus
 
@@ -388,3 +389,4 @@ cargo test --lib test_encode_seqz_regression_extra_operand -- --test-threads=1
 | encode_negw | pseudo.rs |
 | encode_sext_w | pseudo.rs |
 | encode_seqz | pseudo.rs |
+| encode_snez | pseudo.rs |

@@ -1,25 +1,15 @@
-# PBT Coverage Status
+# Coverage Status
 
-> Last updated: 2026-10-07 (campaign: encode_seqz)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; C++ reporter binaries do not link encode_seqz. Rust execution evidence: `cargo test --lib encode_seqz_pbt`.
-
-## Summary
+> Last updated: 2026-10-07 (campaign: encode_snez)
+> Coverage evidence: file-level (symbol presence) — `coverage_gaps` found no .gcda/.profraw (Rust cargo tests are not the C++ reporter binaries); it listed encode_snez as NOT LINKED against unrelated host PBT binaries. Execution evidence is the cargo test run of `encode_snez_pbt` (11 tests: 9 pass, 2 fail on the same extra-operand bug).
 
 | Metric | Value |
 |--------|-------|
-| Target function | encode_seqz |
-| Source | src/backend/riscv/assembler/encoder/pseudo.rs:257 |
-| Properties | 9 (8 passing, 1 failing) |
-| KAT | passing (llvm-mc seqz/sltiu pins) |
-| Bugs | 1 (extra operand ignored) |
-| Tier sweep | 1 round — manual contract audit (llvm-mc/sltiu/I-type/ABI/isolation/arity-invalid passing; extra filed) |
+| Target function | encode_snez |
+| Source | pseudo.rs:263 |
+| Test file | encode_snez_pbt.rs |
+| Properties | 9 (8 passing, 1 failing) + KAT + regression |
+| Documented behaviors exercised | llvm-mc snez, llvm-mc sltu x0, encode_alu_reg SLTU metamorphic, R-type fields, ABI/xN/Imm alias, field isolation, arity-too-few, invalid operand, extra operand |
+| Remaining gap | extra-operand rejection (filed bug) |
 
-## Module Breakdown
-
-| Module | Properties | Passing | Failing | Bugs |
-|--------|------------|---------|---------|------|
-| encode_seqz | 9 | 8 | 1 | 1 |
-
-## Untested documented behaviors
-
-(none remaining within tier budget — extra-operand gap is the filed bug)
+Sweep closed: tier standard owes 1 coverage_gaps round; spent. Remaining documented gap is the extra-operand bug.

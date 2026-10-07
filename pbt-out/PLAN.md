@@ -1,14 +1,14 @@
-# PBT Campaign: encode_seqz
+# PBT Campaign: encode_snez
 
 ## Scan findings
-- **Spec:** README.md:324 `seqz rd, rs` → `sltiu rd, rs, 1`; inline comment pseudo.rs:260 `// sltiu rd, rs1, 1`; RISC-V Unprivileged ISA SEQZ = SLTIU rd, rs, 1. Dispatch: encoder/mod.rs:870 `"seqz" => encode_seqz(operands)`.
-- **Test layout:** Project-owned Rust unit tests via `#[cfg(test)] mod …_pbt` under `src/backend/riscv/assembler/encoder/`, discovered by `cargo test --lib`. Framework: proptest 1.11 (dev-dependency). Filename convention: `encode_<name>_pbt.rs` beside the encoder modules.
-- **Buildability probe:** `cargo test --lib encode_not_kat -- --test-threads=1` → PASS (1 passed). Build contract command family confirmed green.
-- **Harness placement:** extend existing cargo lib-test target — new file `src/backend/riscv/assembler/encoder/encode_seqz_pbt.rs` + one `mod encode_seqz_pbt;` line in `encoder/mod.rs` (rung 1).
-- **Candidate modules:** encode_seqz (pseudo.rs:257) — sole `--func` target
-- **Skipped modules:** all other functions in pseudo.rs (campaign HARD scope is encode_seqz only); HEAD changes outside src/backend/riscv/assembler/encoder/pseudo.rs
+- **Spec:** README.md:325 `snez rd, rs` → `sltu rd, x0, rs`; inline comment pseudo.rs:266 `// sltu rd, x0, rs2`; RISC-V Unprivileged ISA SNEZ = SLTU rd, x0, rs. No rustdoc on the function.
+- **Test layout:** Project-owned Rust lib tests via `#[cfg(test)] mod …_pbt` under `src/backend/riscv/assembler/encoder/`, discovered by `cargo test --lib`. Filename convention `encode_<op>_pbt.rs`. Framework: proptest 1.11 (Cargo.toml dev-dependency).
+- **Buildability probe:** `cargo test --lib encode_seqz_kat_llvm_mc -- --test-threads=1` → PASS (1 passed). Build contract command shape confirmed.
+- **Harness placement:** extend existing lib-test target (rung 1) — add `src/backend/riscv/assembler/encoder/encode_snez_pbt.rs` and one `mod encode_snez_pbt;` line in `encoder/mod.rs` beside `encode_seqz_pbt`.
+- **Candidate modules:** encode_snez (pseudo.rs:263) — sole `--func` / change-surface target.
+- **Skipped modules:** all other functions in pseudo.rs (encode_li, encode_mv, encode_not, encode_neg, encode_negw, encode_sext_w, encode_seqz, encode_sltz, encode_sgtz, branch/jump pseudos, …) — outside HARD scope `encode_snez` only. HEAD changes outside `src/backend/riscv/assembler/encoder/pseudo.rs` — out of campaign scope.
 
-## Module: encode_seqz
+## Module: encode_snez
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
 - [x] Test: write and run

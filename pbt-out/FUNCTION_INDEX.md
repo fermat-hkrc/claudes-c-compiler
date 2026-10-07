@@ -197,7 +197,7 @@
 | encode_negw | pseudo.rs | 245 | function | yes | - |
 | encode_sext_w | pseudo.rs | 251 | function | yes | - |
 | encode_seqz | pseudo.rs | 257 | function | yes | primary --func target |
-| encode_snez | pseudo.rs | 263 | function | no | out of campaign scope |
+| encode_snez | pseudo.rs | 263 | function | yes | primary --func target |
 | encode_sltz | pseudo.rs | 269 | function | no | out of campaign scope |
 | encode_sgtz | pseudo.rs | 275 | function | no | out of campaign scope |
 | encode_beqz | pseudo.rs | 282 | function | no | out of campaign scope |
