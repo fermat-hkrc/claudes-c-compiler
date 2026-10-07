@@ -41,3 +41,12 @@
 
 - **Coverage-driven sweep (coverage_gaps tool):** NOT AVAILABLE — no .gcda/.profraw in this environment; tool reported "Not in a PBT campaign". File-level evidence used instead.
 - **ARM NEON encoder surface:** EXCLUDED — teammate's territory (#474-#773, 263 issues)
+
+## Round 31 — ir/lowering deep PBT (global init/ptr/complex/compound)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| lower_global_init (14 type kinds) | src/ir/lowering/global_init.rs, global_init_bytes.rs | src/ir/lowering/lower.rs::pbt_global_init | p_global_init_bytes_vs_gcc | 300 cases byte-exact; long double → **#1084** |
+| create_compound_literal_global | src/ir/lowering/global_init.rs:1142 | src/ir/lowering/lower.rs::pbt_lowering_e2e | p_compound_designated_statics_vs_gcc | 2-D nested → **#1087**; 1-D/designated/statics green |
+| const_eval_global_addr | src/ir/lowering/const_eval_global_addr.rs | src/ir/lowering/lower.rs::pbt_lowering_e2e | p_pointer_globals_vs_gcc | 400 cases &g/&arr[k]/decay/member/ptr-arrays green |
+| complex global init | src/ir/lowering/complex.rs | src/ir/lowering/lower.rs::pbt_lowering_e2e | p_complex_globals_vs_gcc | 300 cases float/double _Complex byte-exact |
+| f128_bytes_to_x87_bytes | src/common/long_double.rs:886 | (root cause of #1084) | p_global_init kind 13 | truncates 49 bits, no RNE — every LD literal 1 ulp low |

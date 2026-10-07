@@ -92,3 +92,5 @@
 | 30 | src/backend/arm/assembler/encoder | encode_ldar_stlr silently encodes imm9≠0 for LDAR/STLR with offset | **new issue filed** | [#1077](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1077) |
 | 30 | src/backend/arm/assembler/encoder | encode_ldaxr_stlxr LDAXR imm9≠0 with offset (3rd instance of exclusive-load offset pattern) | **new issue filed** | [#1078](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1078) |
 | 30 | src/backend/arm/assembler/encoder | encode_ubfiz panic on width=0 (u32 underflow, same pattern as #1073) | **new issue filed** | [#1080](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1080) |
+| 31 | src/common/long_double.rs | f128_bytes_to_x87_bytes truncates 49 bits — long double literals 1 ulp low on x86 (0.1L/pi misprint) | **new issue filed** | [#1084](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1084) |
+| 31 | src/ir/lowering/global_init.rs | compound literal nested-array rows drop elements 2..n (backing [1,0,4,0,7,0]) | **new issue filed** | [#1087](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1087) |

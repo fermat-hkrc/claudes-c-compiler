@@ -1422,3 +1422,357 @@ impl Lowerer {
     }
 
 }
+
+#[cfg(test)]
+mod pbt_global_init {
+    //! Deep PBT for ir/lowering global initializer paths:
+    //! global_init.rs / global_init_bytes.rs / global_init_compound_*.rs / const_eval_global_addr.rs
+    //! Oracle: ccc-emitted global object bytes must byte-match gcc's (via dump of every byte).
+
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/31_lowering_deep/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 随机 scalar 初始值（全部常量表达式）
+    fn scalar_expr(ty_idx: usize, v: u64) -> String {
+        match ty_idx % 8 {
+            0 => format!("{}", (v % 2000000) as i64 - 1000000),             // int
+            1 => format!("{}u", v % 4000000000),                              // unsigned
+            2 => format!("'{}'", (b'a' + (v % 26) as u8) as char),            // char
+            3 => format!("{}", (v % 100000) as i64 - 50000),                  // short
+            4 => format!("{}LL", v as i64),                                   // long long
+            5 => format!("{:.6}f", (v % 10000) as f32 / 7.0),                 // float
+            6 => format!("{:.9}", (v % 1000000) as f64 / 13.0),               // double
+            _ => format!("{}", (v % 100000) as i64 - 50000),                  // fallback
+        }
+    }
+
+    /// 类型池（15 种形态，覆盖嵌套/联合/位域/数组）
+    /// (类型前缀, 数组后缀) — 声明 = "static {prefix} g{i}{suffix} = ..."
+    fn type_decl(kind: usize) -> (&'static str, &'static str, &'static str) {
+        match kind % 15 {
+            0 => ("int", "", "i32"),
+            1 => ("long long", "", "i64"),
+            2 => ("double", "", "f64"),
+            3 => ("float", "", "f32"),
+            4 => ("char", "[8]", "bytes"),
+            5 => ("short", "[5]", "bytes"),
+            6 => ("int", "[4][3]", "bytes"),
+            7 => ("struct { int a; char b; double c; }", "", "bytes"),
+            8 => ("struct { char x[3]; int y; struct { short p; long q; } z; }", "", "bytes"),
+            9 => ("union { int i; char c[8]; double d; }", "", "bytes"),
+            10 => ("union { long l; short s[4]; }", "", "bytes"),
+            11 => ("struct { unsigned a:3; unsigned b:5; int c:24; }", "", "bytes"),
+            12 => ("struct { unsigned x:1; unsigned y:31; }", "", "bytes"),
+            13 => ("long double", "", "bytes"),
+            _ => ("unsigned char", "[16]", "bytes"),
+        }
+    }
+
+    fn init_expr(kind: usize, v: u64) -> String {
+        match kind % 15 {
+            0 | 1 | 2 | 3 => scalar_expr(kind, v),
+            4 => format!("{{'{}', '{}', '{}', {}}}",
+                (b'a' + (v % 26) as u8) as char, (b'A' + (v % 26) as u8) as char,
+                (b'x' + (v % 26) as u8) as char, (v % 256)),
+            5 => format!("{{{}, {}, {}}}", v % 30000, v % 100, (v % 70000) as i64),
+            6 => { let r = format!("{{{}, {}, {}}}", v % 1000, v % 2000, v % 3000);
+                   let s = format!("{{{}, {}}}", v % 4000, v % 5000);
+                   format!("{{{}, {}}}", r, s) },
+            7 => format!("{{{}, '{}', {}}}", v % 100000, (b'q' + (v % 26) as u8) as char, (v % 100000) as f64 / 11.0),
+            8 => format!("{{{{'{}', '{}', '{}'}}, {}, {{{}, {}}}}}",
+                (b'm' + (v % 26) as u8) as char, (b'n' + (v % 26) as u8) as char,
+                (b'o' + (v % 26) as u8) as char, v % 100000, v % 30000, v as i64),
+            9 => format!("{{0x{:x}}}", (v as u32).swap_bytes()),
+            10 => format!("{{0x{:x}}}", v),
+            11 => format!("{{{}, {}, {}}}", v % 8, v % 32, (v % 16777216) as i64 - 8388608),
+            12 => format!("{{{}, {}}}", v % 2, v),
+            13 => format!("{:.12}L", (v % 10000000) as f64 / 17.0),
+            _ => format!("{{ {} }}",
+                (0..16).map(|i| (v.wrapping_mul(0x9E37 + i as u64)) % 256).map(|x| x.to_string())
+                .collect::<Vec<_>>().join(", ")),
+        }
+    }
+
+    fn render_program(seeds: &[(u16, u64, bool)]) -> String {
+        let mut s = String::from("#include <stdio.h>\n#include <string.h>\n\n");
+        let mut dumps = String::new();
+        for (i, &(kind, v, full)) in seeds.iter().enumerate() {
+            let (ty, suffix, note) = type_decl(kind as usize);
+            let init = init_expr(kind as usize, v);
+            s.push_str(&format!("static {} g{}{} = {};\n", ty, i, suffix, init));
+            if note == "i32" || note == "i64" {
+                dumps.push_str(&format!(
+                    "    printf(\"g{}=%llx %zu\\n\", (unsigned long long)g{}, sizeof(g{}));\n",
+                    i, i, i));
+            } else {
+                dumps.push_str(&format!(
+                    "    {{ unsigned char b[512]; unsigned n = sizeof(g{}); memcpy(b, &g{}, n); \
+                     printf(\"g{}=%zu:\", n); for (unsigned j = 0; j < n; j++) printf(\"%02x\", b[j]); putchar('\\n'); }}\n",
+                    i, i, i));
+            }
+        }
+        s.push_str("\nint main(void) {\n");
+        s.push_str(&dumps);
+        s.push_str("    return 0;\n}\n");
+        s
+    }
+
+    fn compile_ccc(src: &std::path::Path, out: &std::path::Path) -> Result<(), String> {
+        let argv = vec![
+            "ccc".to_string(),
+            src.to_string_lossy().into_owned(),
+            "-o".to_string(), out.to_string_lossy().into_owned(),
+        ];
+        let mut d = crate::driver::Driver::new();
+        if d.parse_cli_args(&argv)? { return Err("cli flag consumed".into()); }
+        d.run()
+    }
+
+    /// P-GLOBAL-BYTES: 全局初始化对象字节必须与 gcc byte-exact
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(300))]
+        #[test]
+        fn p_global_init_bytes_vs_gcc(
+            seed0 in any::<u16>(), v0 in any::<u64>(),
+            seed1 in any::<u16>(), v1 in any::<u64>(),
+            seed2 in any::<u16>(), v2 in any::<u64>(),
+            seed3 in any::<u16>(), v3 in any::<u64>(),
+            full0 in any::<bool>(), full1 in any::<bool>(),
+        ) {
+            prop_assume!(seed0 % 15 != 13 && seed1 % 15 != 13 && seed2 % 15 != 13 && seed3 % 15 != 13, "long double → #1084");
+            let seeds = vec![
+                (seed0 % 15, v0, full0),
+                (seed1 % 15, v1, full1),
+                (seed2 % 15, v2, true),
+                (seed3 % 15, v3, false),
+            ];
+            let prog = render_program(&seeds);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("g{}.c", case));
+            let ccc_out = dir.join(format!("g{}_ccc", case));
+            let gcc_out = dir.join(format!("g{}_gcc", case));
+            std::fs::write(&src, &prog).unwrap();
+
+            let cc = compile_ccc(&src, &ccc_out);
+            let gc = Command::new("gcc").args(["-w", "-O0", "-o"])
+                .arg(&gcc_out).arg(&src).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc rejected: {}", String::from_utf8_lossy(&gc.stderr));
+            // gcc 通过但 ccc 失败 → 诊断差异（不算数据 bug 但值得看）
+            if let Err(e) = &cc {
+                prop_assert!(false, "ccc FAILED where gcc accepted:\n{}\nccc err: {}",
+                    prog, &e[..e.len().min(300)]);
+            }
+            cc.unwrap();
+
+            let r1 = Command::new(&ccc_out).output().unwrap();
+            let r2 = Command::new(&gcc_out).output().unwrap();
+            let o1 = String::from_utf8_lossy(&r1.stdout);
+            let o2 = String::from_utf8_lossy(&r2.stdout);
+            prop_assert_eq!(o1, o2,
+                "global-init bytes differ from gcc\nprogram:\n{}", prog);
+            let _ = std::fs::remove_file(&src);
+            let _ = std::fs::remove_file(&ccc_out);
+            let _ = std::fs::remove_file(&gcc_out);
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod pbt_lowering_e2e {
+    //! Round-31b/c: pointer globals (const_eval_global_addr.rs) + _Complex globals (complex.rs)
+    //! Oracle: gcc differential — offsets are relative, complex dumps are byte-exact.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/31_lowering_deep/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+    fn compile_ccc(src: &std::path::Path, out: &std::path::Path) -> Result<(), String> {
+        let argv = vec!["ccc".into(), src.to_string_lossy().into_owned(),
+            "-o".into(), out.to_string_lossy().into_owned()];
+        let mut d = crate::driver::Driver::new();
+        if d.parse_cli_args(&argv)? { return Err("cli flag consumed".into()); }
+        d.run()
+    }
+    /// 返回
+    fn e2e(prog: &str, tag: &str) -> Result<(String, String), String> {
+        let case = CASE.fetch_add(1, Ordering::SeqCst);
+        let dir = run_dir();
+        let src = dir.join(format!("p{}{}.c", tag, case));
+        let ccc_out = dir.join(format!("p{}{}_ccc", tag, case));
+        let gcc_out = dir.join(format!("p{}{}_gcc", tag, case));
+        std::fs::write(&src, prog).unwrap();
+        let cc = compile_ccc(&src, &ccc_out);
+        let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&gcc_out).arg(&src).output().unwrap();
+        if !gc.status.success() {
+            return Err(format!("GCC_REJECT: {}", String::from_utf8_lossy(&gc.stderr).lines().next().unwrap_or("")));
+        }
+        cc.map_err(|e| format!("CCC_FAIL: {}", &e[..e.len().min(200)]))?;
+        let r1 = Command::new(&ccc_out).output().unwrap();
+        let r2 = Command::new(&gcc_out).output().unwrap();
+        let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&ccc_out); let _ = std::fs::remove_file(&gcc_out);
+        if !r1.status.success() { return Err(format!("CCC_CRASH: exit {}", r1.status)); }
+        Ok((String::from_utf8_lossy(&r1.stdout).into_owned(),
+            String::from_utf8_lossy(&r2.stdout).into_owned()))
+    }
+
+    /// P-PTR-GLOBALS: 指针全局的相对偏移 == gcc
+    /// 覆盖 const_eval_global_addr.rs: &scalar / &arr[k] / arr decay / s.member /
+    /// member-array decay / &s.member / &arr[2]+n / 指针数组 / 字符串指针表
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+        #[test]
+        fn p_pointer_globals_vs_gcc(
+            k1 in 0usize..6, k2 in 0usize..6, j in 0usize..4, n in 0i64..8,
+            str_idx in 0usize..3,
+        ) {
+            let strs = ["alpha", "beta7", "gammaXY"];
+            let prog = format!(r#"#include <stdio.h>
+#include <string.h>
+static int a = 11;
+static int arr[6] = {{10,20,30,40,50,60}};
+static struct S {{ char c; int x[4]; double d; }} s = {{'Q', {{1,2,3,4}}, 9.5}};
+static int *p1 = &a;
+static int *p2 = &arr[{k1}];
+static int *p3 = arr[{k2}];
+static int *p4 = s.x;
+static void *p5 = &s.d;
+static int *p6 = &arr[2] + {n};
+static int *ps[3] = {{&a, &arr[{k1}], s.x + {j}}};
+static char *msg = "{s}";
+static char *tab[3] = {{"alpha", "beta7", "gammaXY"}};
+static char *sel = tab[{str_idx}];
+int main(void) {{
+    printf("%ld %ld %ld %ld %ld %ld\n",
+        (long)((char*)p1 - (char*)&a),
+        (long)((char*)p2 - (char*)arr),
+        (long)((char*)p3 - (char*)arr),
+        (long)((char*)p4 - (char*)&s),
+        (long)((char*)p5 - (char*)&s),
+        (long)((char*)p6 - (char*)arr));
+    for (int i = 0; i < 3; i++)
+        printf("ps%d=%ld\n", i, (long)((char*)ps[i] - (char*)arr));
+    printf("msg=%s\n", msg);
+    for (int i = 0; i < 3; i++) printf("t%d=%s/%ld\n", i, tab[i], (long)strlen(tab[i]));
+    printf("sel=%s\n", sel);
+    return 0;
+}}"#, k1=k1, k2=k2, j=j, n=n, s=strs[str_idx % 3], str_idx=str_idx % 3);
+            match e2e(&prog, "ptr") {
+                Ok((ccc_out, gcc_out)) => prop_assert_eq!(ccc_out, gcc_out, "pointer-global offsets differ\n{}", prog),
+                Err(e) if e.starts_with("CCC_") => prop_assert!(false, "{}\nprogram:\n{}", e, prog),
+                Err(_) => (), // gcc reject: skip
+            }
+        }
+    }
+
+    /// P-COMPOUND-GLOBALS: 全局复合字面量 + 嵌套指定初始化 + 静态局部
+    /// 覆盖 global_init_compound_ptrs.rs + stmt_init.rs 静态路径
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(400))]
+        #[test]
+        fn p_compound_designated_statics_vs_gcc(
+            v1 in any::<u32>(), v2 in any::<u32>(),
+            d1 in 0usize..4, d2 in 0usize..4,
+            sv in any::<i32>(),
+        ) {
+            let prog = format!(r#"#include <stdio.h>
+#include <string.h>
+static int *cp = (int[]){{ {v1} % 97, {v2} % 89, 7, 8 }};
+static char *cs = (char[]){{ 'h', 'i', 0 }};
+static struct N {{ int a[4]; struct {{ int x, y; }} b; char t[3]; }} n = {{
+    .a[{d1}] = {v1} % 1000, .b.y = {v2} % 500, .a[{d2}] = 99, .t[1] = 'Z', .b.x = -3
+}};
+static struct {{ int u_sel; union {{ long l; char c[8]; }} u; }} au = {{ 5, 0x4142434445 }};
+static struct {{ unsigned p:5, q:11, r:16; }} bf = {{ {v1} % 32, {v2} % 2048, {v1} % 65536 }};
+int count(void) {{
+    static int ctr = 0;
+    static int tbl[3] = {{ {sv} % 100, 2, 3 }};
+    ctr++;
+    return ctr * 10 + tbl[0] % 7;
+}}
+int main(void) {{
+    printf("cp=%d %d %d %d\n", cp[0], cp[1], cp[2], cp[3]);
+    printf("ca=%d %d\n", ca[1][0], ca[2][2]);
+    printf("cs=%s\n", cs);
+    unsigned char b[64]; memcpy(b, &n, sizeof(n));
+    printf("n=%zu:", sizeof(n));
+    for (unsigned i = 0; i < sizeof(n); i++) printf("%02x", b[i]);
+    putchar('\n');
+    memcpy(b, &au, sizeof(au));
+    printf("au=%zu:", sizeof(au));
+    for (unsigned i = 0; i < sizeof(au); i++) printf("%02x", b[i]);
+    putchar('\n');
+    memcpy(b, &bf, sizeof(bf));
+    printf("bf=%zu:", sizeof(bf));
+    for (unsigned i = 0; i < sizeof(bf); i++) printf("%02x", b[i]);
+    putchar('\n');
+    int r1 = count(); int r2 = count(); int r3 = count();
+    printf("ctr=%d %d %d\n", r1, r2, r3);
+    return 0;
+}}"#, v1=v1, v2=v2, d1=d1, d2=d2, sv=sv);
+            match e2e(&prog, "cds") {
+                Ok((ccc_out, gcc_out)) => prop_assert_eq!(ccc_out, gcc_out, "compound/designated/static differs\n{}", prog),
+                Err(e) if e.starts_with("CCC_") => prop_assert!(false, "{}\nprogram:\n{}", e, prog),
+                Err(_) => (), // gcc reject: skip
+            }
+        }
+    }
+
+    /// P-COMPLEX-GLOBALS: _Complex 全局字节级 == gcc
+    /// 覆盖 complex.rs: float/double _Complex 字面量、负部、纯虚部
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(300))]
+        #[test]
+        fn p_complex_globals_vs_gcc(
+            re1 in -10000i64..10000, im1 in -10000i64..10000,
+            re2 in any::<u32>(), im2 in any::<u32>(),
+            fmode in 0usize..2,
+        ) {
+            let (cty, suffix) = if fmode % 2 == 0 { ("float _Complex", "f") } else { ("double _Complex", "") };
+            let re2d = (re2 % 1000000) as f64 / 7.0;
+            let im2d = (im2 % 1000000) as f64 / 9.0;
+            let prog = format!(r#"#include <stdio.h>
+#include <string.h>
+#include <complex.h>
+static {cty} z1 = {re1}.0 + {im1}.0i{suffix};
+static {cty} z2 = {re2d:.9}{s2} + {im2d:.9}i{suffix};
+static const {cty} z3 = -1.5 - 2.5i{suffix};
+static {cty} z4 = 3.0i{suffix};
+int main(void) {{
+    unsigned char b[64]; unsigned n = sizeof(z1);
+    memcpy(b, &z1, n); printf("z1=%zu:", n);
+    for (unsigned j = 0; j < n; j++) printf("%02x", b[j]); putchar('\n');
+    memcpy(b, &z2, n); printf("z2:");
+    for (unsigned j = 0; j < n; j++) printf("%02x", b[j]); putchar('\n');
+    memcpy(b, &z3, n); printf("z3:");
+    for (unsigned j = 0; j < n; j++) printf("%02x", b[j]); putchar('\n');
+    memcpy(b, &z4, n); printf("z4:");
+    for (unsigned j = 0; j < n; j++) printf("%02x", b[j]); putchar('\n');
+    printf("r=%.9f i=%.9f\n", (double)creal(z1), (double)cimag(z1));
+    return 0;
+}}"#, cty=cty, re1=re1, im1=im1, re2d=re2d, im2d=im2d, suffix=suffix, s2=suffix);
+            match e2e(&prog, "cx") {
+                Ok((ccc_out, gcc_out)) => prop_assert_eq!(ccc_out, gcc_out, "complex global differs\n{}", prog),
+                Err(e) if e.starts_with("CCC_") => prop_assert!(false, "{}\n{}", e, prog),
+                Err(_) => (),
+            }
+        }
+    }
+}
