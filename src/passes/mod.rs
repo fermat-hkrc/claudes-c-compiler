@@ -1464,3 +1464,85 @@ mod pbt_mutation_fuzz {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_selfdiff {
+    //! Round-49: SELF-differential — same program compiled by ccc at -O0 vs -O2,
+    //! run BOTH, outputs must match. Oracle-free (no gcc) → 10x case budget.
+    //! Catches optimizer divergences gcc-diff batteries can't reach cheaply.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/49_selfdiff/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 富语义体：结构体/位域/联合/浮点/switch/循环/指针链（无 UB）
+    fn body(seed: u64) -> String {
+        format!("\
+struct S {{ int a; double b; char c[4]; }};
+struct BF {{ unsigned p:5; unsigned q:11; unsigned r:16; }};
+union U {{ unsigned u; unsigned char b[4]; struct BF bf; }};
+static unsigned h = 2166136261u;
+static void mix(unsigned x) {{ h = (h ^ x) * 16777619u; }}
+static struct S mk(int s) {{ struct S r = {{ s, s * 1.5, {{1,2,3,4}} }}; return r; }}
+static double use(struct S s) {{ return s.a * 2.0 + s.b + s.c[3]; }}
+int cmain(void) {{
+    unsigned B = {b}u, C = {c}u;
+    int cells[8]; for (int i = 0; i < 8; i++) cells[i] = (int)((B >> (i * 4)) & 0xF) - 8;
+    for (int i = 0; i < 8; i++) {{
+        struct S s = mk(cells[i] + (int)(C % 11));
+        mix((unsigned)(use(s) * 4.0));
+        union U u; u.u = B * (i + 1) + C;
+        mix(u.b[i % 4] + u.bf.p);
+        struct BF bf2 = {{ u.bf.q, u.bf.r, u.bf.p }};
+        mix((bf2.p << 16) + (bf2.q << 5) + bf2.r);
+        switch (i % 5) {{
+            case 0: mix(bf2.p); break;
+            case 1: mix(u.b[0] + 1); break;
+            case 2: mix(cells[i] & 0xFFu); break;
+            case 3: mix(C >> 3); break;
+            default: mix(B + i); break;
+        }}
+        int *p = &cells[(i * 3) % 8]; *p += (int)(u.bf.q % 7);
+    }}
+    long t = 0;
+    for (int k = 0; k < 6; k++) t = t * 3 + (long)(B >> (k * 5)) % 97;
+    mix((unsigned)t);
+    double d = (B % 997) / 7.0; float f = (float)d;
+    mix((unsigned)(d * 1000.0) + (unsigned)(f * 100.0f) + (d < f ? 1 : 0));
+    return (int)(h % 251);
+}}
+int main(void){{ return cmain(); }}", b = seed, c = seed >> 32)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(2000))]
+        #[test]
+        fn p_selfdiff_o0_o2(seed in any::<u64>()) {
+            let dir = run_dir();
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let src = dir.join(format!("S{}.c", case));
+            std::fs::write(&src, body(seed)).unwrap();
+            let mut outs = vec![];
+            for lvl in ["-O0", "-O2"] {
+                let bin = dir.join(format!("S{}{}", case, lvl));
+                let argv = vec!["ccc".to_string(), lvl.to_string(), src.to_string_lossy().into_owned(), "-o".to_string(), bin.to_string_lossy().into_owned()];
+                let mut d = crate::driver::Driver::new();
+                let cc = match d.parse_cli_args(&argv) { Ok(false) => d.run(), Ok(true) => Err("cli".into()), Err(e) => Err(e) };
+                prop_assert!(cc.is_ok(), "compile failed at {}", lvl);
+                let run = Command::new(&bin).output().unwrap();
+                let _ = std::fs::remove_file(&bin);
+                prop_assert!(!run.status.to_string().contains("signal"), "crashed at {}", lvl);
+                outs.push(run.status.code().unwrap_or(-1));
+            }
+            let _ = std::fs::remove_file(&src);
+            prop_assert_eq!(outs[0], outs[1], "SELF-DIFF MISMATCH -O0 vs -O2 (seed {:#x})", seed);
+        }
+    }
+}

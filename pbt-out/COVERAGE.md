@@ -179,3 +179,9 @@
 | F: multi-TU static interplay | green | — |
 | G: wide/unicode char values | exact match | — |
 | H: deep recursive types | valid green; member-on-int → #1139 ext | comment |
+
+## Round 49 — new testing levels
+| Level | Test | Cases | Status |
+|-------|------|-------|--------|
+| self-differential (-O0 ≡ -O2, oracle-free) | mod.rs::pbt_selfdiff | 2000 | green |
+| valgrind memory validation | /tmp/vgbat.c battery | full-feature × 2 levels | zero errors |
