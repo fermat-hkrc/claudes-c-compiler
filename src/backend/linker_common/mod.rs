@@ -126,3 +126,140 @@ pub use eh_frame::{count_eh_frame_fdes, build_eh_frame_hdr};
 
 // gc_sections.rs
 pub use gc_sections::gc_collect_sections_elf64;
+
+#[cfg(test)]
+mod pbt_multitu_link {
+    //! Round-33: linker_common deep PBT — multi-TU linking differential vs gcc.
+    //! Covers symbol resolution across files, extern data, cross-file calls,
+    //! tentative definitions, function pointer tables.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/33_linker_deep/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 生成 3 个 TU：main + 2 个提供者，随机分布符号
+    fn render_tus(seeds: &[(u32, i64)]) -> (String, String, String) {
+        let mut main_body = String::new();
+        let mut b_body = String::new();
+        let mut c_body = String::new();
+        for (i, &(kind, v)) in seeds.iter().enumerate() {
+            match kind % 6 {
+                0 => { // extern int 全局
+                    let val = v % 100000;
+                    b_body.push_str(&format!("int g{} = {};\n", i, val));
+                    main_body.push_str(&format!("printf(\"g{}=%d\\\\n\", g{});\n", i, i));
+                }
+                1 => { // 数组
+                    c_body.push_str(&format!("int arr{}[4] = {{ {}, {}, {}, {} }};\n",
+                        i, v % 97, (v>>8) % 89, (v>>16) % 83, (v>>24) % 79));
+                    main_body.push_str(&format!(
+                        "printf(\"arr{}=%d %d\\\\n\", arr{}[0], arr{}[3]);\n", i, i, i));
+                }
+                2 => { // 跨文件函数
+                    let c2 = (v % 50) + 1;
+                    c_body.push_str(&format!(
+                        "int f{}(int x) {{ return x * {} + {}; }}\n", i, c2, (v>>12) % 100));
+                    main_body.push_str(&format!("printf(\"f{}=%d\\\\n\", f{}({}));\n",
+                        i, i, (v % 30) - 15));
+                }
+                3 => { // tentative definition (common symbol 语义)
+                    b_body.push_str(&format!("int tent{};\n", i));
+                    c_body.push_str(&format!("int tent{};\n", i)); // 两个 TU 都 tentative
+                    b_body.push_str(&format!("int init_tent{}() {{ tent{} = {}; return tent{}; }}\n", i, i, v % 500, i));
+                    main_body.push_str(&format!("printf(\"tent{}=%d\\\\n\", init_tent{}());\n", i, i));
+                }
+                4 => { // 函数指针表跨 TU
+                    c_body.push_str(&format!(
+                        "static int h{}a(int x) {{ return x + {}; }}\nint h{}b(int x) {{ return x * {}; }}\n", i, v % 71, i, 2 + v % 9));
+                    b_body.push_str(&format!(
+                        "extern int h{}b(int);\ntypeedef int (*fp{})(int);\nfp{} tbl{}[2] = {{ 0, h{}b }};\n", i, i, i, i, i));
+                    main_body.push_str(&format!("printf(\"tbl{}=%d\\\\n\", tbl{}[1]({}));\n", i, i, v % 20));
+                }
+                _ => { // 双层跨文件调用: main→b→c
+                    b_body.push_str(&format!(
+                        "extern int deep{}(int);\nint mid{}(int x) {{ return deep{}(x + {}) * 2; }}\n", i, i, i, v % 13));
+                    c_body.push_str(&format!(
+                        "int deep{}(int x) {{ return x - {}; }}\n", i, v % 61));
+                    main_body.push_str(&format!("printf(\"mid{}=%d\\\\n\", mid{}({}));\n", i, i, (v % 40) - 20));
+                }
+            }
+        }
+        // main 需要所有跨 TU 符号的 extern 声明（现代 gcc 无隐式声明）
+        let mut decls = String::from("#include <stdio.h>\n");
+        for (i, &(kind, _)) in seeds.iter().enumerate() {
+            match kind % 6 {
+                0 => decls.push_str(&format!("extern int g{};\n", i)),
+                1 => decls.push_str(&format!("extern int arr{}[4];\n", i)),
+                2 => decls.push_str(&format!("extern int f{}(int);\n", i)),
+                4 => decls.push_str(&format!(
+                    "typedef int (*fp_t{})(int); extern fp_t{} tbl{}[2];\n", i, i, i)),
+                _ => decls.push_str(&format!("extern int mid{}(int);\n", i)),
+            }
+        }
+        let main = format!("{}int main(void) {{\n    {}\n    return 0;\n}}\n", decls, main_body);
+        (main, b_body, c_body)
+    }
+
+    /// P-MULTITU: 3-TU 随机符号分布链接后行为 == gcc
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+        #[test]
+        fn p_multitu_link_vs_gcc(
+            k0 in any::<u32>(), v0 in any::<i64>(),
+            k1 in any::<u32>(), v1 in any::<i64>(),
+            k2 in any::<u32>(), v2 in any::<i64>(),
+            k3 in any::<u32>(), v3 in any::<i64>(),
+            k4 in any::<u32>(), v4 in any::<i64>(),
+            k5 in any::<u32>(), v5 in any::<i64>(),
+        ) {
+            let seeds = vec![(k0, v0), (k1, v1), (k2, v2), (k3, v3), (k4, v4), (k5, v5)];
+            // 保证至少一个 kind 0（extern int），使 main 的 g0 声明有效
+            let mut seeds = seeds;
+            seeds[0].0 = 0;
+            let (main_c, b_c, c_c) = render_tus(&seeds);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let f_main = dir.join(format!("L{}a.c", case));
+            let f_b = dir.join(format!("L{}b.c", case));
+            let f_c = dir.join(format!("L{}c.c", case));
+            std::fs::write(&f_main, &main_c).unwrap();
+            std::fs::write(&f_b, &b_c).unwrap();
+            std::fs::write(&f_c, &c_c).unwrap();
+            let ccc_out = dir.join(format!("L{}ccc", case));
+            let gcc_out = dir.join(format!("L{}gcc", case));
+
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&gcc_out)
+                .arg(&f_main).arg(&f_b).arg(&f_c).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject: {}", String::from_utf8_lossy(&gc.stderr).lines().next().unwrap_or(""));
+
+            let argv = vec!["ccc".to_string(),
+                f_main.to_string_lossy().into_owned(),
+                f_b.to_string_lossy().into_owned(),
+                f_c.to_string_lossy().into_owned(),
+                "-o".to_string(), ccc_out.to_string_lossy().into_owned()];
+            let mut d = crate::driver::Driver::new();
+            let cc = match d.parse_cli_args(&argv) { Ok(true) => Err("cli consumed".to_string()), Ok(false) => d.run(), Err(e) => Err(e) };
+            match cc {
+                Ok(()) => {}
+                Err(e) => prop_assert!(false, "ccc link FAILED where gcc ok: {}\nmain:\n{}\nb:\n{}\nc:\n{}",
+                    &e[..e.len().min(200)], main_c, b_c, c_c),
+            }
+
+            let r1 = Command::new(&ccc_out).output().unwrap();
+            let r2 = Command::new(&gcc_out).output().unwrap();
+            let _ = std::fs::remove_file(&f_main); let _ = std::fs::remove_file(&f_b);
+            let _ = std::fs::remove_file(&f_c); let _ = std::fs::remove_file(&ccc_out); let _ = std::fs::remove_file(&gcc_out);
+            prop_assert!(r1.status.success(), "ccc binary crashed");
+            let o1 = String::from_utf8_lossy(&r1.stdout);
+            let o2 = String::from_utf8_lossy(&r2.stdout);
+            prop_assert_eq!(o1, o2, "multi-TU link behavior differs\nmain:\n{}\nb:\n{}\nc:\n{}", main_c, b_c, c_c);
+        }
+    }
+}

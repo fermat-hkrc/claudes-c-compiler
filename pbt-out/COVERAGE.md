@@ -57,3 +57,9 @@
 | #if expr eval (corners) | src/frontend/preprocessor/expr_eval.rs | same file ::pbt_semantics_corners | p_if_corners_vs_gcc | 30 corners green; malformed accept → **#1088** |
 | #if unsigned mixing | src/frontend/preprocessor/expr_eval.rs | same ::pbt_semantics_corners | p_if_random_unsigned_mix | 300 cases green |
 | macro expansion corners | src/frontend/preprocessor/macro_defs.rs | expr_eval.rs ::pbt_macro_expansion | p_macro_corners_vs_gcc | 18/20 green; __VA_OPT__ → **#1089** |
+
+## Round 33 — linker_common deep PBT (multi-TU)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| multi-TU symbol resolution | src/backend/linker_common/*.rs (17 files) | mod.rs ::pbt_multitu_link | p_multitu_link_vs_gcc | 200 cases green: extern/cross-fn/tentative/fn-ptr-tables |
+| weak symbols (manual probe) | symbols.rs | manual /tmp/w1.c+w2.c | — | matches gcc |

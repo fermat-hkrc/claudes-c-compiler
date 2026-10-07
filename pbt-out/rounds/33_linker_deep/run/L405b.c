@@ -1,0 +1,10 @@
+int g0 = 84046;
+int tent2;
+int init_tent2() { tent2 = 351; return tent2; }
+extern int deep3(int);
+int mid3(int x) { return deep3(x + 5) * 2; }
+extern int deep4(int);
+int mid4(int x) { return deep4(x + -7) * 2; }
+extern int h5b(int);
+typeedef int (*fp5)(int);
+fp5 tbl5[2] = { 0, h5b };
