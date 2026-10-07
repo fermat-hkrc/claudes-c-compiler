@@ -136,3 +136,5 @@
 | 40 | src/frontend/sema + lowering | sizeof on a bit-field accepted (sizeof(s.a)) — C11 6.5.3.4p1 constrain | **new issue filed** | [#1136](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1136) |
 | 40 | src/frontend parser+sema | statement-placement constraints absent — break/continue/case/default o | **new issue filed** | [#1137](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1137) |
 | 40 | src/frontend parser+sema | declaration constraints absent — same-scope var redefinition, void var | **new issue filed** | [#1138](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1138) |
+| 40 | src/frontend/sema | expression operand-type constraints absent — *deref non-pointer, subscript  | **new issue filed** | [#1139](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1139) |
+| 40 | src/frontend/sema | declaration/qualifier constraints absent — static init with non-constant SI | **new issue filed** | [#1140](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1140) |
