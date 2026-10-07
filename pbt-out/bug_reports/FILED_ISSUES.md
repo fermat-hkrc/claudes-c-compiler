@@ -72,3 +72,5 @@
 | 28 | src/backend/i686/assembler | 12 system/legacy instructions missing (shrdl/xlat/enter/into/bound/arpl/lldt/sldt/str/verr/verw/lar) | **new issue filed** (dedup-clean) | [#1039](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1039) |
 | 28 | src/backend/x86/assembler | lzcnt/tzcnt (ABM) + adcx/adox (ADX) missing (4 forms) | **new issue filed** (dedup-clean) | [#1040](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1040) |
 | 28 | src/backend/riscv/assembler | Zbb instructions (andn/clz/rol/min etc.) without +zbb gate (15 forms) | **new issue filed** (dedup-clean) | [#1041](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1041) |
+| 28 | src/backend/arm/assembler | AArch64 ldr/str h-register (FP16) encoded as d-register (64-bit) — ldr | **new issue filed** | [#1042](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1042) |
+| 28 | src/backend/arm/assembler | AArch64 FP16 arithmetic encoded as FP32 — fadd h0,h1,h2 produces fadd  | **new issue filed** | [#1043](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1043) |
