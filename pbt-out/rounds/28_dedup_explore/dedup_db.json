@@ -1,5 +1,9 @@
 [
  {
+  "n": 1052,
+  "t": "Bug: AArch64 NEON ld2r/ld4r post-increment byte mismatch + ld1/st1/ld4 writeback (!) on post-index silently accepted"
+ },
+ {
   "n": 1051,
   "t": "Bug: x86-64 assembler lacks SSE4.2 string comparison (pcmpestri/pcmpestrm/pcmpistri/pcmpistrm) and MOVBE \u2014 6 instructions missing"
  },
@@ -396,10 +400,6 @@
   "t": "Bug: encode_csr ignores extra operands"
  },
  {
-  "n": 952,
-  "t": "Bug: encode_csr ignores extra operands"
- },
- {
   "n": 951,
   "t": "Bug: encode_csr truncates CSR numbers outside 0..=4095"
  },
@@ -790,6 +790,10 @@
  {
   "n": 854,
   "t": "Bug: encode_smaddl accepts FP/SIMD registers as GPRs"
+ },
+ {
+  "n": 853,
+  "t": "Bug: encode_smaddl silently ignores a 5th operand"
  },
  {
   "n": 853,
