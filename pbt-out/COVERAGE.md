@@ -152,3 +152,11 @@
 | pragma pack stack | preprocessor pragmas | /tmp/r44.c | 5-struct size chain | green (push/1/2/pop/pop) |
 | pack×bitfields + builtin mem/ffs + atomics + 512-switch | lexer/builtins/codegen | /tmp/r44b.c /tmp/r44c.c /tmp/bigsw.c | byte/value diff | all green |
 | string-literal newline check | src/frontend/lexer | /tmp/nl.c | gcc/clang diff | accepted → **#1155** |
+
+## Round 45 — escape corners + driver/CLI flags
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| hex-escape validation | lexer | python-form isolation | \x empty forms | accepted → #1156 |
+| -U/-D ordering, functional -D, -C, -M | src/driver | /tmp/uu.c /tmp/fm.c /tmp/ec.c /tmp/mm.c | gcc diff | 4 breaks → #1157 #1158 #1160 #1161 |
+| self-include depth | includes.rs | /tmp/deep.h | gcc diff | silent object → #1159 |
+| UTF-8 strings/comments, \8, \7777, -isystem, include_next, search order | — | /tmp/e45.c etc | value diff | all green |
