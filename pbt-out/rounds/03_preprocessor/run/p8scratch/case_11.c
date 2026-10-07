@@ -1,2 +1,3 @@
-#define TWO(a,b) [a][b]
-TWO(,)
+#define P(a,b) a##\
+b
+P(x,1)

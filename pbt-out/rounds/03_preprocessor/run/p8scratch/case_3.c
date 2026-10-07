@@ -1,2 +1,3 @@
-#define P(a,b) a##b
-P(x,)
+int y; // comment \
+still comment
+int z;

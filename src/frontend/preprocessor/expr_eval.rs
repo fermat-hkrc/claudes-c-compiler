@@ -568,3 +568,51 @@ mod pbt_macro_expansion {
         assert_eq!(fails, 0, "{} macro expansion corners differ from gcc", fails);
     }
 }
+
+#[cfg(test)]
+mod pbt_text_proc {
+    //! Round-32c: line-splicing corners + computed includes vs gcc tokens.
+    use crate::frontend::preprocessor::pbt_support::{gcc_tokens, sut_tokens};
+
+    fn cmp(name: &str, src: &str) -> Result<(), String> {
+        let g = gcc_tokens(src).map_err(|e| format!("gcc err: {}", &e[..e.len().min(60)]))?;
+        let mut pp = crate::frontend::preprocessor::Preprocessor::new();
+        let s = sut_tokens(&mut pp, src);
+        if g != s { Err(format!("{}\n  gcc: {:?}\n  ccc: {:?}", name, g, s)) } else { Ok(()) }
+    }
+
+    #[test]
+    fn p_splice_and_include_corners() {
+        let cases: Vec<(&str, &str)> = vec![
+            // 行拼接：宏定义内
+            ("splice-macro", "#define M(a) \\\n  a + 1\nM(5)\n"),
+            // 行拼接：表达式中间
+            ("splice-expr", "int x = 1 + \\\n2;\n"),
+            // 行拼接：字符串字面量中间（C11: 未定义但 gcc 行为固定——拼接）
+            ("splice-string", "char *s = \"ab\\\ncd\";\n"),
+            // 行拼接：// 注释末尾 —— 注释延续到下一行！
+            ("splice-linecomment", "int y; // comment \\\nstill comment\nint z;\n"),
+            // 行拼接：/* */ 注释内部
+            ("splice-blockcomment", "/* star \\\n still */ int q;\n"),
+            // 三字母相邻：反斜杠后空白再换行（不拼接——gcc 警告但保留）
+            ("splice-space-eol", "#define N 2 \\\n\nN\n"),
+            // 字符串内的假续行：反斜杠双写
+            ("string-double-bs", "char *t = \"x\\\\\ny\";\n"),
+            // include 差分需本地 fixture（全量系统头对比 = 预定义宏噪音，非 bug）
+            // 空行 + 续行
+            ("splice-blank", "#define K \\\n\n 7\nK\n"),
+            // ## 后接换行
+            ("paste-splice", "#define P(a,b) a##\\\nb\nP(x,1)\n"),
+            // # 后接换行（字符串化操作符）
+            ("str-splice", "#define S(a) #\\\na\nS(q)\n"),
+        ];
+        let mut fails = 0;
+        for (name, src) in cases {
+            match cmp(name, src) {
+                Ok(()) => {}
+                Err(e) => { println!("  FAIL {}", e); fails += 1; }
+            }
+        }
+        assert_eq!(fails, 0, "{} splice/include corners differ from gcc", fails);
+    }
+}

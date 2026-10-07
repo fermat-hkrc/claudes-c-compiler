@@ -1,2 +1,2 @@
-#define P(a,b) a##b
-P(,x)
+char *s = "ab\
+cd";

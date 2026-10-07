@@ -1,2 +1,3 @@
-#define C() 1 /* c */ + 2
-C()
+#define S(a) #\
+a
+S(q)

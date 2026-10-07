@@ -1,2 +1,3 @@
-#define F(x) F(x)
-F(1)
+#define N 2 \
+
+N

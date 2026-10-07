@@ -1,2 +1,3 @@
-#define V(a,...) a __VA_ARGS__
-V(1)
+#define S(a) #\
+a
+S(q)

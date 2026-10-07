@@ -1,2 +1,3 @@
-#define V(...) __VA_ARGS__
-V()
+#define P(a,b) a##\
+b
+P(x,1)
