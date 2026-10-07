@@ -148,3 +148,4 @@
 | 41 | src/frontend/sema | VLA placement: struct member + block-static VLA accepted | **new issue filed** | [#1148](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1148) |
 | 41 | src/frontend/sema | wave-8: array cast, self-containing struct, enum-fwd object (3 forms) | **new issue filed** | [#1149](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1149) |
 | 42 | src/frontend parser/sema | nested-fn support inverted (plain rejected, static accepted) | **new issue filed** | [#1151](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1151) |
+| 42 | symbol emitter | asm-label rename splits call/def symbol names → unlink | **new issue filed** | [#1152](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1152) |

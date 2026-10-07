@@ -127,3 +127,12 @@
 | mixed bitfield layout | lowering struct layout | /tmp/rt11.c | byte diff vs gcc+clang | == clang exactly; gcc slack-only diff (unspecified) — no bug |
 | i686 FP-struct interop | i686 backend | /tmp/i32f*.c | gcc -m32 diff | all green (st(0)) |
 | goto/VLA stack balance | stack_layout | /tmp/rt12.c | 1000-round stress | green both levels |
+
+## Round 42 — adversarial optimizer + GNU extensions
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| optimizer adversarial patterns | src/passes | mod.rs::pbt_opt_adversarial | 400×3 levels | green (INT_MIN abs, ovf-guards, rotates, strength-reduction) |
+| memory-graph fuzz | codegen | mod.rs::pbt_memgraph | 300×3 levels | green (aliasing, fn-ptr effects) |
+| nested functions | parser/sema | /tmp/nest*.c | gcc diff | inversion → #1150 + #1151 |
+| asm labels | symbol emitter | /tmp/asmname.c | link diff | split rename → #1152 |
+| GNU ext surface | — | /tmp/gnux.c /tmp/attr.c | byte/value diff | stmt-expr/typeof/computed-goto/packed/aligned all green |
