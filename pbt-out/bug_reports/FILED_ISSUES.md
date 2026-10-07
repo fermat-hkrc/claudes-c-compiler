@@ -88,3 +88,4 @@
 | 28 | src/backend/arm/assembler | ALL fmov Rd,#imm encode as NOP (10 forms; FP reg never set) | **new issue filed** (HIGH) | [#1064](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1064) |
 | 28 | src/backend/riscv/assembler | fcvt.d.s/fcvt.d.w wrong rs2 encoding (2 forms; 34/36 clean) | **new issue filed** | [#1068](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1068) |
 | 30 | src/backend/arm/assembler/encoder | encode_shift panic on shift >= width (u32 underflow) | **new issue filed** | [#1073](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1073) |
+| 30 | src/backend/arm/assembler/encoder | encode_ldxr_stxr silently encodes imm9≠0 for LDXR with offset | **new issue filed** | [#1075](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1075) |

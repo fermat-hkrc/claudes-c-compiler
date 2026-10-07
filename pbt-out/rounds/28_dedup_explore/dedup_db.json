@@ -1,5 +1,33 @@
 [
  {
+  "n": 1074,
+  "t": "Bug: encode_mv silently ignores extra operands"
+ },
+ {
+  "n": 1073,
+  "t": "Bug: encode_shift panics on subtraction overflow when shift amount >= register width (lsl w0, w1, #32 \u2192 \"attempt to subtract with overflow\")"
+ },
+ {
+  "n": 1072,
+  "t": "Bug: encode_li silently ignores extra operands"
+ },
+ {
+  "n": 1071,
+  "t": "Bug: encode_v_crypto_vs uses OP-P (1110111) instead of OP-V (1010111)"
+ },
+ {
+  "n": 1070,
+  "t": "Bug: encode_v_crypto_vs ignores trailing v0.t on a non-maskable instruction"
+ },
+ {
+  "n": 1069,
+  "t": "Bug: encode_v_crypto_vs ignores extra operands"
+ },
+ {
+  "n": 1068,
+  "t": "Bug: RISC-V fcvt.d.s and fcvt.d.w encode with wrong rs2/rm field bits \u2014 2 conversion instructions produce wrong encodings"
+ },
+ {
   "n": 1067,
   "t": "Bug: encode_v_crypto_vv uses OP-P (1110111) instead of OP-V (1010111)"
  },
@@ -796,10 +824,6 @@
   "t": "Bug: encode_uxth emits 64-bit UBFM for an X destination"
  },
  {
-  "n": 868,
-  "t": "Bug: encode_uxth emits 64-bit UBFM for an X destination"
- },
- {
   "n": 867,
   "t": "Bug: encode_uxth treats SP/WSP as ZR"
  },
@@ -1566,6 +1590,10 @@
  {
   "n": 676,
   "t": "Bug: encode_neon_logical accepts arrangements other than .8b/.16b"
+ },
+ {
+  "n": 675,
+  "t": "Bug: encode_neon_logical encodes GPR/SP/bare/FP sources as NEON registers"
  },
  {
   "n": 675,

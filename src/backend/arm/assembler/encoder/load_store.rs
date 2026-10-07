@@ -964,3 +964,141 @@ pub(crate) fn encode_stop(mnemonic: &str, operands: &[Operand]) -> Result<Encode
         | (rs << 16) | (opc << 12) | (rn << 5) | rt;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod pbt_adversarial {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+
+    /// P-LDR-STR: FP 寄存器传给 GPR ldr/str → 应该 Err
+    #[test]
+    fn p_ldr_str_fp_as_gpr() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()), // FP as data register
+            Operand::Mem { base: "x1".to_string(), offset: 0 },
+        ];
+        let result = encode_ldr_str(&ops, true, 3, false, false);
+        // ldr d0, [x1] is actually VALID (FP load) — should succeed
+        // But encode_ldr_str with size=3 is for GPR ldr x0; FP should route differently
+        // The question is: does encode_ldr_str validate the register class?
+        // If it encodes d0 as x0, that's the same get_reg issue
+        if let Ok(EncodeResult::Word(word)) = result {
+            let rt = word & 0x1F;
+            println!("ldr d0,[x1] via encode_ldr_str: word={:#x}, Rt={} (d0 number=0)", word, rt);
+        }
+    }
+
+    /// P-LDR-STR: 立即数偏移超出 imm12 范围 → 应该 Err 或处理
+    #[test]
+    fn p_ldr_str_offset_out_of_range() {
+        for offset in [16384i64, -16385, 100000, 1000000] {
+            let ops = vec![
+                Operand::Reg("x0".to_string()),
+                Operand::Mem { base: "x1".to_string(), offset },
+            ];
+            let result = encode_ldr_str(&ops, true, 3, false, false);
+            // imm12 unsigned scaled: max offset = 32760 for 64-bit ldr
+            // Out-of-range should error or use different encoding (ldur)
+            if let Ok(EncodeResult::Word(word)) = result {
+                let imm12 = (word >> 10) & 0xFFF;
+                // If silently accepted, check the encoded offset is reasonable
+                // (not a huge wrap-around value)
+                let scaled = imm12 * 8; // for 64-bit
+                let actual_offset = if offset < 0 {
+                    (scaled as i64) - 4096 * 8 // two's complement
+                } else {
+                    scaled as i64
+                };
+                // Just verify no panic for now
+            }
+        }
+    }
+
+    /// P-LDP-STP: SP 作为数据寄存器 → 应该 Err（FP pair 中不能有 SP）
+    #[test]
+    fn p_ldp_stp_sp_as_data() {
+        let ops = vec![
+            Operand::Reg("sp".to_string()), // SP as first data register
+            Operand::Reg("x1".to_string()),
+            Operand::Mem { base: "x2".to_string(), offset: 16 },
+        ];
+        let result = encode_ldp_stp(&ops, true);
+        // SP cannot be a data register in LDP — only base
+        if let Ok(EncodeResult::Word(word)) = result {
+            let rt = word & 0x1F;
+            // SP as Rt would be encoded as 31 (XZR)
+            assert!(rt != 31,
+                "encode_ldp_stp accepted SP as Rt, encoded as register 31 (XZR)");
+        }
+    }
+
+    /// P-LDP-STP: FP 寄存器传给 GPR ldp/stp → 检查是否正确处理
+    #[test]
+    fn p_ldp_stp_fp_as_gpr() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()), // FP as first data register
+            Operand::Reg("d1".to_string()), // FP as second data register
+            Operand::Mem { base: "x2".to_string(), offset: 16 },
+        ];
+        let result = encode_ldp_stp(&ops, true);
+        // ldp d0, d1, [x2] IS a valid FP load pair — different encoding
+        // But encode_ldp_stp might not handle it (expects GPR)
+        // If it treats d0/d1 as x0/x1, that's the get_reg issue
+        if let Ok(EncodeResult::Word(word)) = result {
+            let opc = (word >> 30) & 0b11;
+            // For GPR ldp: opc should be 01 (64-bit); for FP: 10
+            println!("ldp d0,d1 via encode_ldp_stp: opc={:02b} (should be 10 for FP)", opc);
+        }
+    }
+
+    /// P-LDXR: 立即数偏移不被 ldxr 支持（no offset form）→ 应该 Err
+    #[test]
+    fn p_ldxr_with_offset() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Mem { base: "x1".to_string(), offset: 8 }, // offset not supported
+        ];
+        let result = encode_ldxr_stxr(&ops, true, None);
+        // LDXR only supports [Xn] with no offset — offset should error
+        if result.is_ok() {
+            if let Ok(EncodeResult::Word(word)) = result {
+                // If silently accepted, the offset bits should be 0
+                let imm = (word >> 10) & 0x1FF; // imm9 field
+                assert_eq!(imm, 0,
+                    "LDXR with offset 8 encoded imm9={} (should reject or encode imm9=0)", imm);
+            }
+        }
+    }
+
+    /// P-ADR: 超出 ±1MB 范围 → 应该 Err 或不 panic
+    #[test]
+    fn p_adr_out_of_range() {
+        for offset in [1048576i64, -1048577, 2000000, -2000000] {
+            let ops = vec![
+                Operand::Reg("x0".to_string()),
+                Operand::SymbolOffset("label".to_string(), offset),
+            ];
+            let result = encode_adr(&ops);
+            // ADR has ±1MB range; out of range should error or use ADRP
+            // Just verify no panic
+            let _ = result;
+        }
+    }
+
+    /// P-PRFM: 立即数形式 prfm → 检查编码
+    #[test]
+    fn p_prfm_imm_form() {
+        // prfm #5, [x0] — numeric operation type
+        let ops = vec![
+            Operand::Imm(5),
+            Operand::Mem { base: "x0".to_string(), offset: 0 },
+        ];
+        let result = encode_prfm(&ops);
+        if let Ok(EncodeResult::Word(word)) = result {
+            let rt = word & 0x1F;
+            // prfm encodes the operation in Rt field
+            assert_eq!(rt, 5, "prfm #5 encoded Rt={} (should be 5)", rt);
+        }
+    }
+}
