@@ -167,3 +167,4 @@
 | 46 | riscv encoder pseudo | encode_j_pseudo silently ignores extra operands | **new issue filed** | [#1169](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1169) |
 | 46 | riscv encoder pseudo | encode_jr silently ignores extra operands | **new issue filed** | [#1170](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1170) |
 | 46 | riscv encoder pseudo | encode_jump silently ignores extra operands | **new issue filed** | [#1171](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1171) |
+| 47 | lexer | digraphs unsupported (C95 %: <%% %%> <: :>) | **new issue filed** | [#1172](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1172) |
