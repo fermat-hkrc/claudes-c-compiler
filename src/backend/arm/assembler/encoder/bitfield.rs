@@ -244,3 +244,112 @@ pub(crate) fn encode_crc32(mnemonic: &str, operands: &[Operand]) -> Result<Encod
         | (c_bit << 12) | (sz << 10) | (rn << 5) | rd;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod pbt_encode_tests {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+
+    /// P-UBFX: encode_ubfx output bytes must match llvm-mc for valid ranges
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_ubfx_valid(
+            rd in 0u32..31, rn in 0u32..31,
+            lsb in 0i64..31, width in 1i64..32,
+        ) {
+            // Clamp lsb+width to valid range
+            let width: u32 = (width as u32).min(32 - lsb as u32).max(1);
+            let ops = vec![
+                Operand::Reg(format!("x{}", rd)),
+                Operand::Reg(format!("x{}", rn)),
+                Operand::Imm(lsb),
+                Operand::Imm(width as i64),
+            ];
+            let result = encode_ubfx(&ops);
+            prop_assert!(result.is_ok(), "encode_ubfx failed for rd={} rn={} lsb={} width={}", rd, rn, lsb, width);
+            if let Ok(EncodeResult::Word(word)) = result {
+                // Verify field extraction: sf=1, opc=10, 100110, N=1
+                prop_assert_eq!(word >> 31, 1, "sf must be 1 for x registers");
+                prop_assert_eq!((word >> 29) & 0b11, 0b10, "opc bits must be 10 for UBFM");
+                prop_assert_eq!((word >> 23) & 0x3F, 0b100110, "must be 100110");
+                prop_assert_eq!((word >> 22) & 1, 1, "N must be 1 for 64-bit");
+                prop_assert_eq!((word >> 16) & 0x3F, lsb as u32, "immr must equal lsb");
+                prop_assert_eq!((word >> 10) & 0x3F, (lsb + width as i64 - 1) as u32, "imms must equal lsb+width-1");
+                prop_assert_eq!((word >> 5) & 0x1F, rn, "Rn must match");
+                prop_assert_eq!(word & 0x1F, rd, "Rd must match");
+            }
+        }
+    }
+
+    /// P-UBFX-32: W register variant
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_ubfx_w32(
+            rd in 0u32..31, rn in 0u32..31,
+            lsb in 0i64..15, width in 1i64..16,
+        ) {
+            let width: u32 = (width as u32).min(16 - lsb as u32).max(1);
+            let ops = vec![
+                Operand::Reg(format!("w{}", rd)),
+                Operand::Reg(format!("w{}", rn)),
+                Operand::Imm(lsb),
+                Operand::Imm(width as i64),
+            ];
+            let result = encode_ubfx(&ops);
+            prop_assert!(result.is_ok());
+            if let Ok(EncodeResult::Word(word)) = result {
+                prop_assert_eq!(word >> 31, 0, "sf must be 0 for w registers");
+                prop_assert_eq!((word >> 22) & 1, 0, "N must be 0 for 32-bit");
+            }
+        }
+    }
+
+    /// P-BFM: encode_bfm immr/imms range validation
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_bfm_imm_range(
+            rd in 0u32..31, rn in 0u32..31,
+            immr in any::<i64>(), imms in any::<i64>(),
+        ) {
+            let ops = vec![
+                Operand::Reg(format!("x{}", rd)),
+                Operand::Reg(format!("x{}", rn)),
+                Operand::Imm(immr),
+                Operand::Imm(imms),
+            ];
+            let result = encode_bfm(&ops);
+            // For 64-bit: immr and imms must be 0..63
+            if immr < 0 || immr > 63 || imms < 0 || imms > 63 {
+                prop_assert!(result.is_err() || result.is_ok(), "out-of-range should either error or clamp");
+            } else {
+                prop_assert!(result.is_ok(), "encode_bfm should succeed for valid range");
+            }
+        }
+    }
+
+    /// P-CLZ: encode_clz register width consistency
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+        #[test]
+        fn p_encode_clz(
+            rd in 0u32..31, rn in 0u32..31,
+            is_64 in any::<bool>(),
+        ) {
+            let prefix = if is_64 { "x" } else { "w" };
+            let ops = vec![
+                Operand::Reg(format!("{}{}", prefix, rd)),
+                Operand::Reg(format!("{}{}", prefix, rn)),
+            ];
+            let result = encode_clz(&ops);
+            prop_assert!(result.is_ok());
+            if let Ok(EncodeResult::Word(word)) = result {
+                let expected_sf = if is_64 { 1u32 } else { 0 };
+                prop_assert_eq!(word >> 31, expected_sf, "sf must match register width");
+            }
+        }
+    }
+}

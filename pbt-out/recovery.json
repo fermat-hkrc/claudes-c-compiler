@@ -1,5 +1,5 @@
 {
-  "outcome": "retrying",
+  "outcome": "response-resumed",
   "attempts": 1,
   "strategy": "shorten-old-tool-outputs",
   "removedCharacters": 392165,
