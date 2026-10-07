@@ -1,225 +1,162 @@
-# Properties: encode_vmv_v_i
+# Properties: encode_vid_v
 
-## encode_vmv_v_i_diff_llvm_mc
+## encode_vid_v_diff_llvm_mc
 - Tier: 4
-- Rationale: Strongest evidenced oracle is differential vs llvm-mc (LLVM 15.0.6), an independently meaningful assembler of the same RISC-V V 1.0 vmv.v.i encoding. State machine rejected: encode_vmv_v_i is a pure function with no lifecycle. Algebraic round-trip rejected: no in-tree vmv.v.i decoder. Sibling encode_vmv_v_v / encode_vmv_v_x / encode_v_arith_vi rejected by same-job gate (OPIVV / OPIVX / 3-operand OPIVI with vs2). Public wrapper encoder/mod.rs:1008 passes operands through, so the helper contract is the assembler contract.
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_vmv_v_x_pbt.rs:247 encode_vmv_v_x_diff_llvm_mc (generalized from sibling 2-operand vmv.v.x to vmv.v.i with simm5)
-- Formal: ∀ vd ∈ {0..31}, simm ∈ {-16..15}. encode_vmv_v_i([Reg("v{vd}"), Imm(simm)]) = llvm-mc("vmv.v.i v{vd}, {simm}") as little-endian Word
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
+- Rationale: Strongest evidenced oracle is differential vs llvm-mc (LLVM 15.0.6), an independently meaningful assembler of the same RISC-V V 1.0 vid.v encoding. State machine rejected: encode_vid_v is a pure function with no lifecycle. Algebraic round-trip rejected: no in-tree vid.v decoder. Sibling encode_vmv_v_v / encode_v_arith_vv rejected by same-job gate (OPIVV funct3=000 / 3-operand OPIVV with vs2/vs1 vs OPMVV unary with vs1=10001). Public wrapper encoder/mod.rs:1015 passes operands through, so the helper contract is the assembler contract.
+- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
+- Seed: encode_vmv_v_v_pbt.rs:208 encode_vmv_v_v_diff_llvm_mc (generalized from 2-operand vmv.v.v to 1-operand vid.v)
+- Formal: ∀ vd ∈ {0..31}. encode_vid_v([Reg("v{vd}")]) = llvm-mc("vid.v v{vd}") as little-endian Word
+- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_vmv_v_i
+function: encoder.encode_vid_v
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [vd, simm]
-  domain: { vd: "v0..v31", simm: "signed_simm5" }
+  vars: [vd]
+  domain: { vd: "v0..v31" }
   relation:
     op: eq
-    lhs: "encode_vmv_v_i([Reg(v{vd}), Imm(simm)])"
-    rhs: "llvm_mc(vmv.v.i v{vd}, {simm})"
+    lhs: "encode_vid_v([Reg(v{vd})])"
+    rhs: "llvm_mc(vid.v v{vd})"
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -16, max: 15, type: i64 }
-evidence: vector.rs:171; encoder/mod.rs:1008; assembler/README.md:14; llvm-mc RISC-V V 1.0
+evidence: vector.rs:180; encoder/mod.rs:1015; assembler/README.md:14; llvm-mc RISC-V V 1.0
 ```
 
-## encode_vmv_v_i_format_fields
+## encode_vid_v_format_fields
 - Tier: 3
-- Rationale: Algebraic invariant unpacking the RISC-V V 1.0 OPIVI layout named by the rustdoc (opcode, funct3=011, vm=1, vs2=0, funct6=010111, vd, simm5). Stronger differential already present as a sibling property; this pins field placement independently of llvm-mc.
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_vmv_v_x_pbt.rs:256 encode_vmv_v_x_format_fields
-- Formal: ∀ vd ∈ {0..31}, simm ∈ {-16..15}. let w = encode_vmv_v_i([Reg("v{vd}"), Imm(simm)]). w[6:0]=1010111 ∧ w[11:7]=vd ∧ w[14:12]=011 ∧ w[19:15]=(simm as u32)&0x1F ∧ w[24:20]=0 ∧ w[25]=1 ∧ w[31:26]=010111
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
+- Rationale: Algebraic invariant unpacking the RISC-V V 1.0 OPMVV vid.v layout named by the rustdoc (opcode, funct3=010, vm=1, vs2=0, vs1=10001, funct6=010100, vd). Stronger differential already present as a sibling property; this pins field placement independently of llvm-mc.
+- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
+- Seed: encode_vmv_v_v_pbt.rs:218 encode_vmv_v_v_format_fields
+- Formal: ∀ vd ∈ {0..31}. let w = encode_vid_v([Reg("v{vd}")]). w[6:0]=1010111 ∧ w[11:7]=vd ∧ w[14:12]=010 ∧ w[19:15]=10001 ∧ w[24:20]=0 ∧ w[25]=1 ∧ w[31:26]=010100
+- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_vmv_v_i
+function: encoder.encode_vid_v
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [vd, simm]
-  domain: { vd: "v0..v31", simm: "signed_simm5" }
+  vars: [vd]
+  domain: { vd: "v0..v31" }
   relation:
     op: holds
-    expr: "unpack(encode_vmv_v_i([Reg(v{vd}), Imm(simm)])) matches OPIVI layout"
+    expr: "unpack(encode_vid_v([Reg(v{vd})])) matches OPMVV vid.v layout"
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -16, max: 15, type: i64 }
-evidence: vector.rs:171
+evidence: vector.rs:180
 ```
 
-## encode_vmv_v_i_field_isolation
+## encode_vid_v_field_isolation
 - Tier: 3
-- Rationale: Metamorphic isolation — changing vd (resp. simm5) must only affect bits [11:7] (resp. [19:15]). Required metamorphic/differential property for standard tier.
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_vmv_v_x_pbt.rs:268 encode_vmv_v_x_field_isolation
-- Formal: ∀ vd_a, vd_b ∈ {0..31}, simm_a, simm_b ∈ {-16..15}. let wa = encode_vmv_v_i([v{vd_a}, Imm(simm_a)]); wb = encode_vmv_v_i([v{vd_b}, Imm(simm_a)]); wc = encode_vmv_v_i([v{vd_a}, Imm(simm_b)]). (wa & ~(0x1F<<7)) = (wb & ~(0x1F<<7)) ∧ (wa & ~(0x1F<<15)) = (wc & ~(0x1F<<15))
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
+- Rationale: Metamorphic isolation — changing vd must only affect bits [11:7]; all other bits are constant across the vd domain. Required metamorphic/differential property for standard tier.
+- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
+- Seed: encode_vmv_v_v_pbt.rs:232 encode_vmv_v_v_field_isolation
+- Formal: ∀ vd_a, vd_b ∈ {0..31}. let wa = encode_vid_v([v{vd_a}]); wb = encode_vid_v([v{vd_b}]). (wa & ~(0x1F<<7)) = (wb & ~(0x1F<<7)) ∧ (wa>>7)&0x1F = vd_a ∧ (wb>>7)&0x1F = vd_b
+- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_vmv_v_i
+function: encoder.encode_vid_v
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [vd_a, vd_b, simm_a, simm_b]
-  domain: { vd_a: "v0..v31", vd_b: "v0..v31", simm_a: "signed_simm5", simm_b: "signed_simm5" }
+  vars: [vd_a, vd_b]
+  domain: { vd_a: "v0..v31", vd_b: "v0..v31" }
   relation:
     op: holds
-    expr: "vd and simm5 bits are independent"
+    expr: "non-vd bits independent of vd"
 generators:
   vd_a: { gen: int, min: 0, max: 31, type: u32 }
   vd_b: { gen: int, min: 0, max: 31, type: u32 }
-  simm_a: { gen: int, min: -16, max: 15, type: i64 }
-  simm_b: { gen: int, min: -16, max: 15, type: i64 }
-evidence: vector.rs:171-176
+evidence: vector.rs:180
 ```
 
-## encode_vmv_v_i_simm5_twos_complement
-- Tier: 3
-- Rationale: Algebraic invariant that simm5 is two's-complement packed into bits [19:15]. Documented bounds [-16, 15] are sampled exactly (generator min/max pin the edges). Weaker than differential; pins the encoding of negative immediates independently.
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_v_arith_vi_pbt.rs:438 encode_v_arith_vi_simm5_twos_complement
-- Formal: ∀ vd ∈ {0..31}, simm ∈ {-16..15}. (encode_vmv_v_i([Reg("v{vd}"), Imm(simm)]) >> 15) & 0x1F = (simm as u32) & 0x1F
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
+## encode_vid_v_neg_arity_bad_regs
+- Tier: 2
+- Rationale: Negative/error contract. llvm-mc rejects too-few operands (`vid.v` with no vd) and non-vector vd (GPR/FP/v32/non-Reg). get_vreg returns Err for missing or non-vreg operand 0. No documented acceptance of those inputs.
+- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
+- Seed: encode_vmv_v_v_pbt.rs:273 encode_vmv_v_v_neg_arity_bad_regs
+- Formal: ∀ ops. ops = [] ∨ (ops = [bad] ∧ bad ∉ v0..v31 as Operand::Reg) ⇒ encode_vid_v(ops) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_vmv_v_i
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [vd, simm]
-  domain: { vd: "v0..v31", simm: "signed_simm5" }
-  relation:
-    op: eq
-    lhs: "(encode_vmv_v_i([Reg(v{vd}), Imm(simm)]) >> 15) & 0x1F"
-    rhs: "(simm as u32) & 0x1F"
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -16, max: 15, type: i64 }
-evidence: vector.rs:171-174
-```
-
-## encode_vmv_v_i_neg_arity_bad_regs
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc: too few operands and non-vector vd / non-Imm simm5 must Err. get_vreg/get_imm return Err on missing or wrong-kind operands. Documented error is Result::Err(String).
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_vmv_v_x_pbt.rs:326 encode_vmv_v_x_neg_arity_bad_regs
-- Formal: ∀ ops with |ops|<2 ∨ ops[0] ∉ v0..v31 ∨ ops[1] is not Imm. encode_vmv_v_i(ops) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_vmv_v_i
+function: encoder.encode_vid_v
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops]
-  domain: { ops: "arity_lt_2_or_bad_vd_or_non_imm" }
+  domain: { ops: "empty or one non-vreg operand" }
   relation:
-    op: holds
-    expr: "encode_vmv_v_i(ops).is_err()"
+    op: throws
+    expr: "encode_vid_v(ops)"
 generators:
-  ops: { gen: list, elem: { gen: int, min: 0, max: 31, type: u32 }, maxLen: 1 }
+  ops: { gen: list, elem: { gen: string }, maxLen: 1 }
 expected_error: String
-evidence: encoder/mod.rs:476-487 get_vreg/get_imm; llvm-mc invalid operand
+evidence: vector.rs:180; llvm-mc too few operands / invalid operand
 ```
 
-## encode_vmv_v_i_neg_extra
-- Tier: 3
-- Rationale: Negative/error contract from llvm-mc: extra operand after a complete `vmv.v.i vd, simm5` is invalid. Public wrapper passes extra operands through. SUT currently ignores operands beyond index 1.
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_vmv_v_x_pbt.rs:360 encode_vmv_v_x_neg_extra
-- Formal: ∀ vd ∈ {0..31}, simm ∈ {-16..15}, extra ∈ Operand. encode_vmv_v_i([Reg("v{vd}"), Imm(simm), extra]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
+## encode_vid_v_neg_extra
+- Tier: 2
+- Rationale: Negative/error contract. llvm-mc rejects any second operand other than v0.t (`operand must be v0.t` / `expected '.t' suffix` / `invalid operand`). The public wrapper passes extra operands through. No SUT comment declares extra tokens valid or out of domain. v0.t is excluded from this generator and covered by encode_vid_v_mask_v0t_diff_llvm_mc (it is a valid masked form, not extra garbage).
+- Doc contract: vector.rs:180 "vid.v vd: OPMVV, funct6=010100, vm=1, vs2=00000, rs1=10001" — asserted fingerprint d70b41ef
+- Seed: encode_vmv_v_v_pbt.rs:295 encode_vmv_v_v_neg_extra
+- Formal: ∀ vd ∈ {0..31}, extra ∈ Operand \ {Symbol("v0.t")}. encode_vid_v([Reg("v{vd}"), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
 - Status: failing
-- Counterexample: encode_vmv_v_i([Reg("v0"), Imm(-16), Imm(0)]) → Ok(Word(0x5e083057))
-- Bug report: pbt-out/bug_reports/encode_vmv_v_i_extra_operand.md
+- Counterexample: encode_vid_v([Reg("v0"), Imm(0)]) → Ok(Word(0x5208a057))
+- Bug report: pbt-out/bug_reports/encode_vid_v_extra_operand.md
 
 ```property
-function: encoder.encode_vmv_v_i
+function: encoder.encode_vid_v
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [vd, simm, extra]
-  domain: { vd: "v0..v31", simm: "signed_simm5", extra: "Operand" }
+  vars: [vd, extra]
+  domain: { vd: "v0..v31", extra: "Operand except Symbol(v0.t)" }
   relation:
-    op: holds
-    expr: "encode_vmv_v_i([Reg(v{vd}), Imm(simm), extra]).is_err()"
+    op: throws
+    expr: "encode_vid_v([Reg(v{vd}), extra])"
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -16, max: 15, type: i64 }
-  extra: { gen: int, min: 0, max: 1, type: i64 }
+  extra: { gen: string }
 expected_error: String
-evidence: llvm-mc "invalid operand for instruction" on extra token; encoder/mod.rs:1008 operands passed through
+evidence: llvm-mc RISC-V V 1.0 vid.v operand list; encoder/mod.rs:1015
 ```
 
-## encode_vmv_v_i_neg_mask_v0t
-- Tier: 3
-- Rationale: Negative/error contract: RISC-V V 1.0 vmv.v.i is unmasked-only (vm=1); llvm-mc rejects trailing v0.t. Dispatcher TODO encoder/mod.rs:956 admits masked variants are not supported; for vmv.v.i the masked form is not a valid ISA encoding, so accepting v0.t is a bug (not a deferred feature).
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_vmv_v_x_pbt.rs:375 encode_vmv_v_x_neg_mask_v0t
-- Formal: ∀ vd ∈ {0..31}, simm ∈ {-16..15}. encode_vmv_v_i([Reg("v{vd}"), Imm(simm), Symbol("v0.t")]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
+## encode_vid_v_mask_v0t_diff_llvm_mc
+- Tier: 4
+- Rationale: Differential vs llvm-mc for the documented RISC-V V 1.0 masked form `vid.v vd, v0.t` (vm=0). Unlike vmv.v.v, vid.v is maskable. Full vd domain {0..31}: llvm-mc encodes vm=0 for vd ∈ {1..31} and rejects vd=v0 (destination overlaps mask). Agreement is: SUT Word equals llvm-mc Word when llvm-mc accepts, and SUT is Err when llvm-mc rejects. Dispatcher TODO encoder/mod.rs:962 admits masked variants are not yet supported — a known limitation on an input the public API accepts, not a domain exclusion.
+- Doc contract: encoder/mod.rs:962 "TODO: masked variants (v0.t) are not yet supported; vm is hardcoded to 1 (unmasked)." — limitation fingerprint 99cac70e
+- Seed: encode_vmv_v_v_pbt.rs:311 encode_vmv_v_v_neg_mask_v0t (inverted: for vid.v the mask form is valid, so the oracle is differential agreement not rejection)
+- Formal: ∀ vd ∈ {0..31}. let mc = llvm-mc("vid.v v{vd}, v0.t"); let sut = encode_vid_v([Reg("v{vd}"), Symbol("v0.t")]). (mc = Ok(w) ⇒ sut = Ok(w)) ∧ (mc = Err ⇒ sut = Err)
+- Test file: src/backend/riscv/assembler/encoder/encode_vid_v_pbt.rs
 - Status: failing
-- Counterexample: encode_vmv_v_i([Reg("v0"), Imm(-16), Symbol("v0.t")]) → Ok(Word(0x5e083057))
-- Bug report: pbt-out/bug_reports/encode_vmv_v_i_mask_v0t.md
+- Counterexample: encode_vid_v([Reg("v0"), Symbol("v0.t")]) → Ok(Word(0x5208a057))
+- Bug report: pbt-out/bug_reports/encode_vid_v_mask_v0t.md
 
 ```property
-function: encoder.encode_vmv_v_i
-oracle: negative_error
+function: encoder.encode_vid_v
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [vd, simm]
-  domain: { vd: "v0..v31", simm: "signed_simm5" }
+  vars: [vd]
+  domain: { vd: "v0..v31" }
   relation:
     op: holds
-    expr: "encode_vmv_v_i([Reg(v{vd}), Imm(simm), Symbol(v0.t)]).is_err()"
+    expr: "llvm_mc_ok iff sut_ok and then sut_word == mc_word"
 generators:
   vd: { gen: int, min: 0, max: 31, type: u32 }
-  simm: { gen: int, min: -16, max: 15, type: i64 }
-expected_error: String
-evidence: vector.rs:171 vm=1; llvm-mc rejects v0.t on vmv.v.i; RISC-V V 1.0 unmasked-only
-```
-
-## encode_vmv_v_i_neg_imm_oob
-- Tier: 3
-- Rationale: Negative/error contract: llvm-mc requires simm5 ∈ [-16, 15] ("immediate must be an integer in the range [-16, 15]"). The rustdoc names the field simm5. Documented bounds must be exercised at bound±1 (16 and -17). SUT currently truncates with `& 0x1F`.
-- Doc contract: vector.rs:171 "vmv.v.i vd, simm5: OPIVI, funct6=010111, vm=1, vs2=0" — asserted fingerprint 00b9eacd
-- Seed: encode_v_arith_vi_pbt.rs:530 encode_v_arith_vi_neg_imm_oob
-- Formal: ∀ vd ∈ {0..31}, imm ∈ ℤ \ {-16..15}. encode_vmv_v_i([Reg("v{vd}"), Imm(imm)]) = Err(_)
-- Test file: src/backend/riscv/assembler/encoder/encode_vmv_v_i_pbt.rs
-- Status: failing
-- Counterexample: encode_vmv_v_i([Reg("v0"), Imm(16)]) → Ok(Word(0x5e083057)) (encodes as -16)
-- Bug report: pbt-out/bug_reports/encode_vmv_v_i_imm_oob.md
-
-```property
-function: encoder.encode_vmv_v_i
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [vd, imm]
-  domain: { vd: "v0..v31", imm: "i64_outside_simm5" }
-  relation:
-    op: holds
-    expr: "encode_vmv_v_i([Reg(v{vd}), Imm(imm)]).is_err()"
-generators:
-  vd: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, min: 16, max: 1024, type: i64 }
-expected_error: String
-evidence: llvm-mc "immediate must be an integer in the range [-16, 15]"; vector.rs:171 simm5
+evidence: RISC-V V 1.0 vid.v vm; encoder/mod.rs:962; llvm-mc -mattr=+v
 ```
