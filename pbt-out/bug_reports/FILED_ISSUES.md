@@ -138,3 +138,5 @@
 | 40 | src/frontend parser+sema | declaration constraints absent — same-scope var redefinition, void var | **new issue filed** | [#1138](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1138) |
 | 40 | src/frontend/sema | expression operand-type constraints absent — *deref non-pointer, subscript  | **new issue filed** | [#1139](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1139) |
 | 40 | src/frontend/sema | declaration/qualifier constraints absent — static init with non-constant SI | **new issue filed** | [#1140](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1140) |
+| 40 | src/frontend/sema | bit-field declaration constraints absent — negative width (a:-1), width 99  | **new issue filed** | [#1141](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1141) |
+| 40 | src/frontend/sema | linkage/label constraints absent — static-after-nonstatic decl, int-then-do | **new issue filed** | [#1142](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1142) |
