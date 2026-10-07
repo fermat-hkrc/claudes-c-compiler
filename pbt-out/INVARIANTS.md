@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_not)
+
+- Valid 2-operand `not rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `not rd, rs` and of `xori rd, rs, -1` byte-for-byte (1000 cases). KAT pins not a0, a1 = xori a0, a1, -1 = 0xfff5c513; not zero, zero = 0xfff04013; not t6, ra = 0xfff0cf93; not fp, s0 = 0xfff44413.
+- I-type layout: opcode 0010011, funct3=100, imm12=0xFFF (-1), rd and rs1 in their fields, including bounds 0 and 31 (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd/rs matches xN (get_reg GCC bare-number path). encode_not(rd, rs) equals encode_alu_imm XORI on [rd, rs, Imm(-1)] (1000 cases).
+- Field isolation: rd bits independent of rs1; opcode/funct3/rs1/imm bits independent of rd (1000 cases).
+- Too few operands and invalid/FP/non-GPR names return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_not)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6) assembling `not rd, rs` and `xori rd, rs, -1`.
+- Harness: src/backend/riscv/assembler/encoder/encode_not_pbt.rs, cargo test --lib encode_not_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:860 "not" => encode_not(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_not NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/xori/I-type/ABI/isolation/arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_not)
+
+- encode_not has no rustdoc; contract is README.md:320 plus the inline XORI comment at pseudo.rs:236.
+- RISC-V Unprivileged ISA NOT pseudo is XORI rd, rs, -1; this assembler matches that expansion (and llvm-mc).
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_mv)
 
 - Valid 2-operand `mv rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `add rd, x0, rs` byte-for-byte (1000 cases). KAT pins mv a0, a1 = add a0, x0, a1 = 0x00b00533; mv zero, zero = 0x00000033; mv t6, ra = 0x00100fb3; mv fp, s0 = 0x00800433.

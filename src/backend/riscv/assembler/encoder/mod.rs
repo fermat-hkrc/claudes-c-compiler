@@ -128,6 +128,8 @@ mod encode_v_crypto_vs_pbt;
 mod encode_li_pbt;
 #[cfg(test)]
 mod encode_mv_pbt;
+#[cfg(test)]
+mod encode_not_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

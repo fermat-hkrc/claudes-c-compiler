@@ -1,18 +1,18 @@
-# Properties: encode_mv
+# Properties: encode_not
 
-## encode_mv_diff_llvm_mc_add
+## encode_not_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest oracle for the documented expansion is encoding agreement with llvm-mc assembling `add rd, x0, rs`, an independent assembler of the same ADD word the README claims. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree MV/ADD decoder). Encoding-equality vs llvm-mc `mv` rejected as primary — llvm-mc expands MV to ADDI (`addi rd, rs, 0`) while README.md:319 and pseudo.rs:228-229 claim ADD for RV64C/C.MV eligibility (different encoding contract; semantic agreement is a separate property). Differential vs encode_alu_reg(add) rejected as primary — shared encode_r/get_reg (used as a weaker metamorphic instead).
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
-- Seed: (none) — no project-owned encode_mv unit test; llvm-mc KAT `add a0, x0, a1` = 0x00b00533
-- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_mv([Reg(rd), Reg(rs)]) = llvm-mc("add rd, x0, rs")
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Rationale: Strongest oracle for the documented expansion is encoding agreement with llvm-mc assembling `not rd, rs`, an independent assembler of the same XORI-with-minus-one word the README claims. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree NOT/XORI decoder). Differential vs encode_alu_imm(xori) rejected as primary — shared encode_i/get_reg (used as a weaker metamorphic instead). Unlike MV, llvm-mc `not` uses the same XORI -1 encoding this assembler documents, so encoding-equality vs llvm-mc `not` is a matching-contract pair.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
+- Seed: (none) — no project-owned encode_not unit test; llvm-mc KAT `not a0, a1` = 0xfff5c513
+- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_not([Reg(rd), Reg(rs)]) = llvm-mc("not rd, rs")
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_mv
+function: encoder.encode_not
 oracle: differential
 predicate:
   quantifier: forall
@@ -20,55 +20,83 @@ predicate:
   domain: { rd: gpr_name, rs: gpr_name }
   relation:
     op: eq
-    lhs: encode_mv([Reg(rd), Reg(rs)]).word
-    rhs: llvm_mc("add rd, x0, rs").word
+    lhs: encode_not([Reg(rd), Reg(rs)]).word
+    rhs: llvm_mc("not rd, rs").word
 generators:
   rd: { gen: string }
   rs: { gen: string }
-evidence: src/backend/riscv/assembler/README.md:319; pseudo.rs:228-229; encoder/mod.rs:857
+evidence: src/backend/riscv/assembler/README.md:320; pseudo.rs:236; encoder/mod.rs:860
 ```
 
-## encode_mv_sem_vs_llvm_mc_mv
+## encode_not_diff_llvm_mc_xori
 - Tier: 5
-- Rationale: Metamorphic/differential required at standard tier. llvm-mc `mv` uses ADDI while the SUT uses ADD; both must leave `rs` in `rd` (RISC-V MV semantics; x0 writes discarded). Independent interpreter of ADD/ADDI (not a copy of encode_mv). State machine rejected. Encoding-equality vs llvm-mc `mv` rejected (documented ADD vs ADDI). Round-trip rejected (no decoder).
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
+- Rationale: Metamorphic/differential required at standard tier. README.md:320 documents `not rd, rs` → `xori rd, rs, -1`. Encoding agreement with llvm-mc assembling that expansion is an independent check of the same contract (llvm-mc may pretty-print the word as `not`, but the bytes must match). State machine rejected. Round-trip rejected (no decoder). Differential vs in-tree encode_alu_imm rejected as primary (shared encode_i).
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
 - Seed: (none)
-- Formal: ∀ rd ∈ GPR\{x0}, ∀ rs ∈ GPR. sim(encode_mv([Reg(rd), Reg(rs)]))[rd] = sim(llvm-mc("mv rd, rs"))[rd] = init[rs]
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_not([Reg(rd), Reg(rs)]) = llvm-mc("xori rd, rs, -1")
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_mv
+function: encoder.encode_not
 oracle: differential
 predicate:
   quantifier: forall
   vars: [rd, rs]
-  domain: { rd: gpr_nonzero, rs: gpr }
+  domain: { rd: gpr_name, rs: gpr_name }
   relation:
     op: eq
-    lhs: sim(encode_mv([Reg(xN(rd)), Reg(xN(rs))]))[rd]
-    rhs: sim(llvm_mc("mv xN(rd), xN(rs)"))[rd]
+    lhs: encode_not([Reg(rd), Reg(rs)]).word
+    rhs: llvm_mc("xori rd, rs, -1").word
 generators:
-  rd: { gen: int, min: 1, max: 31, type: u32 }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: RISC-V Unprivileged ISA MV copies rs to rd; assembler/README.md:319 ADD expansion is semantically the copy
+  rd: { gen: string }
+  rs: { gen: string }
+evidence: src/backend/riscv/assembler/README.md:320; RISC-V Unprivileged ISA NOT = XORI rd, rs, -1
 ```
 
-## encode_mv_isa_fields
+## encode_not_eq_xori_m1
 - Tier: 4
-- Rationale: Documented expansion is R-type ADD (opcode OP-OP, funct3=000, funct7=0000000, rs1=x0). Field unpack from RISC-V R-type, not from the encoder body. Stronger encoding differential covers this domain; this pins the ISA layout including bounds rd/rs ∈ {0,31}.
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
+- Rationale: Documented expansion is XORI with imm=-1. encode_alu_imm(funct3=100) is the same-job sibling for xori, used as a weaker metamorphic because it shares encode_i/get_reg with encode_not. Stronger llvm-mc differentials cover independence.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
 - Seed: (none)
-- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. encode_mv = Word(w) ∧ opcode(w)=0110011 ∧ rd(w)=rd ∧ funct3(w)=000 ∧ rs1(w)=0 ∧ rs2(w)=rs ∧ funct7(w)=0000000
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. encode_not([Reg(xN(rd)), Reg(xN(rs))]) = encode_alu_imm([Reg(xN(rd)), Reg(xN(rs)), Imm(-1)], 0b100)
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_mv
+function: encoder.encode_not
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [rd, rs]
+  domain: { rd: u32_0_31, rs: u32_0_31 }
+  relation:
+    op: eq
+    lhs: encode_not([Reg(xN(rd)), Reg(xN(rs))]).word
+    rhs: encode_alu_imm([Reg(xN(rd)), Reg(xN(rs)), Imm(-1)], 0b100).word
+generators:
+  rd: { gen: int, min: 0, max: 31, type: u32 }
+  rs: { gen: int, min: 0, max: 31, type: u32 }
+evidence: src/backend/riscv/assembler/README.md:320; encoder/mod.rs:598 "xori" => encode_alu_imm(operands, 0b100)
+```
+
+## encode_not_isa_fields
+- Tier: 4
+- Rationale: Documented expansion is I-type XORI (opcode OP-IMM=0010011, funct3=100, imm12=-1). Field unpack from RISC-V I-type, not from the encoder body. Stronger encoding differential covers this domain; this pins the ISA layout including bounds rd/rs ∈ {0,31}.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
+- Seed: (none)
+- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. encode_not = Word(w) ∧ opcode(w)=0010011 ∧ rd(w)=rd ∧ funct3(w)=100 ∧ rs1(w)=rs ∧ imm12(w)=0xFFF
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encoder.encode_not
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
@@ -76,26 +104,26 @@ predicate:
   domain: { rd: u32_0_31, rs: u32_0_31 }
   relation:
     op: holds
-    expr: is_add_x0(encode_mv([Reg(xN(rd)), Reg(xN(rs))]), rd, rs)
+    expr: is_xori_m1(encode_not([Reg(xN(rd)), Reg(xN(rs))]), rd, rs)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: RISC-V Unprivileged ISA R-type ADD; assembler/README.md:319; pseudo.rs:228-229
+evidence: RISC-V Unprivileged ISA I-type XORI; assembler/README.md:320
 ```
 
-## encode_mv_abi_xn_alias
+## encode_not_abi_xn_alias
 - Tier: 4
-- Rationale: ABI names, xN, fp/s0, and zero/x0 are the same GPR. Metamorphic invariance under name alias. Stronger encoding differential already uses mixed names; this pins alias equality including Imm(0..=31) as GCC bare register numbers (get_reg).
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
+- Rationale: ABI names, xN, fp/s0, and zero/x0 must encode the same register number. Imm(0..=31) is the documented GCC bare-number path in get_reg. Algebraic metamorphic over name aliases; stronger encoding differential already covers ABI/xN via llvm-mc.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
 - Seed: (none)
-- Formal: ∀ n,m ∈ 0..31. encode_mv([ABI(n), ABI(m)]) = encode_mv([xN(n), xN(m)]) ∧ encode_mv([Imm(n), Imm(m)]) = encode_mv([xN(n), xN(m)]) ∧ (n=8 ⇒ encode_mv([fp, xN(m)]) = encode_mv([xN(8), xN(m)]))
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Formal: ∀ n,m ∈ 0..31. encode_not([ABI(n), ABI(m)]) = encode_not([xN(n), xN(m)]) = encode_not([Imm(n), Imm(m)]) ∧ (n=8 ⇒ encode_not([fp, xN(m)]) equals) ∧ (m=8 ⇒ encode_not([xN(n), fp]) equals)
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_mv
+function: encoder.encode_not
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
@@ -103,35 +131,35 @@ predicate:
   domain: { n: u32_0_31, m: u32_0_31 }
   relation:
     op: eq
-    lhs: encode_mv([Reg(ABI(n)), Reg(ABI(m))]).word
-    rhs: encode_mv([Reg(xN(n)), Reg(xN(m))]).word
+    lhs: encode_not([Reg(ABI(n)), Reg(ABI(m))]).word
+    rhs: encode_not([Reg(xN(n)), Reg(xN(m))]).word
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   m: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:457-465 get_reg ABI/xN/Imm(0..=31); parser.rs:22-23 register names
+evidence: encoder/mod.rs:459-468 get_reg ABI/xN/Imm(0..=31); fp is s0/x8
 ```
 
-## encode_mv_field_isolation
+## encode_not_field_isolation
 - Tier: 4
-- Rationale: R-type rd and rs2 occupy disjoint bit fields; changing one operand must not perturb the other field or the constant opcode/funct3/rs1/funct7 bits.
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
-- Seed: (none)
-- Formal: ∀ rd, rs_a, rs_b, rd_a, rd_b, rs ∈ 0..31. rd_field(encode_mv(rd, rs_a)) = rd_field(encode_mv(rd, rs_b)) ∧ (encode_mv(rd_a, rs) & ~rd_mask) = (encode_mv(rd_b, rs) & ~rd_mask)
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+- Rationale: Contract-surface sweep (coverage_gaps had no Rust .profraw; C++ reporter listed encode_not NOT LINKED). I-type layout from the RISC-V Unprivileged ISA: rd occupies bits [11:7] independently of rs1; opcode/funct3/rs1/imm occupy the other bits independently of rd. Stronger encoding differential already covers the word; this pins field isolation including bounds 0 and 31.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
+- Seed: encode_mv_field_isolation (same two-operand pseudo shape)
+- Formal: ∀ rd,rs_a,rs_b ∈ 0..31. rd_field(encode_not(rd, rs_a)) = rd_field(encode_not(rd, rs_b)). ∀ rd_a,rd_b,rs ∈ 0..31. (encode_not(rd_a, rs) & ¬rd_mask) = (encode_not(rd_b, rs) & ¬rd_mask)
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_mv
-oracle: algebraic.metamorphic
+function: encoder.encode_not
+oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rd, rs_a, rs_b, rd_a, rd_b, rs]
   domain: { rd: u32_0_31, rs_a: u32_0_31, rs_b: u32_0_31, rd_a: u32_0_31, rd_b: u32_0_31, rs: u32_0_31 }
   relation:
     op: holds
-    expr: rd_field_independent_of_rs and rs_field_independent_of_rd
+    expr: rd_independent_of_rs1(encode_not) && non_rd_independent_of_rd(encode_not)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs_a: { gen: int, min: 0, max: 31, type: u32 }
@@ -139,93 +167,90 @@ generators:
   rd_a: { gen: int, min: 0, max: 31, type: u32 }
   rd_b: { gen: int, min: 0, max: 31, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: RISC-V Unprivileged ISA R-type layout; assembler/README.md:319
+evidence: RISC-V Unprivileged ISA I-type layout; assembler/README.md:320
 ```
 
-## encode_mv_eq_add_x0
-- Tier: 4
-- Rationale: README expansion `add rd, x0, rs` is the same job as encode_alu_reg(funct3=000, funct7=0000000) on [rd, x0, rs]. Shared encode_r/get_reg weakens independence, so this is metamorphic not primary differential. llvm-mc ADD is the independent encoding check.
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
-- Seed: encode_neg_eq_sub_x0 in pseudo.rs encode_neg_pbt (same expansion shape)
-- Formal: ∀ rd, rs ∈ 0..31. encode_mv([xN(rd), xN(rs)]) = encode_alu_reg([xN(rd), x0, xN(rs)], funct3=000, funct7=0000000)
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
+## encode_not_neg_arity
+- Tier: 3
+- Rationale: README documents the two-operand form `not rd, rs`. llvm-mc rejects too few operands. Negative/error contract on arity < 2. Stronger oracles do not cover the error path.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
+- Seed: (none)
+- Formal: ∀ ops. len(ops) < 2 ⇒ encode_not(ops) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_mv
-oracle: algebraic.metamorphic
+function: encoder.encode_not
+oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rd, rs]
-  domain: { rd: u32_0_31, rs: u32_0_31 }
+  vars: [ops]
+  domain: { ops: operand_vec_len_lt_2 }
   relation:
-    op: eq
-    lhs: encode_mv([Reg(xN(rd)), Reg(xN(rs))]).word
-    rhs: encode_alu_reg([Reg(xN(rd)), Reg(x0), Reg(xN(rs))], 0, 0).word
+    op: holds
+    expr: encode_not(ops).is_err()
 generators:
-  rd: { gen: int, min: 0, max: 31, type: u32 }
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: assembler/README.md:319; encoder/base.rs:260 encode_alu_reg ADD
+  ops: { gen: list, elem: { gen: string }, maxLen: 1 }
+expected_error: String
+evidence: src/backend/riscv/assembler/README.md:320 two-operand form; llvm-mc "too few operands"
 ```
 
-## encode_mv_neg_extra
+## encode_not_neg_invalid
 - Tier: 3
-- Rationale: README documents a two-operand form; llvm-mc rejects a third operand. Negative/error contract: extra operand must Err. No documented "ignore extra" exclusion.
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
-- Seed: test_encode_neg_regression_extra_operand (pseudo.rs encode_neg_pbt)
-- Formal: ∀ rd, rs ∈ GPR, ∀ extra. encode_mv([Reg(rd), Reg(rs), extra]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
-- Status: failing
-- Counterexample: encode_mv([Reg("zero"), Reg("zero"), Reg("zero")]) = Ok(Word(0x00000033))
-- Bug report: pbt-out/bug_reports/encode_mv_extra_operand.md
+- Rationale: get_reg rejects non-GPR names (FP, vector, unknown, out-of-range Imm). llvm-mc rejects FP dest/src for `not`. Negative/error contract on invalid operands at either position.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
+- Seed: (none)
+- Formal: ∀ bad ∈ InvalidOperand, ∀ good ∈ GPR, ∀ which ∈ {0,1,both}. encode_not(ops_with_bad) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
 
 ```property
-function: encoder.encode_mv
+function: encoder.encode_not
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [bad, good, which]
+  domain: { bad: invalid_operand, good: gpr_name, which: 0..2 }
+  relation:
+    op: holds
+    expr: encode_not(place_bad(bad, good, which)).is_err()
+generators:
+  bad: { gen: string }
+  good: { gen: string }
+  which: { gen: int, min: 0, max: 2, type: u8 }
+expected_error: String
+evidence: encoder/mod.rs:459-468 get_reg; llvm-mc rejects fa0/non-GPR
+```
+
+## encode_not_neg_extra
+- Tier: 3
+- Rationale: README documents exactly two operands. llvm-mc rejects a third operand ("invalid operand for instruction"). encode_not has no arity check and only reads operands 0 and 1, so extras are currently ignored — that is the contract under test, not a generator exclusion. Negative/error contract.
+- Doc contract: pseudo.rs:236 "xori rd, rs1, -1" — asserted fingerprint da2c30d4
+- Seed: encode_mv extra-operand property (same two-operand pseudo shape)
+- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_not([Reg(rd), Reg(rs), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_not_pbt.rs
+- Status: failing
+- Counterexample: encode_not([Reg("zero"), Reg("zero"), Reg("zero")]) → Ok(Word(0xfff04013))
+- Bug report: bug_reports/encode_not_extra_operand.md
+
+```property
+function: encoder.encode_not
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rs, extra]
-  domain: { rd: gpr_name, rs: gpr_name, extra: operand }
+  domain: { rd: gpr_name, rs: gpr_name, extra: extra_operand }
   relation:
-    op: throws
-    expr: encode_mv([Reg(rd), Reg(rs), extra])
-    error: String
+    op: holds
+    expr: encode_not([Reg(rd), Reg(rs), extra]).is_err()
 generators:
   rd: { gen: string }
   rs: { gen: string }
   extra: { gen: string }
 expected_error: String
-evidence: assembler/README.md:319 two-operand `mv rd, rs`; llvm-mc rejects extra
-```
-
-## encode_mv_neg_arity_invalid
-- Tier: 3
-- Rationale: llvm-mc rejects too-few operands and FP/non-GPR names. get_reg returns Err for missing/invalid slots. Documented error path.
-- Doc contract: pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." — asserted fingerprint 12e6ded6
-- Seed: encode_neg_neg_arity / encode_neg_neg_invalid
-- Formal: ∀ ops. |ops|<2 ⇒ encode_mv(ops) is Err ∧ ∀ bad ∈ non-GPR. encode_mv([bad, good]) is Err ∧ encode_mv([good, bad]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_mv_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.encode_mv
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [ops, bad, good]
-  domain: { ops: short_ops, bad: invalid_operand, good: gpr_name }
-  relation:
-    op: throws
-    expr: encode_mv(ops_or_mixed)
-    error: String
-generators:
-  ops: { gen: string }
-  bad: { gen: string }
-  good: { gen: string }
-expected_error: String
-evidence: encoder/mod.rs:457-465 get_reg Err on missing/invalid; llvm-mc too few / invalid operand
+evidence: src/backend/riscv/assembler/README.md:320 two-operand form; llvm-mc rejects extra operand
 ```

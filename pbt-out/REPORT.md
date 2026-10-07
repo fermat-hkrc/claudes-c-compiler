@@ -1,15 +1,15 @@
-# PBT Campaign Report: encode_mv
+# PBT Campaign Report: encode_not
 
 ## Summary
 
-**Verdict:** 1 medium: encode_mv silently ignores extra operands, so `mv a0, a1, a2` encodes as `add a0, x0, a1` instead of being rejected.
+**Verdict:** 1 medium: encode_not silently ignores extra operands, so `not a0, a1, a2` encodes as `xori a0, a1, -1` instead of being rejected.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mv
-**Tests:** 8
-**Result:** 7 passing, 1 bug
-**Change surface:** 1 changed function (encode_mv), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_mv NOT LINKED in C++ reporter binaries; Rust cargo tests executed the symbol (12 lib tests: 7 properties + 5 KAT)
+**Modules tested:** encode_not
+**Tests:** 9
+**Result:** 8 passing, 1 bug
+**Change surface:** 1 changed function (encode_not), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_not NOT LINKED in C++ reporter binaries; Rust cargo tests executed the symbol (10 lib tests: 8 passing properties + 1 failing property + 1 passing KAT + 1 failing regression)
 
 **Tier:** standard
 
@@ -17,39 +17,39 @@
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mv | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_not | 9 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_mv silently ignores extra operands
+### B1: encode_not silently ignores extra operands
 
-**Formal:** ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_mv([Reg(rd), Reg(rs), extra]) is Err
-**Contract evidence:** inferred (README.md:319 documents the two-operand form `mv rd, rs`; llvm-mc 15.0.6 rejects a third operand; encode_instruction passes operands through unchanged)
+**Formal:** ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_not([Reg(rd), Reg(rs), extra]) is Err
+**Contract evidence:** inferred (README.md:320 documents the two-operand form `not rd, rs`; llvm-mc 15.0.6 rejects a third operand; encode_instruction passes operands through unchanged)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_mv([Reg("zero"), Reg("zero"), Reg("zero")]) then encode_mv([Reg("a0"), Reg("a1"), Imm(0)])
-**Expected / Actual:** Err / Ok(Word(0x00000033)) and Ok(Word(0x00b00533))
-**Impact:** Typos and extra commas assemble without error; `mv a0, a1, a2` is encoded as `add a0, x0, a1`.
-**Root cause:** pseudo.rs:226 reads only operands 0 and 1 via get_reg and never checks operands.len(), so extra tokens are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:226`
+**Counterexample:** encode_not([Reg("zero"), Reg("zero"), Reg("zero")])
+**Expected / Actual:** Err / Ok(Word(0xfff04013))
+**Impact:** Typos and extra commas assemble without error; `not a0, a1, a2` is encoded as `xori a0, a1, -1`.
+**Root cause:** pseudo.rs:234 reads only operands 0 and 1 via get_reg and never checks operands.len(), so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:234`
 ```rust
     let rd = get_reg(operands, 0)?;
-    let rs = get_reg(operands, 1)?;
+    let rs1 = get_reg(operands, 1)?;
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("mv: expected 2 operands, got {}", operands.len()));
+        return Err(format!("not: expected 2 operands, got {}", operands.len()));
     }
     let rd = get_reg(operands, 0)?;
-    let rs = get_reg(operands, 1)?;
+    let rs1 = get_reg(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_mv_extra_operand.md
-**Repro seed:** cc 969c709026a403447688aeba302d5581679bd236607fb00bfad158245a9895bc
+**Bug report:** bug_reports/encode_not_extra_operand.md
+**Repro seed:** cc 3c07d0f839b270c3463444e28615b41bafaff44a60a7b8eace9c6e2f4cd383e0
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_mv_pbt::encode_mv_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_mv_pbt.rs:327:1:
-Test failed: extra operand must Err for mv zero, zero (llvm-mc rejects: true); got Ok(Word(51)) at src/backend/riscv/assembler/encoder/encode_mv_pbt.rs:455.
+thread 'backend::riscv::assembler::encoder::encode_not_pbt::encode_not_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_not_pbt.rs:266:1:
+Test failed: extra operand must Err for not zero, zero (llvm-mc rejects: true) at src/backend/riscv/assembler/encoder/encode_not_pbt.rs:372.
 minimal failing input: rd = "zero", rs = "zero", extra = Reg(
     "zero",
 )
@@ -57,55 +57,57 @@ minimal failing input: rd = "zero", rs = "zero", extra = Reg(
 	local rejects: 0
 	global rejects: 0
 
-thread 'backend::riscv::assembler::encoder::encode_mv_pbt::test_encode_mv_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_mv_pbt.rs:320:5:
-mv a0, a1 with a third operand must be rejected (llvm-mc rejects; README documents `mv rd, rs`); got Ok(Word(11535667))
+thread 'backend::riscv::assembler::encoder::encode_not_pbt::test_encode_not_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_not_pbt.rs:259:5:
+not zero, zero with a third operand must be rejected (llvm-mc rejects; README documents `not rd, rs`); got Ok(Word(4293935123))
 ```
 
 ## Design Caveats
 
-- llvm-mc 15.0.6 encodes `mv rd, rs` as ADDI (`addi rd, rs, 0`, e.g. `mv a0, a1` = 0x00058513). This assembler encodes ADD (`add rd, x0, rs`, 0x00b00533). **Doc evidence:** README.md:319 "`mv rd, rs` | `add rd, x0, rs` (uses ADD form for RV64C eligibility)" and pseudo.rs:228-229 "Use `add rd, x0, rs` instead of `addi rd, rs, 0` so the instruction is eligible for RV64C compression to C.MV (which requires the ADD form)." Encoding-equality vs llvm-mc `mv` was not used as a bug oracle; semantic copy still agrees. RISC-V Unprivileged ISA MV is ADDI — spec-vs-codebase, SUT matches its README.
+(none)
 
 ## Test Files Created
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_mv_pbt.rs | 8 properties + 5 KAT + 1 failing regression |
+| src/backend/riscv/assembler/encoder/encode_not_pbt.rs | 9 properties + 1 KAT + 1 failing regression |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_mv_pbt -- --test-threads=1
+cargo test --lib encode_not_pbt -- --test-threads=1
 ```
 
 Bug B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mv_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_not_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_mv_extra_operand.md
-- pbt-out/bug_reports/encode_mv_extra_operand.html
-- pbt-out/CHANGE_SURFACE.md
+- pbt-out/REPORT.md — this campaign report
+- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — function coverage table
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/report.json — machine-readable report
+- pbt-out/INVARIANTS.md — confirmed invariants for later campaigns
+- pbt-out/bug_reports/encode_not_extra_operand.md — bug B1
+- pbt-out/bug_reports/encode_not_extra_operand.html — customer-facing bug page
+- pbt-out/FUNCTION_INDEX.md — merged function index
+- pbt-out/run/ — test scratch directory
+- src/backend/riscv/assembler/encoder/encode_not_pbt.rs — harness
+- proptest-regressions/backend/riscv/assembler/encoder/encode_not_pbt.txt — shrunk extra-operand witness (proptest regression file)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 02:57 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 237/383 total | PBT candidates: 237 | Tested: 237 (100%) | 1 pass, 237 fail
+> Last updated: 2026-10-07 03:11 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 238/383 total | PBT candidates: 238 | Tested: 238 (100%) | 1 pass, 238 fail
 
 ## Summary
 
@@ -114,10 +116,10 @@ cargo test --lib test_encode_mv_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 237 |
-| **Tested (of PBT candidates)** | **237 / 237 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 237 / -1 |
-| **Overall (tested / all functions)** | **237 / 383 (62%)** |
+| PBT candidates (from FUNCTION_INDEX) | 238 |
+| **Tested (of PBT candidates)** | **238 / 238 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 238 / -1 |
+| **Overall (tested / all functions)** | **238 / 383 (62%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -125,13 +127,13 @@ cargo test --lib test_encode_mv_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 237 | 237 | 0 | 100% |
+|  | 238 | 238 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 237 | 237 | 0 | 100% |
+| unknown | 238 | 238 | 0 | 100% |
 
 ## File Coverage
 
@@ -145,7 +147,7 @@ cargo test --lib test_encode_mv_regression_extra_operand -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 3 | 3 | 100% | covered |
+| pseudo.rs | 44 | 4 | 4 | 100% | covered |
 
 ## Recommended Focus
 
@@ -391,3 +393,4 @@ cargo test --lib test_encode_mv_regression_extra_operand -- --test-threads=1
 | encode_v_crypto_vs | vector.rs |
 | encode_li | pseudo.rs |
 | encode_mv | pseudo.rs |
+| encode_not | pseudo.rs |
