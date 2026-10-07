@@ -1,0 +1,109 @@
+══════════════════════════════════════════════════════════════
+ 全部已测目标 · 按 15 层级 × 18 目录 · 859 测试函数 / 78 文件
+══════════════════════════════════════════════════════════════
+
+【层级 1】函数级对抗 PBT（直接调 encode_*/内部函数）
+  ARM 编码器 6 文件:
+    data_processing.rs (72 tests) — neg/negs/mvn/mul/madd/smull/sxtw/extr/crc32
+    bitfield.rs (24) — bfm/bfi/bfxil/ubfiz/ubfx/sbfx/rev/clz/rbit
+    load_store.rs (38) — ldr_str_auto/ldp_stp/ldur_stur/ldxr_stxr/cas/prfm
+    compare_branch.rs (14) — cmp/cmn/tst/ccmp/csel/cset/csinc/csinv/csneg
+    fp_scalar.rs (26) — fp_arith/fmadd/fsqrt/fcmp/fmov/scvtf/ucvtf
+    system.rs (12) — dmb/dsb/svc/hvc/smc/msr/mrs/hint/bti
+  RISC-V 编码器 4 文件:
+    pseudo.rs (14) — li 算法/mv/not/neg/seqz..sgtz/beqz..bleu/csrr..csrc/fmv/fabs/fneg/la/lla
+    atomics.rs (4) — amo/lr/sc (suffixed+unsuffixed)
+    base.rs (4) — alu_reg/alu_imm/shift_imm/zbb_unary 家族
+    mod.rs (18) — encode_r/i/s/b/u/j 格式打包器
+  x86: gp_integer.rs (6), parser.rs (4)
+  跨编码器: mod.rs 模糊 (36 ARM + 19 RV 随机操作数向量 35k 例)
+
+【层级 2】单元级 PBT（ir/ 与 passes/ 内部函数）
+  ir/constants.rs (15) — long_double 构造/bytes/hash_key/to_f64
+  ir/ops.rs (12) — eval_i64/i128/eval_f64、shift/overflow 语义
+  ir/instruction.rs (4) — dest/used_values/for_each/result_type
+  ir/module.rs (3) — new/function_new/global_init
+  ir/analysis.rs (5) — build_cfg/dominators/frontiers
+  ir/mem2reg/ (19) — promote + phi_eliminate
+  passes/ 12 文件 (225 tests):
+    simplify.rs (93) — 代数化简/恒等折叠
+    constant_fold.rs (34) — 折叠 vs C11 模型
+    div_by_const.rs (20) — magic 数 4×PBT
+    gvn.rs (19) — 值编号
+    cfg_simplify.rs (13) — CFG 简化
+    narrow.rs (10) — 变窄保持
+    copy_prop (7)/dce (5)/if_convert (4)/licm (7)/iv_strength_reduce (2)
+  common/ 11 文件 (117) — long_double (89!)/const_arith/encoding/error/…
+
+【层级 3】.s 汇编差分（ccc-as vs GNU as / llvm-mc）
+  ARM: 18 Zbb 形式、20 pseudo 形式、跳转表、全部 round-16/26 形式
+  RISC-V: 18 pseudo 字节精确、li 执行等价(6000)、Zbb/atomics
+  x86/i686: round-15/19/26 全形式
+  回环: ccc -S → GNU as 装配 ✓; ccc -S → ccc 自家汇编器 ✓
+
+【层级 4】C 级 E2E 差分（ccc vs gcc 全管道执行）
+  lower.rs 4 属性 (1400 例) — 全局初始化/指针全局/复数/复合字面量
+  优化器对抗 (1000×3) — INT_MIN abs/ovf-guard/rotate/强度削减
+  跳转表 (800×2) — 表至 200 case
+  内存图模糊 (300×3) — 别名写/函数指针副作用
+  自差分 (4000×2) — -O0 ≡ -O2 oracle-free
+  round-29 随机 C (1300) + round-36 富特性 (150×3)
+
+【层级 5】跨编译器 interop（gcc/clang 调用方 ↔ ccc 被调方）
+  x86-64: SSE 结构返回 (#1114)/X87 long double (#1116)/函数指针
+  ARM64: HFA 8 方向 (#1118)
+  RISC-V: FP 结构返回 (#1119)
+  i686: FP 结构 st(0) 约定 ✓（全绿）
+
+【层级 6】跨目标运行时（qemu 执行）
+  ARM64 + RISC-V qemu 150×2 富程序 == gcc-x64 ✓
+  i686 -m32 native 120×3 级别 ✓
+  级别矩阵 (-O0/-O1/-O2 × 3 目标) ✓
+
+【层级 7】预处理差分（-E vs gcc -E）
+  #if 语义角落 30 形式 + 无符号混合 300 例
+  宏展开角落 18 形式（粘贴/字符串化/递归屏障/变参）
+  续行拼接 10 形式（字符串/注释/## 跨行）
+  宏表生命周期状态机 4000 例（6 名 × 30 序列）
+  -E 回环（ccc→ccc + gcc→ccc）✓
+
+【层级 8】约束负向测试（gcc/clang 拒绝 vs ccc）
+  9 波 × 78+ 形式: 左值/语句/声明/表达式/链接/位域/预处理/
+    指令结构/#if 操作数/VLA 放置/digraph/空转义/嵌套函数
+  → 12 条 issue (#1133-#1143 + #1072/#1088 延伸)
+
+【层级 9】变异模糊（健壮性）
+  600 变异程序（token 删/插/换含 unicode/digraph 垃圾）
+  → 零 ICE/零挂死
+
+【层级 10】驱动 CLI（标志语义）
+  完好: -l/-L/-shared/-fPIC/-Wl(rpath)/-isystem/include_next/
+    -x/stdin/@file/-c 默认名/--version/对象式 -D/-std/搜索顺序/
+    -Werror/-march/-O0..3/-E 回环/CPATH↘
+  破损 10: -U/-D/函数式-D/-C/-M/-MD/-MF/-g/CPATH/-Wl,-Map
+
+【层级 11】链接器语义
+  多 TU 符号解析 200 ✓ / 弱符号序 ✓ / 归档惰性+互依 ✓ /
+  tentative 合并 ✓ / 重复强符号 ✗(#1166) / --whole-archive ✗
+
+【层级 12】二进制结构（readelf/objdump）
+  结构健全 ✓ / eh_frame 7 CIE/FDE ✓ / 符号表完整性 ✗(#1092) /
+  .s 互操作(GNU as) ✓ / 交叉成员地址 ✓
+
+【层级 13】家族矩阵（每 bug 的完整形式空间）
+  #1144 sizeof(VLA)×9 上下文 / #1118 HFA×8 / #1135 左值×17 /
+  #1140 静态初始化×5 / #1088 #if×7 / #1147 typedef-VLA 边界 /
+  #1114 SSE 返回仅返回路径
+
+【层级 14】GNU 扩展语义
+  ✓ 语句表达式/typeof/computed goto/packed/aligned/_Thread_local/
+    section/cleanup/__builtin 位族/atomic 四内存序/asm volatile 屏障
+  ✗ 嵌套函数倒置(#1150/#1151)/asm 标签断链(#1152)/ctor 优先级(#1153)
+
+【层级 15】运行时内存（valgrind）
+  全特性电池 × 2 级别 → 零 invalid/零泄漏
+  （合法程序完全干净；无效程序的 GPF 归 #1139 家族）
+
+══════════════════════════════════════════════════════════════
+ 汇总: 859 测试函数 · 78 测试文件 · 157 issues · 24 属性组
+ ══════════════════════════════════════════════════════════════
