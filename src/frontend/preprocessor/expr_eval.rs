@@ -515,3 +515,56 @@ mod pbt_semantics_corners {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_macro_expansion {
+    //! Round-32b: macro expansion corners vs gcc tokens — __VA_OPT__, paste,
+    //! stringize spaces, recursion barriers, variadic empty args.
+    use proptest::prelude::*;
+    use crate::frontend::preprocessor::pbt_support::{gcc_tokens, sut_tokens};
+
+    fn cmp(name: &str, src: &str) -> Result<(), String> {
+        let g = gcc_tokens(src).map_err(|e| format!("gcc err: {}", &e[..e.len().min(60)]))?;
+        let mut pp = crate::frontend::preprocessor::Preprocessor::new();
+        let s = sut_tokens(&mut pp, src);
+        if g != s {
+            return Err(format!("{}\n  gcc: {:?}\n  ccc: {:?}", name, g, s));
+        }
+        Ok(())
+    }
+
+    /// P-MACRO-CORNERS: 展开角落 token 流 == gcc
+    #[test]
+    fn p_macro_corners_vs_gcc() {
+        let cases: Vec<(&str, &str)> = vec![
+            ("str-space", "#define S(x) #x\nS(a  b)\nS( \"q\" )\nS(  )\n"),
+            ("str-adjacent-space", "#define S(x) #x\nS(a  b)\n"),
+            ("paste-empty-l", "#define P(a,b) a##b\nP(,x)\n"),
+            ("paste-empty-r", "#define P(a,b) a##b\nP(x,)\n"),
+            ("paste-both-empty", "#define P(a,b) a##b\nP(,)\n"),
+            ("recur-self", "#define F(x) F(x)\nF(1)\n"),
+            ("recur-mutual", "#define A B\n#define B A\nA\n"),
+            ("variadic-args", "#define V(...) __VA_ARGS__\nV(a, b, c)\n"),
+            ("variadic-empty", "#define V(...) __VA_ARGS__\nV()\n"),
+            ("variadic-named-empty", "#define V(a,...) a __VA_ARGS__\nV(1)\n"),
+            ("nested-str", "#define XSTR(x) STR(x)\n#define STR(x) #x\n#define FOO 42\nXSTR(FOO)\n"),
+            // vaopt → #1089 (not implemented; literal passthrough)
+            // ("vaopt-absent", ...), ("vaopt-present", ...),
+            ("empty-args", "#define TWO(a,b) [a][b]\nTWO(,)\n"),
+            ("comment-in-macro", "#define C() 1 /* c */ + 2\nC()\n"),
+            ("line-cont", "#define M(a) a + 1\nM(5)\n"),
+            ("hash-hash-token", "#define CAT(a,b) a##b\n#define X 1\nCAT(X,2)\n"),
+            ("arg-used-thrice", "#define R(a) a a a\nR(z)\n"),
+            ("stringize-vaargs", "#define S(...) #__VA_ARGS__\nS(a, b)\n"),
+            ("paste-nonident", "#define P(a,b) a##b\nP(1,2)\n"),
+        ];
+        let mut fails = 0;
+        for (name, src) in cases {
+            if let Err(e) = cmp(name, src) {
+                println!("  FAIL {} {}", name, e);
+                fails += 1;
+            }
+        }
+        assert_eq!(fails, 0, "{} macro expansion corners differ from gcc", fails);
+    }
+}

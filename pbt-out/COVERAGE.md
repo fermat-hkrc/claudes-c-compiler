@@ -50,3 +50,10 @@
 | const_eval_global_addr | src/ir/lowering/const_eval_global_addr.rs | src/ir/lowering/lower.rs::pbt_lowering_e2e | p_pointer_globals_vs_gcc | 400 cases &g/&arr[k]/decay/member/ptr-arrays green |
 | complex global init | src/ir/lowering/complex.rs | src/ir/lowering/lower.rs::pbt_lowering_e2e | p_complex_globals_vs_gcc | 300 cases float/double _Complex byte-exact |
 | f128_bytes_to_x87_bytes | src/common/long_double.rs:886 | (root cause of #1084) | p_global_init kind 13 | truncates 49 bits, no RNE — every LD literal 1 ulp low |
+
+## Round 32 — preprocessor deep PBT (expr_eval / macro expansion)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| #if expr eval (corners) | src/frontend/preprocessor/expr_eval.rs | same file ::pbt_semantics_corners | p_if_corners_vs_gcc | 30 corners green; malformed accept → **#1088** |
+| #if unsigned mixing | src/frontend/preprocessor/expr_eval.rs | same ::pbt_semantics_corners | p_if_random_unsigned_mix | 300 cases green |
+| macro expansion corners | src/frontend/preprocessor/macro_defs.rs | expr_eval.rs ::pbt_macro_expansion | p_macro_corners_vs_gcc | 18/20 green; __VA_OPT__ → **#1089** |

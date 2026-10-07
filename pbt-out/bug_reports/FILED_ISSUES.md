@@ -95,3 +95,4 @@
 | 31 | src/common/long_double.rs | f128_bytes_to_x87_bytes truncates 49 bits — long double literals 1 ulp low on x86 (0.1L/pi misprint) | **new issue filed** | [#1084](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1084) |
 | 31 | src/ir/lowering/global_init.rs | compound literal nested-array rows drop elements 2..n (backing [1,0,4,0,7,0]) | **new issue filed** | [#1087](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1087) |
 | 32 | src/frontend/preprocessor/expr_eval.rs | #if accepts malformed exprs silently, 8/13 wrong branch | **new issue filed** | [#1088](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1088) |
+| 32 | src/frontend/preprocessor/macro_defs.rs | __VA_OPT__ emitted as literal tokens (not expanded) | **new issue filed** | [#1089](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1089) |
