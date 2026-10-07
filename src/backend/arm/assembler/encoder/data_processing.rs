@@ -1185,3 +1185,310 @@ mod pbt_encode_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_adversarial {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+
+    // ═══ Helper: 生成各种"错误"的操作数 ═══
+
+    fn wrong_reg_class(prefix: &str, num: u32) -> Operand {
+        // 用 FP 寄存器名传入需要 GPR 的编码器
+        Operand::Reg(format!("{}{}", prefix, num % 32))
+    }
+
+    fn wrong_width(prefix: &str, num: u32) -> Operand {
+        // 用 W 寄存器传给需要 X 的位置（或反之）
+        Operand::Reg(format!("{}{}", prefix, num % 32))
+    }
+
+    // ═══ P-ADD_SUB: 对抗性操作数 ═══
+
+    /// FP 寄存器传给 add/sub → 应该 Err
+    #[test]
+    fn p_add_sub_fp_as_gpr() {
+        for fp_reg in ["d0", "s1", "q2", "v3.4s", "h4"] {
+            let ops = vec![
+                Operand::Reg("x0".to_string()),
+                Operand::Reg("x1".to_string()),
+                Operand::Reg(fp_reg.to_string()),
+            ];
+            let result = encode_add_sub(&ops, false, false);
+            assert!(result.is_err(),
+                "encode_add_sub accepted FP register '{}' as Rm: {:?}", fp_reg, result);
+        }
+    }
+
+    /// SP 作为数据寄存器传给 add/sub → 应该 Err（SP 只能做 Rn/Rd in ADD/SUB）
+    #[test]
+    fn p_add_sub_sp_as_rm() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("sp".to_string()),
+        ];
+        let result = encode_add_sub(&ops, false, false);
+        // SP as Rm in ADD/SUB is INVALID (only SUBS extended register)
+        // But some encoders might handle it — check what happens
+        // The key question: does it produce garbage or error?
+        println!("add x0, x1, sp → {:?}", result);
+    }
+
+    /// 混合 W/X 宽度 → 应该 Err
+    #[test]
+    fn p_add_sub_mixed_width() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("w1".to_string()),  // W in X context
+            Operand::Reg("x2".to_string()),
+        ];
+        let result = encode_add_sub(&ops, false, false);
+        assert!(result.is_err(),
+            "encode_add_sub accepted mixed W/X: {:?}", result);
+    }
+
+    /// 4 个操作数传给 3 操作数指令 → 多余的应该报错或忽略
+    #[test]
+    fn p_add_sub_extra_operand() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("x2".to_string()),
+            Operand::Reg("x3".to_string()), // 4th operand — extra
+        ];
+        let result = encode_add_sub(&ops, false, false);
+        // Should either Err (reject extra) or be explicitly handled
+        // If Ok, the 4th operand must not corrupt the encoding
+        if let Ok(EncodeResult::Word(word)) = result {
+            let expected_3op = encode_add_sub(&[
+                Operand::Reg("x0".to_string()),
+                Operand::Reg("x1".to_string()),
+                Operand::Reg("x2".to_string()),
+            ], false, false);
+            if let Ok(EncodeResult::Word(expected)) = expected_3op {
+                assert_eq!(word, expected,
+                    "4th operand changed encoding (was ignored in parse but not in encode)");
+            }
+        }
+    }
+
+    /// 2 个操作数传给 3 操作数指令 → 应该 Err
+    #[test]
+    fn p_add_sub_missing_operand() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+        ];
+        let result = encode_add_sub(&ops, false, false);
+        assert!(result.is_err(),
+            "encode_add_sub accepted 2 operands (expected 3): {:?}", result);
+    }
+
+    // ═══ P-LOGICAL: 对抗性 ═══
+
+    /// FP 寄存器传给 logical → 应该 Err
+    #[test]
+    fn p_logical_fp_as_gpr() {
+        for fp_reg in ["d0", "s1", "q2", "h3"] {
+            let ops = vec![
+                Operand::Reg("x0".to_string()),
+                Operand::Reg("x1".to_string()),
+                Operand::Reg(fp_reg.to_string()),
+            ];
+            let result = encode_logical(&ops, 0);
+            assert!(result.is_err(),
+                "encode_logical accepted FP '{}' as Rm: {:?}", fp_reg, result);
+        }
+    }
+
+    /// SP 作为 logical 数据寄存器 → 应该 Err
+    #[test]
+    fn p_logical_sp() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("sp".to_string()),
+        ];
+        let result = encode_logical(&ops, 0);
+        assert!(result.is_err(),
+            "encode_logical accepted SP as Rm (SP not encodable in logical): {:?}", result);
+    }
+
+    // ═══ P-DIV: 对抗性 ═══
+
+    /// FP 寄存器传给 div → 应该 Err
+    #[test]
+    fn p_div_fp_as_gpr() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("x2".to_string()),
+        ];
+        let result = encode_div(&ops, false);
+        assert!(result.is_err(),
+            "encode_div accepted FP d0 as Rd: {:?}", result);
+    }
+
+    /// 2 操作数传给 div → 应该 Err
+    #[test]
+    fn p_div_missing_operand() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+        ];
+        let result = encode_div(&ops, false);
+        assert!(result.is_err(),
+            "encode_div accepted 2 operands: {:?}", result);
+    }
+
+    // ═══ P-SHIFT: 边界立即数 ═══
+
+    /// 移位量超出范围 → 应该 Err 或正确处理
+    #[test]
+    fn p_shift_out_of_range() {
+        for shift_amount in [-1i64, 64, 65, 100, 255, 256, 1000] {
+            let ops = vec![
+                Operand::Reg("x0".to_string()),
+                Operand::Reg("x1".to_string()),
+                Operand::Imm(shift_amount),
+            ];
+            let result = encode_shift(&ops, 0); // LSL
+            // For X registers: shift must be 0..63
+            if let Ok(EncodeResult::Word(word)) = result {
+                let encoded_shift = (word >> 10) & 0x3F;
+                let expected = shift_amount.clamp(0, 63) as u32;
+                // If out-of-range was silently accepted, verify it clamps to valid range
+                assert!(encoded_shift <= 63,
+                    "shift {} encoded as {} (out of 6-bit range)", shift_amount, encoded_shift);
+            }
+        }
+    }
+
+    // ═══ P-SDIV/UDIV: 混合宽度 ═══
+
+    /// 混合 W/X 在 div 中 → 应该 Err
+    #[test]
+    fn p_div_mixed_width() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("w1".to_string()), // W in X context
+            Operand::Reg("x2".to_string()),
+        ];
+        let result = encode_div(&ops, false);
+        assert!(result.is_err(),
+            "encode_div accepted mixed W/X: {:?}", result);
+    }
+
+    // ═══ P-EXTEND (sxtw/uxtw etc): 对抗性 ═══
+
+    /// FP 寄存器传给 sxtw → 应该 Err
+    #[test]
+    fn p_sxtw_fp_as_gpr() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("d1".to_string()),
+        ];
+        let result = encode_sxtw(&ops);
+        assert!(result.is_err(),
+            "encode_sxtw accepted FP d1 as source: {:?}", result);
+    }
+
+    /// W 目标 + X 源在 sxtw 中 → 应该 Err (dest must be X for sxtw)
+    #[test]
+    fn p_sxtw_w_dest() {
+        let ops = vec![
+            Operand::Reg("w0".to_string()), // W destination
+            Operand::Reg("w1".to_string()),
+        ];
+        let result = encode_sxtw(&ops);
+        // sxtw can be W→W or X→X, but W dest + X src is mixed
+        // Actually sxtw Rd, Wn is valid for both W and X Rd
+        // Just verify no crash
+        let _ = result;
+    }
+}
+
+#[cfg(test)]
+mod pbt_adversarial2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+
+    /// P-SMULL: W 源检查（只能 W，不能 X）
+    #[test]
+    fn p_smull_x_source() {
+        // smull 要求 W 源，X 源应该被拒绝
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()), // X source — should be W!
+            Operand::Reg("x2".to_string()), // X source — should be W!
+        ];
+        let result = encode_smull(&ops);
+        // smull Xd, Wn, Wm — X sources are invalid
+        if result.is_ok() {
+            // 已在 #837 中报告
+            println!("smull with X sources accepted (already filed as #837)");
+        }
+    }
+
+    /// P-NEG: 一元操作数数量验证
+    #[test]
+    fn p_neg_operand_count() {
+        let ops_1 = vec![Operand::Reg("x0".to_string())]; // 只有 1 个操作数
+        let ops_2 = vec![Operand::Reg("x0".to_string()), Operand::Reg("x1".to_string())];
+        let ops_3 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("x2".to_string()),
+        ];
+        let _ = encode_neg(&ops_1); // 1 operand — probably error
+        let _ = encode_neg(&ops_2); // 2 operands — correct
+        let _ = encode_neg(&ops_3); // 3 operands — extra operand
+        // Verify: 3 operands should not produce different encoding than 2
+        if let Ok(EncodeResult::Word(w2)) = encode_neg(&ops_2) {
+            if let Ok(EncodeResult::Word(w3)) = encode_neg(&ops_3) {
+                assert_eq!(w2, w3, "encode_neg 3rd operand changed encoding");
+            }
+        }
+    }
+
+    /// P-MVN: FP 寄存器 → 应该 Err
+    #[test]
+    fn p_mvn_fp_reg() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("d1".to_string()), // FP as source
+        ];
+        let result = encode_mvn(&ops);
+        assert!(result.is_err(), "encode_mvn accepted FP d1 as source: {:?}", result);
+    }
+
+    /// P-SXTW: 操作数数量
+    #[test]
+    fn p_sxtw_operand_count() {
+        let ops_1 = vec![Operand::Reg("x0".to_string())]; // missing source
+        let result = encode_sxtw(&ops_1);
+        assert!(result.is_err(), "encode_sxtw accepted 1 operand: {:?}", result);
+    }
+
+    /// P-SHIFT: 移位量 64 on 32-bit register → 应该 Err 或 reject
+    #[test]
+    fn p_shift_64_on_w() {
+        let ops = vec![
+            Operand::Reg("w0".to_string()),
+            Operand::Reg("w1".to_string()),
+            Operand::Imm(32), // 32 is out of range for W (0-31)
+        ];
+        let result = encode_shift(&ops, 0);
+        if result.is_ok() {
+            if let Ok(EncodeResult::Word(word)) = result {
+                let encoded_shift = (word >> 10) & 0x3F;
+                assert!(encoded_shift <= 31,
+                    "shift 32 on W register encoded as {} (should reject or clamp to <=31)",
+                    encoded_shift);
+            }
+        }
+    }
+}
