@@ -69,3 +69,10 @@
 |----------|-------------|-----------|--------------|-------|
 | slot_assignment/analysis | src/backend/stack_layout/*.rs (7 files) | mod.rs ::pbt_stack_stress | p_stack_deep_vs_gcc | 250 deep-frame cases green |
 | alloca_coalescing | src/backend/stack_layout/alloca_coalescing.rs | mod.rs ::pbt_stack_stress | p_vla_alloca_vs_gcc | 200 VLA+alloca cases green |
+
+## Round 35 — elf/driver/predefined_macros
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| predefined macro set | src/frontend/preprocessor/predefined_macros.rs | manual /tmp/pm.c | value diff vs gcc | 12/12 exact |
+| driver modes | src/driver/*.rs (4 files) | manual matrix | -E/-c/-S/relink/a.out | all green |
+| ELF output structure | src/backend/linker_common/write.rs + src/backend/elf/ (11 files) | readelf probes | symtab/eh_frame/phdr | symtab missing → **#1092**; rest green |

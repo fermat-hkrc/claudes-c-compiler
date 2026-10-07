@@ -96,3 +96,4 @@
 | 31 | src/ir/lowering/global_init.rs | compound literal nested-array rows drop elements 2..n (backing [1,0,4,0,7,0]) | **new issue filed** | [#1087](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1087) |
 | 32 | src/frontend/preprocessor/expr_eval.rs | #if accepts malformed exprs silently, 8/13 wrong branch | **new issue filed** | [#1088](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1088) |
 | 32 | src/frontend/preprocessor/macro_defs.rs | __VA_OPT__ emitted as literal tokens (not expanded) | **new issue filed** | [#1089](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1089) |
+| 35 | src/backend/linker_common | linked output drops .symtab/.strtab (nm "no symbols", no enabling flag) | **new issue filed** | [#1092](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1092) |
