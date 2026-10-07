@@ -1,5 +1,9 @@
 [
  {
+  "n": 1055,
+  "t": "Bug: x86-64 assembler lacks CET/shadow-stack instructions (endbr64/wrssd/wrussd/incsspd/rdssp/saveprevssp) \u2014 6 forms"
+ },
+ {
   "n": 1054,
   "t": "Bug: x86-64 assembler lacks BMI1 extract/modify instructions (blsi/blsmsk/blsr + bextri) \u2014 9 forms"
  },
@@ -796,10 +800,6 @@
   "t": "Bug: encode_smaddl encodes SP/WSP as XZR/WZR"
  },
  {
-  "n": 855,
-  "t": "Bug: encode_smaddl encodes SP/WSP as XZR/WZR"
- },
- {
   "n": 854,
   "t": "Bug: encode_smaddl accepts FP/SIMD registers as GPRs"
  },
@@ -1190,6 +1190,10 @@
  {
   "n": 757,
   "t": "Bug: encode_ic encodes IC IVAU without Xt as IVAU XZR"
+ },
+ {
+  "n": 756,
+  "t": "Bug: encode_ic accepts a register on IALLUIS/IALLU"
  },
  {
   "n": 756,
