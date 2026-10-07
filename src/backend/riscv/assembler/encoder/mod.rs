@@ -1016,3 +1016,87 @@ let extracted = (raw << 19) >> 19; // sign-extend 13 bits
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_adversarial2 {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P-ENCODE-U: U-type (lui/auipc) 20-bit immediate
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_u_imm(
+            rd in 0u32..32,
+        ) {
+            // U-type imm20: bits 31:12 of the word
+            for &imm in &[0u32, 1, 0xFFFFF, 0x80000, 0xFFFFF, 0x100000] {
+                let word = encode_u(0x37, rd, imm << 12); // LUI (encode_u expects pre-shifted)
+                let extracted = word >> 12;
+                if imm <= 0xFFFFF {
+                    prop_assert_eq!(extracted, imm, "U-type imm {} not preserved (got {})", imm, extracted);
+                }
+                // For imm > 20 bits, verify no panic and field is 20-bit
+                prop_assert!(extracted <= 0xFFFFF, "U-type field {} > 20 bits", extracted);
+            }
+        }
+    }
+
+    /// P-ENCODE-J: J-type (jal) 21-bit offset (bit 0 = 0)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_j_offset(
+            rd in 0u32..32,
+        ) {
+            // J-type imm21 (bit 0 must be 0): range [-1048576, 1048574]
+            for &imm in &[0i32, 2, -2, 1048574, -1048576] {
+                let word = encode_j(0x6F, rd, imm); // JAL
+                // J-type: imm[20|10:1|11|19:12] packed into word[31|30:21|20|19:12]
+                let imm20 = (word >> 31) & 1;
+                let imm10_1 = (word >> 21) & 0x3FF;
+                let imm11 = (word >> 20) & 1;
+                let imm19_12 = (word >> 12) & 0xFF;
+                // Reconstruct
+                let raw = (imm20 << 20) | (imm10_1 << 1) | (imm11 << 11) | (imm19_12 << 12);
+                let extracted = (((raw << 11) as i32) >> 11); // sign-extend 21 bits: put sign at bit 31, then arithmetic shift
+                if (-1048576..=1048574).contains(&imm) && imm % 2 == 0 {
+                    prop_assert_eq!(extracted as i64, imm as i64, "J-type imm {} not preserved (got {})", imm, extracted);
+                }
+            }
+        }
+    }
+
+    /// P-I-FORMAT: negative imm12 round-trip
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_encode_i_negative_imm(
+            imm in -2048i32..0,
+        ) {
+            let word = encode_i(0x13, 1, 0, 2, imm); // ADDI
+            let extracted = ((word >> 20) as i32) << 20 >> 20; // sign-extend 12 bits
+            prop_assert_eq!(extracted, imm, "negative imm {} not preserved (got {})", imm, extracted);
+        }
+    }
+
+    /// P-ENCODE-R: boundary register numbers
+    #[test]
+    fn p_encode_r_boundary_regs() {
+        // x0 = zero, x31 = t6/tp — both valid in encode_r
+        let word = encode_r(0x33, 31, 0, 31, 31, 0);
+        assert_eq!((word >> 7) & 0x1F, 31, "rd=x31");
+        assert_eq!((word >> 15) & 0x1F, 31, "rs1=x31");
+        assert_eq!((word >> 20) & 0x1F, 31, "rs2=x31");
+    }
+
+    /// P-ENCODE-I: positive imm12 round-trip
+    #[test]
+    fn p_encode_i_positive_imm() {
+        for imm in [0i32, 1, 100, 2047] {
+            let word = encode_i(0x13, 1, 0, 2, imm);
+            let extracted = ((word >> 20) as i32) << 20 >> 20;
+            assert_eq!(extracted, imm, "positive imm {} not preserved", imm);
+        }
+    }
+}

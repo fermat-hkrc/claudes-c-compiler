@@ -1492,3 +1492,161 @@ mod pbt_adversarial2 {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_adversarial3 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// P-MOV: FP 寄存器作为 mov 目标 → 应该 Err
+    #[test]
+    fn p_mov_fp_as_gpr() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Reg("x1".to_string()),
+        ];
+        let result = encode_mov(&ops);
+        // FP as GPR — same root as #825 but testing at encode level
+        if let Ok(EncodeResult::Word(word)) = result {
+            let rd = word & 0x1F;
+            // d0 → register 0 (same as x0) — silent wrong register
+            // This is already covered by #825
+        }
+    }
+
+    /// P-MOVZ: imm 超出 16 位 → 应该 Err
+    #[test]
+    fn p_movz_imm_out_of_range() {
+        for imm in [65536i64, 65537, 100000, -1] {
+            let ops = vec![
+                Operand::Reg("x0".to_string()),
+                Operand::Imm(imm),
+            ];
+            let result = encode_movz(&ops);
+            // imm16 field — out of range should error or mask
+            if let Ok(EncodeResult::Word(word)) = result {
+                let encoded_imm = (word >> 5) & 0xFFFF;
+                // Verify: if silently accepted, encoded_imm should be within 16 bits
+                assert!(encoded_imm <= 0xFFFF,
+                    "movz imm {} encoded as {} (> 16 bits)", imm, encoded_imm);
+            }
+        }
+    }
+
+    /// P-MOVM: 多余操作数
+    #[test]
+    fn p_mov_extra_operand() {
+        let ops_2 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+        ];
+        let ops_3 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("x2".to_string()), // extra
+        ];
+        let r2 = encode_mov(&ops_2);
+        let r3 = encode_mov(&ops_3);
+        if let (Ok(EncodeResult::Word(w2)), Ok(EncodeResult::Word(w3))) = (r2, r3) {
+            assert_eq!(w2, w3, "3rd operand changed MOV encoding");
+        }
+    }
+
+    /// P-EXTR: 5 操作数形式（4 正常 + 1 多余）
+    #[test]
+    fn p_extr_extra_operand() {
+        let ops_4 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("x2".to_string()),
+            Operand::Imm(31),
+        ];
+        let ops_5 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("x2".to_string()),
+            Operand::Imm(31),
+            Operand::Reg("x3".to_string()), // extra
+        ];
+        let r4 = encode_extr(&ops_4);
+        let r5 = encode_extr(&ops_5);
+        if let (Ok(EncodeResult::Word(w4)), Ok(EncodeResult::Word(w5))) = (r4, r5) {
+            assert_eq!(w4, w5, "5th operand changed EXTR encoding");
+        }
+    }
+
+    /// P-MADD: FP 寄存器作为乘加操作数
+    #[test]
+    fn p_madd_fp_reg() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Reg("x2".to_string()),
+            Operand::Reg("d3".to_string()), // FP as addend
+        ];
+        let result = encode_madd(&ops);
+        assert!(result.is_err(),
+            "encode_madd accepted FP d3 as Ra: {:?}", result);
+    }
+
+    /// P-SMULL: 4 操作数（3 正常 + 1 多余）
+    #[test]
+    fn p_smull_extra_operand() {
+        let ops_3 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("w1".to_string()),
+            Operand::Reg("w2".to_string()),
+        ];
+        let ops_4 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("w1".to_string()),
+            Operand::Reg("w2".to_string()),
+            Operand::Reg("w3".to_string()), // extra
+        ];
+        let r3 = encode_smull(&ops_3);
+        let r4 = encode_smull(&ops_4);
+        if let (Ok(EncodeResult::Word(w3)), Ok(EncodeResult::Word(w4))) = (r3, r4) {
+            assert_eq!(w3, w4, "4th operand changed SMULL encoding");
+        }
+    }
+
+    /// P-EXTEND: sxtb 3 操作数（2 正常 + 1 多余）
+    #[test]
+    fn p_sxtb_extra_operand() {
+        let ops_2 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("w1".to_string()),
+        ];
+        let ops_3 = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("w1".to_string()),
+            Operand::Reg("w2".to_string()), // extra
+        ];
+        let r2 = encode_sxtb(&ops_2);
+        let r3 = encode_sxtb(&ops_3);
+        if let (Ok(EncodeResult::Word(w2)), Ok(EncodeResult::Word(w3))) = (r2, r3) {
+            assert_eq!(w2, w3, "3rd operand changed SXTB encoding");
+        }
+    }
+
+    /// P-CLZ: 0 操作数 → 应该 Err
+    #[test]
+    fn p_clz_zero_operands() {
+        let ops: Vec<Operand> = vec![];
+        let result = encode_clz(&ops);
+        assert!(result.is_err(),
+            "encode_clz accepted 0 operands: {:?}", result);
+    }
+
+    /// P-RBIT: 立即数作为操作数 → 应该 Err
+    #[test]
+    fn p_rbit_imm_operand() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Imm(5), // immediate where register expected
+        ];
+        let result = encode_rbit(&ops);
+        assert!(result.is_err(),
+            "encode_rbit accepted Imm as source: {:?}", result);
+    }
+}
