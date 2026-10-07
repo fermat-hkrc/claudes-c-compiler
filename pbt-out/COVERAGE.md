@@ -87,3 +87,9 @@
 | Function | Source file | Test file | Test target | Notes |
 |----------|-------------|-----------|--------------|-------|
 | encode_bgt/ble/bgtu/bleu/bltz/bgtz/csrr/csrw/csrs/csrc/fmv_s/fmv_d/fabs_s/fabs_d/fneg_s/fneg_d/la/lla (18 fns) | src/backend/riscv/assembler/encoder/pseudo.rs | pseudo.rs ::pbt_extra_unclaimed | p_extra_unclaimed_sweep | 19/19 silently ignore extras; encode_bgez → teammate #1094; 18 filed **#1095-#1112** (canonical #1094 format, concrete Actual encodings) |
+
+## Round 38 — high-value silent-wrong-code battery
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| struct-return epilogue (SSE single-eightbyte) | src/backend/x86/codegen/returns.rs:74 | src/passes/mod.rs::pbt_high_value | p_struct_interop_gcc_calls_ccc | 250-case gcc↔ccc interop differential; ≤8B SSE returns in RAX → **#1114**; {double,double}/mixed/args green |
+| punning/wrapping/variadic | — | src/passes/mod.rs::pbt_high_value | p_punning_wrap_variadic_vs_gcc | 300×2 levels green (union punning, char* roundtrip, u32/u64 wrap, va_arg mixed) |
