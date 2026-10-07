@@ -136,3 +136,12 @@
 | nested functions | parser/sema | /tmp/nest*.c | gcc diff | inversion → #1150 + #1151 |
 | asm labels | symbol emitter | /tmp/asmname.c | link diff | split rename → #1152 |
 | GNU ext surface | — | /tmp/gnux.c /tmp/attr.c | byte/value diff | stmt-expr/typeof/computed-goto/packed/aligned all green |
+
+## Round 43 — attribute/builtin semantics
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| constructor priorities | init_array emission | /tmp/cd.c | order diff | priorities ignored → #1153 |
+| #if operand types | pp expr_eval | /tmp/pp43.sh | 5-form diff | float/str/cast/ppnum accepted → #1154 |
+| builtin bits + complex arith | builtins/codegen | /tmp/b43.c | value diff -O2 | green (Smith div exact) |
+| asm volatile barrier | optimizer | /tmp/asmv.c | disasm witness | both loads+stores kept = gcc |
+| _Alignas member / cleanup | frontend | /tmp/al43.c /tmp/cu.c | layout+order | green |
