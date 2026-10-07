@@ -1,5 +1,17 @@
 [
  {
+  "n": 1046,
+  "t": "Bug: encode_vmv_v_i ignores trailing v0.t"
+ },
+ {
+  "n": 1045,
+  "t": "Bug: encode_vmv_v_i truncates out-of-range immediates"
+ },
+ {
+  "n": 1044,
+  "t": "Bug: encode_vmv_v_i ignores extra operands"
+ },
+ {
   "n": 1043,
   "t": "Bug: AArch64 FP16 arithmetic encoded as FP32 \u2014 fadd h0,h1,h2 produces fadd s0,s1,s2 bytes (wrong type field)"
  },
@@ -1578,6 +1590,10 @@
  {
   "n": 648,
   "t": "Bug: encode_neon_mul ignores a fourth operand"
+ },
+ {
+  "n": 647,
+  "t": "Bug: encode_neon_mul accepts a bare Vn / GPR dest as a NEON register"
  },
  {
   "n": 647,

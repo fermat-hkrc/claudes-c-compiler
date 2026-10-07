@@ -74,3 +74,4 @@
 | 28 | src/backend/riscv/assembler | Zbb instructions (andn/clz/rol/min etc.) without +zbb gate (15 forms) | **new issue filed** (dedup-clean) | [#1041](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1041) |
 | 28 | src/backend/arm/assembler | AArch64 ldr/str h-register (FP16) encoded as d-register (64-bit) — ldr | **new issue filed** | [#1042](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1042) |
 | 28 | src/backend/arm/assembler | AArch64 FP16 arithmetic encoded as FP32 — fadd h0,h1,h2 produces fadd  | **new issue filed** | [#1043](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1043) |
+| 28 | src/frontend/sema | _Generic conflates signed char with char (C11 distinct types) | **new issue filed** | [#1047](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1047) |
