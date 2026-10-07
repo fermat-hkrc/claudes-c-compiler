@@ -57,3 +57,18 @@ Closes #1041's open question "The encodings need verification":
 ## RISC-V shift imm range → #797 (dup, round 30 cont.)
 slli 64 / slli -1 / slliw 32 silently truncated (shamt & 0x3F / & 0x1F in
 encode_shift_imm/_w). Exact dup of #797 (title covers all three cases).
+
+## x86/i686 never-reported: 1 fn (encode_instruction_code64, trivial wrapper) — saturated
+
+## ROUND 30 ENCODE-LEVEL FINAL STATE (converged)
+ARM non-NEON: exhausted — every fn verified correct or already filed
+ARM NEON: teammate territory (64/65 reported)
+RISC-V: base/pseudo/atomics/compressed all verified or dup
+x86/i686: saturated
+Teammate's ongoing wave (#1072-#1081) = operand-count pattern = pre-covered by #176-#281
+
+Verified-correct this session: prfop(18 values), bti(4), mov_wide_imm(MOVZ/MOVK chain),
+li 4-case algorithm (2048-case full-i64 exec-equivalence), 18 pseudo byte-exact,
+bgt/ble/bgtu/bleu swaps, Zbb 18-form byte-exact (closes #1041 open question)
+Dups this session: #176 #208 #215 #223 #225 #276 #360 #797 #960 #962 #964 (11 issues)
+New issues filed round 30: #1073 #1075 #1077 #1078 #1080 (5)
