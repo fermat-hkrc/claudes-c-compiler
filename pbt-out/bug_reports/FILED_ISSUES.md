@@ -169,3 +169,4 @@
 | 46 | riscv encoder pseudo | encode_jump silently ignores extra operands | **new issue filed** | [#1171](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1171) |
 | 47 | lexer | digraphs unsupported (C95 %: <%% %%> <: :>) | **new issue filed** | [#1172](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1172) |
 | 48 | sema enum handling | enum values >int truncated to 0 (4-byte forced) | **new issue filed** | [#1173](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1173) |
+| 48 | riscv encoder pseudo | encode_rdcsr ignores extra operands (last unclassified fn) | **new issue filed** | [#1174](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1174) |

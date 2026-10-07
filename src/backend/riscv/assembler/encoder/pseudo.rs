@@ -873,3 +873,21 @@ mod pbt_final6 {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_rdcsr {
+    use super::*;
+    use crate::backend::riscv::assembler::parser::Operand;
+    #[test]
+    fn p_rdcsr_extra() {
+        let base = encode_rdcsr("rdcycle", &[Operand::Reg("a0".into())]);
+        let extra = encode_rdcsr("rdcycle", &[Operand::Reg("a0".into()), Operand::Reg("a1".into())]);
+        println!("base={:?}", base);
+        println!("extra={:?}", extra);
+        match (base, extra) {
+            (Ok(_), Ok(_)) => panic!("encode_rdcsr ignores extra operand"),
+            (Ok(_), Err(_)) => println!("correct: rejects"),
+            (Err(e), _) => panic!("base form fails: {}", e),
+        }
+    }
+}
