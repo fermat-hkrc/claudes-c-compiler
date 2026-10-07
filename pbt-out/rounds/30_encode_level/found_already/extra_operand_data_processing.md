@@ -46,3 +46,14 @@ Filed under base names: encode_lr→#962, encode_sc→#964, encode_amo→#960 (+
 - mv: repo uses add rd,x0,rs2 (R-type) vs llvm canonical addi — valid alternative, not a bug
 - bgt/ble/bgtu/bleu operand swap: verified correct
 - get_branch_target Reg-as-symbol: documented design choice, not a bug
+
+## Zbb encoding bits — ALL CORRECT (18/18 byte-exact vs llvm-21, round 30 cont.)
+Closes #1041's open question "The encodings need verification":
+- llvm-21 (-mattr=+zbb) reference obtained; repo's 18 Zbb forms all match exactly
+  (andn/orn/xnor/clz/ctz/cpop/rol/ror/rolw/rorw/rev8/min/max/minu/maxu/sext.b/sext.h/zext.h)
+- Only the GATING issue stands (#1041); encodings themselves are correct
+- Minor: repo lacks `pcnt` alias for cpop (llvm-21 rejects pcnt too? see check)
+
+## RISC-V shift imm range → #797 (dup, round 30 cont.)
+slli 64 / slli -1 / slliw 32 silently truncated (shamt & 0x3F / & 0x1F in
+encode_shift_imm/_w). Exact dup of #797 (title covers all three cases).
