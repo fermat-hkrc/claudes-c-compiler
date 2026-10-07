@@ -1,5 +1,9 @@
 [
  {
+  "n": 1063,
+  "t": "Bug: AArch64 prfm with register-index addressing produces wrong encoding \u2014 bits 23-21 encode wrong opc field (all indexed forms wrong; bare [x0] correct)"
+ },
+ {
   "n": 1062,
   "t": "Bug: AArch64 NEON fneg v.4s encodes with bit 23 clear (wrong S field) \u2014 produces wrong instruction"
  },
@@ -1192,6 +1196,10 @@
   "t": "Bug: encode_dc accepts W, SP, and SIMD registers as Xt"
  },
  {
+  "n": 764,
+  "t": "Bug: encode_dc accepts W, SP, and SIMD registers as Xt"
+ },
+ {
   "n": 763,
   "t": "Bug: encode_dc matches DC op names by substring"
  },
@@ -1590,10 +1598,6 @@
  {
   "n": 664,
   "t": "Bug: encode_neon_three_same ignores a fourth operand"
- },
- {
-  "n": 663,
-  "t": "Bug: encode_neon_three_same accepts a bare Vn/Vm without arrangement"
  },
  {
   "n": 663,

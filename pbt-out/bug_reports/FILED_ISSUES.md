@@ -85,3 +85,4 @@
 | 28 | src/backend/arm/assembler | NEON fcmp-vs-zero: fcmeq/fcmgt → NOP; fcmlt/fcmle wrong; sqshlu/cmls missing | **new issue filed** | [#1057](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1057) |
 | 28 | src/backend/arm/assembler | NEON fneg v.4s bit 23 clear (wrong instruction) | **new issue filed** | [#1062](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1062) |
 | 28 | src/backend/arm/assembler | prfm register-index encoding wrong (all indexed forms; bare form correct) | **new issue filed** (encoding, not validation #345-347) | [#1063](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1063) |
+| 28 | src/backend/arm/assembler | ALL fmov Rd,#imm encode as NOP (10 forms; FP reg never set) | **new issue filed** (HIGH) | [#1064](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1064) |
