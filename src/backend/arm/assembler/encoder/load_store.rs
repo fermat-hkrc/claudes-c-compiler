@@ -1253,3 +1253,55 @@ mod pbt_adversarial2 {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_offset_sweep {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// 系统性扫描：哪些 load/store exclusive/acquire 函数接受非零 offset
+    #[test]
+    fn p_all_offset_validation() {
+        let ops_with_offset = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Mem { base: "x1".to_string(), offset: 8 },
+        ];
+
+        println!("=== Offset validation sweep ===");
+        println!("(offset=8 passed to functions that should reject non-zero offsets)");
+        println!();
+
+        // LDXR (already filed #1075)
+        let r = encode_ldxr_stxr(&ops_with_offset, true, None);
+        println!("  LDXR:  {:?}",
+            if r.is_ok() { "ACCEPTED (BUG #1075)" } else { "REJECTED (correct)" });
+
+        // STXR (same function, is_load=false)
+        let r = encode_ldxr_stxr(&ops_with_offset, false, None);
+        println!("  STXR:  {:?}",
+            if r.is_ok() { "ACCEPTED (BUG — same fn as #1075)" } else { "REJECTED (correct)" });
+
+        // LDAXR (acquire version)
+        let r = encode_ldaxr_stlxr(&ops_with_offset, true, None);
+        println!("  LDAXR: {:?}",
+            if r.is_ok() { "ACCEPTED (potential BUG)" } else { "REJECTED (correct)" });
+
+        // STLXR (release version)
+        let r = encode_ldaxr_stlxr(&ops_with_offset, false, None);
+        println!("  STLXR: {:?}",
+            if r.is_ok() { "ACCEPTED (potential BUG)" } else { "REJECTED (correct)" });
+
+        // LDAR (already filed #1077)
+        let r = encode_ldar_stlr(&ops_with_offset, true, None);
+        println!("  LDAR:  {:?}",
+            if r.is_ok() { "ACCEPTED (BUG #1077)" } else { "REJECTED (correct)" });
+
+        // STLR (same function, is_load=false)
+        let r = encode_ldar_stlr(&ops_with_offset, false, None);
+        println!("  STLR:  {:?}",
+            if r.is_ok() { "ACCEPTED (BUG — same fn as #1077)" } else { "REJECTED (correct)" });
+
+        println!();
+        println!("=== Summary ===");
+    }
+}
