@@ -1,5 +1,9 @@
 [
  {
+  "n": 1054,
+  "t": "Bug: x86-64 assembler lacks BMI1 extract/modify instructions (blsi/blsmsk/blsr + bextri) \u2014 9 forms"
+ },
+ {
   "n": 1053,
   "t": "Bug: x86-64 assembler lacks the ENTIRE FMA instruction set (vfmadd/vfmsub/vfnmadd/vfnmsub \u00d7 132/213/231 \u00d7 pd/ps/sd/ss) \u2014 31 forms all rejected"
  },
@@ -786,6 +790,10 @@
  {
   "n": 856,
   "t": "Bug: encode_smaddl accepts W/X mixes that llvm-mc rejects"
+ },
+ {
+  "n": 855,
+  "t": "Bug: encode_smaddl encodes SP/WSP as XZR/WZR"
  },
  {
   "n": 855,
@@ -1590,10 +1598,6 @@
  {
   "n": 655,
   "t": "Bug: encode_neon_mla ignores a fourth operand"
- },
- {
-  "n": 654,
-  "t": "Bug: encode_neon_pmul encodes reserved non-byte T as 8B"
  },
  {
   "n": 654,
