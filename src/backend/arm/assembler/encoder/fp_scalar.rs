@@ -337,3 +337,90 @@ mod pbt_encode_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_adversarial2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// P-FMOV-IMM: fp 立即数编码 → encode_fmov 处理 Imm(float) 时？
+    #[test]
+    fn p_fmov_imm_handling() {
+        // encode_fmov 处理 Operand::Imm(float_bits) 时的行为
+        // .s 层已发现 fmov d0, #1.0 → NOP (#1064)
+        // encode 层测试：Imm 传入后是否返回 NOP word？
+        let ops = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Imm(0x3FF0000000000000), // double bits for 1.0
+        ];
+        let result = encode_fmov(&ops);
+        if let Ok(EncodeResult::Word(word)) = result {
+            println!("fmov d0, #1.0 bits → word={:#010x}", word);
+            if word == 0x1F2003D5 {
+                println!("  → NOP confirmed (same as #1064)");
+            }
+        }
+    }
+
+    /// P-FCMP: 零比较 → encode_fcmp 处理 Imm(0) (浮点零) 时？
+    #[test]
+    fn p_fcmp_zero_imm() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Imm(0), // might be treated as #0.0
+        ];
+        let result = encode_fcmp(&ops);
+        if let Ok(EncodeResult::Word(word)) = result {
+            println!("fcmp d0, #0.0 → word={:#010x}", word);
+            if word == 0x1F2003D5 {
+                println!("  → NOP confirmed (same as #839)");
+            }
+        }
+    }
+
+    /// P-FADD: GPR 寄存器传给 FP 算术 → 应该 Err
+    #[test]
+    fn p_fp_arith_gpr_reg() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Reg("d1".to_string()),
+            Operand::Reg("x2".to_string()), // GPR as FP operand
+        ];
+        let result = encode_fp_arith(&ops, 0);
+        assert!(result.is_err(),
+            "encode_fp_arith accepted GPR x2 as FP operand: {:?}", result);
+    }
+
+    /// P-FSQRT: 3 操作数（2 正常 + 1 多余）
+    #[test]
+    fn p_fsqrt_extra_operand() {
+        let ops_2 = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Reg("d1".to_string()),
+        ];
+        let ops_3 = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Reg("d1".to_string()),
+            Operand::Reg("d2".to_string()), // extra
+        ];
+        let r2 = encode_fsqrt(&ops_2);
+        let r3 = encode_fsqrt(&ops_3);
+        if let (Ok(EncodeResult::Word(w2)), Ok(EncodeResult::Word(w3))) = (r2, r3) {
+            assert_eq!(w2, w3, "3rd operand changed FSQRT encoding");
+        }
+    }
+
+    /// P-FMADD: GPR 寄存器 → 应该 Err
+    #[test]
+    fn p_fmadd_gpr_reg() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()),
+            Operand::Reg("d1".to_string()),
+            Operand::Reg("d2".to_string()),
+            Operand::Reg("x3".to_string()), // GPR as addend
+        ];
+        let result = encode_fmadd_fmsub(&ops, false);
+        assert!(result.is_err(),
+            "encode_fmadd_fmsub accepted GPR x3 as FP operand: {:?}", result);
+    }
+}
