@@ -149,3 +149,5 @@
 | 41 | src/frontend/sema | wave-8: array cast, self-containing struct, enum-fwd object (3 forms) | **new issue filed** | [#1149](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1149) |
 | 42 | src/frontend parser/sema | nested-fn support inverted (plain rejected, static accepted) | **new issue filed** | [#1151](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1151) |
 | 42 | symbol emitter | asm-label rename splits call/def symbol names → unlink | **new issue filed** | [#1152](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1152) |
+| 43 | init_array emission | constructor(N) priorities ignored — declaration order instead | **new issue filed** | [#1153](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1153) |
+| 43 | src/frontend/preprocessor/expr_eval.rs | #if operand-type constraints (float/str/cast/pp-number, 5 forms) | **new issue filed** | [#1154](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1154) |
