@@ -1,5 +1,9 @@
 [
  {
+  "n": 1053,
+  "t": "Bug: x86-64 assembler lacks the ENTIRE FMA instruction set (vfmadd/vfmsub/vfnmadd/vfnmsub \u00d7 132/213/231 \u00d7 pd/ps/sd/ss) \u2014 31 forms all rejected"
+ },
+ {
   "n": 1052,
   "t": "Bug: AArch64 NEON ld2r/ld4r post-increment byte mismatch + ld1/st1/ld4 writeback (!) on post-index silently accepted"
  },
@@ -796,10 +800,6 @@
   "t": "Bug: encode_smaddl silently ignores a 5th operand"
  },
  {
-  "n": 853,
-  "t": "Bug: encode_smaddl silently ignores a 5th operand"
- },
- {
   "n": 852,
   "t": "Bug: encode_crc32 ignores W vs X register width"
  },
@@ -1590,6 +1590,10 @@
  {
   "n": 655,
   "t": "Bug: encode_neon_mla ignores a fourth operand"
+ },
+ {
+  "n": 654,
+  "t": "Bug: encode_neon_pmul encodes reserved non-byte T as 8B"
  },
  {
   "n": 654,

@@ -79,3 +79,4 @@
 | 28 | src/backend/x86/assembler | SSE4.2 string cmp (4) + MOVBE (2) missing | **new issue filed** | [#1051](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1051) |
 | 28 | src/backend/arm/assembler | NEON ld2r/ld4r wrong encoding + contradictory ! accepted | **new issue filed** | [#1052](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1052) |
 | 28 | src/backend/x86/assembler | ENTIRE FMA instruction set missing (31 forms: vfmadd/vfmsub/vfnmadd/vfnmsub × 132/213/231 × pd/ps/sd/ss) | **new issue filed** | [#1053](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1053) |
+| 28 | src/backend/x86/assembler | BMI1 blsi/blsmsk/blsr + bextri missing (9 forms) | **new issue filed** | [#1054](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1054) |
