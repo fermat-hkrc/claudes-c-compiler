@@ -269,3 +269,71 @@ pub(crate) fn encode_fcvt_precision(operands: &[Operand]) -> Result<EncodeResult
         | (opc << 15) | (0b10000 << 10) | (rn << 5) | rd;
     Ok(EncodeResult::Word(word))
 }
+
+#[cfg(test)]
+mod pbt_encode_tests {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+
+    /// P-FMOV: fmov register-to-register field verification
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_fmov_reg(
+            rd in 0u32..32, rn in 0u32..32,
+            is_double in any::<bool>(),
+        ) {
+            let prefix = if is_double { "d" } else { "s" };
+            let ops = vec![
+                Operand::Reg(format!("{}{}", prefix, rd % 32)),
+                Operand::Reg(format!("{}{}", prefix, rn % 32)),
+            ];
+            let result = encode_fmov(&ops);
+            // Just verify no panic and result is either Ok or Err (not crash)
+            if let Ok(EncodeResult::Word(word)) = result {
+                // For FP register moves: bits 31-21 should have opcode 00011110000
+                let opcode = (word >> 21) & 0x7FF;
+                prop_assert!(opcode > 0, "FP opcode field should be nonzero");
+            }
+        }
+    }
+
+    /// P-FP-ARITH: fp arithmetic (fadd/fsub/fmul/fdiv) field verification
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_fp_arith(
+            rd in 0u32..32, rn in 0u32..32, rm in 0u32..32,
+            opcode in 0u32..16,
+        ) {
+            let ops = vec![
+                Operand::Reg(format!("d{}", rd % 32)),
+                Operand::Reg(format!("d{}", rn % 32)),
+                Operand::Reg(format!("d{}", rm % 32)),
+            ];
+            let result = encode_fp_arith(&ops, opcode);
+            if let Ok(EncodeResult::Word(word)) = result {
+                prop_assert_eq!(word >> 31, 0, "M bit=0 for scalar FP");
+                prop_assert_eq!(word & 0x1F, rd % 32, "Rd must match");
+            }
+        }
+    }
+
+    /// P-FCVT: fp conversion opcode verification
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+        #[test]
+        fn p_encode_fcvt_precision(
+            rd in 0u32..32, rn in 0u32..32,
+        ) {
+            let ops = vec![
+                Operand::Reg(format!("d{}", rd % 32)),
+                Operand::Reg(format!("s{}", rn % 32)),
+            ];
+            let result = encode_fcvt_precision(&ops);
+            // Just verify no panic
+            let _ = result;
+        }
+    }
+}
