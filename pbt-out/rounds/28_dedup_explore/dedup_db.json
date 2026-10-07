@@ -1,5 +1,9 @@
 [
  {
+  "n": 1051,
+  "t": "Bug: x86-64 assembler lacks SSE4.2 string comparison (pcmpestri/pcmpestrm/pcmpistri/pcmpistrm) and MOVBE \u2014 6 instructions missing"
+ },
+ {
   "n": 1050,
   "t": "Bug: encode_vid_v ignores trailing v0.t and hardcodes vm=1"
  },
@@ -386,6 +390,10 @@
  {
   "n": 953,
   "t": "Bug: encode_csr masks out-of-range zimm instead of rejecting"
+ },
+ {
+  "n": 952,
+  "t": "Bug: encode_csr ignores extra operands"
  },
  {
   "n": 952,
@@ -1190,10 +1198,6 @@
  {
   "n": 752,
   "t": "Bug: encode_brk ignores extra operands"
- },
- {
-  "n": 751,
-  "t": "Bug: encode_smc masks immediates outside 0..=65535 instead of rejecting"
  },
  {
   "n": 751,
