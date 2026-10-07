@@ -1,18 +1,18 @@
-# PROPERTIES — encode_bgez
+# Properties: encode_bltz
 
-## encode_bgez_diff_llvm_mc
+## encode_bltz_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest oracle is differential vs independent llvm-mc. State machine rejected (pure). Round-trip rejected (no decoder). Sibling encode_branch_instr shares encode_b (metamorphic only).
-- Doc contract: pseudo.rs:313 "// bge rs, x0" — asserted fingerprint 93651925
-- Seed: encode_blez_pbt.rs encode_blez_diff_llvm_mc (sibling pattern)
-- Formal: ∀ rs ∈ GPRNames. encode_bgez([Reg(rs), Imm(0)]).word = llvm-mc("bgez rs, 0") ∧ reloc=(Branch,"0",0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Strongest independent oracle is llvm-mc assembling `bltz rs, 0`. State machine N/A (pure). Round-trip N/A (no decoder). In-tree `encode_branch_instr(BLT)` shares `encode_b`/`get_reg` so used only as metamorphic, not primary differential.
+- Doc contract: src/backend/riscv/assembler/README.md:329 "`blez/bgez/...`| Corresponding `bge`/`blt` with x0" — asserted fingerprint b10d7541
+- Seed: encode_bgez_pbt.rs differential pattern (none for bltz specifically)
+- Formal: ∀ rs ∈ GPRNames. encode_bltz([Reg(rs), Imm(0)]).word = llvm_mc("bltz rs, 0") ∧ reloc = Branch/"0"/0
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: differential
 predicate:
   quantifier: forall
@@ -20,26 +20,26 @@ predicate:
   domain: { rs: gpr_name }
   relation:
     op: eq
-    lhs: encode_bgez([Reg(rs), Imm(0)]).word
-    rhs: llvm_mc("bgez " + rs + ", 0")
+    lhs: "encode_bltz([Reg(rs), Imm(0)]).word"
+    rhs: "llvm_mc(format!(\"bltz {}, 0\", rs))"
 generators:
   rs: { gen: string, type: String }
-evidence: README.md:329; RISC-V ISA BGEZ=BGE rs,x0; llvm-mc -triple=riscv64
+evidence: src/backend/riscv/assembler/README.md:329
 ```
 
-## encode_bgez_diff_llvm_mc_bge
+## encode_bltz_diff_llvm_mc_blt
 - Tier: 5
-- Rationale: Documented expansion BGEZ rs ≡ BGE rs, x0 must agree with llvm-mc on the expanded form.
-- Doc contract: pseudo.rs:313 "// bge rs, x0" — asserted fingerprint 93651925
-- Seed: encode_blez_pbt.rs encode_blez_diff_llvm_mc_bge
-- Formal: ∀ rs ∈ GPRNames. encode_bgez([Reg(rs), Imm(0)]).word = llvm-mc("bge rs, x0, 0")
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Documented expansion BLTZ = BLT rs, x0 must match independent llvm-mc of the base form (strengthens the pseudo path beyond shared in-tree helpers).
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:322 "// blt rs, x0" — asserted fingerprint 7b98a108
+- Seed: (none)
+- Formal: ∀ rs ∈ GPRNames. encode_bltz([Reg(rs), Imm(0)]).word = llvm_mc("blt rs, x0, 0")
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: differential
 predicate:
   quantifier: forall
@@ -47,283 +47,283 @@ predicate:
   domain: { rs: gpr_name }
   relation:
     op: eq
-    lhs: encode_bgez([Reg(rs), Imm(0)]).word
-    rhs: llvm_mc("bge " + rs + ", x0, 0")
+    lhs: "encode_bltz([Reg(rs), Imm(0)]).word"
+    rhs: "llvm_mc(format!(\"blt {}, x0, 0\", rs))"
 generators:
   rs: { gen: string, type: String }
-evidence: README.md:329; pseudo.rs:313
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:322
 ```
 
-## encode_bgez_eq_bge_rs_x0
+## encode_bltz_eq_blt_rs_x0
 - Tier: 4
-- Rationale: Metamorphic same-job expansion via encode_branch_instr(BGE).
-- Doc contract: pseudo.rs:313 "// bge rs, x0" — asserted fingerprint 93651925
-- Seed: encode_blez_pbt.rs encode_blez_eq_bge_x0
-- Formal: ∀ rs ∈ 0..31, ∀ tgt ∈ Idents. encode_bgez([xN(rs), Symbol(tgt)]) = encode_branch_instr([xN(rs), x0, Symbol(tgt)], BGE) = encode_branch_instr([xN(rs), zero, Symbol(tgt)], BGE)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Algebraic metamorphic — pseudo equals same-job base encoder on [rs, x0, label] (and zero alias). Weaker than llvm-mc differential (shared encode_b) but pins the documented expansion in-tree.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:322 "// blt rs, x0" — asserted fingerprint 7b98a108
+- Seed: (none)
+- Formal: ∀ rs ∈ 0..31, ∀ tgt ∈ LabelIdents. encode_bltz([xN(rs), Symbol(tgt)]) = encode_branch_instr(BLT, [xN(rs), x0, Symbol(tgt)]) = encode_branch_instr(BLT, [xN(rs), zero, Symbol(tgt)])
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [rs, tgt]
-  domain: { rs: reg_num, tgt: ident }
+  domain: { rs: "0..=31", tgt: ident }
   relation:
     op: eq
-    lhs: encode_bgez([Reg(xN(rs)), Symbol(tgt)])
-    rhs: encode_branch_instr([Reg(xN(rs)), Reg("x0"), Symbol(tgt)], 0b101)
+    lhs: "encode_bltz([xN(rs), Symbol(tgt)])"
+    rhs: "encode_branch_instr(BLT, [xN(rs), x0, Symbol(tgt)])"
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
   tgt: { gen: string, type: String }
-evidence: README.md:329; pseudo.rs:309-315
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:322
 ```
 
-## encode_bgez_isa_b_type
+## encode_bltz_isa_b_type
 - Tier: 4
-- Rationale: B-type layout invariant — opcode BRANCH, funct3 BGE, rs1=rs, rs2=x0, imm=0, reloc Branch.
-- Doc contract: pseudo.rs:313 "// bge rs, x0" — asserted fingerprint 93651925
-- Seed: encode_blez_pbt.rs encode_blez_isa_b_type
-- Formal: ∀ rs ∈ 0..31, ∀ tgt. let (w,k,s,a)=encode_bgez([xN(rs),Symbol(tgt)]). unpack_b(w)=(OP_BRANCH, BGE, rs, 0, 0) ∧ (k,s,a)=(Branch,tgt,0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: B-type invariant — opcode BRANCH, funct3=BLT(100), rs1=rs, rs2=x0, imm=0 deferred to Branch reloc.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:322 "// blt rs, x0" — asserted fingerprint 7b98a108
+- Seed: (none)
+- Formal: ∀ rs ∈ 0..31, ∀ tgt. let (w,k,s,a) = encode_bltz([xN(rs), Symbol(tgt)]). unpack_b(w) = (OP_BRANCH, 0b100, rs, 0, 0) ∧ k=Branch ∧ s=tgt ∧ a=0
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rs, tgt]
-  domain: { rs: reg_num, tgt: ident }
-  body: unpack_b(encode_bgez([xN(rs), Symbol(tgt)]).word) == (OP_BRANCH, BGE, rs, 0, 0)
+  domain: { rs: "0..=31", tgt: ident }
+  body: "unpack_b(word)=(OP_BRANCH,0b100,rs,0,0) ∧ reloc=Branch/tgt/0"
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
   tgt: { gen: string, type: String }
-evidence: RISC-V Unprivileged ISA B-type; pseudo.rs:309-315
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:318-324
 ```
 
-## encode_bgez_abi_xn_alias
+## encode_bltz_abi_xn_alias
 - Tier: 4
-- Rationale: ABI name, xN, and fp(≡x8) are aliases for the same encoding.
-- Doc contract: (none)
-- Seed: encode_blez_pbt.rs encode_blez_abi_xn_alias
-- Formal: ∀ n ∈ 0..31, ∀ tgt. encode_bgez([ABI(n), Symbol(tgt)]) = encode_bgez([xN(n), Symbol(tgt)]) ∧ (n=8 ⇒ encode_bgez([fp, Symbol(tgt)]) equals them)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: ABI names, xN, and fp/s0 aliases encode identically.
+- Doc contract: src/backend/riscv/assembler/README.md:329 "`blez/bgez/...`| Corresponding `bge`/`blt` with x0" — asserted fingerprint b10d7541
+- Seed: (none)
+- Formal: ∀ n ∈ 0..31, ∀ tgt. encode_bltz([ABI(n), Symbol(tgt)]) = encode_bltz([xN(n), Symbol(tgt)]) ∧ (n=8 ⇒ fp form equal)
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [n, tgt]
-  domain: { n: reg_num, tgt: ident }
+  domain: { n: "0..=31", tgt: ident }
   relation:
     op: eq
-    lhs: encode_bgez([Reg(ABI(n)), Symbol(tgt)])
-    rhs: encode_bgez([Reg(xN(n)), Symbol(tgt)])
+    lhs: "encode_bltz([ABI(n), Symbol(tgt)])"
+    rhs: "encode_bltz([xN(n), Symbol(tgt)])"
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   tgt: { gen: string, type: String }
-evidence: encoder get_reg / reg_num ABI table
+evidence: src/backend/riscv/assembler/README.md:329
 ```
 
-## encode_bgez_target_forms
+## encode_bltz_target_forms
 - Tier: 4
-- Rationale: Symbol, Label, and Reg-as-label with the same string yield identical WordWithReloc.
-- Doc contract: pseudo.rs:383 "expected branch target at operand {}" — asserted fingerprint fdb4f80b
-- Seed: encode_blez_pbt.rs encode_blez_target_forms
-- Formal: ∀ rs, s. encode_bgez([xN(rs), Symbol(s)]) = encode_bgez([xN(rs), Label(s)]) = encode_bgez([xN(rs), Reg(s)])
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Symbol / Label / Reg-as-label targets with the same string are equivalent (get_branch_target contract).
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:378 "Some(Operand::Symbol(s)) | Some(Operand::Label(s)) => Ok(s.clone())," — asserted fingerprint 0c04e437
+- Seed: (none)
+- Formal: ∀ rs, s. encode_bltz([xN(rs), Symbol(s)]) = encode_bltz([xN(rs), Label(s)]) = encode_bltz([xN(rs), Reg(s)])
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [rs, s]
-  domain: { rs: reg_num, s: ident }
+  domain: { rs: "0..=31", s: ident }
   relation:
     op: eq
-    lhs: encode_bgez([xN(rs), Symbol(s)])
-    rhs: encode_bgez([xN(rs), Label(s)])
+    lhs: "encode_bltz([xN(rs), Symbol(s)])"
+    rhs: "encode_bltz([xN(rs), Label(s)])"
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
   s: { gen: string, type: String }
-evidence: pseudo.rs:376-385 get_branch_target
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:376
 ```
 
-## encode_bgez_imm_target
+## encode_bltz_imm_target
 - Tier: 4
-- Rationale: Imm target stringifies into reloc.symbol; word stays zero-imm BGE rs,x0.
-- Doc contract: pseudo.rs:379 "Some(Operand::Imm(v)) => Ok(format!" — asserted fingerprint 6d9a81ec
-- Seed: encode_blez_pbt.rs encode_blez_imm_target
-- Formal: ∀ rs, imm. encode_bgez([xN(rs), Imm(imm)]) yields unpack_b=(BRANCH,BGE,rs,0,0) ∧ reloc=(Branch, format(imm), 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Imm target stringifies into reloc symbol; word stays zero-imm BLT.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:379 "Some(Operand::Imm(v)) => Ok(format!("{}", v))," — asserted fingerprint ad06d32a
+- Seed: (none)
+- Formal: ∀ rs, imm. encode_bltz([xN(rs), Imm(imm)]) yields B-type BLT with imm_field=0, reloc.symbol=format!(imm), Branch, addend=0
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rs, imm]
-  domain: { rs: reg_num, imm: imm_edge }
-  body: unpack + reloc.symbol == format(imm) && addend == 0
+  domain: { rs: "0..=31", imm: i64_edge }
+  body: "word is zero-imm BLT ∧ reloc.symbol == format!(imm)"
 generators:
   rs: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, min: -64, max: 64, type: i64 }
-evidence: pseudo.rs:379
+  imm: { gen: int, min: -4096, max: 4094, type: i64 }
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:380
 ```
 
-## encode_bgez_imm_as_rs
+## encode_bltz_imm_as_rs
 - Tier: 4
-- Rationale: get_reg accepts bare Imm(0..31) (GCC path); must equal xN.
-- Doc contract: mod.rs:487 "Some(Operand::Imm(n)) if *n >= 0 && *n <= 31 => Ok(*n as u32)," — asserted fingerprint 4df5b8ba
-- Seed: encode_blez_pbt.rs encode_blez_imm_as_rs
-- Formal: ∀ n ∈ 0..31, ∀ tgt. encode_bgez([Imm(n), Symbol(tgt)]) = encode_bgez([xN(n), Symbol(tgt)])
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Imm(0..31) as rs matches xN (get_reg bare-number path).
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:489 "Some(Operand::Imm(n)) if *n >= 0 && *n <= 31 => Ok(*n as u32)," — asserted fingerprint 4df5b8ba
+- Seed: (none)
+- Formal: ∀ n ∈ 0..31, ∀ tgt. encode_bltz([Imm(n), Symbol(tgt)]) = encode_bltz([xN(n), Symbol(tgt)])
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [n, tgt]
-  domain: { n: reg_num, tgt: ident }
+  domain: { n: "0..=31", tgt: ident }
   relation:
     op: eq
-    lhs: encode_bgez([Imm(n), Symbol(tgt)])
-    rhs: encode_bgez([Reg(xN(n)), Symbol(tgt)])
+    lhs: "encode_bltz([Imm(n), Symbol(tgt)])"
+    rhs: "encode_bltz([xN(n), Symbol(tgt)])"
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   tgt: { gen: string, type: String }
-evidence: mod.rs:484-485
+evidence: src/backend/riscv/assembler/encoder/mod.rs:481
 ```
 
-## encode_bgez_neg_arity
+## encode_bltz_neg_arity
 - Tier: 3
-- Rationale: Fewer than 2 operands must Err (README two-operand form; llvm-mc rejects).
-- Doc contract: README.md:329 "Corresponding `bge`/`blt` with x0" — domain-restriction fingerprint e9cf8d73
-- Seed: encode_blez_pbt.rs encode_blez_neg_arity
-- Formal: ∀ ops. len(ops)<2 ⇒ encode_bgez(ops) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Too few operands must Err (llvm-mc rejects; two-operand form).
+- Doc contract: src/backend/riscv/assembler/README.md:329 "`blez/bgez/...`| Corresponding `bge`/`blt` with x0" — asserted fingerprint b10d7541
+- Seed: (none)
+- Formal: ∀ ops. len(ops) < 2 ⇒ encode_bltz(ops) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops]
-  domain: { ops: short_ops }
+  domain: { ops: "len<2" }
   relation:
-    op: holds
-    expr: encode_bgez(ops).is_err()
+    op: throws
+    expr: "encode_bltz(ops)"
 generators:
   ops: { gen: list, maxLen: 1 }
 expected_error: String
-evidence: README.md:329; llvm-mc rejects missing operand
+evidence: src/backend/riscv/assembler/README.md:329
 ```
 
-## encode_bgez_neg_invalid_rs
+## encode_bltz_neg_invalid_rs
 - Tier: 3
-- Rationale: Non-GPR first operand must Err.
-- Doc contract: mod.rs:488 "expected register at operand {}, got {:?}" — domain-restriction fingerprint 783b781e
-- Seed: encode_blez_pbt.rs encode_blez_neg_invalid_rs
-- Formal: ∀ bad ∉ GPR, ∀ tgt. encode_bgez([bad, Symbol(tgt)]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Invalid/FP/non-GPR rs must Err.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:490 "expected register at operand {}, got {:?}" — asserted fingerprint 783b781e
+- Seed: (none)
+- Formal: ∀ bad ∉ GPR, ∀ tgt. encode_bltz([bad, Symbol(tgt)]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [bad, tgt]
   domain: { bad: invalid_rs, tgt: ident }
   relation:
-    op: holds
-    expr: encode_bgez([bad, Symbol(tgt)]).is_err()
+    op: throws
+    expr: "encode_bltz([bad, Symbol(tgt)])"
 generators:
   bad: { gen: string, type: Operand }
   tgt: { gen: string, type: String }
 expected_error: String
-evidence: mod.rs:479-488 get_reg
+evidence: src/backend/riscv/assembler/encoder/mod.rs:481
 ```
 
-## encode_bgez_neg_invalid_target
+## encode_bltz_neg_invalid_target
 - Tier: 3
-- Rationale: Target not Symbol/Label/Imm/Reg must Err.
-- Doc contract: pseudo.rs:383 "expected branch target at operand {}" — domain-restriction fingerprint fdb4f80b
-- Seed: encode_blez_pbt.rs encode_blez_neg_invalid_target
-- Formal: ∀ rs ∈ GPR, ∀ bad ∉ {Symbol,Label,Imm,Reg}. encode_bgez([Reg(rs), bad]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Non Symbol/Label/Imm/Reg targets must Err.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:383 "_ => Err(format!("expected branch target at operand {}", idx))," — asserted fingerprint da4c41b9
+- Seed: (none)
+- Formal: ∀ rs ∈ GPR, ∀ bad ∉ {Symbol,Label,Imm,Reg}. encode_bltz([Reg(rs), bad]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rs, bad]
   domain: { rs: gpr_name, bad: invalid_target }
   relation:
-    op: holds
-    expr: encode_bgez([Reg(rs), bad]).is_err()
+    op: throws
+    expr: "encode_bltz([Reg(rs), bad])"
 generators:
   rs: { gen: string, type: String }
   bad: { gen: string, type: Operand }
 expected_error: String
-evidence: pseudo.rs:376-385
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:376
 ```
 
-## encode_bgez_neg_extra
+## encode_bltz_neg_extra
 - Tier: 3
-- Rationale: Extra third operand must Err (llvm-mc rejects; README two-operand form). Same class as encode_blez/beqz/bnez.
-- Doc contract: README.md:329 "Corresponding `bge`/`blt` with x0" — domain-restriction fingerprint e9cf8d73
-- Seed: encode_blez_pbt.rs encode_blez_neg_extra
-- Formal: ∀ rs ∈ GPR, ∀ tgt ∈ Idents, ∀ extra. encode_bgez([Reg(rs), Symbol(tgt), extra]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgez_pbt.rs
+- Rationale: Extra operand must Err — README two-operand form; llvm-mc rejects. Sibling encode_bgez/blez already filed the same class of bug.
+- Doc contract: src/backend/riscv/assembler/README.md:329 "`blez/bgez/...`| Corresponding `bge`/`blt` with x0" — asserted fingerprint b10d7541
+- Seed: encode_bgez_neg_extra / bug encode_bgez_extra_operand
+- Formal: ∀ rs ∈ GPR, ∀ tgt, ∀ extra. encode_bltz([Reg(rs), Symbol(tgt), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bltz_pbt.rs
 - Status: failing
-- Counterexample: encode_bgez([Reg("a0"), Symbol("foo"), Reg("a1")]) → Ok(WordWithReloc { word: 0x00055063 }) instead of Err
-- Bug report: bug_reports/encode_bgez_extra_operand.md
+- Counterexample: encode_bltz([Reg("zero"), Symbol("foo"), Reg("zero")]) → Ok (expected Err)
+- Bug report: bug_reports/encode_bltz_extra_operand.md
 
 ```property
-function: encoder.encode_bgez
+function: encoder.encode_bltz
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rs, tgt, extra]
-  domain: { rs: gpr_name, tgt: ident, extra: extra_operand }
+  domain: { rs: gpr_name, tgt: ident, extra: operand }
   relation:
-    op: holds
-    expr: encode_bgez([Reg(rs), Symbol(tgt), extra]).is_err()
+    op: throws
+    expr: "encode_bltz([Reg(rs), Symbol(tgt), extra])"
 generators:
   rs: { gen: string, type: String }
   tgt: { gen: string, type: String }
   extra: { gen: string, type: Operand }
 expected_error: String
-evidence: README.md:329; llvm-mc rejects extra operand
+evidence: src/backend/riscv/assembler/README.md:329
 ```
