@@ -1808,3 +1808,49 @@ mod pbt_extra_operand_sweep {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_malformed_matrix {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    fn r(s: &str) -> Operand { Operand::Reg(s.to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+
+    /// P-MALFORMED: 缺参/空/错型 —— 只允许 Err，不许 panic 或 Ok
+    #[test]
+    fn p_malformed_no_panics() {
+        let x = || r("x0");
+        let w = || r("w0");
+        let cases: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            // (函数, 正常参数数) — 依次测 empty / 少1 / 错型(Imm当Reg)
+            ("neg", Box::new(|| encode_neg(&[]))),
+            ("neg-short", Box::new(|| encode_neg(&[x()]))),
+            ("neg-imm", Box::new(|| encode_neg(&[x(), i(5)]))),
+            ("mvn-short", Box::new(|| encode_mvn(&[x()]))),
+            ("mul-short", Box::new(|| encode_mul(&[x(), x()]))),
+            ("mul-imm", Box::new(|| encode_mul(&[x(), x(), i(3)]))),
+            ("madd-short", Box::new(|| encode_madd(&[x(), x(), x()]))),
+            ("madd-imm", Box::new(|| encode_madd(&[x(), x(), x(), i(1)]))),
+            ("sxtw-short", Box::new(|| encode_sxtw(&[x()]))),
+            ("sxtw-imm", Box::new(|| encode_sxtw(&[x(), i(9)]))),
+            ("clz-short", Box::new(|| encode_clz(&[x()]))),
+            ("rbit-short", Box::new(|| encode_rbit(&[x()]))),
+            ("extr-short", Box::new(|| encode_extr(&[x(), x(), x()]))),
+            ("extr-imm", Box::new(|| encode_extr(&[x(), x(), i(1)]))),
+            ("smull-short", Box::new(|| encode_smull(&[w(), w()]))),
+            ("smull-imm", Box::new(|| encode_smull(&[w(), w(), i(2)]))),
+            ("crc32-short", Box::new(|| encode_crc32("crc32w", &[w(), w()]))),
+        ];
+        let mut bad = 0;
+        for (name, f) in &cases {
+            let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            match got {
+                Ok(Ok(_)) => { println!("  {}: SILENT OK on malformed input!", name); bad += 1; }
+                Ok(Err(_)) => {}
+                Err(_) => { println!("  {}: PANIC", name); bad += 1; }
+            }
+        }
+        assert_eq!(bad, 0, "{} malformed-input violations (panic or silent-Ok)", bad);
+    }
+}

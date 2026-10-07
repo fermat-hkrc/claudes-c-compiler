@@ -103,5 +103,11 @@
 | encode_zbb_unary/_f5/_w, encode_zbb_zexth, encode_shift_imm/_w, encode_amo/lr/sc_suffixed (9 fns) | src/backend/riscv/assembler/encoder/{base,atomics}.rs | base.rs ::pbt_extra_base_zbb | p_extra_base_zbb_sweep | 10/10 ignore extras; zbb_binary→encode_alu_reg #946 skipped; 9 filed **#1122-#1130** |
 | i686 struct ABI (5 directions) | src/backend/i686 | round-38 gcc -m32 interop | — | ALL GREEN (matches gcc) |
 | fn-ptr FP-struct calls | x86 codegen | round-38 probe | — | breakage = #1114 propagation (mk return garbage), not new |
+
+## Round 39b — ARM malformed-input matrix (empty/missing/wrong-type)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| ARM 6-file malformed matrix | data_processing/load_store/system/compare_branch/bitfield/fp_scalar | ::pbt_malformed_matrix per file | catch_unwind silent-Ok/panic sweep | 6/6 green after extraction; dmb/dsb empty+wrong-type silent sy → **#1131** |
+| hint imm range / msr field validation | system.rs | round-39 probes | llvm-mc diff | both GREEN (hint #100 valid ≤127; msr xyzzy errors) |
 | volatile local folding | src/passes (storage classification) | round-38 /tmp/vol2.c f6 | access-count vs gcc | constants folded, 1/6 accesses survive → **#1115** |
 | long double runtime arith / >16B MEMORY structs | x86 backend | round-38 probes | interop | both GREEN (exact mul/div/cmp; 5×double hidden-pointer ✓) |

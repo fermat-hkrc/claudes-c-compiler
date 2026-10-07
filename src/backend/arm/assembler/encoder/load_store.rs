@@ -1305,3 +1305,37 @@ mod pbt_offset_sweep {
         println!("=== Summary ===");
     }
 }
+
+#[cfg(test)]
+mod pbt_malformed_matrix {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    fn x() -> Operand { Operand::Reg("x0".to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+    fn mem() -> Operand { Operand::Mem { base: "x1".to_string(), offset: 8 } }
+
+    #[test]
+    fn p_malformed_load_store() {
+        let cases: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            // control (correct form) verified elsewhere: round-30 adversarial battery
+            ("ldr-empty", Box::new(|| encode_ldr_str_auto(&[], true))),
+            ("ldr-nomem", Box::new(|| encode_ldr_str_auto(&[x(), x()], true))),   // Reg 当 Mem
+            ("ldp-short", Box::new(|| encode_ldp_stp(&[x(), x(), i(16)], true))),
+            ("ldp-imm", Box::new(|| encode_ldp_stp(&[x(), x(), i(16), i(0)], true))),
+            ("ldur-short", Box::new(|| encode_ldur_stur(&[x()], true, 0))),
+            ("cas-short", Box::new(|| encode_cas("cas", &[x(), x()]))),
+            ("ldxr-short", Box::new(|| encode_ldxr_stxr(&[x()], true, None))),
+            ("prfm-short", Box::new(|| encode_prfm(&[i(0)]))),
+            ("ldnp-short", Box::new(|| encode_ldnp_stnp(&[x(), x(), i(16)], true))),
+        ];
+        let mut bad = 0;
+        for (name, f) in &cases {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+                Ok(Ok(_)) => { println!("  {}: SILENT OK", name); bad += 1; }
+                Ok(Err(_)) => {}
+                Err(_) => { println!("  {}: PANIC", name); bad += 1; }
+            }
+        }
+        assert_eq!(bad, 0, "{} violations", bad);
+    }
+}

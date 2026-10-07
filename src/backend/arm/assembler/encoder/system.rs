@@ -684,3 +684,32 @@ mod pbt_adversarial {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_malformed_matrix {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    fn x() -> Operand { Operand::Reg("x0".to_string()) }
+
+    #[test]
+    fn p_malformed_system() {
+        let cases: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("svc-empty", Box::new(|| encode_svc(&[]))),
+            ("svc-reg", Box::new(|| encode_svc(&[x()]))),
+            ("hvc-empty", Box::new(|| encode_hvc(&[]))),
+            ("smc-empty", Box::new(|| encode_smc(&[]))),
+            ("msr-short", Box::new(|| encode_msr(&[Operand::Symbol("spsel".into())]))),
+            ("mrs-short", Box::new(|| encode_mrs(&[x()]))),
+            // dmb(x0)/dsb() silent-sy → #1131
+        ];
+        let mut bad = 0;
+        for (name, f) in &cases {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+                Ok(Ok(_)) => { println!("  {}: SILENT OK", name); bad += 1; }
+                Ok(Err(_)) => {}
+                Err(_) => { println!("  {}: PANIC", name); bad += 1; }
+            }
+        }
+        assert_eq!(bad, 0, "{} violations", bad);
+    }
+}

@@ -129,3 +129,4 @@
 | 39 | src/backend/riscv/assembler/encoder | encode_amo_suffixed silently ignores extra operands | **new issue filed** | [#1128](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1128) |
 | 39 | src/backend/riscv/assembler/encoder | encode_lr_suffixed silently ignores extra operands | **new issue filed** | [#1129](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1129) |
 | 39 | src/backend/riscv/assembler/encoder | encode_sc_suffixed silently ignores extra operands | **new issue filed** | [#1130](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1130) |
+| 39 | src/backend/arm/assembler/encoder/system.rs | dmb/dsb accept empty+wrong-type operands → silent sy barrier | **new issue filed** | [#1131](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1131) |

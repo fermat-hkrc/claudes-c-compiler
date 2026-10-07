@@ -521,3 +521,35 @@ test_fn:
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_malformed_matrix {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    fn d() -> Operand { Operand::Reg("d0".to_string()) }
+    fn x() -> Operand { Operand::Reg("x0".to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+
+    #[test]
+    fn p_malformed_fp_scalar() {
+        let cases: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("fadd-empty", Box::new(|| encode_fp_arith(&[], 0))),
+            ("fadd-short", Box::new(|| encode_fp_arith(&[d(), d()], 0))),
+            ("fmadd-short", Box::new(|| encode_fmadd_fmsub(&[d(), d(), d()], false))),
+            ("fmov-empty", Box::new(|| encode_fmov(&[]))),
+            ("fmov-imm-dest", Box::new(|| encode_fmov(&[i(0), d()]))),
+            ("fcmp-empty", Box::new(|| encode_fcmp(&[]))),
+            ("fsqrt-short", Box::new(|| encode_fsqrt(&[d()]))),
+            ("scvtf-empty", Box::new(|| encode_scvtf(&[]))),
+        ];
+        let mut bad = 0;
+        for (name, f) in &cases {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+                Ok(Ok(_)) => { println!("  {}: SILENT OK", name); bad += 1; }
+                Ok(Err(_)) => {}
+                Err(_) => { println!("  {}: PANIC", name); bad += 1; }
+            }
+        }
+        assert_eq!(bad, 0, "{} violations", bad);
+    }
+}

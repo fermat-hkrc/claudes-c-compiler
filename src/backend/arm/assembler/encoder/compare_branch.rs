@@ -425,3 +425,34 @@ mod pbt_adversarial {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_malformed_matrix {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    fn x() -> Operand { Operand::Reg("x0".to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+
+    #[test]
+    fn p_malformed_cb() {
+        let cases: Vec<(&str, Box<dyn Fn() -> Result<EncodeResult, String>>)> = vec![
+            ("cmp-empty", Box::new(|| encode_cmp(&[]))),
+            ("cmp-short", Box::new(|| encode_cmp(&[x()]))),
+            ("cmp-imm-type", Box::new(|| encode_cmp(&[i(5), x()]))),
+            ("tst-empty", Box::new(|| encode_tst(&[]))),
+            ("csel-short", Box::new(|| encode_csel(&[x(), x()]))),
+            ("csinc-short", Box::new(|| encode_csinc(&[x()]))),
+            ("ccmp-short", Box::new(|| encode_ccmp_ccmn(&[x(), x()], true))),
+            ("cmn-empty", Box::new(|| encode_cmn(&[]))),
+        ];
+        let mut bad = 0;
+        for (name, f) in &cases {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+                Ok(Ok(_)) => { println!("  {}: SILENT OK", name); bad += 1; }
+                Ok(Err(_)) => {}
+                Err(_) => { println!("  {}: PANIC", name); bad += 1; }
+            }
+        }
+        assert_eq!(bad, 0, "{} violations", bad);
+    }
+}
