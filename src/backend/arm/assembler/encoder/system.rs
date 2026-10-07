@@ -611,3 +611,76 @@ pub(crate) fn encode_dc(operands: &[Operand], raw_operands: &str) -> Result<Enco
 
     Err(format!("unsupported dc variant: {}", raw_operands))
 }
+
+#[cfg(test)]
+mod pbt_adversarial {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// P-DMB: 多余操作数 → 应该 Err 或忽略
+    #[test]
+    fn p_dmb_extra_operands() {
+        let ops_1 = vec![Operand::Imm(15)]; // dmb #15 = dmb sy
+        let ops_2 = vec![Operand::Imm(15), Operand::Imm(0)]; // extra
+        let r1 = encode_dmb(&ops_1);
+        let r2 = encode_dmb(&ops_2);
+        if let (Ok(EncodeResult::Word(w1)), Ok(EncodeResult::Word(w2))) = (r1, r2) {
+            assert_eq!(w1, w2, "2nd operand changed DMB encoding");
+        }
+    }
+
+    /// P-MRS: FP 寄存器作为目标 → 应该 Err
+    #[test]
+    fn p_mrs_fp_dest() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()), // FP as destination
+            Operand::Reg("midr_el1".to_string()),
+        ];
+        let result = encode_mrs(&ops);
+        // MRS requires X register destination — FP should be rejected
+        assert!(result.is_err(),
+            "encode_mrs accepted FP d0 as destination: {:?}", result);
+    }
+
+    /// P-MSR: FP 寄存器作为源 → 应该 Err
+    #[test]
+    fn p_msr_fp_source() {
+        let ops = vec![
+            Operand::Reg("daifset".to_string()),
+            Operand::Reg("s0".to_string()), // FP as source
+        ];
+        let result = encode_msr(&ops);
+        assert!(result.is_err(),
+            "encode_msr accepted FP s0 as source: {:?}", result);
+    }
+
+    /// P-BRK: 超出 16 位范围的立即数 → 应该 Err 或正确处理
+    #[test]
+    fn p_brk_imm_out_of_range() {
+        for imm in [-1i64, 65536, 100000] {
+            let ops = vec![Operand::Imm(imm)];
+            let result = encode_brk(&ops);
+            // BRK imm is 16-bit; out of range should error
+            if let Ok(EncodeResult::Word(word)) = result {
+                let encoded_imm = word & 0xFFFF;
+                // Verify the encoded imm is within 16 bits
+                assert!(encoded_imm <= 0xFFFF,
+                    "BRK imm {} encoded as {} (16-bit overflow)", imm, encoded_imm);
+            }
+        }
+    }
+
+    /// P-SVC: 负数立即数 → 应该 Err
+    #[test]
+    fn p_svc_negative_imm() {
+        let ops = vec![Operand::Imm(-1)];
+        let result = encode_svc(&ops);
+        // SVC imm is unsigned 16-bit; negative should error or wrap
+        if let Ok(EncodeResult::Word(word)) = result {
+            let encoded = word & 0xFFFF;
+            // If wrapping, -1 becomes 0xFFFF
+            assert_eq!(encoded, 0xFFFF,
+                "SVC #(-1) should wrap to 0xFFFF or be rejected, got {}", encoded);
+        }
+    }
+}

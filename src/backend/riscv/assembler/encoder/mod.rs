@@ -924,3 +924,95 @@ pub fn encode_instruction(mnemonic: &str, operands: &[Operand], raw_operands: &s
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_adversarial {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P-ENCODE-R: 字段提取验证
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_encode_r_field_extraction(
+            opcode in 0u32..0x40, rd in 0u32..32, funct3 in 0u32..8,
+            rs1 in 0u32..32, rs2 in 0u32..32, funct7 in 0u32..128,
+        ) {
+            let word = encode_r(opcode, rd, funct3, rs1, rs2, funct7);
+            // Verify field extraction
+            prop_assert_eq!(word & 0x3F, opcode, "opcode field");
+            prop_assert_eq!((word >> 7) & 0x1F, rd, "rd field");
+            prop_assert_eq!((word >> 12) & 0x7, funct3, "funct3 field");
+            prop_assert_eq!((word >> 15) & 0x1F, rs1, "rs1 field");
+            prop_assert_eq!((word >> 20) & 0x1F, rs2, "rs2 field");
+            prop_assert_eq!((word >> 25) & 0x7F, funct7, "funct7 field");
+        }
+    }
+
+    /// P-ENCODE-I: 立即数边界
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_encode_i_imm_boundary(
+            opcode in 0u32..0x40, rd in 0u32..32, funct3 in 0u32..8,
+            rs1 in 0u32..32,
+        ) {
+            // Test valid imm12 range: -2048..2047
+            for &imm in &[0i32, 1, -1, 2047, -2048, 2048, -2049] {
+                let word = encode_i(opcode, rd, funct3, rs1, imm);
+                // For valid range, verify imm field extraction
+                if (-2048..=2047).contains(&imm) {
+                    let extracted = ((word >> 20) as i32) << 20 >> 20; // sign-extend 12 bits
+                    prop_assert_eq!(extracted, imm, "imm {} not preserved in encode_i", imm);
+                }
+                // For out-of-range, verify no panic and result is a valid instruction word
+                prop_assert!(word != 0, "encode_i returned 0 for imm={}", imm);
+            }
+        }
+    }
+
+    /// P-ENCODE-S: store offset边界
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_s_offset(
+            opcode in 0u32..0x40, funct3 in 0u32..8, rs1 in 0u32..32, rs2 in 0u32..32,
+        ) {
+            for &imm in &[0i32, 2047, -2048] {
+                let word = encode_s(opcode, funct3, rs1, rs2, imm);
+                // S-type splits imm into bits 31:25 and 11:7
+                let imm_hi = (word >> 25) & 0x7F;
+                let imm_lo = (word >> 7) & 0x1F;
+                let raw = ((imm_hi << 5) | imm_lo) as i32;
+let extracted = (raw << 20) >> 20; // sign-extend 12 bits
+                // For valid range, verify roundtrip
+                prop_assert_eq!(extracted as i32, imm, "S-type imm {} not preserved", imm);
+            }
+        }
+    }
+
+    /// P-ENCODE-B: 分支偏移边界（imm13，最低位必须是 0）
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_encode_b_offset(
+            funct3 in 0u32..8, rs1 in 0u32..32, rs2 in 0u32..32,
+        ) {
+            for &imm in &[0i32, 2, -2, 4094, -4096] {
+                let word = encode_b(0x63, funct3, rs1, rs2, imm);
+                // B-type has 13-bit imm (bit 0 must be 0)
+                let imm12 = (word >> 31) & 1; // imm[12]
+                let imm10_5 = (word >> 25) & 0x3F; // imm[10:5]
+                let imm4_1 = (word >> 8) & 0xF; // imm[4:1]
+                let imm11 = (word >> 7) & 1; // imm[11]
+                // Reconstruct: imm[12|10:5|4:1|11|0]
+                let raw = ((imm12 << 12) | (imm10_5 << 5) | (imm4_1 << 1) | (imm11 << 11)) as i32;
+let extracted = (raw << 19) >> 19; // sign-extend 13 bits
+                // For valid range, verify roundtrip
+                if (-4096..=4094).contains(&imm) && imm % 2 == 0 {
+                    prop_assert_eq!(extracted, imm, "B-type imm {} not preserved (got {})", imm, extracted);
+                }
+            }
+        }
+    }
+}
