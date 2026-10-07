@@ -140,3 +140,5 @@
 | 40 | src/frontend/sema | declaration/qualifier constraints absent — static init with non-constant SI | **new issue filed** | [#1140](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1140) |
 | 40 | src/frontend/sema | bit-field declaration constraints absent — negative width (a:-1), width 99  | **new issue filed** | [#1141](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1141) |
 | 40 | src/frontend/sema | linkage/label constraints absent — static-after-nonstatic decl, int-then-do | **new issue filed** | [#1142](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1142) |
+| 40 | src/frontend/preprocessor | directive structure constraints absent (6 forms) | **new issue filed** | [#1143](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1143) |
+| 40 | src/ir/lowering expr_sizeof/fold | sizeof(VLA) folds to 1024 in arithmetic — sizeof(v)/sizeof(v[0])=256 | **new issue filed** | [#1144](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1144) |
