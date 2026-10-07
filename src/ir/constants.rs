@@ -894,3 +894,99 @@ mod pbt_regression {
         assert_eq!(decoded, v, "f64_to_f128_bytes(5e-324) decodes to {}", decoded);
     }
 }
+
+#[cfg(test)]
+mod pbt_tests2 {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P-LD-I64: long_double_from_i64 round-trip through to_f64
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_long_double_from_i64(v in any::<i64>()) {
+            let c = IrConst::long_double_from_i64(v);
+            let f = c.to_f64();
+            prop_assert!(f.is_some(), "long_double_from_i64({}).to_f64() returned None", v);
+            if let Some(f) = f {
+                prop_assert_eq!(f, v as f64, "long_double_from_i64 round-trip");
+            }
+        }
+    }
+
+    /// P-LD-U64: long_double_from_u64 round-trip
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_long_double_from_u64(v in any::<u64>()) {
+            let c = IrConst::long_double_from_u64(v);
+            let f = c.to_f64();
+            if v <= (1u64 << 53) {
+                // Exact representable
+                prop_assert!(f.is_some());
+                if let Some(f) = f {
+                    prop_assert_eq!(f, v as f64);
+                }
+            }
+        }
+    }
+
+    /// P-LD-I128: long_double_from_i128 for small values (exact)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_long_double_from_i128(
+            lo in any::<i64>(), hi in -256i64..256,
+        ) {
+            let v = ((hi as i128) << 64) | (lo as u64) as i128;
+            let c = IrConst::long_double_from_i128(v);
+            // Just verify no panic and valid construction
+            let bytes = c.long_double_bytes();
+            prop_assert!(bytes.is_some(), "long_double_from_i128 bytes returned None");
+        }
+    }
+
+    /// P-LD-BYTES: LongDouble bytes consistency
+    #[test]
+    fn p_long_double_bytes_consistency() {
+        let c = IrConst::long_double(1.5);
+        let bytes = c.long_double_bytes().unwrap();
+        assert_eq!(bytes.len(), 16, "long_double_bytes must be 16 bytes");
+    }
+
+    /// P-X87-BYTES: x87_bytes must be 16 bytes (80-bit padded)
+    #[test]
+    fn p_x87_bytes_16() {
+        let c = IrConst::long_double(0.0);
+        let b = c.x87_bytes();
+        assert_eq!(b.len(), 16, "x87_bytes must be 16 bytes (10 padded to 16)");
+    }
+
+    /// P-TO-HASH-KEY: to_hash_key consistency (equal consts → equal keys)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_to_hash_key_equal(
+            v in any::<i64>(),
+        ) {
+            let c1 = IrConst::I64(v);
+            let c2 = IrConst::I64(v);
+            prop_assert_eq!(c1.to_hash_key(), c2.to_hash_key(),
+                "equal I64({}) must have equal hash keys", v);
+        }
+    }
+
+    /// P-TO-F64: to_f64 for all numeric const types
+    #[test]
+    fn p_to_f64_all_types() {
+        assert_eq!(IrConst::F32(1.5).to_f64(), Some(1.5));
+        assert_eq!(IrConst::F64(2.5).to_f64(), Some(2.5));
+        assert_eq!(IrConst::I32(7).to_f64(), Some(7.0));
+        assert_eq!(IrConst::I64(-3).to_f64(), Some(-3.0));
+        // LongDouble
+        let ld = IrConst::long_double(3.5);
+        assert_eq!(ld.to_f64(), Some(3.5));
+        // Zero converts to 0.0 (it represents the zero value of the target type)
+        assert_eq!(IrConst::Zero.to_f64(), Some(0.0));
+    }
+}
