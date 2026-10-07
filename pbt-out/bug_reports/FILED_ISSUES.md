@@ -170,3 +170,7 @@
 | 47 | lexer | digraphs unsupported (C95 %: <%% %%> <: :>) | **new issue filed** | [#1172](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1172) |
 | 48 | sema enum handling | enum values >int truncated to 0 (4-byte forced) | **new issue filed** | [#1173](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1173) |
 | 48 | riscv encoder pseudo | encode_rdcsr ignores extra operands (last unclassified fn) | **new issue filed** | [#1174](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1174) |
+| 51 | lexer | octal 8/9 digits accepted as decimal (018→18) | **new issue filed** | [#1175](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1175) |
+| 51 | lexer | duplicate suffixes (luL/uu/lll) accepted | **new issue filed** | [#1176](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1176) |
+| 51 | parser | contradictory specifiers (5 forms) | **new issue filed** | [#1177](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1177) |
+| 51 | lexer | empty char constant accepted (value 0) | **new issue filed** | [#1178](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1178) |
