@@ -93,3 +93,6 @@
 |----------|-------------|-----------|--------------|-------|
 | struct-return epilogue (SSE single-eightbyte) | src/backend/x86/codegen/returns.rs:74 | src/passes/mod.rs::pbt_high_value | p_struct_interop_gcc_calls_ccc | 250-case gcc↔ccc interop differential; ≤8B SSE returns in RAX → **#1114**; {double,double}/mixed/args green |
 | punning/wrapping/variadic | — | src/passes/mod.rs::pbt_high_value | p_punning_wrap_variadic_vs_gcc | 300×2 levels green (union punning, char* roundtrip, u32/u64 wrap, va_arg mixed) |
+| X87-class struct ABI ({long double}) | src/backend/call_abi.rs + x86 codegen | round-38 manual probes | interop | RAX:RDX/RDI:RSI instead of st(0)/memory → **#1116** |
+| volatile local folding | src/passes (storage classification) | round-38 /tmp/vol2.c f6 | access-count vs gcc | constants folded, 1/6 accesses survive → **#1115** |
+| long double runtime arith / >16B MEMORY structs | x86 backend | round-38 probes | interop | both GREEN (exact mul/div/cmp; 5×double hidden-pointer ✓) |
