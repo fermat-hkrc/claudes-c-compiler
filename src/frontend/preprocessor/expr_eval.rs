@@ -631,8 +631,8 @@ mod pbt_macro_table_sm {
     enum Op { Def(&'static str, u32), Undef(&'static str), RedefSame(&'static str), RedefDiff(&'static str, u32), Probe(&'static str) }
 
     fn arb_op(i: usize) -> impl Strategy<Value = Op> {
-        let names = ["A", "B", "C"];
-        let name = names[i % 3];
+        let names = ["A", "B", "C", "D", "E", "F"];
+        let name = names[i % 6];
         prop_oneof![
             3 => (0u32..1000).prop_map(move |v| Op::Def(name, v)),
             2 => Just(Op::Undef(name)),
@@ -644,12 +644,15 @@ mod pbt_macro_table_sm {
 
     /// P-MACRO-LIFECYCLE: 每步 probe 的分支 == 模型 == gcc
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(1000))]
+        #![proptest_config(ProptestConfig::with_cases(4000))]
         #[test]
         fn p_macro_lifecycle_vs_model_gcc(
-            ops in prop::collection::vec(arb_op(0), 1..4)
-                .prop_flat_map(|a| prop::collection::vec(arb_op(1), 1..4).prop_map(move |b| a.iter().cloned().chain(b.iter().cloned()).collect::<Vec<_>>()))
-                .prop_flat_map(|ab| prop::collection::vec(arb_op(2), 1..4).prop_map(move |c| ab.iter().cloned().chain(c.iter().cloned()).collect::<Vec<_>>())),
+            ops in prop::collection::vec(arb_op(0), 1..5)
+                .prop_flat_map(|a| prop::collection::vec(arb_op(1), 1..5).prop_map(move |b| a.iter().cloned().chain(b.iter().cloned()).collect::<Vec<_>>()))
+                .prop_flat_map(|ab| prop::collection::vec(arb_op(2), 1..5).prop_map(move |c| ab.iter().cloned().chain(c.iter().cloned()).collect::<Vec<_>>()))
+                .prop_flat_map(|abc| prop::collection::vec(arb_op(3), 1..5).prop_map(move |d| abc.iter().cloned().chain(d.iter().cloned()).collect::<Vec<_>>()))
+                .prop_flat_map(|abcd| prop::collection::vec(arb_op(4), 1..5).prop_map(move |e| abcd.iter().cloned().chain(e.iter().cloned()).collect::<Vec<_>>()))
+                .prop_flat_map(|abcde| prop::collection::vec(arb_op(5), 1..5).prop_map(move |f| abcde.iter().cloned().chain(f.iter().cloned()).collect::<Vec<_>>())),
         ) {
             use std::collections::HashMap;
             let mut model: HashMap<&str, u32> = HashMap::new();
@@ -685,7 +688,7 @@ mod pbt_macro_table_sm {
             for (i, want) in expected.iter().enumerate() {
                 let up = format!("PROBE{}", i + 1);
                 let lo = format!("probe{}", i + 1);
-                let gcc_says = gtxt.contains(&up);
+                let gcc_says = gtxt.lines().any(|l| l.trim() == up || l.trim() == lo) && gtxt.lines().any(|l| l.trim() == up);
                 prop_assert_eq!(gcc_says, *want,
                     "gcc DISAGREES with model at probe {} (model={}, gcc={})\n{}", i + 1, want, gcc_says, src);
             }
@@ -695,8 +698,7 @@ mod pbt_macro_table_sm {
             for (i, want) in expected.iter().enumerate() {
                 let up = format!("PROBE{}", i + 1);
                 let lo = format!("probe{}", i + 1);
-                let ccc_says = out.contains(&up) && !out.contains(&format!("pROBE{}", i + 1));
-                let ccc_says = if out.contains(&up) { true } else if out.contains(&lo) { false } else { prop_assert!(false, "probe {} marker missing in ccc output\n{}", i + 1, src); true };
+                let ccc_says = if out.lines().any(|l| l.trim() == up) { true } else if out.lines().any(|l| l.trim() == lo) { false } else { prop_assert!(false, "probe {} marker missing in ccc output\n{}", i + 1, src); true };
                 prop_assert_eq!(ccc_says, *want,
                     "ccc DISAGREES at probe {} (model={}, ccc={})\n{}", i + 1, want, ccc_says, src);
             }

@@ -1039,10 +1039,10 @@ int main(void) {{\n    {ty} probes[] = {{ {} }};\n    for (unsigned i = 0; i < s
 
     /// P-SWITCH: 跳转表/稀疏/类型变体 @-O2 全域扫描 == gcc
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(300))]
+        #![proptest_config(ProptestConfig::with_cases(800))]
         #[test]
         fn p_switch_tables_vs_gcc(
-            seed in any::<u64>(), n in 4usize..60, ty in 0usize..4,
+            seed in any::<u64>(), n in 4usize..200, ty in 0usize..4,
             sparse in any::<bool>(), ft in any::<bool>(),
         ) {
             let prog = render(seed, n, ty, sparse, ft);
@@ -1098,8 +1098,10 @@ static unsigned h = 2166136261u;
 static void mix(unsigned x) {{ h = (h ^ x) * 16777619u; }}
 static struct S mk(int s) {{ struct S r = {{ s, s * 1.5, {{1,2,3,4}} }}; return r; }}
 static double use(struct S s) {{ return s.a * 2.0 + s.b + s.c[3]; }}
+static int recfn(int n) {{ return n <= 0 ? 1 : recfn(n - 1) * 2 % 100003; }}
+static int itfn(int n) {{ int r = 1; for (int i = 0; i < n; i++) r = r * 2 % 100003; return r; }}
 struct BF {{ unsigned p:5; unsigned q:11; }};
-int cmain(void) {{
+int cmain(int rec) {{
     unsigned B1 = {s1}u, B2 = {s2}u;
     for (int i = 0; i < 8; i++) {{
         struct S s = mk(i * 7 + (int)(B1 % 13));
@@ -1131,7 +1133,7 @@ int cmain(void) {{
             let dir = run_dir();
             let case = CASE.fetch_add(1, Ordering::SeqCst);
             let x64 = dir.join(format!("L{}.c", case));
-            std::fs::write(&x64, format!("#include <stdio.h>\n{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            std::fs::write(&x64, format!("#include <stdio.h>\n{}int main(void){{ return cmain(0); }}\n", b)).unwrap();
             let gx = dir.join(format!("L{}g", case));
             let gc = Command::new("gcc").args(["-w", lvl, "-o"]).arg(&gx).arg(&x64).output().unwrap();
             prop_assume!(gc.status.success(), "gcc reject");
@@ -1139,7 +1141,7 @@ int cmain(void) {{
             let expected = want.status.code().unwrap_or(-1);
             let _ = std::fs::remove_file(&gx);
             let msrc = dir.join(format!("LM{}.c", case));
-            std::fs::write(&msrc, format!("{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            std::fs::write(&msrc, format!("{}int main(void){{ return cmain(0); }}\n", b)).unwrap();
             let out = dir.join(format!("LM{}i", case));
             let comp = Command::new("./target/debug/ccc-i686").args(["-m32", lvl, msrc.to_str().unwrap(), "-o", out.to_str().unwrap()]).output().unwrap();
             prop_assert!(comp.status.success(), "i686 {} failed: {}", lvl, String::from_utf8_lossy(&comp.stderr));
@@ -1161,7 +1163,7 @@ int cmain(void) {{
             let case = CASE.fetch_add(1, Ordering::SeqCst);
             // x64 基准
             let x64 = dir.join(format!("X{}.c", case));
-            std::fs::write(&x64, format!("#include <stdio.h>\n{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            std::fs::write(&x64, format!("#include <stdio.h>\n{}int main(void){{ return cmain(0); }}\n", b)).unwrap();
             let gx = dir.join(format!("X{}g", case));
             let gc = Command::new("gcc").args(["-w","-O2","-o"]).arg(&gx).arg(&x64).output().unwrap();
             prop_assume!(gc.status.success(), "gcc reject");
@@ -1172,13 +1174,13 @@ int cmain(void) {{
 
             // freestanding 入口（ARM64 / RISC-V）
             let fs = format!("\n{}int cmain(void);\nvoid _start(void) {{\n\
-#if defined(__aarch64__)\n    register int x0v asm(\"x0\") = cmain();\n    register int x8v asm(\"x8\") = 93;\n    asm volatile(\"svc #0\" : \"+r\"(x0v) : \"r\"(x8v) : \"memory\");\n\
-#elif defined(__riscv)\n    register int a0v asm(\"a0\") = cmain();\n    register int a7v asm(\"a7\") = 93;\n    asm volatile(\"ecall\" : \"+r\"(a0v) : \"r\"(a7v) : \"memory\");\n\
+#if defined(__aarch64__)\n    register int x0v asm(\"x0\") = cmain(0);\n    register int x8v asm(\"x8\") = 93;\n    asm volatile(\"svc #0\" : \"+r\"(x0v) : \"r\"(x8v) : \"memory\");\n\
+#elif defined(__riscv)\n    register int a0v asm(\"a0\") = cmain(0);\n    register int a7v asm(\"a7\") = 93;\n    asm volatile(\"ecall\" : \"+r\"(a0v) : \"r\"(a7v) : \"memory\");\n\
 #else\n    asm volatile(\"mov $60, %eax\");\n#endif\n    __builtin_unreachable();\n}}\n", b);
             let fsrc = dir.join(format!("F{}.c", case));
             std::fs::write(&fsrc, &fs).unwrap();
             let msrc = dir.join(format!("M{}.c", case));
-            std::fs::write(&msrc, format!("{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            std::fs::write(&msrc, format!("{}int main(void){{ return cmain(0); }}\n", b)).unwrap();
             for (bin, cc, extra, qemu) in [
                 (dir.join(format!("F{}arm", case)), "ccc-arm", "-static", Some("qemu-aarch64-static")),
                 (dir.join(format!("F{}rv", case)), "ccc-riscv", "-static", Some("qemu-riscv64-static")),
@@ -1239,7 +1241,7 @@ static unsigned strength(unsigned n, unsigned k) {{
     return s;
 }}
 static long guarded_div(long a, long b) {{ return b ? a / b : -77; }}
-int cmain(void) {{
+int cmain(int rec) {{
     unsigned R = {r}u;
     int A = {x}, B = {x} + 1;
     unsigned X = {u}u, K = {k}u, N = {n} % 200u;
@@ -1254,11 +1256,11 @@ int cmain(void) {{
     h += (long)(X - K) + (long)(K - X);   // 无符号回绕对称
     return (int)((h * 2654435761L) % 251);
 }}
-int main(void){{ return cmain(); }}", x = x, u = u, r = r, n = n, k = k, d = d)
+int main(void){{ return cmain(0); }}", x = x, u = u, r = r, n = n, k = k, d = d)
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(400))]
+        #![proptest_config(ProptestConfig::with_cases(1000))]
         #[test]
         fn p_opt_adversarial_vs_gcc(
             x in proptest::strategy::Union::new(vec![
@@ -1346,7 +1348,7 @@ mod pbt_memgraph {
 {fdefs}static int cells[8];
 static int arr[6];
 static long sum;
-int cmain(void) {{
+int cmain(int rec) {{
     for (int i = 0; i < 8; i++) cells[i] = i * 13 % 101;
     for (int i = 0; i < 6; i++) arr[i] = i * 7;
 {ops}    long h = sum;
@@ -1483,7 +1485,8 @@ mod pbt_selfdiff {
     }
 
     /// 富语义体：结构体/位域/联合/浮点/switch/循环/指针链（无 UB）
-    fn body(seed: u64) -> String {
+    fn body(seed: u64, rec: bool) -> String {
+        let RC = if rec { 1 } else { 0 };
         format!("\
 struct S {{ int a; double b; char c[4]; }};
 struct BF {{ unsigned p:5; unsigned q:11; unsigned r:16; }};
@@ -1492,8 +1495,10 @@ static unsigned h = 2166136261u;
 static void mix(unsigned x) {{ h = (h ^ x) * 16777619u; }}
 static struct S mk(int s) {{ struct S r = {{ s, s * 1.5, {{1,2,3,4}} }}; return r; }}
 static double use(struct S s) {{ return s.a * 2.0 + s.b + s.c[3]; }}
-int cmain(void) {{
-    unsigned B = {b}u, C = {c}u;
+static int recfn(int n) {{ return n <= 0 ? 1 : recfn(n - 1) * 2 % 100003; }}
+static int itfn(int n) {{ int r = 1; for (int i = 0; i < n; i++) r = r * 2 % 100003; return r; }}
+int cmain(int rec) {{
+    unsigned B = {1}u, C = {2}u;
     int cells[8]; for (int i = 0; i < 8; i++) cells[i] = (int)((B >> (i * 4)) & 0xF) - 8;
     for (int i = 0; i < 8; i++) {{
         struct S s = mk(cells[i] + (int)(C % 11));
@@ -1516,19 +1521,28 @@ int cmain(void) {{
     mix((unsigned)t);
     double d = (B % 997) / 7.0; float f = (float)d;
     mix((unsigned)(d * 1000.0) + (unsigned)(f * 100.0f) + (d < f ? 1 : 0));
+    // v2 深化: 递归 + 函数指针 + 伪字符串哈希
+    static int (*fp)(int);
+    fp = rec ? &recfn : &itfn;
+    mix((unsigned)fp((int)(C % 17)));
+    char buf[16];
+    for (int i = 0; i < 15; i++) buf[i] = (char)(48 + (i + (int)(B % 10)) % 10);
+    buf[15] = 0;
+    unsigned sh = 0; for (int i = 0; buf[i]; i++) sh = sh * 31 + (unsigned)buf[i];
+    mix(sh);
     return (int)(h % 251);
 }}
-int main(void){{ return cmain(); }}", b = seed, c = seed >> 32)
+int main(void){{ return cmain({0}); }}", RC, seed, seed >> 32)
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(2000))]
+        #![proptest_config(ProptestConfig::with_cases(4000))]
         #[test]
-        fn p_selfdiff_o0_o2(seed in any::<u64>()) {
+        fn p_selfdiff_o0_o2(seed in any::<u64>(), rec in any::<bool>()) {
             let dir = run_dir();
             let case = CASE.fetch_add(1, Ordering::SeqCst);
             let src = dir.join(format!("S{}.c", case));
-            std::fs::write(&src, body(seed)).unwrap();
+            std::fs::write(&src, body(seed, rec)).unwrap();
             let mut outs = vec![];
             for lvl in ["-O0", "-O2"] {
                 let bin = dir.join(format!("S{}{}", case, lvl));

@@ -659,7 +659,7 @@ mod pbt_li_exec {
 
     /// P-LI-EXEC: encode_li_immediate 生成的序列执行后必须精确重建 imm
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(2048))]
+        #![proptest_config(ProptestConfig::with_cases(6000))]
         #[test]
         fn p_li_exec_roundtrip(
             imm in proptest::strategy::Union::new(vec![
@@ -669,6 +669,18 @@ mod pbt_li_exec {
                 (0i64..64).prop_map(|k| (-1i64) << k).boxed(),
                 any::<i32>().prop_map(|v| v as i64).boxed(),
                 (0i64..65536).prop_map(|hi| ((hi as i64) << 48) | 0x1234).boxed(),
+                // v2 深化: 交替位模式
+                (0i64..8).prop_map(|k| [0xAAAA_AAAA_AAAA_AAAAu64, 0x5555_5555_5555_5555u64, 0xCCCC_CCCC_CCCC_CCCCu64, 0x3333_3333_3333_3333u64, 0xEEEE_EEEE_EEEE_EEEEu64, 0x7777_7777_7777_7777u64, 0xF0F0_F0F0_F0F0_F0F0u64, 0x0F0F_0F0F_0F0F_0F0Fu64][k as usize] as i64).boxed(),
+                // v2: 2^k 边界 ±1 邻域
+                (0i64..64).prop_map(|k| (1i64 << k).wrapping_add(-1)).boxed(),
+                (0i64..64).prop_map(|k| (1i64 << k).wrapping_add(1)).boxed(),
+                // v2: i64::MAX/MIN ± 邻域
+                (0i64..5).prop_map(|d| i64::MAX - d).boxed(),
+                (0i64..5).prop_map(|d| i64::MIN + d).boxed(),
+                // v2: 字节重复模式
+                any::<u8>().prop_map(|b| ((b as u64).wrapping_mul(0x0101_0101_0101_0101u64)) as i64).boxed(),
+                // v2: 半字混合
+                (any::<u16>(), any::<u16>(), any::<u16>(), any::<u16>()).prop_map(|(a,b,c,d)| ((a as i64) << 48) | ((b as i64) << 32) | ((c as i64) << 16) | d as i64).boxed(),
             ]),
         ) {
             let words = encode_li_immediate(10, imm);

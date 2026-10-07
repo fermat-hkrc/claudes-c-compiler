@@ -185,3 +185,13 @@
 |-------|------|-------|--------|
 | self-differential (-O0 ≡ -O2, oracle-free) | mod.rs::pbt_selfdiff | 2000 | green |
 | valgrind memory validation | /tmp/vgbat.c battery | full-feature × 2 levels | zero errors |
+
+## Round 49b — thousand-case deepening v2 (all green, zero new SUT bugs)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| li encode +7 edge strategies | riscv encoder pseudo.rs | ::pbt_li_exec | 6000 cases | green |
+| macro lifecycle SM (6 names × ≤30 ops) | pp expr_eval.rs | ::pbt_macro_table_sm | 4000 cases | green (harness PROBE-substring fixed → line-exact) |
+| optimizer self-diff +rec/fnptr/str | passes mod.rs | ::pbt_selfdiff | 4000 × 2 levels | green |
+| switch tables ≤200 cases | passes mod.rs | ::pbt_switch_tables | 800 × 2 | green |
+| adversarial optimizer | passes mod.rs | ::pbt_opt_adversarial | 1000 × 3 | green |
+| cross-target + levels regression | passes mod.rs | ::pbt_cross_target | 270 | green after call-site repair |
