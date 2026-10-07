@@ -1121,6 +1121,36 @@ int cmain(void) {{
 }}", s1 = seed, s2 = seed >> 32)
     }
 
+    /// P-CROSS-TARGET-LVL: 9 组合矩阵（-O0/-O1/-O2 × ARM64/RISC-V/i686）
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(120))]
+        #[test]
+        fn p_cross_target_levels(seed in any::<u64>(), lvl_idx in 0usize..3) {
+            let lvl = ["-O0", "-O1", "-O2"][lvl_idx];
+            let b = body(seed);
+            let dir = run_dir();
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let x64 = dir.join(format!("L{}.c", case));
+            std::fs::write(&x64, format!("#include <stdio.h>\n{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            let gx = dir.join(format!("L{}g", case));
+            let gc = Command::new("gcc").args(["-w", lvl, "-o"]).arg(&gx).arg(&x64).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+            let want = Command::new(&gx).output().unwrap();
+            let expected = want.status.code().unwrap_or(-1);
+            let _ = std::fs::remove_file(&gx);
+            let msrc = dir.join(format!("LM{}.c", case));
+            std::fs::write(&msrc, format!("{}int main(void){{ return cmain(); }}\n", b)).unwrap();
+            let out = dir.join(format!("LM{}i", case));
+            let comp = Command::new("./target/debug/ccc-i686").args(["-m32", lvl, msrc.to_str().unwrap(), "-o", out.to_str().unwrap()]).output().unwrap();
+            prop_assert!(comp.status.success(), "i686 {} failed: {}", lvl, String::from_utf8_lossy(&comp.stderr));
+            let run = Command::new(&out).output().unwrap();
+            let _ = std::fs::remove_file(&out);
+            prop_assert_eq!(run.status.code().unwrap_or(-1), expected,
+                "i686 MISMATCH at {} seed {:#x}\n{}", lvl, seed, b);
+            let _ = std::fs::remove_file(&x64); let _ = std::fs::remove_file(&msrc);
+        }
+    }
+
     /// P-CROSS-TARGET: 随机体 → ccc-arm/ccc-riscv qemu == gcc-x64 原生
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(150))]

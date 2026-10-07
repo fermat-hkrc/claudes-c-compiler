@@ -143,3 +143,7 @@
 | 40 | src/frontend/preprocessor | directive structure constraints absent (6 forms) | **new issue filed** | [#1143](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1143) |
 | 40 | src/ir/lowering expr_sizeof/fold | sizeof(VLA) folds to 1024 in arithmetic — sizeof(v)/sizeof(v[0])=256 | **new issue filed** | [#1144](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1144) |
 | 41 | compiler runtime (linker_common) | long double fails to LINK on ARM64/RISC-V (__addtf3 family undefined) | **new issue filed** | [#1145](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1145) |
+| 41 | src/frontend/sema | wave-6 type constraints (volatile fn, void* deref, incomplete member, void[], wide-init, folded dup case) | **new issue filed** | [#1146](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1146) |
+| 41 | src/frontend typedef/array lowering | typedef-to-VLA crashes (SIGSEGV); sizeof 4 vs 20 | **new issue filed** | [#1147](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1147) |
+| 41 | src/frontend/sema | VLA placement: struct member + block-static VLA accepted | **new issue filed** | [#1148](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1148) |
+| 41 | src/frontend/sema | wave-8: array cast, self-containing struct, enum-fwd object (3 forms) | **new issue filed** | [#1149](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1149) |
