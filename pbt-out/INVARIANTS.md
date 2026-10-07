@@ -1,3 +1,25 @@
+# Confirmed invariants (encode_sext_w)
+
+- Valid 2-operand `sext.w rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `sext.w rd, rs` and of `addiw rd, rs, 0` byte-for-byte (1000 cases). KAT pins sext.w a0, a1 = addiw a0, a1, 0 = 0x0005851b; sext.w zero, zero = 0x0000001b; sext.w t6, ra = 0x00008f9b; sext.w fp, s0 = 0x0004041b; sext.w x1, x2 = 0x0001009b.
+- I-type OP-IMM-32 layout: opcode 0011011, funct3=000, imm12=0, rd and rs1 in their fields, including bounds 0 and 31 (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd/rs matches xN (get_reg GCC bare-number path). encode_sext_w(rd, rs) equals encode_alu_imm_w ADDIW on [rd, rs, Imm(0)] (1000 cases).
+- Too few operands and invalid/FP/non-GPR names return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_sext_w)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6) assembling `sext.w rd, rs` and `addiw rd, rs, 0`. llvm-mc pretty-prints `addiw rd, rs, 0` as `sext.w`.
+- Harness: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs, cargo test --lib encode_sext_w_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:867 "sext.w" => encode_sext_w(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_sext_w NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/addiw/I-type/ABI/arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_sext_w)
+
+- encode_sext_w has no rustdoc; contract is README.md:323 `sext.w rd, rs` → `addiw rd, rs, 0` plus the inline comment at pseudo.rs:254.
+- RISC-V Unprivileged ISA SEXT.W pseudo is ADDIW rd, rs, 0; this assembler matches that expansion (and llvm-mc).
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_negw)
 
 - Valid 2-operand `negw rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `negw rd, rs` and of `subw rd, x0, rs` byte-for-byte (1000 cases). KAT pins negw a0, a1 = subw a0, x0, a1 = 0x40b0053b; negw zero, zero = 0x4000003b; negw t6, ra = 0x40100fbb; negw fp, s0 = 0x4080043b.

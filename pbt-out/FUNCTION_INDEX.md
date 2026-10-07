@@ -1,4 +1,4 @@
-> Total files: 16 | Total functions: 383 | PBT candidates: 240 | Excluded: 143
+> Total files: 16 | Total functions: 383 | PBT candidates: 241 | Excluded: 142
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -195,7 +195,7 @@
 | encode_not | pseudo.rs | 233 | function | yes | - |
 | encode_neg | pseudo.rs | 239 | function | yes | - |
 | encode_negw | pseudo.rs | 245 | function | yes | - |
-| encode_sext_w | pseudo.rs | 251 | function | no | out of campaign scope |
+| encode_sext_w | pseudo.rs | 251 | function | yes | - |
 | encode_seqz | pseudo.rs | 257 | function | no | out of campaign scope |
 | encode_snez | pseudo.rs | 263 | function | no | out of campaign scope |
 | encode_sltz | pseudo.rs | 269 | function | no | out of campaign scope |

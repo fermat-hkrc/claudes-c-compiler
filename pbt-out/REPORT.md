@@ -1,15 +1,15 @@
-# PBT Campaign Report: encode_negw
+# PBT Campaign Report: encode_sext_w
 
 ## Summary
 
-**Verdict:** 1 medium: encode_negw silently ignores extra operands, so `negw a0, a1, a2` encodes as `subw a0, x0, a1` instead of being rejected.
+**Verdict:** 1 medium: encode_sext_w silently ignores extra operands, so `sext.w a0, a1, a2` encodes as `addiw a0, a1, 0` instead of being rejected.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_negw
+**Modules tested:** encode_sext_w
 **Tests:** 8
 **Result:** 7 passing, 1 bug
-**Change surface:** 1 changed function (encode_negw), 1 with a property, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_negw NOT LINKED in C++ reporter binaries; Rust cargo tests executed the symbol (10 lib tests: 7 passing properties + 1 failing property + 1 passing KAT + 1 failing regression)
+**Change surface:** 1 changed function (encode_sext_w), 1 with a property, 0 error-handling changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_sext_w NOT LINKED in C++ reporter binaries; Rust cargo tests executed the symbol (10 lib tests: 7 passing properties + 1 failing property + 1 passing KAT + 1 failing regression)
 
 **Tier:** standard
 
@@ -17,39 +17,39 @@
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_negw | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_sext_w | 8 | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_negw silently ignores extra operands
+### B1: encode_sext_w silently ignores extra operands
 
-**Formal:** ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_negw([Reg(rd), Reg(rs), extra]) is Err
-**Contract evidence:** inferred (README.md:322 documents the two-operand form `negw rd, rs`; llvm-mc 15.0.6 rejects a third operand; encode_instruction passes operands through unchanged)
+**Formal:** ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_sext_w([Reg(rd), Reg(rs), extra]) is Err
+**Contract evidence:** inferred (README.md:323 documents the two-operand form `sext.w rd, rs`; llvm-mc 15.0.6 rejects a third operand; encode_instruction passes operands through unchanged)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** encode_negw([Reg("zero"), Reg("zero"), Reg("zero")])
-**Expected / Actual:** Err / Ok(Word(0x4000003b))
-**Impact:** Typos and extra commas assemble without error; `negw a0, a1, a2` is encoded as `subw a0, x0, a1`.
-**Root cause:** pseudo.rs:246 reads only operands 0 and 1 via get_reg and never checks operands.len(), so extra tokens are ignored.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:246`
+**Counterexample:** encode_sext_w([Reg("zero"), Reg("zero"), Reg("zero")])
+**Expected / Actual:** Err / Ok(Word(0x0000001b))
+**Impact:** Typos and extra commas assemble without error; `sext.w a0, a1, a2` is encoded as `addiw a0, a1, 0`.
+**Root cause:** pseudo.rs:252 reads only operands 0 and 1 via get_reg and never checks operands.len(), so extra tokens are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:252`
 ```rust
     let rd = get_reg(operands, 0)?;
-    let rs2 = get_reg(operands, 1)?;
+    let rs1 = get_reg(operands, 1)?;
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("negw: expected 2 operands, got {}", operands.len()));
+        return Err(format!("sext.w: expected 2 operands, got {}", operands.len()));
     }
     let rd = get_reg(operands, 0)?;
-    let rs2 = get_reg(operands, 1)?;
+    let rs1 = get_reg(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_negw_extra_operand.md
-**Repro seed:** cc d70d2b637317bb900bdfd342c6b810b21260d6126818d1619aeca7ac4ed7a4f3
+**Bug report:** bug_reports/encode_sext_w_extra_operand.md
+**Repro seed:** cc 6b9c9839af017c9325dc44e21b48d96b99e9baa45add3b095cabebb68837ae3d
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_negw_pbt::encode_negw_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_negw_pbt.rs:267:1:
-Test failed: extra operand must Err for negw zero, zero (llvm-mc rejects: true) at src/backend/riscv/assembler/encoder/encode_negw_pbt.rs:378.
+thread 'backend::riscv::assembler::encoder::encode_sext_w_pbt::encode_sext_w_neg_extra' panicked at src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs:275:1:
+Test failed: extra operand must Err for sext.w zero, zero (llvm-mc rejects: true) at src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs:381.
 minimal failing input: rd = "zero", rs = "zero", extra = Reg(
     "zero",
 )
@@ -57,8 +57,8 @@ minimal failing input: rd = "zero", rs = "zero", extra = Reg(
 	local rejects: 0
 	global rejects: 0
 
-thread 'backend::riscv::assembler::encoder::encode_negw_pbt::test_encode_negw_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_negw_pbt.rs:260:5:
-negw zero, zero with a third operand must be rejected (llvm-mc rejects; README documents `negw rd, rs`); got Ok(Word(1073741883))
+thread 'backend::riscv::assembler::encoder::encode_sext_w_pbt::test_encode_sext_w_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs:268:5:
+sext.w zero, zero with a third operand must be rejected (llvm-mc rejects; README documents `sext.w rd, rs`); got Ok(Word(27))
 ```
 
 ## Design Caveats
@@ -69,45 +69,44 @@ negw zero, zero with a third operand must be rejected (llvm-mc rejects; README d
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_negw_pbt.rs | 8 properties + 1 KAT + 1 failing regression |
+| src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs | 8 properties + 1 KAT + 1 failing regression |
 
 ## Reproduction
 
 Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_negw_pbt -- --test-threads=1
+cargo test --lib encode_sext_w_pbt -- --test-threads=1
 ```
 
 Bug B1:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_negw_regression_extra_operand -- --test-threads=1
+cargo test --lib test_encode_sext_w_regression_extra_operand -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md — this report
-- pbt-out/REPORT.html — customer-facing overview (rendered from report.json)
-- pbt-out/PROPERTIES.md — property ledger
-- pbt-out/PLAN.md — campaign phases
-- pbt-out/COVERAGE.md — function coverage table
-- pbt-out/COVERAGE_STATUS.md — coverage statistics
-- pbt-out/report.json — machine-readable report
-- pbt-out/INVARIANTS.md — confirmed invariants for later campaigns
-- pbt-out/bug_reports/encode_negw_extra_operand.md — bug B1
-- pbt-out/bug_reports/encode_negw_extra_operand.html — customer-facing bug page
-- pbt-out/FUNCTION_INDEX.md — merged function index
-- pbt-out/CHANGE_SURFACE.md — encode_negw
-- pbt-out/build.log — pre-campaign user build
-- proptest-regressions/backend/riscv/assembler/encoder/encode_negw_pbt.txt — shrunk extra-operand seed
+- pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html
+- pbt-out/report.json
+- pbt-out/COVERAGE.md
+- pbt-out/COVERAGE_STATUS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/CHANGE_SURFACE.md
+- pbt-out/bug_reports/encode_sext_w_extra_operand.md
+- pbt-out/bug_reports/encode_sext_w_extra_operand.html
+- pbt-out/run/encode_sext_w.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 03:24 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 239/383 total | PBT candidates: 239 | Tested: 239 (100%) | 1 pass, 239 fail
+> Last updated: 2026-10-07 03:36 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 240/383 total | PBT candidates: 240 | Tested: 240 (100%) | 1 pass, 240 fail
 
 ## Summary
 
@@ -116,10 +115,10 @@ cargo test --lib test_encode_negw_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 239 |
-| **Tested (of PBT candidates)** | **239 / 239 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 239 / -1 |
-| **Overall (tested / all functions)** | **239 / 383 (62%)** |
+| PBT candidates (from FUNCTION_INDEX) | 240 |
+| **Tested (of PBT candidates)** | **240 / 240 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 240 / -1 |
+| **Overall (tested / all functions)** | **240 / 383 (63%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -127,13 +126,13 @@ cargo test --lib test_encode_negw_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 239 | 239 | 0 | 100% |
+|  | 240 | 240 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 239 | 239 | 0 | 100% |
+| unknown | 240 | 240 | 0 | 100% |
 
 ## File Coverage
 
@@ -147,7 +146,7 @@ cargo test --lib test_encode_negw_regression_extra_operand -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 5 | 5 | 100% | covered |
+| pseudo.rs | 44 | 6 | 6 | 100% | covered |
 
 ## Recommended Focus
 
@@ -395,3 +394,4 @@ cargo test --lib test_encode_negw_regression_extra_operand -- --test-threads=1
 | encode_mv | pseudo.rs |
 | encode_not | pseudo.rs |
 | encode_negw | pseudo.rs |
+| encode_sext_w | pseudo.rs |

@@ -1,18 +1,18 @@
-# Properties: encode_negw
+# Properties: encode_sext_w
 
-## encode_negw_diff_llvm_mc
+## encode_sext_w_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest oracle for the documented expansion is encoding agreement with llvm-mc assembling `negw rd, rs`, an independent assembler of the same SUBW-with-x0 word the README claims. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree NEGW/SUBW decoder). Differential vs encode_alu_reg_w(subw) rejected as primary — shared encode_r/get_reg (used as a weaker metamorphic instead). Differential vs encode_neg rejected — different job (SUB / OP vs SUBW / OP-32). llvm-mc `negw` uses the same SUBW x0 encoding this assembler documents, so encoding-equality vs llvm-mc `negw` is a matching-contract pair.
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
-- Seed: (none) — no project-owned encode_negw unit test; llvm-mc KAT `negw a0, a1` = 0x40b0053b
-- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_negw([Reg(rd), Reg(rs)]) = llvm-mc("negw rd, rs")
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Rationale: Strongest oracle for the documented expansion is encoding agreement with llvm-mc assembling `sext.w rd, rs`, an independent assembler of the same ADDIW-with-imm-0 word the README and inline comment claim. State machine rejected (pure function, no lifecycle). Algebraic round-trip rejected (no in-tree SEXT.W/ADDIW decoder). Differential vs encode_alu_imm_w(addiw) rejected as primary — shared encode_i/get_reg (used as a weaker metamorphic instead). llvm-mc `sext.w` uses the same ADDIW imm=0 encoding this assembler documents, so encoding-equality vs llvm-mc `sext.w` is a matching-contract pair.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
+- Seed: src/backend/riscv/assembler/encoder/encode_alu_imm_w_pbt.rs:334 llvm-mc KAT `sext.w x1, x2`
+- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_sext_w([Reg(rd), Reg(rs)]) = llvm-mc("sext.w rd, rs")
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: differential
 predicate:
   quantifier: forall
@@ -20,27 +20,27 @@ predicate:
   domain: { rd: gpr_name, rs: gpr_name }
   relation:
     op: eq
-    lhs: encode_negw([Reg(rd), Reg(rs)]).word
-    rhs: llvm_mc("negw rd, rs").word
+    lhs: encode_sext_w([Reg(rd), Reg(rs)]).word
+    rhs: llvm_mc("sext.w rd, rs").word
 generators:
   rd: { gen: string }
   rs: { gen: string }
-evidence: src/backend/riscv/assembler/README.md:322; encoder/mod.rs:864
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:254; src/backend/riscv/assembler/README.md:323; encoder/mod.rs:867
 ```
 
-## encode_negw_diff_llvm_mc_subw
+## encode_sext_w_diff_llvm_mc_addiw
 - Tier: 5
-- Rationale: Metamorphic/differential required at standard tier. README.md:322 documents `negw rd, rs` → `subw rd, x0, rs`. Encoding agreement with llvm-mc assembling that expansion is an independent check of the same contract (llvm-mc may pretty-print the word as `negw`, but the bytes must match). State machine rejected. Round-trip rejected (no decoder). Differential vs in-tree encode_alu_reg_w rejected as primary (shared encode_r).
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
-- Seed: (none)
-- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_negw([Reg(rd), Reg(rs)]) = llvm-mc("subw rd, x0, rs")
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Rationale: Metamorphic/differential required at standard tier. README.md:323 and pseudo.rs:254 document `sext.w rd, rs` → `addiw rd, rs, 0`. Encoding agreement with llvm-mc assembling that expansion is an independent check of the same contract (llvm-mc may pretty-print the word as `sext.w`, but the bytes must match). State machine rejected. Round-trip rejected (no decoder). Differential vs in-tree encode_alu_imm_w rejected as primary (shared encode_i).
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
+- Seed: src/backend/riscv/assembler/encoder/encode_alu_imm_w_pbt.rs:327 encode_alu_imm_w_kat_llvm_mc_addiw_zero
+- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR. encode_sext_w([Reg(rd), Reg(rs)]) = llvm-mc("addiw rd, rs, 0")
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: differential
 predicate:
   quantifier: forall
@@ -48,27 +48,27 @@ predicate:
   domain: { rd: gpr_name, rs: gpr_name }
   relation:
     op: eq
-    lhs: encode_negw([Reg(rd), Reg(rs)]).word
-    rhs: llvm_mc("subw rd, x0, rs").word
+    lhs: encode_sext_w([Reg(rd), Reg(rs)]).word
+    rhs: llvm_mc("addiw rd, rs, 0").word
 generators:
   rd: { gen: string }
   rs: { gen: string }
-evidence: src/backend/riscv/assembler/README.md:322; RISC-V Unprivileged ISA NEGW = SUBW rd, x0, rs
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:254; src/backend/riscv/assembler/README.md:323; RISC-V Unprivileged ISA SEXT.W = ADDIW rd, rs, 0
 ```
 
-## encode_negw_eq_subw_x0
+## encode_sext_w_eq_addiw_0
 - Tier: 4
-- Rationale: Documented expansion is SUBW with rs1=x0. encode_alu_reg_w(funct3=000, funct7=0100000) is the same-job sibling for subw, used as a weaker metamorphic because it shares encode_r/get_reg with encode_negw. Stronger llvm-mc differentials cover independence.
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
+- Rationale: Documented expansion is ADDIW with imm=0. encode_alu_imm_w(funct3=000) is the same-job sibling for addiw, used as a weaker metamorphic because it shares encode_i/get_reg with encode_sext_w. Stronger llvm-mc differentials cover independence.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
 - Seed: (none)
-- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. encode_negw([Reg(xN(rd)), Reg(xN(rs))]) = encode_alu_reg_w([Reg(xN(rd)), Reg(x0), Reg(xN(rs))], 0b000, 0b0100000)
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. encode_sext_w([Reg(xN(rd)), Reg(xN(rs))]) = encode_alu_imm_w([Reg(xN(rd)), Reg(xN(rs)), Imm(0)], 0)
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
@@ -76,52 +76,54 @@ predicate:
   domain: { rd: u32_0_31, rs: u32_0_31 }
   relation:
     op: eq
-    lhs: encode_negw([Reg(xN(rd)), Reg(xN(rs))]).word
-    rhs: encode_alu_reg_w([Reg(xN(rd)), Reg(x0), Reg(xN(rs))], 0b000, 0b0100000).word
+    lhs: encode_sext_w([Reg(xN(rd)), Reg(xN(rs))]).word
+    rhs: encode_alu_imm_w([Reg(xN(rd)), Reg(xN(rs)), Imm(0)], 0).word
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/README.md:322
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:254; src/backend/riscv/assembler/README.md:323
 ```
 
-## encode_negw_isa_fields
+## encode_sext_w_isa_fields
 - Tier: 4
-- Rationale: RISC-V R-type SUBW layout is an exact structural invariant of the documented expansion: opcode OP-32=0b0111011, funct3=000, funct7=0100000, rs1=x0, rd and rs2 from the two operands. Stronger differentials cover the full word; this pins each field so a swapped rs1/rs2 or OP vs OP-32 mix-up cannot hide.
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
+- Rationale: RISC-V I-type ADDIW layout is an exact structural invariant: opcode OP-IMM-32=0011011, funct3=000, imm12=0, rd and rs1 in their fields. Stronger llvm-mc differentials already pin the whole word; this isolates each field including bounds 0 and 31.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
 - Seed: (none)
-- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. let w = encode_negw([Reg(xN(rd)), Reg(xN(rs))]).word in (w & 0x7F = 0b0111011) ∧ ((w>>7)&0x1F = rd) ∧ ((w>>12)&7 = 0) ∧ ((w>>15)&0x1F = 0) ∧ ((w>>20)&0x1F = rs) ∧ ((w>>25)&0x7F = 0b0100000)
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Formal: ∀ rd ∈ 0..31, ∀ rs ∈ 0..31. let w = encode_sext_w([Reg(xN(rd)), Reg(xN(rs))]). w[6:0]=0011011 ∧ w[11:7]=rd ∧ w[14:12]=000 ∧ w[19:15]=rs ∧ w[31:20]=0
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [rd, rs]
   domain: { rd: u32_0_31, rs: u32_0_31 }
-  body: opcode(w)=OP_OP_32 and rd_field=rd and funct3=0 and rs1=0 and rs2=rs and funct7=0b0100000
+  relation:
+    op: holds
+    lhs: isa_i_type_addiw_imm0(encode_sext_w([Reg(xN(rd)), Reg(xN(rs))]).word, rd, rs)
 generators:
   rd: { gen: int, min: 0, max: 31, type: u32 }
   rs: { gen: int, min: 0, max: 31, type: u32 }
-evidence: src/backend/riscv/assembler/README.md:322; encoder/mod.rs:389 R-type; encoder/mod.rs:445 OP_OP_32
+evidence: src/backend/riscv/assembler/encoder/mod.rs:396 I-type; encoder/mod.rs:446 OP_OP_IMM_32; RISC-V Unprivileged ISA ADDIW
 ```
 
-## encode_negw_abi_xn_alias
+## encode_sext_w_abi_xn_alias
 - Tier: 4
-- Rationale: get_reg accepts ABI names, xN, fp/s0, zero/x0, and Imm(0..=31). Same architectural register must encode identically regardless of spelling. Metamorphic under name transform; llvm-mc differentials already cover ABI and xN independently.
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
+- Rationale: ABI names, xN, fp/s0, zero/x0, and Imm(0..=31) (get_reg GCC bare-number path) must encode identically. Metamorphic under register-name aliasing. Stronger llvm-mc already covers ABI and xN independently.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
 - Seed: (none)
-- Formal: ∀ n ∈ 0..31, ∀ m ∈ 0..31. encode_negw([Reg(xN(n)), Reg(xN(m))]) = encode_negw([Reg(ABI(n)), Reg(ABI(m))]) = encode_negw([Imm(n), Imm(m)]) ∧ (n=8 ⇒ also fp) ∧ (m=8 ⇒ also fp)
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Formal: ∀ n ∈ 0..31, ∀ m ∈ 0..31. encode_sext_w([Reg(ABI(n)), Reg(ABI(m))]) = encode_sext_w([Reg(xN(n)), Reg(xN(m))]) = encode_sext_w([Imm(n), Imm(m)]) ∧ (n=8 ⇒ fp alias) ∧ (n=0 ⇒ zero alias)
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
@@ -129,94 +131,95 @@ predicate:
   domain: { n: u32_0_31, m: u32_0_31 }
   relation:
     op: eq
-    lhs: encode_negw([Reg(xN(n)), Reg(xN(m))]).word
-    rhs: encode_negw([Reg(ABI(n)), Reg(ABI(m))]).word
+    lhs: encode_sext_w([Reg(ABI(n)), Reg(ABI(m))]).word
+    rhs: encode_sext_w([Reg(xN(n)), Reg(xN(m))]).word
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
   m: { gen: int, min: 0, max: 31, type: u32 }
-evidence: encoder/mod.rs:461 get_reg; README.md:322 two-operand GPR form
+evidence: src/backend/riscv/assembler/encoder/mod.rs:463 get_reg; encoder/mod.rs:476 Imm(0..=31)
 ```
 
-## encode_negw_neg_arity
+## encode_sext_w_neg_arity
 - Tier: 3
-- Rationale: README documents the two-operand form `negw rd, rs`. llvm-mc rejects too few operands. Missing operands must Err. Stronger oracles do not apply to the invalid domain.
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
+- Rationale: README documents two-operand form `sext.w rd, rs`. llvm-mc rejects too few operands ("too few operands for instruction"). Missing operands must return Err. Negative/error contract; stronger value oracles do not reach this path.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
 - Seed: (none)
-- Formal: ∀ ops. |ops| < 2 ⇒ encode_negw(ops) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Formal: ∀ ops. len(ops) < 2 ⇒ encode_sext_w(ops) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops]
-  domain: { ops: operand_vecs_len_lt_2 }
+  domain: { ops: short_ops }
   relation:
     op: throws
-    expr: encode_negw(ops)
+    lhs: encode_sext_w(ops)
+expected_error: String
 generators:
   ops: { gen: list, elem: { gen: string }, maxLen: 1 }
-expected_error: String
-evidence: src/backend/riscv/assembler/README.md:322 two-operand form; llvm-mc rejects arity < 2
+evidence: src/backend/riscv/assembler/README.md:323 two-operand form; llvm-mc rejects missing operand
 ```
 
-## encode_negw_neg_invalid
+## encode_sext_w_neg_invalid
 - Tier: 3
-- Rationale: Non-GPR operands (FP, vector, symbol, mem, CSR, out-of-range Imm, invalid names) must be rejected. llvm-mc rejects FP dest/src. get_reg returns Err for those. Stronger oracles do not apply to the invalid domain.
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
+- Rationale: get_reg rejects non-GPR names (FP, vector, unknown) and Imm outside 0..=31. Invalid operands at rd or rs must return Err. llvm-mc rejects FP dest. Negative/error contract.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
 - Seed: (none)
-- Formal: ∀ bad ∉ GPR, ∀ good ∈ GPR. encode_negw([bad, bad]) is Err ∧ encode_negw([bad, Reg(good)]) is Err ∧ encode_negw([Reg(good), bad]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Formal: ∀ bad ∉ GPR, ∀ good ∈ GPR. encode_sext_w([bad, bad]) is Err ∧ encode_sext_w([bad, Reg(good)]) is Err ∧ encode_sext_w([Reg(good), bad]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad, good]
-  domain: { bad: non_gpr_operand, good: gpr_name }
+  vars: [bad, good, which]
+  domain: { bad: invalid_operand, good: gpr_name, which: 0..2 }
   relation:
     op: throws
-    expr: encode_negw([bad, Reg(good)])
+    lhs: encode_sext_w(placed(bad, good, which))
+expected_error: String
 generators:
   bad: { gen: string }
   good: { gen: string }
-expected_error: String
-evidence: encoder/mod.rs:461 get_reg; llvm-mc rejects FP/non-GPR for negw
+  which: { gen: int, min: 0, max: 2, type: u8 }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:463 get_reg; llvm-mc rejects FP dest
 ```
 
-## encode_negw_neg_extra
+## encode_sext_w_neg_extra
 - Tier: 3
-- Rationale: README documents exactly two operands. llvm-mc rejects a third operand (`invalid operand for instruction`). Extra operands must Err. The body has no arity check (only get_reg 0 and 1), so this is the error-path property most likely to fail.
-- Doc contract: (none) — encode_negw has no rustdoc or inline comment. Expansion asserted at src/backend/riscv/assembler/README.md:322 "`negw rd, rs` | `subw rd, x0, rs`" — asserted fingerprint 015cf432
-- Seed: encode_not_pbt.rs extra-operand property; encode_neg extra-operand regression
-- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_negw([Reg(rd), Reg(rs), extra]) is Err
-- Test file: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs
+- Rationale: README documents exactly two operands `sext.w rd, rs`. llvm-mc rejects a third operand ("invalid operand for instruction"). Extra operands must return Err. The function never checks operands.len(), so this is the documented-arity error path.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:254 "Ok(EncodeResult::Word(encode_i(OP_OP_IMM_32, rd, 0, rs1, 0))) // addiw rd, rs1, 0" — asserted fingerprint 9557309c
+- Seed: encode_negw_pbt.rs extra-operand property (same two-operand pseudo pattern)
+- Formal: ∀ rd ∈ GPR, ∀ rs ∈ GPR, ∀ extra. encode_sext_w([Reg(rd), Reg(rs), extra]) is Err
+- Test file: src/backend/riscv/assembler/encoder/encode_sext_w_pbt.rs
 - Status: failing
-- Counterexample: encode_negw([Reg("zero"), Reg("zero"), Reg("zero")]) → Ok(Word(0x4000003b))
-- Bug report: pbt-out/bug_reports/encode_negw_extra_operand.md
+- Counterexample: rd="zero", rs="zero", extra=Reg("zero") → Ok(Word(0x0000001b))
+- Bug report: bug_reports/encode_sext_w_extra_operand.md
 
 ```property
-function: encoder.encode_negw
+function: encoder.encode_sext_w
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [rd, rs, extra]
-  domain: { rd: gpr_name, rs: gpr_name, extra: operand }
+  domain: { rd: gpr_name, rs: gpr_name, extra: extra_operand }
   relation:
     op: throws
-    expr: encode_negw([Reg(rd), Reg(rs), extra])
+    lhs: encode_sext_w([Reg(rd), Reg(rs), extra])
+expected_error: String
 generators:
   rd: { gen: string }
   rs: { gen: string }
   extra: { gen: string }
-expected_error: String
-evidence: src/backend/riscv/assembler/README.md:322 two-operand form; llvm-mc rejects extra operand
+evidence: src/backend/riscv/assembler/README.md:323 two-operand form; llvm-mc rejects extra operand
 ```
