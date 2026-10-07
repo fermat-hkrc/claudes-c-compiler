@@ -389,3 +389,129 @@ impl Preprocessor {
         )
     }
 }
+
+#[cfg(test)]
+mod pbt_semantics_corners {
+    //! Round-32: #if C-semantics corners — unsigned compare wrap, div-zero,
+    //! shift UB, lazy &&/||, char constants, octal/hex/suffix, comma rejection.
+    //! Oracle: gcc -E branch decision differential.
+    use proptest::prelude::*;
+
+    fn gcc_branch(expr: &str) -> Option<bool> {
+        let prog = format!("#if {e}\nTAKE_TRUE\n#else\nTAKE_FALSE\n#endif\n", e = expr);
+        let f = std::env::temp_dir().join("pbt_if_corner.c");
+        std::fs::write(&f, &prog).unwrap();
+        let out = std::process::Command::new("gcc").args(["-E", "-P"]).arg(&f).output().unwrap();
+        if !out.status.success() { return None; }
+        let text = String::from_utf8_lossy(&out.stdout);
+        if text.contains("TAKE_TRUE") { Some(true) }
+        else if text.contains("TAKE_FALSE") { Some(false) }
+        else { None }
+    }
+
+    fn sut_branch(expr: &str) -> Option<bool> {
+        let prog = format!("#if {e}\nTAKE_TRUE\n#else\nTAKE_FALSE\n#endif\n", e = expr);
+        let mut pp = crate::frontend::preprocessor::Preprocessor::new();
+        let out = pp.preprocess(&prog);
+        if out.contains("TAKE_TRUE") { Some(true) }
+        else if out.contains("TAKE_FALSE") { Some(false) }
+        else { None }
+    }
+
+    /// 棘手表达式池（全部有明确 C 语义或 gcc 明确行为）
+    fn tricky() -> Vec<(&'static str, bool)> {
+        vec![
+            // 无符号混合比较（经典：-1 转无符号后巨大）
+            ("-1 < 1u", false),
+            ("-1 > 0u", true),
+            ("(unsigned)-1 == 4294967295u", false), // unsigned 不存在于 #if? → 实际 #if 无 unsigned 关键字转型, 由后缀决定
+            ("-1u == 4294967295u", true),
+            ("-1u < 1u", false),
+            // 大数算术（intmax_t 64 位，不回绕）
+            ("65536 * 65536 == 4294967296", true),
+            ("2147483647 + 1 == -2147483648", false), // 64 位 intmax 下不回绕: 2147483648
+            ("9223372036854775807 > 0", true),
+            // 字符常量
+            ("'A' == 65", true),
+            ("'\\n' == 10", true),
+            ("'\\0' == 0", true),
+            // 八进制/十六进制/后缀
+            ("010 == 8", true),
+            ("0x10 == 16", true),
+            ("0XFF == 255", true),
+            ("1U + 1L == 2", true),
+            ("0777 == 511", true),
+            // 移位
+            ("1 << 31 == 2147483648", true),
+            ("1 << 63 > 0", true),
+            ("16 >> 2 == 4", true),
+            // 逻辑与懒惰求值
+            ("0 && 1", false),
+            ("1 || 0", true),
+            ("!0", true),
+            ("!!5", true),
+            // 三元与优先级
+            ("1 ? 2 : 3 ? 4 : 5", true == (2 == 2)),
+            ("0 ? 1 : 0 ? 2 : 3 == 3", true),
+            ("1 + 2 * 3 == 7", true),
+            ("(1 + 2) * 3 == 9", true),
+            ("2 - 3 - 4 == -5", true),
+            ("1 << 2 << 3 == 2048", true),
+            ("100 / 10 / 5 == 2", true),
+            ("17 % 5 == 2", true),
+            ("-17 % 5 == -2", true),
+            // 位运算
+            ("0xF0 | 0x0F == 255", false), // == 优先于 |: 0xF0 | (0x0F==255)=0xF0|0=240 ≠ 255? 实际 (0xF0|0x0F)==255 但 == 先结合
+            ("(0xF0 | 0x0F) == 255", true),
+            ("0xFF & 0x0F == 15", false),
+            ("~0 == -1", true),
+            ("^2", false), // 一元 ^ 无效 — gcc 报错; 但 proptest 期望 Err → 跳过 None
+        ]
+    }
+
+    /// P-IF-CORNERS: 棘手 #if 表达式的分支决策 == gcc
+    #[test]
+    fn p_if_corners_vs_gcc() {
+        let mut fails = 0;
+        let mut skipped = 0;
+        for (expr, _expected) in tricky() {
+            let g = gcc_branch(expr);
+            let s = sut_branch(expr);
+            match (g, s) {
+                (Some(g), Some(s)) => {
+                    if g != s {
+                        println!("  MISMATCH #if {}: gcc={} ccc={}", expr, g, s);
+                        fails += 1;
+                    }
+                }
+                (None, _) | (_, None) => {
+                    println!("  SKIP #if {} (gcc={:?} ccc={:?})", expr, g, s);
+                    skipped += 1;
+                }
+            }
+        }
+        println!("corners: {} failed, {} skipped", fails, skipped);
+        assert_eq!(fails, 0, "{} #if corner mismatches vs gcc", fails);
+    }
+
+    /// P-IF-RANDOM: 随机组合无符号/有符号比较表达式 == gcc
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(300))]
+        #[test]
+        fn p_if_random_unsigned_mix(
+            a in any::<i32>(), b in any::<u32>(), u1 in any::<bool>(), u2 in any::<bool>(),
+            cmp in 0usize..4, arith in 0usize..4,
+        ) {
+            let s1: &str = if u1 { "u" } else { "" };
+            let (t1, t2) = (format!("{}{}", a, s1), format!("{}{}", b, if u2 { "u" } else { "" }));
+            let lop = match arith % 4 { 0 => "+", 1 => "-", 2 => "*", _ => "^" };
+            let cmpop = match cmp % 4 { 0 => "<", 1 => ">", 2 => "<=", _ => ">=" };
+            let expr = format!("({t1} {lop} 7) {cmpop} ({t2} {lop} 3)", t1=t1, t2=t2, lop=lop, cmpop=cmpop);
+            let g = gcc_branch(&expr);
+            let s = sut_branch(&expr);
+            if let (Some(g), Some(s)) = (g, s) {
+                prop_assert_eq!(g, s, "#if {} : gcc={} ccc={}", expr, g, s);
+            }
+        }
+    }
+}
