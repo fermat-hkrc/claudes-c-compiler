@@ -424,3 +424,100 @@ mod pbt_adversarial2 {
             "encode_fmadd_fmsub accepted GPR x3 as FP operand: {:?}", result);
     }
 }
+
+#[cfg(test)]
+mod pbt_fixed_point {
+    use super::*;
+
+    /// P-SCVTF-FIXED: 定点形式 3 操作数必须与整数形式 2 操作数编码不同
+    #[test]
+    fn p_scvtf_fixed_vs_int() {
+        // llvm-mc 参考:
+        //   scvtf d0, x1      → 0x9e620020
+        //   scvtf d0, x1, #32 → 0x9e428020  (不同指令!)
+        //   ucvtf d0, x1, #32 → 0x9e438020
+        //   scvtf s0, w1, #16 → 0x1e02c020
+        let int_form = encode_scvtf(&[
+            crate::backend::arm::assembler::parser::Operand::Reg("d0".into()),
+            crate::backend::arm::assembler::parser::Operand::Reg("x1".into()),
+        ]);
+        let fix_form = encode_scvtf(&[
+            crate::backend::arm::assembler::parser::Operand::Reg("d0".into()),
+            crate::backend::arm::assembler::parser::Operand::Reg("x1".into()),
+            crate::backend::arm::assembler::parser::Operand::Imm(32),
+        ]);
+        println!("int  form: {:?}", int_form);
+        println!("fix  form: {:?}", fix_form);
+        if let (Ok(EncodeResult::Word(w_int)), Ok(EncodeResult::Word(w_fix))) = (&int_form, &fix_form) {
+            assert_ne!(w_int, w_fix,
+                "scvtf d0,x1,#32 (fixed-point) encoded IDENTICALLY to scvtf d0,x1 (integer): {:#010x}", w_int);
+            // 参考正确值
+            assert_eq!(*w_fix, 0x9e428020u32,
+                "scvtf d0,x1,#32 should be 0x9e428020, got {:#010x}", w_fix);
+        }
+        // 若 3-op 被接受为 Ok，必须是定点编码；Err 也可接受（不支持定点形式）
+    }
+
+    /// P-UCVTF-FIXED: ucvtf 定点形式
+    #[test]
+    fn p_ucvtf_fixed_vs_int() {
+        let fix_form = encode_ucvtf(&[
+            crate::backend::arm::assembler::parser::Operand::Reg("d0".into()),
+            crate::backend::arm::assembler::parser::Operand::Reg("x1".into()),
+            crate::backend::arm::assembler::parser::Operand::Imm(32),
+        ]);
+        if let Ok(EncodeResult::Word(w)) = fix_form {
+            assert_ne!(w, 0x9e630020u32, "ucvtf d0,x1,#32 encoded as integer form");
+        }
+    }
+
+    /// P-SCVTF-GPR-DEST: GPR 作为 FP 目标 → 应 Err（#839 类）
+    #[test]
+    fn p_scvtf_gpr_dest() {
+        let r = encode_scvtf(&[
+            crate::backend::arm::assembler::parser::Operand::Reg("x0".into()),
+            crate::backend::arm::assembler::parser::Operand::Reg("x1".into()),
+        ]);
+        if let Ok(EncodeResult::Word(w)) = r {
+            println!("scvtf x0, x1 → {:#010x} (should be Err; GPR as FP dest)", w);
+        }
+    }
+}
+
+#[cfg(test)]
+mod pbt_fixed_point_e2e {
+    /// P-SCVTF-FIXED-E2E: .s 文件 → 汇编 → objdump 验证定点编码
+    #[test]
+    fn p_scvtf_fixed_e2e() {
+        let asm = "
+.text
+.global test_fn
+test_fn:
+    scvtf d0, x1, #32
+    ucvtf d0, x1, #32
+    scvtf s0, w1, #16
+";
+        let out = "/tmp/pbt_scvtf_e2e.o";
+        let _ = std::fs::remove_file(out);
+        match crate::backend::arm::assembler::assemble(asm, out) {
+            Ok(()) => {
+                let dump = std::process::Command::new("aarch64-linux-gnu-objdump")
+                    .args(["-d", out]).output().expect("objdump");
+                let text = String::from_utf8_lossy(&dump.stdout);
+                for line in text.lines().filter(|l| l.contains(":\t")) {
+                    println!("OBJDUMP: {}", line.trim_end());
+                }
+                // 检查是否出现定点编码（llvm-mc 参考: 9e428020 / 9e438020）
+                let has_fixed = text.contains("9e428020") || text.contains("9e438020")
+                    || text.contains("2042809e") || text.contains("2043809e"); // little-endian
+                println!("fixed-point encoding present: {}", has_fixed);
+                // 如果汇编器静默接受了 3-op 形式但编码为整数形式：
+                let int_le = text.contains("2062009e") || text.contains("9e620020");
+                if !has_fixed && int_le {
+                    println!("BUG CONFIRMED: 3-op fixed-point form silently encoded as 2-op integer form");
+                }
+            }
+            Err(e) => println!("assemble() error: {} (parser may reject 3-op form)", &e[..e.len().min(120)]),
+        }
+    }
+}
