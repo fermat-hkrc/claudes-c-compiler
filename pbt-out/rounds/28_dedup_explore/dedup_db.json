@@ -1,5 +1,21 @@
 [
  {
+  "n": 1067,
+  "t": "Bug: encode_v_crypto_vv uses OP-P (1110111) instead of OP-V (1010111)"
+ },
+ {
+  "n": 1066,
+  "t": "Bug: encode_v_crypto_vv ignores trailing v0.t on a non-maskable instruction"
+ },
+ {
+  "n": 1065,
+  "t": "Bug: encode_v_crypto_vv ignores extra operands"
+ },
+ {
+  "n": 1064,
+  "t": "Bug: AArch64 assembler encodes ALL fmov Rd, #imm (FP immediate) forms as NOP \u2014 fmov d0, #1.0 produces 1f2003d5 (NOP) instead of 00106e1e"
+ },
+ {
   "n": 1063,
   "t": "Bug: AArch64 prfm with register-index addressing produces wrong encoding \u2014 bits 23-21 encode wrong opc field (all indexed forms wrong; bare [x0] correct)"
  },
@@ -780,6 +796,10 @@
   "t": "Bug: encode_uxth emits 64-bit UBFM for an X destination"
  },
  {
+  "n": 868,
+  "t": "Bug: encode_uxth emits 64-bit UBFM for an X destination"
+ },
+ {
   "n": 867,
   "t": "Bug: encode_uxth treats SP/WSP as ZR"
  },
@@ -1190,10 +1210,6 @@
  {
   "n": 765,
   "t": "Bug: parse_integer_expr panics in debug on arithmetic overflow and out-of-range shifts instead of returning Err"
- },
- {
-  "n": 764,
-  "t": "Bug: encode_dc accepts W, SP, and SIMD registers as Xt"
  },
  {
   "n": 764,
