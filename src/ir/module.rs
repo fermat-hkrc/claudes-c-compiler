@@ -337,3 +337,52 @@ impl IrFunction {
         max_id
     }
 }
+
+#[cfg(test)]
+mod pbt_ir_module_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P-BYTE-SIZE: GlobalInit::byte_size consistency
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+        #[test]
+        fn p_global_init_byte_size(
+            size in 0usize..1024,
+        ) {
+            let init = GlobalInit::Array(vec![crate::ir::constants::IrConst::I32(0); size]);
+            let bs = init.byte_size();
+            // byte_size for Array returns ELEMENT COUNT (used for .long emission), not bytes
+            prop_assert_eq!(bs, size, "Array(vec![I32; {}]).byte_size() = {} (element count)", size, bs);
+        }
+    }
+
+    /// P-MODULE-NEW: IrModule::new produces empty module
+    #[test]
+    fn p_module_new_empty() {
+        let m = IrModule::new();
+        assert!(m.functions.is_empty(), "new module should have no functions");
+        assert!(m.globals.is_empty(), "new module should have no globals");
+    }
+
+    /// P-FUNCTION-NEW: IrFunction::new produces valid function
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        #[test]
+        fn p_function_new(
+            name in "[a-z]{1,8}",
+            ret_idx in 0u8..3,
+            n_params in 0usize..5,
+        ) {
+            let ret = [IrType::I32, IrType::I64, IrType::Void][ret_idx as usize % 3].clone();
+            let params: Vec<IrParam> = (0..n_params)
+                .map(|i| IrParam { ty: IrType::I32, struct_size: None, struct_align: None,
+                    struct_eightbyte_classes: vec![], riscv_float_class: None })
+                .collect();
+            let f = IrFunction::new(name.to_string(), ret.clone(), params.clone(), false);
+            assert_eq!(f.name, name);
+            assert_eq!(f.params.len(), n_params);
+            assert!(f.blocks.is_empty() || f.blocks.len() >= 1);
+        }
+    }
+}

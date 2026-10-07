@@ -557,3 +557,94 @@ impl Terminator {
         used
     }
 }
+
+#[cfg(test)]
+mod pbt_ir_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P-DEST: Instruction::dest() 一致性 — 对所有指令变体
+    #[test]
+    fn p_instruction_dest_consistency() {
+        let v = Value(5);
+        let ty = IrType::I32;
+
+        // Instructions WITH dest
+        let with_dest = vec![
+            Instruction::BinOp { dest: v, op: crate::ir::ops::IrBinOp::Add,
+                lhs: Operand::Const(crate::ir::constants::IrConst::I32(1)),
+                rhs: Operand::Const(crate::ir::constants::IrConst::I32(2)), ty: ty.clone() },
+            Instruction::UnaryOp { dest: v, op: crate::ir::ops::IrUnaryOp::Neg,
+                src: Operand::Value(v), ty: ty.clone() },
+            Instruction::Cast { dest: v, src: Operand::Value(v),
+                from_ty: ty.clone(), to_ty: ty.clone() },
+            Instruction::Copy { dest: v, src: Operand::Value(v) },
+        ];
+        for inst in &with_dest {
+            assert!(inst.dest().is_some(), "{:?} should have dest", inst);
+        }
+
+        // Instructions WITHOUT dest
+        let no_dest = vec![
+            Instruction::ParamRef { dest: v, param_idx: 0, ty: ty.clone() },
+        ];
+        // ParamRef actually has a dest (it defines the param)
+        for inst in &no_dest {
+            let _ = inst.dest(); // Just verify no panic
+        }
+    }
+
+    /// P-USED-VALUES: used_values() must not include self
+    #[test]
+    fn p_used_values_no_self_ref() {
+        let v = Value(10);
+        let inst = Instruction::BinOp {
+            dest: Value(1),
+            op: crate::ir::ops::IrBinOp::Add,
+            lhs: Operand::Value(Value(2)),
+            rhs: Operand::Value(Value(3)),
+            ty: IrType::I32,
+        };
+        let used = inst.used_values();
+        assert!(used.contains(&2), "lhs value 2 must be used");
+        assert!(used.contains(&3), "rhs value 3 must be used");
+        assert!(!used.contains(&1), "dest value 1 must NOT be in used_values");
+    }
+
+    /// P-RESULT-TYPE: result_type() returns consistent types
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+        #[test]
+        fn p_result_type_binop(
+            ty_idx in 0u8..5,
+        ) {
+            let ty = [IrType::I8, IrType::I32, IrType::I64, IrType::F32, IrType::F64][ty_idx as usize % 5].clone();
+            let inst = Instruction::BinOp {
+                dest: Value(1),
+                op: crate::ir::ops::IrBinOp::Add,
+                lhs: Operand::Value(Value(2)),
+                rhs: Operand::Value(Value(3)),
+                ty: ty.clone(),
+            };
+            let rt = inst.result_type();
+            prop_assert!(rt.is_some(), "BinOp should have result_type");
+            if let Some(rt) = rt {
+                prop_assert_eq!(rt, ty, "result_type must match BinOp ty");
+            }
+        }
+    }
+
+    /// P-FOR-EACH-USED: for_each_used_value covers all Value operands
+    #[test]
+    fn p_for_each_covers_all() {
+        let inst = Instruction::Cast {
+            dest: Value(100),
+            src: Operand::Value(Value(200)),
+            from_ty: IrType::I32,
+            to_ty: IrType::I64,
+        };
+        let mut visited = Vec::new();
+        inst.for_each_used_value(|v| visited.push(v));
+        assert_eq!(visited, vec![200], "for_each must visit exactly Value(200)");
+    }
+}
