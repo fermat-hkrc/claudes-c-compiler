@@ -1,2 +1,3 @@
-char *t = "x\\
-y";
+#define A B
+#define B A
+A

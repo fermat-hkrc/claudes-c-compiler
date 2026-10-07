@@ -1,17 +1,17 @@
 #include <stdio.h>
 extern int g0;
-typedef int (*fp_t1)(int); extern fp_t1 tbl1[2];
-extern int g2;
-extern int arr3[4];
-typedef int (*fp_t4)(int); extern fp_t4 tbl4[2];
-extern int arr5[4];
+extern int mid1(int);
+extern int arr2[4];
+typedef int (*fp_t3)(int); extern fp_t3 tbl3[2];
+extern int arr4[4];
+extern int mid5(int);
 int main(void) {
     printf("g0=%d\\n", g0);
-printf("tbl1=%d\\n", tbl1[1](5));
-printf("g2=%d\\n", g2);
-printf("arr3=%d %d\\n", arr3[0], arr3[3]);
-printf("tbl4=%d\\n", tbl4[1](9));
-printf("arr5=%d %d\\n", arr5[0], arr5[3]);
+printf("mid1=%d\\n", mid1(-22));
+printf("arr2=%d %d\\n", arr2[0], arr2[3]);
+printf("tbl3=%d\\n", tbl3[1](19));
+printf("arr4=%d %d\\n", arr4[0], arr4[3]);
+printf("tent5=%d\\n", init_tent5());
 
     return 0;
 }

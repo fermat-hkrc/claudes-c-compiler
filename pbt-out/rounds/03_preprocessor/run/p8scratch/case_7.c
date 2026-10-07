@@ -1,4 +1,2 @@
-#define K \
-
- 7
-K
+#define V(...) __VA_ARGS__
+V(a, b, c)

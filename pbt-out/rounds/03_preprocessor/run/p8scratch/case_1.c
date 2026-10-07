@@ -1,2 +1,2 @@
-int x = 1 + \
-2;
+#define S(x) #x
+S(a  b)

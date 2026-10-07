@@ -1,6 +1,4 @@
-int deep1(int x) { return x - -28; }
-int tent2;
-int f3(int x) { return x * 30 + 28; }
-static int h4a(int x) { return x + 39; }
-int h4b(int x) { return x * 2; }
-int deep5(int x) { return x - 47; }
+static int h2a(int x) { return x + -42; }
+int h2b(int x) { return x * -3; }
+int deep4(int x) { return x - 46; }
+int f5(int x) { return x * 18 + 37; }

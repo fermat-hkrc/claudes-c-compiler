@@ -5,7 +5,7 @@ static struct S mk(int s) { struct S r = { s, s * 1.5, {1,2,3,4} }; return r; }
 static double use(struct S s) { return s.a * 2.0 + s.b + s.c[3]; }
 struct BF { unsigned p:5; unsigned q:11; };
 int cmain(void) {
-    unsigned B1 = 2583782861235354787u, B2 = 601583826u;
+    unsigned B1 = 5815849849101363887u, B2 = 1354108063u;
     for (int i = 0; i < 8; i++) {
         struct S s = mk(i * 7 + (int)(B1 % 13));
         mix((unsigned)(use(s) * 4.0) ^ B1);

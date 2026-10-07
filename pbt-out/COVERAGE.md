@@ -118,3 +118,12 @@
 |----------|-------------|-----------|--------------|-------|
 | ARM64/RISC-V/i686 codegen at runtime | all backends | src/passes/mod.rs::pbt_cross_target | p_cross_target_vs_gcc_x64 | 150 × 3 targets green (qemu exit-code diff) |
 | fp128 runtime linkage | linker_common/resolve_lib | round-41 probe | long double link | __addtf3 family undefined → **#1145** |
+
+## Round 41b — constraint waves 6-9 + runtime corners
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| type-system constraints | sema declarators/init | /tmp/neg6-9.sh batteries | 60+ forms | waves 6-9: #1146 (6), #1148 (2), #1149 (3); extensions → #1088/#1143 |
+| typedef VM types | parser/sema typedef | /tmp/tdv*.c | crash witness | typedef-VLA SEGFAULT → #1147 |
+| mixed bitfield layout | lowering struct layout | /tmp/rt11.c | byte diff vs gcc+clang | == clang exactly; gcc slack-only diff (unspecified) — no bug |
+| i686 FP-struct interop | i686 backend | /tmp/i32f*.c | gcc -m32 diff | all green (st(0)) |
+| goto/VLA stack balance | stack_layout | /tmp/rt12.c | 1000-round stress | green both levels |

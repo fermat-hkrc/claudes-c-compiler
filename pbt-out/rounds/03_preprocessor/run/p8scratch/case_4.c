@@ -1,2 +1,2 @@
-/* star \
- still */ int q;
+#define P(a,b) a##b
+P(,)

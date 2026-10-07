@@ -1,4 +1,5 @@
-int f1(int x) { return x * -18 + -62; }
-static int h2a(int x) { return x + 48; }
-int h2b(int x) { return x * 6; }
-int deep5(int x) { return x - 60; }
+static int h1a(int x) { return x + -47; }
+int h1b(int x) { return x * 1; }
+int arr3[4] = { 55, 12, 13, 13 };
+int tent4;
+int arr5[4] = { 3, 27, 71, 39 };

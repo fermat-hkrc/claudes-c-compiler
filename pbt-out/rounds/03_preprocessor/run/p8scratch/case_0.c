@@ -1,3 +1,4 @@
-#define M(a) \
-  a + 1
-M(5)
+#define S(x) #x
+S(a  b)
+S( "q" )
+S(  )
