@@ -1,4 +1,4 @@
-> Total files: 16 | Total functions: 383 | PBT candidates: 253 | Excluded: 130
+> Total files: 16 | Total functions: 383 | PBT candidates: 254 | Excluded: 129
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -208,7 +208,7 @@
 | encode_bgtz | pseudo.rs | 327 | function | yes | primary campaign target |
 | encode_bgt | pseudo.rs | 336 | function | yes | primary campaign target |
 | encode_ble | pseudo.rs | 346 | function | yes | - |
-| encode_bgtu | pseudo.rs | 356 | function | no | out of campaign scope |
+| encode_bgtu | pseudo.rs | 356 | function | yes | primary campaign target |
 | encode_bleu | pseudo.rs | 366 | function | no | out of campaign scope |
 | get_branch_target | pseudo.rs | 376 | function | no | out of campaign scope |
 | encode_j_pseudo | pseudo.rs | 387 | function | no | out of campaign scope |

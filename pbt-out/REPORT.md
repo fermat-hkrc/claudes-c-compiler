@@ -1,68 +1,68 @@
-# PBT Campaign Report: encode_ble
+# PBT Campaign Report: encode_bgtu
 
 ## Summary
 
-**Verdict:** 1 medium: `encode_ble` silently ignores a fourth+ operand so typos like `ble a0, a1, foo, a2` assemble as three-operand `ble` (diverges from llvm-mc).
+**Verdict:** 1 medium: `encode_bgtu` silently ignores trailing operands beyond the documented three-operand form, so `bgtu a0, a1, foo, a2` assembles as `bgtu a0, a1, foo` and diverges from llvm-mc.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_ble
-**Tests:** 14 (12 properties + 1 KAT + 1 regression)
-**Result:** 12 passing (11 props + KAT), 2 failing (1 prop + regression), 1 bug
-**Change surface:** 1 changed function (encode_ble), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no .gcda/.profraw (Rust not C++-instrumented) and listed encode_ble NOT LINKED against unrelated OH C++ binaries; real execution evidence is `cargo test --lib encode_ble_` on the production symbol
-**Effort tier:** standard
+**Modules tested:** encode_bgtu
+**Tests:** 12 properties (+ 1 KAT + 1 regression witness)
+**Result:** 11 passing, 1 bug
+**Change surface:** 1 changed function (encode_bgtu), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (Rust harness not C++-instrumented) and listed unrelated OH binaries; execution evidence is `cargo test --lib encode_bgtu_` (14 tests ran against the real symbol)
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_ble | 14 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_bgtu | 12 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_ble silently accepts a fourth (and further) operand
+### B1: encode_bgtu silently accepts a fourth (and further) operand
 
-**Formal:** ∀ rs,rt ∈ GPR, tgt ∈ Idents, extra ∈ Operand. encode_ble([rs,rt,Symbol(tgt),extra]) = Err
-**Contract evidence:** documented README.md:330 three-operand pseudo form `bgt/ble/bgtu/bleu`; inferred (llvm-mc rejects `ble a0, a1, 0, a2` with `invalid operand for instruction`; public dispatch `"ble" => encode_ble(operands)` at encoder/mod.rs:905 passes the operand slice through)
-**Documentation conflict:** (none — README states the three-operand expansion form; it does not declare trailing operands valid)
+**Formal:** ∀ rs,rt ∈ GPR, tgt ∈ Idents, extra ∈ Operand. encode_bgtu([rs,rt,Symbol(tgt),extra]) = Err
+**Contract evidence:** inferred (README.md:330 three-operand `bgt/ble/bgtu/bleu` form; llvm-mc rejects `bgtu a0, a1, 0, a2` with `invalid operand for instruction`; RISC-V ISA pseudo is three-operand)
+**Documentation conflict:** (none) — README states the three-operand pseudo form; it does not declare extra operands valid
 **Severity:** medium
-**Counterexample:** `encode_ble(&[Reg("a0"), Reg("a1"), Symbol("foo"), Reg("a2")])` (shrunk PBT: rs="zero", rt="zero", tgt="foo", extra=Reg("zero"))
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00a5d063, reloc: Branch("foo", 0) })
-**Impact:** Hand-written or generated assembly with a stray trailing operand assembles silently, masking mistakes and diverging from llvm-mc/gas.
-**Root cause:** pseudo.rs:346-354 reads only indices 0..2 via get_reg/get_branch_target and never checks `operands.len() == 3`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:346`
+**Counterexample:** `encode_bgtu(&[Reg("a0"), Reg("a1"), Symbol("foo"), Reg("a2")])` (proptest minimal: rs="zero", rt="zero", tgt="foo", extra=Reg("zero"))
+**Expected / Actual:** Expected `Err(...)`; actual `Ok(WordWithReloc { word: 0x00a5e063, reloc: Branch "foo" addend 0 })`
+**Impact:** Assembler typos and generator mistakes that append a trailing operand are silently accepted, producing the same encoding as the three-operand form and diverging from llvm-mc / gas — masks bugs in hand-written or generated assembly.
+**Root cause:** `pseudo.rs:356-364` reads only indices 0/1/2 via `get_reg`/`get_branch_target` and never checks `operands.len() == 3`, so trailing operands are discarded.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:356`
 ```rust
-pub(crate) fn encode_ble(operands: &[Operand]) -> Result<EncodeResult, String> {
+pub(crate) fn encode_bgtu(operands: &[Operand]) -> Result<EncodeResult, String> {
     let rs1 = get_reg(operands, 0)?;
     let rs2 = get_reg(operands, 1)?;
     let label = get_branch_target(operands, 2)?;
     Ok(EncodeResult::WordWithReloc {
-        word: encode_b(OP_BRANCH, 0b101, rs2, rs1, 0), // bge rs2, rs1
+        word: encode_b(OP_BRANCH, 0b110, rs2, rs1, 0), // bltu rs2, rs1
         reloc: Relocation { reloc_type: RelocType::Branch, symbol: label, addend: 0 },
     })
 }
 ```
 **Suggested fix:** Reject non-exact arity before decoding operands.
 ```rust
-pub(crate) fn encode_ble(operands: &[Operand]) -> Result<EncodeResult, String> {
+pub(crate) fn encode_bgtu(operands: &[Operand]) -> Result<EncodeResult, String> {
     if operands.len() != 3 {
-        return Err(format!("ble: expected 3 operands, got {}", operands.len()));
+        return Err(format!("bgtu: expected 3 operands, got {}", operands.len()));
     }
     let rs1 = get_reg(operands, 0)?;
     let rs2 = get_reg(operands, 1)?;
     let label = get_branch_target(operands, 2)?;
     Ok(EncodeResult::WordWithReloc {
-        word: encode_b(OP_BRANCH, 0b101, rs2, rs1, 0), // bge rs2, rs1
+        word: encode_b(OP_BRANCH, 0b110, rs2, rs1, 0), // bltu rs2, rs1
         reloc: Relocation { reloc_type: RelocType::Branch, symbol: label, addend: 0 },
     })
 }
 ```
-**Bug report:** bug_reports/encode_ble_extra_operand.md
-**Repro seed:** proptest `cc a913093f7d8b52d9702343ef815022e7d9ce438a558071e2ec7a5caefeebdbc0` (encode_ble_neg_extra); deterministic regression needs no seed
+**Bug report:** bug_reports/encode_bgtu_extra_operand.md
+**Repro seed:** cc 0ed270b0d2995d0cee2ec7f9e63d37cbafd5fdc5a1f66192027ce019b84151e3
 **Raw output:**
 ```text
-Test failed: extra operand must Err for ble zero, zero, foo (llvm-mc rejects: true)
-minimal failing input: rs = "zero", rt = "zero", tgt = "foo", extra = Reg("zero")
+thread 'backend::riscv::assembler::encoder::encode_bgtu_pbt::test_encode_bgtu_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs:341:5:
+bgtu a0, a1, foo with a fourth operand must be rejected (llvm-mc rejects; README documents three-operand `bgtu rs, rt, label`); got Ok(WordWithReloc { word: 10870883, reloc: Relocation { reloc_type: Branch, symbol: "foo", addend: 0 } })
 ```
 
 ## Design Caveats
@@ -73,28 +73,19 @@ minimal failing input: rs = "zero", rt = "zero", tgt = "foo", extra = Reg("zero"
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_ble_pbt.rs | 12 proptest properties + 1 KAT + 1 regression |
-| src/backend/riscv/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_ble_pbt;` registration |
+| src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs | 12 properties + KAT + regression |
+| src/backend/riscv/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_bgtu_pbt;` registration |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_ble_ -- --test-threads=1
+cargo test --lib encode_bgtu_ -- --test-threads=1
+cargo test --lib test_encode_bgtu_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_bgtu_neg_extra -- --test-threads=1
 ```
 
-Bug B1 (deterministic regression):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_ble_regression_extra_operand -- --test-threads=1
-```
-
-Bug B1 (proptest property):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_ble_neg_extra -- --test-threads=1
-```
+Serial reconfirmation: `PBT_TEST_JOBS=1 cargo test --lib test_encode_bgtu_regression_extra_operand -- --test-threads=1` → FAIL (same Ok(WordWithReloc) witness).
 
 ## Output Directories
 
@@ -106,17 +97,17 @@ cargo test --lib encode_ble_neg_extra -- --test-threads=1
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
 - pbt-out/report.json
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_ble_extra_operand.md
-- pbt-out/bug_reports/encode_ble_extra_operand.html (rendered from report.json)
-- pbt-out/run/encode_ble_test1.log
+- pbt-out/bug_reports/encode_bgtu_extra_operand.md
+- pbt-out/bug_reports/encode_bgtu_extra_operand.html (rendered from report.json)
+- pbt-out/run/encode_bgtu_test.log
+- proptest-regressions/backend/riscv/assembler/encoder/encode_bgtu_pbt.txt
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 05:59 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 252/383 total | PBT candidates: 252 | Tested: 252 (100%) | 1 pass, 252 fail
+> Last updated: 2026-10-07 06:13 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 253/383 total | PBT candidates: 253 | Tested: 253 (100%) | 1 pass, 253 fail
 
 ## Summary
 
@@ -125,10 +116,10 @@ cargo test --lib encode_ble_neg_extra -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 252 |
-| **Tested (of PBT candidates)** | **252 / 252 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 252 / -1 |
-| **Overall (tested / all functions)** | **252 / 383 (66%)** |
+| PBT candidates (from FUNCTION_INDEX) | 253 |
+| **Tested (of PBT candidates)** | **253 / 253 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 253 / -1 |
+| **Overall (tested / all functions)** | **253 / 383 (66%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -136,13 +127,13 @@ cargo test --lib encode_ble_neg_extra -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 252 | 252 | 0 | 100% |
+|  | 253 | 253 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 252 | 252 | 0 | 100% |
+| unknown | 253 | 253 | 0 | 100% |
 
 ## File Coverage
 
@@ -156,7 +147,7 @@ cargo test --lib encode_ble_neg_extra -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 18 | 18 | 100% | covered |
+| pseudo.rs | 44 | 19 | 19 | 100% | covered |
 
 ## Recommended Focus
 
@@ -417,3 +408,4 @@ cargo test --lib encode_ble_neg_extra -- --test-threads=1
 | encode_bgtz | pseudo.rs |
 | encode_bgt | pseudo.rs |
 | encode_ble | pseudo.rs |
+| encode_bgtu | pseudo.rs |

@@ -157,6 +157,8 @@ mod encode_bgtz_pbt;
 #[cfg(test)]
 mod encode_bgt_pbt;
 #[cfg(test)]
+mod encode_bgtu_pbt;
+#[cfg(test)]
 mod encode_ble_pbt;
 
 pub(crate) use base::*;
