@@ -1,4 +1,4 @@
-> Total files: 16 | Total functions: 383 | PBT candidates: 250 | Excluded: 133
+> Total files: 16 | Total functions: 383 | PBT candidates: 252 | Excluded: 131
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -206,7 +206,7 @@
 | encode_bgez | pseudo.rs | 309 | function | yes | change surface --func |
 | encode_bltz | pseudo.rs | 318 | function | yes | change surface --func |
 | encode_bgtz | pseudo.rs | 327 | function | yes | primary campaign target |
-| encode_bgt | pseudo.rs | 336 | function | no | out of campaign scope |
+| encode_bgt | pseudo.rs | 336 | function | yes | primary campaign target |
 | encode_ble | pseudo.rs | 346 | function | no | out of campaign scope |
 | encode_bgtu | pseudo.rs | 356 | function | no | out of campaign scope |
 | encode_bleu | pseudo.rs | 366 | function | no | out of campaign scope |

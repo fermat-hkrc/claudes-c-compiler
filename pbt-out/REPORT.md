@@ -1,55 +1,69 @@
-# PBT Campaign Report: encode_bgtz
+# PBT Campaign Report: encode_bgt
 
 ## Summary
 
-**Verdict:** 1 medium: `encode_bgtz` silently ignores extra operands, so `bgtz a0, foo, a1` encodes as a valid `blt x0, a0, foo` branch relocation instead of erroring (llvm-mc and README two-operand form disagree).
+**Verdict:** 1 medium: `encode_bgt` silently accepts a fourth operand and still emits `blt rt,rs`, so assembler typos like `bgt a0, a1, foo, a2` assemble instead of erroring (llvm-mc rejects).
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bgtz
-**Tests:** 12 properties (+ 1 KAT + 1 regression witness)
+**Modules tested:** encode_bgt
+**Tests:** 12 properties (+ 1 KAT gate + 1 deterministic regression)
 **Result:** 11 passing, 1 bug
-**Change surface:** 1 changed function (encode_bgtz), 1 with properties, 0 error-handling-only changes (arity/extra are negative contracts on the same encoder)
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` found no Rust .profraw/.gcda and reported encode_bgtz NOT LINKED in unrelated C++ pbt binaries; execution evidence is `cargo test --lib encode_bgtz` (14 unit tests run against the real symbol)
-**Tier:** standard
+**Change surface:** 1 changed function (encode_bgt), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** none — `coverage_gaps` reported no .gcda/.profraw and file-level NOT LINKED against unrelated C++ binaries; execution evidenced by `cargo test --lib encode_bgt_` running the real symbol
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bgtz | 12 | 1 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_bgt | 12 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_bgtz silently ignores extra operands
+### B1: encode_bgt silently accepts trailing operands
 
-**Formal:** ∀ rs ∈ GPR, tgt ∈ Idents, extra ∈ Operand. encode_bgtz([Reg(rs), Symbol(tgt), extra]) = Err
-**Contract evidence:** documented src/backend/riscv/assembler/README.md:329 "`blez/bgez/...`| Corresponding `bge`/`blt` with x0" — two-operand form; llvm-mc rejects extra operand
-**Documentation conflict:** README.md:329 states the two-operand `blez/bgez/...` → corresponding `bge`/`blt` with x0 form (the behavior IS the documented two-operand encoding; extra operands are not part of the form). Code accepts ≥3 operands and encodes the first two. `(not independently verified)` does not apply — llvm-mc independently rejects.
+**Formal:** ∀ rs,rt ∈ GPRNames, tgt ∈ Idents, extra ∈ Operand. encode_bgt([Reg(rs),Reg(rt),Symbol(tgt),extra]) = Err
+**Contract evidence:** documented README.md:330 three-operand `bgt/ble/bgtu/bleu` swapped-blt form; llvm-mc rejects `bgt a0, a1, foo, a2` with `invalid operand for instruction`; inferred (public assembler dispatch `"bgt" => encode_bgt`)
+**Documentation conflict:** (none that declares extra operands valid — README lists the three-operand form only)
 **Severity:** medium
-**Counterexample:** `encode_bgtz([Reg("a0"), Symbol("foo"), Reg("a1")])` then observes Ok instead of Err
-**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00a04063, reloc: Branch "foo" addend 0 })
-**Impact:** Typos and trailing commas in `bgtz` assemble without error and emit a valid branch relocation.
-**Root cause:** `pseudo.rs:328-329` reads only operands 0 and 1 and never checks `operands.len()`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:328`
+**Counterexample:** `encode_bgt([Reg("a0"), Reg("a1"), Symbol("foo"), Reg("a2")])` (shrunk PBT: rs="zero", rt="zero", tgt="foo", extra=Reg("zero"))
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00a5c063, reloc: Branch "foo" 0 })
+**Impact:** Hand-written or generated assembly with a stray fourth operand assembles as a valid branch instead of failing, diverging from llvm-mc/gas and hiding typos.
+**Root cause:** `pseudo.rs:336-344` decodes only indices 0..2 and never checks `operands.len() == 3`, so trailing operands are ignored.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:336`
 ```rust
-    let rs2 = get_reg(operands, 0)?;
-    let label = get_branch_target(operands, 1)?;
+pub(crate) fn encode_bgt(operands: &[Operand]) -> Result<EncodeResult, String> {
+    let rs1 = get_reg(operands, 0)?;
+    let rs2 = get_reg(operands, 1)?;
+    let label = get_branch_target(operands, 2)?;
+    Ok(EncodeResult::WordWithReloc {
+        word: encode_b(OP_BRANCH, 0b100, rs2, rs1, 0), // blt rs2, rs1
+        reloc: Relocation { reloc_type: RelocType::Branch, symbol: label, addend: 0 },
+    })
+}
 ```
-**Suggested fix:** Reject any operand list whose length is not exactly 2.
+**Suggested fix:** Reject non-exact arity before decoding.
 ```rust
-    if operands.len() != 2 {
-        return Err(format!("bgtz: expected 2 operands, got {}", operands.len()));
+pub(crate) fn encode_bgt(operands: &[Operand]) -> Result<EncodeResult, String> {
+    if operands.len() != 3 {
+        return Err(format!("bgt: expected 3 operands, got {}", operands.len()));
     }
-    let rs2 = get_reg(operands, 0)?;
-    let label = get_branch_target(operands, 1)?;
+    let rs1 = get_reg(operands, 0)?;
+    let rs2 = get_reg(operands, 1)?;
+    let label = get_branch_target(operands, 2)?;
+    Ok(EncodeResult::WordWithReloc {
+        word: encode_b(OP_BRANCH, 0b100, rs2, rs1, 0), // blt rs2, rs1
+        reloc: Relocation { reloc_type: RelocType::Branch, symbol: label, addend: 0 },
+    })
+}
 ```
-**Bug report:** bug_reports/encode_bgtz_extra_operand.md
-**Repro seed:** cc b2cdb672559292e646683e1aa9cfd520ae5a9142e4e1ee2822c0a3bf50fdf216 (proptest encode_bgtz_neg_extra)
+**Bug report:** bug_reports/encode_bgt_extra_operand.md
+**Repro seed:** proptest cc eaf73af288581f121e53f6bac844fa34fd8e53b97504b07641de65f268439900
 **Raw output:**
 ```text
-Test failed: extra operand must Err for bgtz zero, foo (llvm-mc rejects: true)
-minimal failing input: rs = "zero", tgt = "foo", extra = Reg("zero")
-bgtz a0, foo with a third operand must be rejected; got Ok(WordWithReloc { word: 10502243, ... })
+Test failed: extra operand must Err for bgt zero, zero, foo (llvm-mc rejects: true)
+minimal failing input: rs = "zero", rt = "zero", tgt = "foo", extra = Reg("zero")
+bgt a0, a1, foo with a fourth operand must be rejected ... got Ok(WordWithReloc { word: 10862691, ... })
 ```
 
 ## Design Caveats
@@ -60,16 +74,27 @@ bgtz a0, foo with a third operand must be rejected; got Ok(WordWithReloc { word:
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs | 12 properties + KAT + regression |
-| src/backend/riscv/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_bgtz_pbt;` registration |
+| src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs | 12 properties + KAT + regression |
+| src/backend/riscv/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_bgt_pbt;` registration |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bgtz -- --test-threads=1
-cargo test --lib test_encode_bgtz_regression_extra_operand -- --test-threads=1
-cargo test --lib encode_bgtz_neg_extra -- --test-threads=1
+cargo test --lib encode_bgt_ -- --test-threads=1
+```
+
+Bug B1 (deterministic regression):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_bgt_regression_extra_operand -- --test-threads=1
+```
+
+Bug B1 (PBT property):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_bgt_neg_extra -- --test-threads=1
 ```
 
 ## Output Directories
@@ -80,18 +105,19 @@ cargo test --lib encode_bgtz_neg_extra -- --test-threads=1
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_bgtz_extra_operand.md
-- pbt-out/bug_reports/encode_bgtz_extra_operand.html (rendered from report.json)
-- pbt-out/run/encode_bgtz_test.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_bgt_extra_operand.md
+- pbt-out/bug_reports/encode_bgt_extra_operand.html (rendered from report.json)
+- pbt-out/run/encode_bgt_test1.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 05:34 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 250/383 total | PBT candidates: 250 | Tested: 250 (100%) | 1 pass, 250 fail
+> Last updated: 2026-10-07 05:46 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 251/383 total | PBT candidates: 251 | Tested: 251 (100%) | 1 pass, 251 fail
 
 ## Summary
 
@@ -100,10 +126,10 @@ cargo test --lib encode_bgtz_neg_extra -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 250 |
-| **Tested (of PBT candidates)** | **250 / 250 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 250 / -1 |
-| **Overall (tested / all functions)** | **250 / 383 (65%)** |
+| PBT candidates (from FUNCTION_INDEX) | 251 |
+| **Tested (of PBT candidates)** | **251 / 251 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 251 / -1 |
+| **Overall (tested / all functions)** | **251 / 383 (66%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -111,13 +137,13 @@ cargo test --lib encode_bgtz_neg_extra -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 250 | 250 | 0 | 100% |
+|  | 251 | 251 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 250 | 250 | 0 | 100% |
+| unknown | 251 | 251 | 0 | 100% |
 
 ## File Coverage
 
@@ -131,7 +157,7 @@ cargo test --lib encode_bgtz_neg_extra -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 16 | 16 | 100% | covered |
+| pseudo.rs | 44 | 17 | 17 | 100% | covered |
 
 ## Recommended Focus
 
@@ -390,3 +416,4 @@ cargo test --lib encode_bgtz_neg_extra -- --test-threads=1
 | encode_bgez | pseudo.rs |
 | encode_bltz | pseudo.rs |
 | encode_bgtz | pseudo.rs |
+| encode_bgt | pseudo.rs |

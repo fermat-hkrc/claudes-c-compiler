@@ -1,329 +1,335 @@
-# Properties: encode_bgtz
+# Properties: encode_bgt
 
-## encode_bgtz_diff_llvm_mc
+## encode_bgt_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest oracle is differential vs independent llvm-mc RISC-V assembler. State machine N/A (pure). Round-trip N/A (no decoder). encode_branch_instr shared encode_b so used only as weaker metamorphic.
-- Doc contract: src/backend/riscv/assembler/README.md:329 "| `blez/bgez/...`| Corresponding `bge`/`blt` with x0                    |" — asserted fingerprint dcddf900
-- Seed: encode_blez_pbt.rs encode_blez_diff_llvm_mc
-- Formal: ∀ rs ∈ GPRNames. encode_bgtz([Reg(rs), Imm(0)]).word = llvm_mc("bgtz rs, 0") ∧ reloc=(Branch,"0",0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Strongest independent reference is llvm-mc RISC-V assembler. State machine rejected (pure function). Round-trip rejected (no BGT decoder). Differential vs encode_branch_instr used as secondary metamorphic only (shared encode_b/get_reg).
+- Doc contract: src/backend/riscv/assembler/README.md:330 "`bgt/ble/bgtu/bleu` | Swapped-operand `blt`/`bge` variants" — asserted fingerprint 2ee023dd
+- Seed: (none — no prior unit test for encode_bgt)
+- Formal: ∀ rs,rt ∈ GPRNames. encode_bgt([Reg(rs), Reg(rt), Imm(0)]).word = llvm_mc("bgt rs, rt, 0") ∧ reloc=(Branch,"0",0)
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rs]
-  domain: { rs: gpr_name }
+  vars: [rs, rt]
+  domain: { rs: gpr_name, rt: gpr_name }
   relation:
     op: eq
-    lhs: encode_bgtz([Reg(rs), Imm(0)]).word
-    rhs: llvm_mc("bgtz " + rs + ", 0")
+    lhs: encode_bgt([Reg(rs), Reg(rt), Imm(0)]).word
+    rhs: llvm_mc("bgt rs, rt, 0")
 generators:
-  rs: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/README.md:329
+  rs: { gen: string, class: gpr_name }
+  rt: { gen: string, class: gpr_name }
+evidence: src/backend/riscv/assembler/README.md:330
 ```
 
-## encode_bgtz_diff_llvm_mc_blt
+## encode_bgt_diff_llvm_mc_blt
 - Tier: 5
-- Rationale: Documented expansion BGTZ = BLT x0, rs must match llvm-mc of the base form.
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:331 "word: encode_b(OP_BRANCH, 0b100, 0, rs2, 0), // blt x0, rs" — asserted fingerprint 4b76b768
-- Seed: encode_blez_pbt.rs encode_blez_diff_llvm_mc_bge
-- Formal: ∀ rs ∈ GPRNames. encode_bgtz([Reg(rs), Imm(0)]).word = llvm_mc("blt x0, rs, 0")
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Documented expansion BGT rs,rt → BLT rt,rs checked against independent llvm-mc of the real instruction (strengthens differential beyond mnemonic alias).
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:341 "// blt rs2, rs1" — asserted fingerprint faae9ea6
+- Seed: (none)
+- Formal: ∀ rs,rt ∈ GPRNames. encode_bgt([Reg(rs), Reg(rt), Imm(0)]).word = llvm_mc("blt rt, rs, 0")
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rs]
-  domain: { rs: gpr_name }
+  vars: [rs, rt]
+  domain: { rs: gpr_name, rt: gpr_name }
   relation:
     op: eq
-    lhs: encode_bgtz([Reg(rs), Imm(0)]).word
-    rhs: llvm_mc("blt x0, " + rs + ", 0")
+    lhs: encode_bgt([Reg(rs), Reg(rt), Imm(0)]).word
+    rhs: llvm_mc("blt rt, rs, 0")
 generators:
-  rs: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:331
+  rs: { gen: string, class: gpr_name }
+  rt: { gen: string, class: gpr_name }
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:341
 ```
 
-## encode_bgtz_eq_blt_x0_rs
+## encode_bgt_eq_blt_swapped
 - Tier: 4
-- Rationale: Metamorphic expansion identity vs encode_branch_instr(BLT) with [x0, rs, label].
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:331 "word: encode_b(OP_BRANCH, 0b100, 0, rs2, 0), // blt x0, rs" — asserted fingerprint 4b76b768
-- Seed: encode_blez_pbt.rs encode_blez_eq_bge_x0_rs
-- Formal: ∀ rs ∈ 0..31, tgt ∈ Idents. encode_bgtz([xN(rs), Symbol(tgt)]) = encode_branch_instr(BLT, [x0, xN(rs), Symbol(tgt)]) = encode_branch_instr(BLT, [zero, xN(rs), Symbol(tgt)])
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Algebraic metamorphic — same-job expansion through encode_branch_instr(BLT) with swapped register order must agree on full WordWithReloc.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:341 "// blt rs2, rs1" — asserted fingerprint faae9ea6
+- Seed: (none)
+- Formal: ∀ r1,r2 ∈ 0..31, tgt ∈ Idents. encode_bgt([xN(r1), xN(r2), Symbol(tgt)]) = encode_branch_instr([xN(r2), xN(r1), Symbol(tgt)], funct3=BLT)
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rs, tgt]
-  domain: { rs: u32_0_31, tgt: ident }
+  vars: [r1, r2, tgt]
+  domain: { r1: reg_num, r2: reg_num, tgt: ident }
   relation:
     op: eq
-    lhs: encode_bgtz([Reg(xN(rs)), Symbol(tgt)])
-    rhs: encode_branch_instr(BLT, [Reg(x0), Reg(xN(rs)), Symbol(tgt)])
+    lhs: encode_bgt([Reg(xN(r1)), Reg(xN(r2)), Symbol(tgt)])
+    rhs: encode_branch_instr([Reg(xN(r2)), Reg(xN(r1)), Symbol(tgt)], 0b100)
 generators:
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:331
+  r1: { gen: int, min: 0, max: 31, type: u32 }
+  r2: { gen: int, min: 0, max: 31, type: u32 }
+  tgt: { gen: string, class: ident }
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:341
 ```
 
-## encode_bgtz_isa_b_type
+## encode_bgt_isa_b_type
 - Tier: 4
-- Rationale: B-type layout invariant from RISC-V ISA (independent unpacker).
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:331 "word: encode_b(OP_BRANCH, 0b100, 0, rs2, 0), // blt x0, rs" — asserted fingerprint 4b76b768
-- Seed: encode_blez_pbt.rs encode_blez_isa_b_type
-- Formal: ∀ rs ∈ 0..31, tgt ∈ Idents. let w=encode_bgtz([xN(rs),Symbol(tgt)]).word in unpack_b(w)=(OP_BRANCH, BLT, rs1=0, rs2=rs, imm=0) ∧ reloc=(Branch,tgt,0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Algebraic invariant — B-type field layout per RISC-V unprivileged ISA (independent unpack, not a copy of encode_b): opcode BRANCH, funct3 BLT, rs1=rt, rs2=rs, imm=0, reloc Branch.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:341 "// blt rs2, rs1" — asserted fingerprint faae9ea6
+- Seed: (none)
+- Formal: ∀ r1,r2 ∈ 0..31, tgt ∈ Idents. unpack_b(encode_bgt([xN(r1),xN(r2),Symbol(tgt)]).word) = (OP_BRANCH, 0b100, r2, r1, 0) ∧ reloc=(Branch,tgt,0)
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rs, tgt]
-  domain: { rs: u32_0_31, tgt: ident }
-  body: unpack_b(encode_bgtz([xN(rs), Symbol(tgt)]).word) == (OP_BRANCH, 0b100, 0, rs, 0)
+  vars: [r1, r2, tgt]
+  domain: { r1: reg_num, r2: reg_num, tgt: ident }
+  body: unpack_b(encode_bgt([xN(r1),xN(r2),Symbol(tgt)]).word) == (OP_BRANCH, 0b100, r2, r1, 0)
 generators:
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:331
+  r1: { gen: int, min: 0, max: 31, type: u32 }
+  r2: { gen: int, min: 0, max: 31, type: u32 }
+  tgt: { gen: string, class: ident }
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:341
 ```
 
-## encode_bgtz_abi_xn_alias
+## encode_bgt_abi_xn_alias
 - Tier: 4
-- Rationale: ABI name / xN / fp≡s0≡x8 aliases must encode identically.
-- Doc contract: src/backend/riscv/assembler/README.md:329 "| `blez/bgez/...`| Corresponding `bge`/`blt` with x0                    |" — asserted fingerprint dcddf900
-- Seed: encode_blez_pbt.rs encode_blez_abi_xn_alias
-- Formal: ∀ n ∈ 0..31, tgt ∈ Idents. encode_bgtz([ABI(n),Symbol(tgt)]) = encode_bgtz([xN(n),Symbol(tgt)]) ∧ (n=8 ⇒ fp form equal)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Metamorphic — ABI names, xN, and fp≡s0≡x8 must produce identical encodings.
+- Doc contract: src/backend/riscv/assembler/README.md:330 "Swapped-operand `blt`/`bge` variants" — asserted fingerprint 2ee023dd
+- Seed: (none)
+- Formal: ∀ n,m ∈ 0..31, tgt ∈ Idents. encode_bgt([ABI(n),ABI(m),Symbol(tgt)]) = encode_bgt([xN(n),xN(m),Symbol(tgt)]); n=8 ⇒ fp alias holds on either side
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, tgt]
-  domain: { n: u32_0_31, tgt: ident }
+  vars: [n, m, tgt]
+  domain: { n: reg_num, m: reg_num, tgt: ident }
   relation:
     op: eq
-    lhs: encode_bgtz([Reg(abi(n)), Symbol(tgt)])
-    rhs: encode_bgtz([Reg(xN(n)), Symbol(tgt)])
+    lhs: encode_bgt([Reg(ABI(n)), Reg(ABI(m)), Symbol(tgt)])
+    rhs: encode_bgt([Reg(xN(n)), Reg(xN(m)), Symbol(tgt)])
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/README.md:329
+  m: { gen: int, min: 0, max: 31, type: u32 }
+  tgt: { gen: string, class: ident }
+evidence: src/backend/riscv/assembler/README.md:330
 ```
 
-## encode_bgtz_target_forms
+## encode_bgt_target_forms
 - Tier: 4
-- Rationale: get_branch_target treats Symbol/Label/Reg-as-label with same string equivalently.
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:381 "Some(Operand::Reg(s)) => Ok(s.clone())," — asserted fingerprint 88c78fb0
-- Seed: encode_blez_pbt.rs encode_blez_target_forms
-- Formal: ∀ rs ∈ 0..31, s ∈ Idents. encode_bgtz([xN(rs),Symbol(s)]) = encode_bgtz([xN(rs),Label(s)]) = encode_bgtz([xN(rs),Reg(s)])
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: get_branch_target treats Symbol/Label/Reg-as-label equivalently for the same string.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:380 "A register name can also be a symbol/label name" — asserted fingerprint 4ea15218
+- Seed: (none)
+- Formal: ∀ r1,r2 ∈ 0..31, s ∈ Idents. encode_bgt([xN(r1),xN(r2),Symbol(s)]) = encode_bgt(...,Label(s)) = encode_bgt(...,Reg(s))
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [rs, s]
-  domain: { rs: u32_0_31, s: ident }
-  relation:
-    op: eq
-    lhs: encode_bgtz([xN(rs), Symbol(s)])
-    rhs: encode_bgtz([xN(rs), Label(s)])
+  vars: [r1, r2, s]
+  domain: { r1: reg_num, r2: reg_num, s: ident }
+  body: encode_bgt([xN(r1),xN(r2),Symbol(s)]) == encode_bgt([xN(r1),xN(r2),Label(s)]) == encode_bgt([xN(r1),xN(r2),Reg(s)])
 generators:
-  rs: { gen: int, min: 0, max: 31, type: u32 }
-  s: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:381
+  r1: { gen: int, min: 0, max: 31, type: u32 }
+  r2: { gen: int, min: 0, max: 31, type: u32 }
+  s: { gen: string, class: ident }
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:380
 ```
 
-## encode_bgtz_imm_target
+## encode_bgt_imm_target
 - Tier: 4
-- Rationale: Imm target stringifies into reloc; word stays zero-imm BLT.
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:331 "word: encode_b(OP_BRANCH, 0b100, 0, rs2, 0), // blt x0, rs" — asserted fingerprint 4b76b768
-- Seed: encode_blez_pbt.rs encode_blez_imm_target
-- Formal: ∀ rs ∈ 0..31, imm ∈ ImmSamples. encode_bgtz([xN(rs),Imm(imm)]) yields B-type BLT rs1=0 rs2=rs imm=0 reloc=(Branch, format!("{}",imm), 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Imm target is stringified into reloc.symbol; word stays zero-imm BLT with swapped regs.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:341 "// blt rs2, rs1" — asserted fingerprint faae9ea6
+- Seed: (none)
+- Formal: ∀ r1,r2 ∈ 0..31, imm ∈ ImmSample. unpack_b(encode_bgt([xN(r1),xN(r2),Imm(imm)]).word)=(OP_BRANCH,0b100,r2,r1,0) ∧ reloc=(Branch, str(imm), 0)
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [rs, imm]
-  domain: { rs: u32_0_31, imm: i64 }
-  body: "reloc.symbol == format!(\"{}\", imm) && unpack imm==0"
+  vars: [r1, r2, imm]
+  domain: { r1: reg_num, r2: reg_num, imm: branch_imm_sample }
+  body: unpack_b(word)==(OP_BRANCH,0b100,r2,r1,0) AND reloc.symbol==format!("{}",imm)
 generators:
-  rs: { gen: int, min: 0, max: 31, type: u32 }
+  r1: { gen: int, min: 0, max: 31, type: u32 }
+  r2: { gen: int, min: 0, max: 31, type: u32 }
   imm: { gen: int, min: -4096, max: 4094, type: i64 }
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:331
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:341
 ```
 
-## encode_bgtz_imm_as_rs
+## encode_bgt_imm_as_reg
 - Tier: 4
-- Rationale: get_reg GCC bare-number path Imm(0..=31) equals xN.
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:489 "Some(Operand::Imm(n)) if *n >= 0 && *n <= 31 => Ok(*n as u32)," — domain-restriction fingerprint 4df5b8ba
-- Seed: encode_blez_pbt.rs encode_blez_imm_as_rs
-- Formal: ∀ n ∈ 0..31, tgt ∈ Idents. encode_bgtz([Imm(n), Symbol(tgt)]) = encode_bgtz([xN(n), Symbol(tgt)])
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: GCC bare Imm(0..31) register path via get_reg must equal xN for both rs and rt.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:490 "GCC sometimes emits bare register numbers (0-31) in inline asm" — asserted fingerprint f1b1a1fb
+- Seed: (none)
+- Formal: ∀ n,m ∈ 0..31, tgt ∈ Idents. encode_bgt([Imm(n),Imm(m),Symbol(tgt)]) = encode_bgt([xN(n),xN(m),Symbol(tgt)])
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [n, tgt]
-  domain: { n: u32_0_31, tgt: ident }
+  vars: [n, m, tgt]
+  domain: { n: reg_num, m: reg_num, tgt: ident }
   relation:
     op: eq
-    lhs: encode_bgtz([Imm(n), Symbol(tgt)])
-    rhs: encode_bgtz([Reg(xN(n)), Symbol(tgt)])
+    lhs: encode_bgt([Imm(n), Imm(m), Symbol(tgt)])
+    rhs: encode_bgt([Reg(xN(n)), Reg(xN(m)), Symbol(tgt)])
 generators:
   n: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: string, type: String }
-evidence: src/backend/riscv/assembler/encoder/mod.rs:489
+  m: { gen: int, min: 0, max: 31, type: u32 }
+  tgt: { gen: string, class: ident }
+evidence: src/backend/riscv/assembler/encoder/mod.rs:490
 ```
 
-## encode_bgtz_neg_arity
+## encode_bgt_neg_arity
 - Tier: 3
-- Rationale: Two-operand form requires ≥2 operands; fewer must Err.
-- Doc contract: src/backend/riscv/assembler/README.md:329 "| `blez/bgez/...`| Corresponding `bge`/`blt` with x0                    |" — asserted fingerprint dcddf900
-- Seed: encode_blez_pbt.rs encode_blez_neg_arity
-- Formal: ∀ ops. len(ops)<2 ⇒ encode_bgtz(ops)=Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Negative contract — fewer than 3 operands must Err (llvm-mc "too few operands"; README three-operand form).
+- Doc contract: src/backend/riscv/assembler/README.md:330 "`bgt/ble/bgtu/bleu`" — domain-restriction fingerprint 7094e033
+- Seed: (none)
+- Formal: ∀ ops. len(ops)<3 ⇒ encode_bgt(ops) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [ops]
-  domain: { ops: short_ops }
+  domain: { ops: short_ops_lt3 }
   relation:
     op: holds
-    expr: encode_bgtz(ops).is_err()
+    expr: encode_bgt(ops).is_err()
 generators:
-  ops: { gen: list, maxLen: 1 }
+  ops: { gen: list, elem: operand, maxLen: 2 }
 expected_error: String
-evidence: src/backend/riscv/assembler/README.md:329
+evidence: src/backend/riscv/assembler/README.md:330
 ```
 
-## encode_bgtz_neg_invalid_rs
+## encode_bgt_neg_invalid_regs
 - Tier: 3
-- Rationale: Non-GPR rs must Err via get_reg.
-- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:486 "reg_num(name).ok_or_else(|| format!(\"invalid integer register: {}\", name))" — asserted fingerprint b41eabbb
-- Seed: encode_blez_pbt.rs encode_blez_neg_invalid_rs
-- Formal: ∀ bad ∉ GPR, tgt ∈ Idents. encode_bgtz([bad, Symbol(tgt)])=Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Invalid rs or rt (FP/vector/out-of-range/non-reg) must Err.
+- Doc contract: src/backend/riscv/assembler/encoder/mod.rs:488 "invalid integer register" — asserted fingerprint 4a1a5b19
+- Seed: (none)
+- Formal: ∀ bad ∈ InvalidRs, good ∈ GPRNames, tgt ∈ Idents. encode_bgt([bad,Reg(good),Symbol(tgt)])=Err ∧ encode_bgt([Reg(good),bad,Symbol(tgt)])=Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad, tgt]
-  domain: { bad: invalid_rs, tgt: ident }
-  relation:
-    op: holds
-    expr: encode_bgtz([bad, Symbol(tgt)]).is_err()
+  vars: [bad, good, tgt]
+  domain: { bad: invalid_rs, good: gpr_name, tgt: ident }
+  body: encode_bgt([bad, Reg(good), Symbol(tgt)]).is_err() AND encode_bgt([Reg(good), bad, Symbol(tgt)]).is_err()
 generators:
-  bad: { gen: string, type: Operand }
-  tgt: { gen: string, type: String }
+  bad: { gen: operand, class: invalid_rs }
+  good: { gen: string, class: gpr_name }
+  tgt: { gen: string, class: ident }
 expected_error: String
-evidence: src/backend/riscv/assembler/encoder/mod.rs:486
+evidence: src/backend/riscv/assembler/encoder/mod.rs:488
 ```
 
-## encode_bgtz_neg_invalid_target
+## encode_bgt_neg_invalid_target
 - Tier: 3
-- Rationale: Target forms outside Symbol/Label/Imm/Reg must Err.
-- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:384 "_ => Err(format!(\"expected branch target at operand {}\", idx))," — asserted fingerprint da4c41b9
-- Seed: encode_blez_pbt.rs encode_blez_neg_invalid_target
-- Formal: ∀ rs ∈ GPR, bad ∉ {Symbol,Label,Imm,Reg}. encode_bgtz([Reg(rs), bad])=Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Target forms get_branch_target rejects (Mem/Csr/Fence/…) must Err.
+- Doc contract: src/backend/riscv/assembler/encoder/pseudo.rs:383 "expected branch target at operand" — asserted fingerprint 5e30155f
+- Seed: (none)
+- Formal: ∀ r1,r2 ∈ GPRNames, bad ∈ InvalidTarget. encode_bgt([Reg(r1),Reg(r2),bad]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rs, bad]
-  domain: { rs: gpr_name, bad: invalid_target }
+  vars: [r1, r2, bad]
+  domain: { r1: gpr_name, r2: gpr_name, bad: invalid_target }
   relation:
     op: holds
-    expr: encode_bgtz([Reg(rs), bad]).is_err()
+    expr: encode_bgt([Reg(r1), Reg(r2), bad]).is_err()
 generators:
-  rs: { gen: string, type: String }
-  bad: { gen: string, type: Operand }
+  r1: { gen: string, class: gpr_name }
+  r2: { gen: string, class: gpr_name }
+  bad: { gen: operand, class: invalid_target }
 expected_error: String
-evidence: src/backend/riscv/assembler/encoder/pseudo.rs:384
+evidence: src/backend/riscv/assembler/encoder/pseudo.rs:383
 ```
 
-## encode_bgtz_neg_extra
+## encode_bgt_neg_extra
 - Tier: 3
-- Rationale: README two-operand form + llvm-mc reject extra operands; SUT must Err.
-- Doc contract: src/backend/riscv/assembler/README.md:329 "| `blez/bgez/...`| Corresponding `bge`/`blt` with x0                    |" — asserted fingerprint dcddf900
-- Seed: encode_blez_pbt.rs encode_blez_neg_extra
-- Formal: ∀ rs ∈ GPR, tgt ∈ Idents, extra ∈ Operand. encode_bgtz([Reg(rs), Symbol(tgt), extra])=Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtz_pbt.rs
+- Rationale: Four-or-more operands must Err (llvm-mc rejects extra operand; README documents three-operand bgt rs, rt, label). encode_bgt only reads indices 0..2 and silently ignores extras.
+- Doc contract: src/backend/riscv/assembler/README.md:330 "`bgt/ble/bgtu/bleu`" three-operand swapped-blt form — domain-restriction fingerprint 7094e033
+- Seed: (none)
+- Formal: ∀ rs,rt ∈ GPRNames, tgt ∈ Idents, extra ∈ Operand. encode_bgt([Reg(rs),Reg(rt),Symbol(tgt),extra]) = Err
+- Test file: src/backend/riscv/assembler/encoder/encode_bgt_pbt.rs
 - Status: failing
-- Counterexample: encode_bgtz([Reg("a0"), Symbol("foo"), Reg("a1")]) → Ok(WordWithReloc { word: 0x00a04063 })
-- Bug report: pbt-out/bug_reports/encode_bgtz_extra_operand.md
+- Counterexample: encode_bgt([Reg("zero"), Reg("zero"), Symbol("foo"), Reg("zero")]) → Ok(WordWithReloc); also Reg("a0"),Reg("a1"),Symbol("foo"),Reg("a2")
+- Bug report: bug_reports/encode_bgt_extra_operand.md
 
 ```property
-function: encoder.encode_bgtz
+function: encoder.encode_bgt
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [rs, tgt, extra]
-  domain: { rs: gpr_name, tgt: ident, extra: Operand }
+  vars: [rs, rt, tgt, extra]
+  domain: { rs: gpr_name, rt: gpr_name, tgt: ident, extra: operand }
   relation:
     op: holds
-    expr: encode_bgtz([Reg(rs), Symbol(tgt), extra]).is_err()
+    expr: encode_bgt([Reg(rs), Reg(rt), Symbol(tgt), extra]).is_err()
 generators:
-  rs: { gen: string, type: String }
-  tgt: { gen: string, type: String }
-  extra: { gen: string, type: Operand }
+  rs: { gen: string, class: gpr_name }
+  rt: { gen: string, class: gpr_name }
+  tgt: { gen: string, class: ident }
+  extra: { gen: operand, class: extra_operand }
 expected_error: String
-evidence: src/backend/riscv/assembler/README.md:329
+evidence: src/backend/riscv/assembler/README.md:330
 ```
