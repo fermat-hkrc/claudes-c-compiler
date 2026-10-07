@@ -82,3 +82,8 @@
 |----------|-------------|-----------|--------------|-------|
 | pass interactions (narrow/copy_prop/if_convert/dce/cfg_simplify/simplify/gvn/fold/div_by_const) | src/passes/*.rs | src/passes/mod.rs::pbt_opt_rich | p_opt_rich_vs_gcc | 150 cases × {default,-O1,-O2} all == gcc -O0; bitfields/structs/unions/float/fn-ptr/switch/goto |
 | macro-table lifecycle state machine | src/frontend/preprocessor/macro_defs.rs | expr_eval.rs ::pbt_macro_table_sm | p_macro_lifecycle_vs_model_gcc | 1000 cases, model+gcc dual oracle, every-step probe — ALL GREEN |
+
+## Round 37 — RISC-V unclaimed extra-operand sweep
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| encode_bgt/ble/bgtu/bleu/bltz/bgtz/csrr/csrw/csrs/csrc/fmv_s/fmv_d/fabs_s/fabs_d/fneg_s/fneg_d/la/lla (18 fns) | src/backend/riscv/assembler/encoder/pseudo.rs | pseudo.rs ::pbt_extra_unclaimed | p_extra_unclaimed_sweep | 19/19 silently ignore extras; encode_bgez → teammate #1094; 18 filed **#1095-#1112** (canonical #1094 format, concrete Actual encodings) |
