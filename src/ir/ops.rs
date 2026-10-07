@@ -410,3 +410,116 @@ mod pbt_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_tests2 {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P-SHIFT-EDGE: shift edge cases for eval_i64
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_shift_edge_cases(
+            x in any::<i64>(),
+            k in 0u32..64,
+        ) {
+            // SHL
+            let got = IrBinOp::Shl.eval_i64(x, k as i64);
+            let want = x.checked_shl(k);
+            prop_assert_eq!(got, want, "Shl({},{})", x, k);
+
+            // LShr (logical, treats bits as unsigned)
+            let got = IrBinOp::LShr.eval_i64(x, k as i64);
+            let want = ((x as u64).checked_shr(k)).map(|v| v as i64);
+            prop_assert_eq!(got, want, "LShr({},{})", x, k);
+
+            // AShr (arithmetic)
+            let got = IrBinOp::AShr.eval_i64(x, k as i64);
+            let want = x.checked_shr(k);
+            prop_assert_eq!(got, want, "AShr({},{})", x, k);
+        }
+    }
+
+    /// P-FLOAT-CMP-NAN: float comparisons with NaN
+    #[test]
+    fn p_float_cmp_nan() {
+        let nan = f64::NAN;
+        let one = 1.0;
+
+        // NaN comparisons: always false except Ne
+        assert!(!IrCmpOp::Slt.eval_f64(nan, one), "NaN < 1.0 should be false");
+        assert!(!IrCmpOp::Sgt.eval_f64(nan, one), "NaN > 1.0 should be false");
+        assert!(!IrCmpOp::Sle.eval_f64(nan, one), "NaN <= 1.0 should be false");
+        assert!(!IrCmpOp::Sge.eval_f64(nan, one), "NaN >= 1.0 should be false");
+        assert!(!IrCmpOp::Eq.eval_f64(nan, one), "NaN == 1.0 should be false");
+        assert!(IrCmpOp::Ne.eval_f64(nan, one), "NaN != 1.0 should be true");
+    }
+
+    /// P-FLOAT-CMP-INF: float comparisons with infinity
+    #[test]
+    fn p_float_cmp_inf() {
+        let inf = f64::INFINITY;
+        let ninf = f64::NEG_INFINITY;
+        let zero = 0.0;
+
+        assert!(IrCmpOp::Slt.eval_f64(zero, inf), "0 < inf");
+        assert!(IrCmpOp::Sgt.eval_f64(inf, zero), "inf > 0");
+        assert!(IrCmpOp::Slt.eval_f64(ninf, zero), "-inf < 0");
+        assert!(IrCmpOp::Sgt.eval_f64(inf, ninf), "inf > -inf");
+        assert!(IrCmpOp::Eq.eval_f64(inf, inf), "inf == inf");
+        assert!(IrCmpOp::Ne.eval_f64(inf, ninf), "inf != -inf");
+    }
+
+    /// P-MUL-OVERFLOW: mul uses wrapping semantics (C11 UB implementation choice)
+    #[test]
+    fn p_mul_overflow() {
+        let max = i64::MAX;
+        let min = i64::MIN;
+
+        // Add/sub/mul use wrapping (C11 UB implementation choice)
+        assert_eq!(IrBinOp::Mul.eval_i64(max, 2), Some(max.wrapping_mul(2)), "wrapping");
+        assert_eq!(IrBinOp::Mul.eval_i64(min, -1), Some(min.wrapping_mul(-1)), "wrapping");
+        assert_eq!(IrBinOp::Mul.eval_i64(max, 1), Some(max), "exact");
+    }
+
+    /// P-ADD-SUB-OVERFLOW: add/sub use wrapping semantics
+    #[test]
+    fn p_add_sub_overflow() {
+        assert_eq!(IrBinOp::Add.eval_i64(i64::MAX, 1),
+            Some(i64::MAX.wrapping_add(1)), "wrapping");
+        assert_eq!(IrBinOp::Add.eval_i64(i64::MIN, -1),
+            Some(i64::MIN.wrapping_add(-1)), "wrapping");
+        assert_eq!(IrBinOp::Sub.eval_i64(i64::MIN, 1),
+            Some(i64::MIN.wrapping_sub(1)), "wrapping");
+        assert_eq!(IrBinOp::Sub.eval_i64(i64::MAX, -1),
+            Some(i64::MAX.wrapping_sub(-1)), "wrapping");
+    }
+
+    /// P-I128-SHIFT: 128-bit shift consistency
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_i128_shift(
+            x in any::<i128>(),
+            k in 0u32..128,
+        ) {
+            let got = IrBinOp::Shl.eval_i128(x, k as i128);
+            let want = x.checked_shl(k);
+            prop_assert_eq!(got, want, "i128 Shl({},{})", x, k);
+        }
+    }
+
+    /// P-CMP-EQ-I128: i128 comparison duality
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(256))]
+        #[test]
+        fn p_i128_cmp_duality(
+            a in any::<i128>(), b in any::<i128>(),
+        ) {
+            let lt = IrCmpOp::Slt.eval_i128(a, b);
+            let ge = IrCmpOp::Sge.eval_i128(a, b);
+            prop_assert_ne!(lt, ge, "Slt({},{}) and Sge must differ", a, b);
+        }
+    }
+}
