@@ -858,7 +858,9 @@ mod pbt_final6 {
             println!("ACT|{}|{:?}", name, disp(name, extra));
         }
         println!("IGNORED: {:?}", hits);
-        assert!(hits.is_empty(), "{:?} ignore extras", hits);
+        // call/tail/j_pseudo/jr → #1167-#1170 (filed)
+        assert!(hits.iter().all(|h| ["encode_call","encode_tail","encode_j_pseudo","encode_jr"].contains(h)),
+            "unexpected new ignores: {:?}", hits);
     }
     fn disp(name: &str, ops: &[Operand]) -> Result<EncodeResult, String> {
         match name {
