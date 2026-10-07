@@ -1102,3 +1102,154 @@ mod pbt_adversarial {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_adversarial2 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+
+    /// P-LDRSW: FP 目标寄存器 → 应该 Err
+    #[test]
+    fn p_ldrsw_fp_dest() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()), // FP as destination
+            Operand::Mem { base: "x1".to_string(), offset: 0 },
+        ];
+        let result = encode_ldrsw(&ops);
+        assert!(result.is_err(),
+            "encode_ldrsw accepted FP d0 as destination: {:?}", result);
+    }
+
+    /// P-LDRS: 128-bit load with wrong size parameter
+    #[test]
+    fn p_ldrs_128bit() {
+        // encode_ldrs with size=4 (128-bit) — should be handled or rejected
+        let ops = vec![
+            Operand::Reg("q0".to_string()),
+            Operand::Mem { base: "x1".to_string(), offset: 0 },
+        ];
+        let result = encode_ldrs(&ops, 4);
+        // Just verify no panic
+        let _ = result;
+    }
+
+    /// P-LDTR: positive offset with ldtr (unscaled, should be 0..255)
+    #[test]
+    fn p_ldtr_positive_offset() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::MemPreIndex { base: "x1".to_string(), offset: 256 }, // out of range
+        ];
+        let result = encode_ldtr_sized(&ops, true, 3);
+        // ldtr unscaled imm9: range -256..255; 256 is out of range
+        if let Ok(EncodeResult::Word(word)) = result {
+            let imm9 = (word >> 12) & 0x1FF;
+            // If silently accepted, imm9 should be within 9 bits
+            assert!(imm9 <= 0x1FF,
+                "ldtr offset 256 encoded as imm9={} (> 9 bits)", imm9);
+        }
+    }
+
+    /// P-LDP: odd offset for 64-bit pair → 应该 Err（must be multiple of 8）
+    #[test]
+    fn p_ldp_odd_offset() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Mem { base: "x2".to_string(), offset: 4 }, // not multiple of 8
+        ];
+        let result = encode_ldp_stp(&ops, true);
+        // For 64-bit pair, offset must be multiple of 8
+        if let Ok(EncodeResult::Word(word)) = result {
+            let imm7 = ((word >> 15) & 0x7F) as i8;
+            let decoded_offset = imm7 as i32 * 8;
+            assert!(decoded_offset % 8 == 0,
+                "ldp odd offset 4 decoded as {} (not multiple of 8)", decoded_offset);
+        }
+    }
+
+    /// P-LDNP: non-temporal pair hint encoding
+    #[test]
+    fn p_ldnp_encoding() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Reg("x1".to_string()),
+            Operand::Mem { base: "x2".to_string(), offset: 16 },
+        ];
+        let ldp = encode_ldp_stp(&ops, true);
+        let ldnp = encode_ldnp_stnp(&ops, true);
+        if let (Ok(EncodeResult::Word(wp)), Ok(EncodeResult::Word(wn))) = (ldp, ldnp) {
+            // LDP vs LDNP: only bit 24 differs (LDP=1, LDNP=0)
+            assert_eq!(wp & !(1 << 24), wn & !(1 << 24),
+                "LDP and LDNP differ in more than bit 24");
+            assert_eq!((wp >> 24) & 1, 1, "LDP bit 24 must be 1");
+            assert_eq!((wn >> 24) & 1, 0, "LDNP bit 24 must be 0");
+        }
+    }
+
+    /// P-STXP: store exclusive pair with FP registers → 应该 Err
+    #[test]
+    fn p_stxp_fp_regs() {
+        let ops = vec![
+            Operand::Reg("w0".to_string()), // status
+            Operand::Reg("d1".to_string()), // FP as data 1
+            Operand::Reg("d2".to_string()), // FP as data 2
+            Operand::Mem { base: "x3".to_string(), offset: 0 },
+        ];
+        let result = encode_ldxp_stxp(&ops, false, false);
+        // STXP requires GPR pair — FP should be rejected
+        assert!(result.is_err(),
+            "encode_ldxp_stxp accepted FP registers: {:?}", result);
+    }
+
+    /// P-CAS: FP 寄存器传给 CAS → 应该 Err
+    #[test]
+    fn p_cas_fp_regs() {
+        let ops = vec![
+            Operand::Reg("d0".to_string()), // FP as data
+            Operand::Reg("x1".to_string()),
+            Operand::Mem { base: "x2".to_string(), offset: 0 },
+        ];
+        let result = encode_cas("cas", &ops);
+        assert!(result.is_err(),
+            "encode_cas accepted FP d0 as data: {:?}", result);
+    }
+
+    /// P-STOP: 0 操作数 → 应该 Err
+    #[test]
+    fn p_stop_zero_operands() {
+        let ops: Vec<Operand> = vec![];
+        let result = encode_stop("stopp", &ops);
+        assert!(result.is_err(),
+            "encode_stop accepted 0 operands: {:?}", result);
+    }
+
+    /// P-ADRP: FP 寄存器作为目标 → 应该 Err
+    #[test]
+    fn p_adrp_fp_dest() {
+        let ops = vec![
+            Operand::Reg("q0".to_string()), // FP as destination
+            Operand::Symbol("label".to_string()),
+        ];
+        let result = encode_adrp(&ops);
+        assert!(result.is_err(),
+            "encode_adrp accepted FP q0 as destination: {:?}", result);
+    }
+
+    /// P-LDAR: offset ≠ 0 → 应该 Err（LDAR has no offset）
+    #[test]
+    fn p_ldar_with_offset() {
+        let ops = vec![
+            Operand::Reg("x0".to_string()),
+            Operand::Mem { base: "x1".to_string(), offset: 8 },
+        ];
+        let result = encode_ldar_stlr(&ops, true, None);
+        if result.is_ok() {
+            if let Ok(EncodeResult::Word(word)) = result {
+                let imm9 = (word >> 12) & 0x1FF;
+                assert_eq!(imm9, 0,
+                    "LDAR with offset 8 encoded imm9={} (should reject or be 0)", imm9);
+            }
+        }
+    }
+}

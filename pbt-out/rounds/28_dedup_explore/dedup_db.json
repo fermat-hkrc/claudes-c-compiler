@@ -1,5 +1,13 @@
 [
  {
+  "n": 1076,
+  "t": "Bug: encode_not silently ignores extra operands"
+ },
+ {
+  "n": 1075,
+  "t": "Bug: encode_ldxr_stxr silently encodes non-zero imm9 for LDXR with offset (LDXR x0, [x1, #8] \u2192 imm9=479 instead of rejecting or encoding 0)"
+ },
+ {
   "n": 1074,
   "t": "Bug: encode_mv silently ignores extra operands"
  },
@@ -382,6 +390,10 @@
  {
   "n": 978,
   "t": "Bug: encode_fp_arith_d treats a non-rounding-mode 4th operand as DYN"
+ },
+ {
+  "n": 977,
+  "t": "Bug: encode_fp_arith ignores a 5th operand"
  },
  {
   "n": 977,
@@ -1590,10 +1602,6 @@
  {
   "n": 676,
   "t": "Bug: encode_neon_logical accepts arrangements other than .8b/.16b"
- },
- {
-  "n": 675,
-  "t": "Bug: encode_neon_logical encodes GPR/SP/bare/FP sources as NEON registers"
  },
  {
   "n": 675,
