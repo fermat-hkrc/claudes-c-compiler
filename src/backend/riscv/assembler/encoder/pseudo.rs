@@ -830,3 +830,44 @@ mod pbt_extra_unclaimed {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_final6 {
+    use super::*;
+    use crate::backend::riscv::assembler::parser::Operand;
+    fn r(s: &str) -> Operand { Operand::Reg(s.to_string()) }
+    fn sym(s: &str) -> Operand { Operand::Symbol(s.to_string()) }
+    fn i(v: i64) -> Operand { Operand::Imm(v) }
+
+    #[test]
+    fn p_final6_extra() {
+        let cases: Vec<(&str, Vec<Operand>, Vec<Operand>)> = vec![
+            ("encode_call", vec![sym("foo")], vec![sym("foo"), r("a0")]),
+            ("encode_tail", vec![sym("foo")], vec![sym("foo"), r("a0")]),
+            ("encode_j_pseudo", vec![sym("L")], vec![sym("L"), r("a0")]),
+            ("encode_jr", vec![r("ra")], vec![r("ra"), r("a0")]),
+            ("encode_jump", vec![sym("L")], vec![sym("L"), r("a0")]),
+            ("encode_rdcsr", vec![r("a0"), i(0x300)], vec![r("a0"), i(0x300), i(1)]),
+        ];
+        let mut hits = vec![];
+        for (name, base, extra) in &cases {
+            let rb = disp(name, base); let re = disp(name, extra);
+            if let (Ok(_), Ok(_)) = (rb, re) { println!("  {}: extra IGNORED", name); hits.push(name); }
+        }
+        for (name, base, extra) in &cases {
+            println!("ACT|{}|{:?}", name, disp(name, extra));
+        }
+        println!("IGNORED: {:?}", hits);
+        assert!(hits.is_empty(), "{:?} ignore extras", hits);
+    }
+    fn disp(name: &str, ops: &[Operand]) -> Result<EncodeResult, String> {
+        match name {
+            "encode_call" => encode_call(ops),
+            "encode_tail" => encode_tail(ops),
+            "encode_j_pseudo" => encode_j_pseudo(ops),
+            "encode_jr" => encode_jr(ops),
+            "encode_jump" => encode_jump(ops),
+            _ => encode_rdcsr("csrr", ops),
+        }
+    }
+}

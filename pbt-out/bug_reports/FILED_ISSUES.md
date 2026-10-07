@@ -162,3 +162,7 @@
 | 45 | driver include paths | CPATH/C_INCLUDE_PATH ignored | **new issue filed** | [#1164](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1164) |
 | 45 | linker args | -Wl,-Map silently ignored (no map file) | **new issue filed** | [#1165](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1165) |
 | 46 | linker_common/symbols.rs | duplicate strong symbols link silently (data+function) | **new issue filed** | [#1166](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1166) |
+| 46 | riscv encoder pseudo | encode_call silently ignores extra operands | **new issue filed** | [#1167](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1167) |
+| 46 | riscv encoder pseudo | encode_tail silently ignores extra operands | **new issue filed** | [#1168](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1168) |
+| 46 | riscv encoder pseudo | encode_j_pseudo silently ignores extra operands | **new issue filed** | [#1169](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1169) |
+| 46 | riscv encoder pseudo | encode_jr silently ignores extra operands | **new issue filed** | [#1170](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1170) |
