@@ -130,6 +130,8 @@ mod encode_li_pbt;
 mod encode_mv_pbt;
 #[cfg(test)]
 mod encode_not_pbt;
+#[cfg(test)]
+mod encode_negw_pbt;
 
 pub(crate) use base::*;
 pub(crate) use atomics::*;

@@ -1,3 +1,26 @@
+# Confirmed invariants (encode_negw)
+
+- Valid 2-operand `negw rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `negw rd, rs` and of `subw rd, x0, rs` byte-for-byte (1000 cases). KAT pins negw a0, a1 = subw a0, x0, a1 = 0x40b0053b; negw zero, zero = 0x4000003b; negw t6, ra = 0x40100fbb; negw fp, s0 = 0x4080043b.
+- R-type OP-32 layout: opcode 0111011, funct3=000, funct7=0100000, rs1=x0, rd and rs2 in their fields, including bounds 0 and 31 (1000 cases).
+- ABI names, xN, fp/s0, and zero/x0 aliases produce the same encoding. Imm(0..=31) as rd/rs matches xN (get_reg GCC bare-number path). encode_negw(rd, rs) equals encode_alu_reg_w SUBW on [rd, x0, rs] (1000 cases).
+- Too few operands and invalid/FP/non-GPR names return Err (1000 cases).
+- Extra operand currently disagrees with the README two-operand form and llvm-mc (see bugs).
+
+## Environment (encode_negw)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15.0.6) assembling `negw rd, rs` and `subw rd, x0, rs`. llvm-mc pretty-prints `subw rd, x0, rs` as `negw`.
+- Harness: src/backend/riscv/assembler/encoder/encode_negw_pbt.rs, cargo test --lib encode_negw_pbt, proptest cases=1000.
+- Dispatch: encoder/mod.rs:864 "negw" => encode_negw(operands). Operands passed through. No arity check.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_negw NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of llvm-mc/subw/R-type/ABI/arity-invalid (passing) and extra operand (filed bug). Closed: tier round spent; remaining documented gap is the extra-operand bug.
+
+## Quirks (encode_negw)
+
+- encode_negw has no rustdoc or inline comment; contract is README.md:322 `negw rd, rs` → `subw rd, x0, rs`.
+- RISC-V Unprivileged ISA NEGW pseudo is SUBW rd, x0, rs; this assembler matches that expansion (and llvm-mc).
+- get_reg accepts Imm(0..=31) as a bare register number.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+- encode_neg (OP / SUB) is a different job from encode_negw (OP-32 / SUBW); encodings differ in opcode only when rd/rs match.
+
 # Confirmed invariants (encode_not)
 
 - Valid 2-operand `not rd, rs` with rd, rs GPR matches llvm-mc `-triple=riscv64 -show-encoding` of `not rd, rs` and of `xori rd, rs, -1` byte-for-byte (1000 cases). KAT pins not a0, a1 = xori a0, a1, -1 = 0xfff5c513; not zero, zero = 0xfff04013; not t6, ra = 0xfff0cf93; not fp, s0 = 0xfff44413.
