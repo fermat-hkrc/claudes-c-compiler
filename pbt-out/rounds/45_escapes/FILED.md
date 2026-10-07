@@ -10,3 +10,9 @@
 > #1160
 # -M dependency output omits ALL included headers — only the main .c is listed (make never rebuilds on header changes)
 > #1161
+# -MF is ignored — dependency rule goes to STDOUT instead of the named file (gcc -MF FILE writes FILE)
+> #1162
+# -g is silently ignored — zero DWARF/debug sections emitted (gcc: 8); ccc binaries have neither symbols (#1092) nor debug info, gdb- unusable
+> #1163
+# CPATH ignored
+> #1164

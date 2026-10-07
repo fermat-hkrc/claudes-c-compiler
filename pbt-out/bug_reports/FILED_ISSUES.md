@@ -157,3 +157,6 @@
 | 45 | src/frontend/preprocessor/includes.rs | self-include builds silently (no depth diagnostic) | **new issue filed** | [#1159](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1159) |
 | 45 | driver -E -C | -C ignored, comments stripped | **new issue filed** | [#1160](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1160) |
 | 45 | driver -M | -M omits included headers | **new issue filed** | [#1161](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1161) |
+| 45 | driver -MF | dep rule to stdout, no file | **new issue filed** | [#1162](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1162) |
+| 45 | driver/backend -g | zero DWARF emitted (flag no-op) | **new issue filed** | [#1163](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1163) |
+| 45 | driver include paths | CPATH/C_INCLUDE_PATH ignored | **new issue filed** | [#1164](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1164) |
