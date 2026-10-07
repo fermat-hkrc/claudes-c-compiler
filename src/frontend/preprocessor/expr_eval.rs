@@ -616,3 +616,90 @@ mod pbt_text_proc {
         assert_eq!(fails, 0, "{} splice/include corners differ from gcc", fails);
     }
 }
+
+#[cfg(test)]
+mod pbt_macro_table_sm {
+    //! Round-36b (strengthening): macro-table LIFECYCLE state machine.
+    //! Ops: define / undef / redefine(identical) / redefine(different) / probe.
+    //! Model: Rust map predicting every probe; oracle: gcc token stream must
+    //! agree with the model (and thus ccc must too). Finds ordering/lifecycle bugs
+    //! the single-shot corners cannot: undef-then-redefine, shadowing, probe
+    //! right after each mutation.
+    use proptest::prelude::*;
+
+    #[derive(Debug, Clone)]
+    enum Op { Def(&'static str, u32), Undef(&'static str), RedefSame(&'static str), RedefDiff(&'static str, u32), Probe(&'static str) }
+
+    fn arb_op(i: usize) -> impl Strategy<Value = Op> {
+        let names = ["A", "B", "C"];
+        let name = names[i % 3];
+        prop_oneof![
+            3 => (0u32..1000).prop_map(move |v| Op::Def(name, v)),
+            2 => Just(Op::Undef(name)),
+            1 => Just(Op::RedefSame(name)),
+            2 => (0u32..1000).prop_map(move |v| Op::RedefDiff(name, v)),
+            3 => Just(Op::Probe(name)),
+        ]
+    }
+
+    /// P-MACRO-LIFECYCLE: 每步 probe 的分支 == 模型 == gcc
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1000))]
+        #[test]
+        fn p_macro_lifecycle_vs_model_gcc(
+            ops in prop::collection::vec(arb_op(0), 1..4)
+                .prop_flat_map(|a| prop::collection::vec(arb_op(1), 1..4).prop_map(move |b| a.iter().cloned().chain(b.iter().cloned()).collect::<Vec<_>>()))
+                .prop_flat_map(|ab| prop::collection::vec(arb_op(2), 1..4).prop_map(move |c| ab.iter().cloned().chain(c.iter().cloned()).collect::<Vec<_>>())),
+        ) {
+            use std::collections::HashMap;
+            let mut model: HashMap<&str, u32> = HashMap::new();
+            let mut src = String::new();
+            let mut expected: Vec<bool> = Vec::new();
+            for op in &ops {
+                match op {
+                    Op::Def(n, v) => { model.insert(n, *v); src.push_str(&format!("#define {} {}\n", n, v)); }
+                    Op::Undef(n) => { model.remove(n); src.push_str(&format!("#undef {}\n", n)); }
+                    // 重定义语义：同体重定义合法；不同体在 gcc 是 -Werror-级别警告但仍生效（覆盖）
+                    Op::RedefSame(n) => {
+                        if let Some(v) = model.get(n) { src.push_str(&format!("#define {} {}\n", n, v)); }
+                        else { src.push_str(&format!("#define {} 1\n", n)); model.insert(n, 1); }
+                    }
+                    Op::RedefDiff(n, v) => { model.insert(n, *v); src.push_str(&format!("#define {} {}\n", n, v)); }
+                    Op::Probe(n) => {
+                        let defined = model.contains_key(n);
+                        expected.push(defined);
+                        src.push_str(&format!(
+                            "#ifdef {}\nPROBE{}\n#else\nprobe{}\n#endif\n",
+                            n, expected.len(), expected.len()));
+                    }
+                }
+            }
+            if expected.is_empty() { return Ok(()); }
+
+            // gcc oracle
+            let f = std::env::temp_dir().join("pbt_sm.c");
+            std::fs::write(&f, &src).unwrap();
+            let g = std::process::Command::new("gcc").args(["-E","-P"]).arg(&f).output().unwrap();
+            prop_assert!(g.status.success(), "gcc rejected:\n{}", src);
+            let gtxt = String::from_utf8_lossy(&g.stdout);
+            for (i, want) in expected.iter().enumerate() {
+                let up = format!("PROBE{}", i + 1);
+                let lo = format!("probe{}", i + 1);
+                let gcc_says = gtxt.contains(&up);
+                prop_assert_eq!(gcc_says, *want,
+                    "gcc DISAGREES with model at probe {} (model={}, gcc={})\n{}", i + 1, want, gcc_says, src);
+            }
+            // 模型对 gcc 成立；现在 ccc 必须同样
+            let mut pp = crate::frontend::preprocessor::Preprocessor::new();
+            let out = pp.preprocess(&src);
+            for (i, want) in expected.iter().enumerate() {
+                let up = format!("PROBE{}", i + 1);
+                let lo = format!("probe{}", i + 1);
+                let ccc_says = out.contains(&up) && !out.contains(&format!("pROBE{}", i + 1));
+                let ccc_says = if out.contains(&up) { true } else if out.contains(&lo) { false } else { prop_assert!(false, "probe {} marker missing in ccc output\n{}", i + 1, src); true };
+                prop_assert_eq!(ccc_says, *want,
+                    "ccc DISAGREES at probe {} (model={}, ccc={})\n{}", i + 1, want, ccc_says, src);
+            }
+        }
+    }
+}

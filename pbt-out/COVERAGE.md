@@ -76,3 +76,9 @@
 | predefined macro set | src/frontend/preprocessor/predefined_macros.rs | manual /tmp/pm.c | value diff vs gcc | 12/12 exact |
 | driver modes | src/driver/*.rs (4 files) | manual matrix | -E/-c/-S/relink/a.out | all green |
 | ELF output structure | src/backend/linker_common/write.rs + src/backend/elf/ (11 files) | readelf probes | symtab/eh_frame/phdr | symtab missing → **#1092**; rest green |
+
+## Round 36 — optimizer interaction differential (rich C at -O0/-O1/-O2)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| pass interactions (narrow/copy_prop/if_convert/dce/cfg_simplify/simplify/gvn/fold/div_by_const) | src/passes/*.rs | src/passes/mod.rs::pbt_opt_rich | p_opt_rich_vs_gcc | 150 cases × {default,-O1,-O2} all == gcc -O0; bitfields/structs/unions/float/fn-ptr/switch/goto |
+| macro-table lifecycle state machine | src/frontend/preprocessor/macro_defs.rs | expr_eval.rs ::pbt_macro_table_sm | p_macro_lifecycle_vs_model_gcc | 1000 cases, model+gcc dual oracle, every-step probe — ALL GREEN |

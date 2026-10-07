@@ -1,35 +1,53 @@
-# COVERAGE_STATUS.md
+# PBT Coverage Status
 
-> Last updated: 2026-10-06
-> Campaign: pbt-test-v2 (whole-repo loop, 29 rounds)
-> Coverage evidence level: file-level (symbol presence)
-> Total: 74 unique issues filed (#516-#1068) + 3 found_already
+> Last updated: 2026-10-07 (campaign pbt-test-v2 — 36 rounds complete)
+> Coverage evidence: file-level (symbol presence) — no .gcda/.profraw; coverage_gaps' passes NOT LINKED list is the known cfg(test) false negative.
+> Total issues filed: 84 unique + 14 found_already (deduped)
 
-## Module Status
+## Round Coverage Map
 
-| Module | Files | PBT Coverage | Issues |
-|--------|-------|-------------|--------|
-| src/common | 15 | 8/15 files with PBT (7 glue skipped w/ reason) | #516-518, #765, #806 |
-| src/frontend/lexer | ~10 | full | #526-530 |
-| src/frontend/preprocessor | ~15 | full | #538-540 |
-| src/frontend/parser | ~8 | full (battery + PBT) | #799, #848 |
-| src/frontend/sema | ~12 | full | #559-563, #812, #1047-1048 |
-| src/ir | 53 | full (13 properties) | #573-576 |
-| src/passes | 18 | full (14 properties + LICM/IVSR) | #759-760, #805 |
-| src/ir/lowering | 42 | E2E differential (9 deep passes) | 0 (all match gcc) |
-| src/backend root | 17 | full (8 properties) | #765, #808 |
-| src/backend/x86 | 53 | E2E + asm deep (58 families) | #774-777, #782, #807, #818-820, #822, #826-827, #834-835, #840-841, #1051-1055 |
-| src/backend/arm | 41 | asm deep (100+ families) | #791-795, #808, #823, #825, #828-831, #836-839, #1042-1043, #1052, #1056-1057, #1062-1064 |
-| src/backend/riscv | 42 | asm deep (100+ families) | #796-798, #821, #824, #833, #1041, #1068 |
-| src/backend/i686 | 40 | E2E + asm validation | #770, #800, #827, #1039 |
-| src/backend/elf | 12 | 1/12 with PBT (11 structural) | 0 |
-| src/backend/linker_common | 17 | E2E only | 0 |
-| src/backend/stack_layout | 7 | E2E only | 0 |
-| src/driver | 5 | 1/5 with PBT | 0 |
+| Round | Module | Issues | Status |
+|-------|--------|--------|--------|
+| 01 | src/common | #516-518 (+#2 dup) | ✅ complete |
+| 02 | src/frontend/lexer | #526-530 | ✅ complete |
+| 03 | src/frontend/preprocessor | #538-540 | ✅ complete |
+| 04 | src/frontend/parser | 0 bugs | ✅ complete |
+| 05 | src/frontend/sema | #559-563 | ✅ complete |
+| 06 | src/ir | #573-576 (+#3 dup) | ✅ complete |
+| 07 | src/passes | #759-760 | ✅ complete |
+| 08 | src/backend root | #765 | ✅ complete |
+| 09 | src/backend/x86 E2E | 0 bugs | ✅ complete |
+| 10 | src/backend/arm asm | 0 bugs | ✅ complete |
+| 11 | src/backend/riscv asm | 0 bugs | ✅ complete |
+| 12 | src/backend/i686 E2E | #770 | ✅ complete |
+| 13 | src/backend/elf+linker | 0 bugs | ✅ complete |
+| 14 | src/driver | 0 bugs | ✅ complete |
+| 15 | x86 assembler deep | #774-777, #782 | ✅ complete |
+| 16 | ARM assembler deep | #791-795 | ✅ complete |
+| 17 | RISC-V assembler deep | #796-798 | ✅ complete |
+| 18 | parser battery | #799 | ✅ complete |
+| 19 | i686 asm + C features | #800 | ✅ complete |
+| 20 | linker deep | 0 bugs | ✅ complete |
+| 21 | exotic C battery | #805 | ✅ complete |
+| 22 | ABI/NaN/-S roundtrip | #806-807 | ✅ complete |
+| 23-24 | second loop (frontend+passes) | #808, #812 | ✅ complete |
+| 25 | second loop (ir+common) | 0 bugs | ✅ complete |
+| 26 | asm deep sweep (all 4 arch) | #818-841 | ✅ complete |
+| 27 | third loop (common+opt) | 0 bugs | ✅ complete |
+| 28 | dedup explore + NEON + FP-imm | #1042-1068 | ✅ complete |
+| 29 | random C PBT (500 int+300 float) | 0 bugs | ✅ complete |
+| 30 | encode-level adversarial (ARM/RISC-V) + ir/ core | #1073, #1075, #1077, #1078, #1080 (+11 dups) | ✅ complete |
+| 31 | ir/lowering deep (globals/ptr/complex/compound) | #1084, #1087 | ✅ complete |
+| 32 | preprocessor deep (if-corners/macro/splice) | #1088, #1089 | ✅ complete |
+| 33 | linker_common multi-TU | 0 bugs | ✅ complete |
+| 34 | stack_layout deep (frames/VLA/alloca) | 0 bugs | ✅ complete |
+| 35 | elf/driver/predefined_macros | #1092 (probe) | ✅ complete |
+| 36 | optimizer interactions @-O1/-O2 + macro SM (strengthening) | 0 bugs | ✅ complete |
 
-## Skipped Surfaces (with reason)
+## Unperformed Coverage Sweep
 
-- **src/common/temp_files.rs** — I/O glue, integration-bound
-- **src/common/type_builder.rs** — API deep-bound to parser AST
-- **ARM NEON encoders** — teammate's territory (#474-#773)
-- **Coverage-driven sweep** — no .gcda/.profraw available
+- **Coverage-driven sweep (coverage_gaps tool):** NOT AVAILABLE — no .gcda/.profraw in this environment; tool reported "Not in a PBT campaign". File-level evidence used instead.
+- **ARM NEON encoder surface:** EXCLUDED — teammate's territory (#474-#773, 263 issues)
+- **Round 36 strengthening (state-machine, 1000 cases):** completed ALL GREEN — macro-table lifecycle model+gcc dual oracle.
+
+Detail tables for rounds 31-36: see pbt-out/COVERAGE.md (appended sections).

@@ -747,3 +747,113 @@ mod pbt_tests_opt {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_opt_rich {
+    //! Round-36: optimizer interaction differential — rich C features
+    //! (bitfields/structs/unions/float/fn-pointers/switch/goto) at -O0/-O1/-O2.
+    //! Oracle: gcc -O0 (semantics are opt-level invariant for defined behavior).
+    //! Tests pass INTERACTIONS: narrow+copy_prop+if_convert+dce+cfg_simplify chains.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/36_opt_rich/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// 富特性函数体生成器：每个 seed 组合多种特性
+    fn render(v1: u32, v2: u32, v3: u64, mode: u8) -> String {
+        let mut s = String::from("#include <stdio.h>\n#include <string.h>\n");
+        s.push_str("struct B { unsigned a:3; unsigned b:5; int c:24; };\n");
+        s.push_str("struct S { char t[4]; short n; double d; };\n");
+        s.push_str("union U { unsigned u; char c[4]; };\n");
+        s.push_str("static int add2(int x) { return x + 2; }\n");
+        s.push_str("static int mul3(int x) { return x * 3; }\n");
+        s.push_str("static int (*pick(int k))(int) { return k & 1 ? add2 : mul3; }\n");
+        s.push_str(&format!(
+"int main(void) {{
+    struct B bf = {{ {}, {}, {} }};
+    bf.a = (unsigned)bf.a + 1; bf.a &= 7;  // 位域回绕
+    struct S st = {{ {{ 'a', 'b', 'c', 'd' }}, {}, {:.6} }};
+    st.n = (short)(st.n * 2 - 1);
+    union U u; u.u = 0x{:x}; u.c[1] = (char){};
+    double dv = {:.9} * 2.0 + (double)bf.c / 7.0;
+    float fv = (float)({}.5f) - 0.25f;
+    long prod = 1;
+    for (int i = 0; i < 6; i++) prod = prod * (i + (long)bf.a % 5 + 1) % 1000003L;
+    int sw = {} % 5, acc = 0;
+    switch (sw) {{
+        case 0: acc += 1; /* fallthrough */
+        case 1: acc += 2; break;
+        case 2: acc += 4; goto tail;
+        case 3: acc += 8; break;
+        default: acc += 16; break;
+    }}
+    acc += 32;
+tail:
+    acc += 64;
+    int (*fp)(int) = pick({});
+    unsigned mask = 0x{:x}u;
+    unsigned rot = (mask << {}) | (mask >> (32 - ({} % 31 + 1)));
+    long double skip = 0; (void)skip; // 不用 long double (#1084)
+    printf(\"bf=%u %u %d st=%d %.3f u=%02x%02x%02x%02x dv=%.6f fv=%.3f prod=%ld acc=%d fp=%d rot=%u\\n\",
+        bf.a, bf.b, bf.c, st.n, st.d,
+        (unsigned char)u.c[0], (unsigned char)u.c[1], (unsigned char)u.c[2], (unsigned char)u.c[3],
+        dv, fv, prod, acc, fp(7), rot);
+    return 0;
+}}", 
+            v1 % 8, (v1 >> 3) % 32, (v2 as i32 % 16777216) - 8388608,
+            (v1 % 30000) as i16, (v2 % 100000) as f64 / 7.0,
+            v1 | 0x41424344u32, (v2 % 100),
+            (v3 % 1000000) as f64 / 9.0, v2 % 10,
+            v1 % 5, v2 % 2,
+            (v1.wrapping_mul(2654435761)) , v3 % 31, v3 % 31));
+        s
+    }
+
+    /// P-OPT-RICH: 富特性 -O0/-O1/-O2 三级全部 == gcc
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(150))]
+        #[test]
+        fn p_opt_rich_vs_gcc(
+            v1 in any::<u32>(), v2 in any::<u32>(), v3 in any::<u64>(), mode in any::<u8>(),
+        ) {
+            let prog = render(v1, v2, v3, mode);
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+            let src = dir.join(format!("R{}.c", case));
+            std::fs::write(&src, &prog).unwrap();
+            let gcc_out = dir.join(format!("R{}g", case));
+            let gc = Command::new("gcc").args(["-w","-O0","-o"]).arg(&gcc_out).arg(&src).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject: {}", String::from_utf8_lossy(&gc.stderr).lines().next().unwrap_or(""));
+            let g_run = Command::new(&gcc_out).output().unwrap();
+            let want = String::from_utf8_lossy(&g_run.stdout).into_owned();
+
+            for lvl in ["", "-O1", "-O2"] {
+                let ccc_out = dir.join(format!("R{}c{}", case, lvl.replace('-', "m")));
+                let argv = vec!["ccc".to_string(),
+                    if lvl.is_empty() { String::new() } else { lvl.to_string() },
+                    src.to_string_lossy().into_owned(),
+                    "-o".to_string(), ccc_out.to_string_lossy().into_owned()];
+                let argv: Vec<String> = argv.into_iter().filter(|a| !a.is_empty()).collect();
+                let mut d = crate::driver::Driver::new();
+                let cc = match d.parse_cli_args(&argv) { Ok(true) => Err("cli".into()), Ok(false) => d.run(), Err(e) => Err(e) };
+                match cc {
+                    Ok(()) => {}
+                    Err(e) => prop_assert!(false, "ccc {} failed: {}\n{}", lvl, &e[..e.len().min(150)], prog),
+                }
+                let r = Command::new(&ccc_out).output().unwrap();
+                let _ = std::fs::remove_file(&ccc_out);
+                prop_assert!(r.status.success(), "ccc {} crashed", lvl);
+                let got = String::from_utf8_lossy(&r.stdout);
+                prop_assert_eq!(got, want.as_str(), "OPT MISMATCH at {} (gcc -O0 reference)\n{}", lvl, prog);
+            }
+            let _ = std::fs::remove_file(&src); let _ = std::fs::remove_file(&gcc_out);
+        }
+    }
+}
