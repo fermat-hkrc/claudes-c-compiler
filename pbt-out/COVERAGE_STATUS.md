@@ -1,26 +1,24 @@
-# Coverage Status
+# PBT Coverage Status
 
-**Mode:** incremental (standard tier)
-**Primary target:** encode_sgtz (pseudo.rs:275)
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no native .gcda/.profraw for this Rust cargo test run; C++ reporter listed unrelated binaries and marked encode_sgtz NOT LINKED. Execution evidence is the cargo lib test run itself (`cargo test --lib encode_sgtz`, 11 tests, real SUT symbol linked into `ccc` libtest).
+> Last updated: 2026-10-07 (campaign: encode_beqz)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw for Rust cargo tests; encode_beqz NOT LINKED in C++ pbt binaries. Execution evidence is cargo test of encode_beqz_pbt (13 items).
+
+## Summary
+
+| Metric | Value |
+|--------|-------|
+| Campaign target | encode_beqz (pseudo.rs:282) |
+| Properties | 10 (9 passing, 1 failing) |
+| Bugs | 1 (extra operand ignored) |
+| Effort tier | standard |
+| Contract-surface sweep | 1 round spent (manual audit; coverage_gaps file-level only) |
 
 ## This campaign
 
-| Function | Scanned | Tested | Notes |
-|----------|---------|--------|-------|
-| encode_sgtz | yes | yes | 8/9 properties passing; 1 bug (extra operand) |
+| Function | Source | Tested | Result |
+|----------|--------|--------|--------|
+| encode_beqz | pseudo.rs | yes | 9 pass / 1 fail (extra operand) |
 
-## Contract-surface sweep (1 round, standard)
+## Coverage evidence level
 
-- llvm-mc differential (`sgtz` and `slt rd, x0, rs`): covered, passing
-- R-type field invariant + bounds 0/31: covered, passing
-- ABI/xN/fp/zero/Imm alias metamorphic: covered, passing
-- Field isolation: covered, passing
-- Arity-too-few + invalid operand negative: covered, passing
-- Extra operand negative: covered, **failing** (filed bug)
-
-Closed: tier sweep round spent; remaining documented gap is the extra-operand bug.
-
-## Skipped (HARD scope)
-
-All other pseudo.rs functions — outside `--func encode_sgtz`.
+file-level (symbol presence) — native line coverage unavailable for this Rust lib-test target under the campaign's C++ coverage reporter.

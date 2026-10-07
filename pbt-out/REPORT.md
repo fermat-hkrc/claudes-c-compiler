@@ -1,55 +1,54 @@
-# PBT Campaign Report: encode_sgtz
+# PBT Campaign Report: encode_beqz
 
 ## Summary
 
-**Verdict:** 1 medium: `encode_sgtz` silently ignores extra operands, so `sgtz rd, rs, extra` encodes as `slt rd, x0, rs` with no diagnostic (README two-operand form; llvm-mc rejects).
+**Verdict:** 1 medium: `encode_beqz` silently ignores a third (or later) operand, so `beqz a0, foo, a1` encodes as `beq a0, x0, foo` with a Branch reloc — typos assemble without error.
 **Date:** 2026-10-07
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_sgtz
-**Tests:** 9 properties (+ 1 KAT + 1 regression witness)
-**Result:** 8 passing, 1 bug
-**Change surface:** 1 changed function (encode_sgtz), 1 with properties, 0 error-handling changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no LLVM profraw for this Rust target and listed encode_sgtz NOT LINKED among unrelated C++ pbt binaries; Rust `cargo test --lib encode_sgtz` exercises the real symbol. Sweep: one standard-tier manual audit of documented behaviors.
+**Modules tested:** encode_beqz
+**Tests:** 10 properties (plus KAT gate + regression witness)
+**Result:** 9 passing, 1 bug
+**Change surface:** 1 changed function (encode_beqz), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (Rust cargo tests are not the C++ instrumented binaries); encode_beqz listed NOT LINKED there. Manual contract-surface audit used instead (standard tier, 1 round spent).
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_sgtz | 9 (+KAT+regression) | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_beqz | 10 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_sgtz silently ignores extra operands
+### B1: encode_beqz silently ignores extra operands
 
-**Formal:** ∀ rd, rs ∈ GPRNames, extra ∈ Operand. encode_sgtz([Reg(rd), Reg(rs), extra]) = Err(_)
-**Contract evidence:** documented README.md:327 "`sgtz rd, rs`  | `slt rd, x0, rs`" (two-operand form); llvm-mc rejects `sgtz a0, a1, a2`
-**Documentation conflict:** (none) — README asserts the two-operand form; it does not declare extra operands valid
+**Formal:** ∀ rs ∈ GPRNames, tgt ∈ LabelIdents, extra ∈ Operand. encode_beqz([Reg(rs), Symbol(tgt), extra]) = Err(_)
+**Contract evidence:** documented src/backend/riscv/assembler/README.md:328 "`beqz/bnez` → `beq/bne rs, x0, label`" (two-operand form); llvm-mc rejects a third operand with "invalid operand for instruction"
+**Documentation conflict:** (none) — README asserts the two-operand expansion; it does not declare extra operands valid
 **Severity:** medium
-**Counterexample:** `encode_sgtz([Reg("zero"), Reg("zero"), Reg("zero")])` then expect Err
-**Expected / Actual:** Err / Ok(Word(0x00002033))
-**Impact:** Typos and stray operands assemble without error, silently dropping the third operand and encoding `slt rd, x0, rs`.
-**Root cause:** `pseudo.rs:276-277` reads only operands 0 and 1 via `get_reg` and never checks `operands.len()`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:276`
+**Counterexample:** `encode_beqz([Reg("a0"), Symbol("foo"), Reg("a1")])` then observe Ok; PBT shrunk to `rs="zero", tgt="foo", extra=Reg("zero")`
+**Expected / Actual:** Err / Ok(WordWithReloc { word: 0x00050063, reloc: Branch/"foo"/0 })
+**Impact:** Assembler accepts ill-formed `beqz` with trailing garbage and still emits a relocatable BEQ-vs-x0; silent mis-assembly of typos.
+**Root cause:** `pseudo.rs:283-284` only reads operands[0] and operands[1]; no `operands.len()` check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:283`
 ```rust
-    let rd = get_reg(operands, 0)?;
-    let rs2 = get_reg(operands, 1)?;
+    let rs1 = get_reg(operands, 0)?;
+    let label = get_branch_target(operands, 1)?;
 ```
 **Suggested fix:** Reject any operand list whose length is not exactly 2.
 ```rust
     if operands.len() != 2 {
-        return Err(format!("sgtz: expected 2 operands, got {}", operands.len()));
+        return Err(format!("beqz: expected 2 operands, got {}", operands.len()));
     }
-    let rd = get_reg(operands, 0)?;
-    let rs2 = get_reg(operands, 1)?;
+    let rs1 = get_reg(operands, 0)?;
+    let label = get_branch_target(operands, 1)?;
 ```
-**Bug report:** bug_reports/encode_sgtz_extra_operand.md
-**Repro seed:** cc 73f69bb79d5ce6be84d02513ebe919fec72f886db4d1a4106adfe45e9a3d3653
+**Bug report:** bug_reports/encode_beqz_extra_operand.md
+**Repro seed:** proptest cc ee5d7ed3a355d7ed93d0db8071c986bdebc763bf4d3d16d5097da5466efe476b (encode_beqz_neg_extra); deterministic regression needs no seed
 **Raw output:**
 ```text
-Test failed: extra operand must Err for sgtz zero, zero (llvm-mc rejects: true)
-minimal failing input: rd = "zero", rs = "zero", extra = Reg("zero")
-sgtz zero, zero with a third operand must be rejected; got Ok(Word(8243))
+test_encode_beqz_regression_extra_operand ... FAILED
+beqz a0, foo with a third operand must be rejected ... got Ok(WordWithReloc { word: 327779, reloc: Relocation { reloc_type: Branch, symbol: "foo", addend: 0 } })
 ```
 
 ## Design Caveats
@@ -60,38 +59,49 @@ sgtz zero, zero with a third operand must be rejected; got Ok(Word(8243))
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_sgtz_pbt.rs | 9 proptest properties + KAT + regression |
-| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_sgtz_pbt;` registration |
+| src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs | 10 PBT properties + KAT + regression |
+| src/backend/riscv/assembler/encoder/mod.rs | `mod encode_beqz_pbt;` registration (additive) |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_sgtz -- --test-threads=1
-cargo test --lib test_encode_sgtz_regression_extra_operand -- --test-threads=1
+cargo test --lib encode_beqz -- --test-threads=1
+```
+
+Bug B1 (serial):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_beqz_regression_extra_operand -- --test-threads=1
+```
+
+Build contract (user-supplied):
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_sgtz_extra_operand.md
-- pbt-out/bug_reports/encode_sgtz_extra_operand.html
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/run/encode_sgtz_test1.log
+- pbt-out/REPORT.md — this report
+- pbt-out/REPORT.html — customer-facing overview (from report.json)
+- pbt-out/PROPERTIES.md — property ledger
+- pbt-out/PLAN.md — campaign checklist
+- pbt-out/COVERAGE.md — function coverage ledger
+- pbt-out/COVERAGE_STATUS.md — coverage statistics
+- pbt-out/report.json — machine-readable report
+- pbt-out/bug_reports/encode_beqz_extra_operand.md
+- pbt-out/bug_reports/encode_beqz_extra_operand.html
+- pbt-out/run/ — test logs
+- pbt-out/INVARIANTS.md — confirmed invariants for next campaigns
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 04:21 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 244/383 total | PBT candidates: 244 | Tested: 244 (100%) | 1 pass, 244 fail
+> Last updated: 2026-10-07 04:34 (campaign: coverage)
+> Files: 16/16 scanned (100%) | Functions: 245/383 total | PBT candidates: 245 | Tested: 245 (100%) | 1 pass, 245 fail
 
 ## Summary
 
@@ -100,10 +110,10 @@ cargo test --lib test_encode_sgtz_regression_extra_operand -- --test-threads=1
 | Total source files | 16 |
 | Files scanned | 16 / 16 (100%) |
 | Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 244 |
-| **Tested (of PBT candidates)** | **244 / 244 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 244 / -1 |
-| **Overall (tested / all functions)** | **244 / 383 (64%)** |
+| PBT candidates (from FUNCTION_INDEX) | 245 |
+| **Tested (of PBT candidates)** | **245 / 245 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 245 / -1 |
+| **Overall (tested / all functions)** | **245 / 383 (64%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -111,13 +121,13 @@ cargo test --lib test_encode_sgtz_regression_extra_operand -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 244 | 244 | 0 | 100% |
+|  | 245 | 245 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 244 | 244 | 0 | 100% |
+| unknown | 245 | 245 | 0 | 100% |
 
 ## File Coverage
 
@@ -131,7 +141,7 @@ cargo test --lib test_encode_sgtz_regression_extra_operand -- --test-threads=1
 | gp_integer.rs | 29 | 1 | 1 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
-| pseudo.rs | 44 | 10 | 10 | 100% | covered |
+| pseudo.rs | 44 | 11 | 11 | 100% | covered |
 
 ## Recommended Focus
 
@@ -384,3 +394,4 @@ cargo test --lib test_encode_sgtz_regression_extra_operand -- --test-threads=1
 | encode_snez | pseudo.rs |
 | encode_sltz | pseudo.rs |
 | encode_sgtz | pseudo.rs |
+| encode_beqz | pseudo.rs |

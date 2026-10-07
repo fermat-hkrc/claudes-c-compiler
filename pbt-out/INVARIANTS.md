@@ -994,3 +994,26 @@
 - parse_rm lowercases and maps unknown strings to 0b111; the parser only constructs RoundingMode for the closed set {rne,rtz,rdn,rup,rmm,dyn}, so unknown RM strings are not caller-reachable through encode_instruction.
 - encode_fp_unary does not range-check funct7 or rs2; callers supply the ISA FSQRT funct7 and rs2=0.
 - proptest 1.11 requires `#[test]` inside `proptest!`.
+
+# Confirmed invariants (encode_beqz)
+
+- Valid `beqz rs, Imm(0)` word matches llvm-mc `-triple=riscv64 -show-encoding` for ABI and xN names (1000 cases). KAT pins beqz a0,0 = 0x00050063, beqz zero,0 = 0x00000063, beqz t6,0 = 0x000f8063, beqz fp,0 = 0x00040063.
+- Documented expansion: word/reloc of encode_beqz([rs, Symbol(tgt)]) equals encode_branch_instr([rs, x0, Symbol(tgt)], funct3=000) and equals with rs2=zero (1000 cases). llvm-mc `beq rs, x0, 0` matches SUT word (1000 cases).
+- B-type layout holds: opcode=OP_BRANCH (0b1100011), funct3=000 (BEQ), rs1 as given, rs2=x0, imm=0; reloc is always RelocType::Branch with addend 0 (1000 cases).
+- ABI names and xN encode identically; fp aliases s0/x8 (1000 cases).
+- Symbol / Label / Reg-as-label targets with the same string yield identical WordWithReloc (1000 cases). Imm targets stringify into reloc.symbol while the word stays zero-imm BEQ (1000 cases).
+- Empty / single-operand arity, invalid rs (FP/vector/unknown/non-Reg), and invalid targets (Mem/Csr/Fence/RM/SymbolOffset/MemSymbol) return Err (1000 cases).
+- A third operand currently disagrees with llvm-mc (see bug encode_beqz_extra_operand): extras are silently ignored.
+
+## Environment (encode_beqz)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -show-encoding (LLVM 15).
+- Harness: src/backend/riscv/assembler/encoder/encode_beqz_pbt.rs, cargo test --lib encode_beqz, proptest cases=1000.
+- Dispatch: encoder/mod.rs "beqz" => encode_beqz(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter; encode_beqz NOT LINKED there). Sweep was a manual audit of llvm-mc / beq expansion / B-type / ABI / target forms / Imm / arity / invalid / extra. Closed: tier round spent; remaining documented gap is the filed extra-operand bug.
+
+## Quirks (encode_beqz)
+
+- Unlike encode_branch_instr, encode_beqz always returns WordWithReloc even for Imm targets (get_branch_target stringifies Imm); the B-type immediate field is always 0 and the reloc carries the target string.
+- get_branch_target intentionally accepts Reg as a label name (e.g. beqz a0, t1 where t1 is a label).
+- proptest 1.11 requires `#[test]` inside `proptest!`.
