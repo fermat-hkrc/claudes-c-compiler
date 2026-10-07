@@ -1,3 +1,27 @@
+# Confirmed invariants (encode_vmv_v_v)
+
+- Valid 2-operand unmasked vmv.v.v with vd, vs1 ∈ {v0..v31} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vmv.v.v v0, v0 = 0x5e000057; vmv.v.v v1, v2 = 0x5e0100d7; vmv.v.v v31, v30 = 0x5e0f0fd7.
+- Format layout holds: opcode=1010111, funct3=000, vm=1, vs2=0, vd in [11:7], vs1 in [19:15], funct6=010111 (1000 cases).
+- Field isolation: vd/vs1 bits independent of the other field (1000 cases).
+- vd/vs1 swap: swapping operands 0 and 1 swaps bits [11:7] and [19:15] and preserves all other bits (1000 cases).
+- Too few operands and non-vector registers (GPR/FP/v32/non-Reg) at either position return Err (1000 cases).
+- Extra operand and trailing v0.t currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_vmv_v_v)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_vmv_v_v_pbt.rs, cargo test --lib encode_vmv_v_v, proptest cases=1000.
+- Dispatch: encoder/mod.rs:1002 "vmv.v.v" => encode_vmv_v_v(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vmv_v_v NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / format / isolation / vd-vs1-swap / arity-bad-regs / extra / mask-v0.t. Closed: tier round spent; remaining documented gaps are the extra-operand and v0.t bugs.
+
+## Quirks (encode_vmv_v_v)
+
+- vreg_num lowercases; llvm-mc rejects uppercase register names.
+- get_vreg does not accept Imm(0..=31) as a bare vector register number.
+- vm is hardcoded to 1 (unmasked). RISC-V V 1.0 vmv.v.v has no masked form; llvm-mc rejects trailing v0.t.
+- Assembly order is vd, vs1 (two vector registers). vs2 is encoded as 0.
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_v_arith_vi)
 
 - Valid 3-operand unmasked OPIVI with vd, vs2 ∈ {v0..v31}, (mnem,funct6,imm) ∈ signed_family × [-16,15] ∪ slide_family × [0,31] matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` except vslideup.vi when vd overlaps vs2 (llvm-mc architectural overlap check; skipped). signed_family = {(vadd.vi,000000),(vand.vi,001001),(vor.vi,001010),(vxor.vi,001011)}; slide_family = {(vslideup.vi,001110),(vslidedown.vi,001111)}. KAT pins vadd.vi v0, v0, 0 = 0x02003057; vadd.vi v1, v2, 3 = 0x0221b0d7; vadd.vi v31, v30, 15 = 0x03e7bfd7; vadd.vi v1, v2, -1 = 0x022fb0d7; vadd.vi v1, v2, -16 = 0x022830d7; vand.vi v1, v2, 3 = 0x2621b0d7; vor.vi v1, v2, 3 = 0x2a21b0d7; vxor.vi v1, v2, 3 = 0x2e21b0d7; vslideup.vi v1, v2, 3 = 0x3a21b0d7; vslidedown.vi v1, v2, 3 = 0x3e21b0d7.
