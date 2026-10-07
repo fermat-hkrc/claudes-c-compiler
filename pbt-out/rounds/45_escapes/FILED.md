@@ -16,3 +16,5 @@
 > #1163
 # CPATH ignored
 > #1164
+# -Wl,-Map ignored
+> #1165

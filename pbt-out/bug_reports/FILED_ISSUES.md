@@ -160,3 +160,4 @@
 | 45 | driver -MF | dep rule to stdout, no file | **new issue filed** | [#1162](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1162) |
 | 45 | driver/backend -g | zero DWARF emitted (flag no-op) | **new issue filed** | [#1163](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1163) |
 | 45 | driver include paths | CPATH/C_INCLUDE_PATH ignored | **new issue filed** | [#1164](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1164) |
+| 45 | linker args | -Wl,-Map silently ignored (no map file) | **new issue filed** | [#1165](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1165) |
