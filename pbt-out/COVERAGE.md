@@ -145,3 +145,10 @@
 | builtin bits + complex arith | builtins/codegen | /tmp/b43.c | value diff -O2 | green (Smith div exact) |
 | asm volatile barrier | optimizer | /tmp/asmv.c | disasm witness | both loads+stores kept = gcc |
 | _Alignas member / cleanup | frontend | /tmp/al43.c /tmp/cu.c | layout+order | green |
+
+## Round 44 — pragma/builtin/layout battery
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| pragma pack stack | preprocessor pragmas | /tmp/r44.c | 5-struct size chain | green (push/1/2/pop/pop) |
+| pack×bitfields + builtin mem/ffs + atomics + 512-switch | lexer/builtins/codegen | /tmp/r44b.c /tmp/r44c.c /tmp/bigsw.c | byte/value diff | all green |
+| string-literal newline check | src/frontend/lexer | /tmp/nl.c | gcc/clang diff | accepted → **#1155** |
