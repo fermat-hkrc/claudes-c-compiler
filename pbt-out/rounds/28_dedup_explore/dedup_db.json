@@ -1,5 +1,9 @@
 [
  {
+  "n": 1047,
+  "t": "Bug: sema conflates signed char with char in _Generic type matching \u2014 C11 requires three distinct char types"
+ },
+ {
   "n": 1046,
   "t": "Bug: encode_vmv_v_i ignores trailing v0.t"
  },
@@ -386,6 +390,10 @@
  {
   "n": 949,
   "t": "Bug: encode_alu_imm_w rejects I-type %lo/%pcrel_lo/%tprel_lo"
+ },
+ {
+  "n": 948,
+  "t": "Bug: encode_alu_imm_w wraps out-of-range immediates"
  },
  {
   "n": 948,
@@ -1590,10 +1598,6 @@
  {
   "n": 648,
   "t": "Bug: encode_neon_mul ignores a fourth operand"
- },
- {
-  "n": 647,
-  "t": "Bug: encode_neon_mul accepts a bare Vn / GPR dest as a NEON register"
  },
  {
   "n": 647,
