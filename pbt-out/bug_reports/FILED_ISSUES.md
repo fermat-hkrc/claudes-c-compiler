@@ -155,3 +155,5 @@
 | 45 | src/driver | -U does not cancel preceding -D (X stays defined) | **new issue filed** | [#1157](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1157) |
 | 45 | src/driver CLI | function-like -D unsupported (implicit-decl warning) | **new issue filed** | [#1158](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1158) |
 | 45 | src/frontend/preprocessor/includes.rs | self-include builds silently (no depth diagnostic) | **new issue filed** | [#1159](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1159) |
+| 45 | driver -E -C | -C ignored, comments stripped | **new issue filed** | [#1160](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1160) |
+| 45 | driver -M | -M omits included headers | **new issue filed** | [#1161](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1161) |

@@ -6,3 +6,7 @@
 > #1158
 # self-including header builds SILENTLY — #include recursion terminated without diagnostic while gcc errors '#include nested too deeply'
 > #1159
+# -E -C is silently ignored — comments still stripped (gcc -C retains them)
+> #1160
+# -M dependency output omits ALL included headers — only the main .c is listed (make never rebuilds on header changes)
+> #1161
