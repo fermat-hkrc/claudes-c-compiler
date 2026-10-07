@@ -118,3 +118,5 @@
 | 38 | src/backend/x86/codegen/returns.rs | SSE-class ≤8B struct returns in RAX not XMM0 — gcc interop garbage | **new issue filed** | [#1114](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1114) |
 | 38 | src/passes (volatile storage classification) | volatile locals constant-folded, only final store survives at -O2 | **new issue filed** | [#1115](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1115) |
 | 38 | src/backend/call_abi.rs + x86 codegen | X87-class {long double} struct: return RAX:RDX (need st(0)), args RDI:RSI (need memory) | **new issue filed** | [#1116](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1116) |
+| 38 | src/backend/call_abi.rs + ARM codegen | ARM64 HFA structs in X0/W0 integer regs (need S/V) — 5/5 interop directions BAD | **new issue filed** | [#1118](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1118) |
+| 38 | src/backend/riscv codegen return path | RISC-V FP-struct returns in integer a0 (need fa0/fa1; {f,f} drops b) | **new issue filed** | [#1119](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1119) |
