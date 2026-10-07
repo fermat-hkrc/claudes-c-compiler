@@ -1,3 +1,28 @@
+# Confirmed invariants (encode_vmv_v_x)
+
+- Valid 2-operand unmasked vmv.v.x with vd ∈ {v0..v31} and rs1 ∈ {x0..x31} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vmv.v.x v0, x0 = 0x5e004057; vmv.v.x v1, x2 = 0x5e0140d7; vmv.v.x v31, x30 = 0x5e0f4fd7.
+- Format layout holds: opcode=1010111, funct3=100, vm=1, vs2=0, vd in [11:7], rs1 in [19:15], funct6=010111 (1000 cases).
+- Field isolation: vd/rs1 bits independent of the other field (1000 cases).
+- vd/rs1 swap: swapping numeric identities of operand 0 (still a v-reg) and operand 1 (still a GPR) swaps bits [11:7] and [19:15] and preserves all other bits (1000 cases).
+- ABI alias: encode_vmv_v_x([v{vd}, ABI[rs1]]) equals encode_vmv_v_x([v{vd}, x{rs1}]) for all 32 ABI names (1000 cases).
+- Too few operands, non-vector vd, and non-GPR rs1 (excluding Imm(0..31), which get_reg documents as GCC bare register numbers) return Err (1000 cases).
+- Extra operand and trailing v0.t currently disagree with llvm-mc (see bugs).
+
+## Environment (encode_vmv_v_x)
+
+- Differential reference: /home/toan/tools/llvm15-official/bin/llvm-mc -triple=riscv64 -mattr=+v -show-encoding (LLVM 15.0.6).
+- Harness: src/backend/riscv/assembler/encoder/encode_vmv_v_x_pbt.rs, cargo test --lib encode_vmv_v_x, proptest cases=1000.
+- Dispatch: encoder/mod.rs:1005 "vmv.v.x" => encode_vmv_v_x(operands). Operands passed through.
+- coverage_gaps had no LLVM profraw (C++ reporter listed unrelated binaries and reported encode_vmv_v_x NOT LINKED; Rust cargo tests are not those binaries). Sweep was a manual audit of 2-op / format / isolation / vd-rs1-swap / ABI / arity-bad-regs / extra / mask-v0.t. Closed: tier round spent; remaining documented gaps are the extra-operand and v0.t bugs.
+
+## Quirks (encode_vmv_v_x)
+
+- vreg_num and reg_num lowercase; llvm-mc rejects uppercase register names.
+- get_vreg does not accept Imm(0..=31) as a bare vector register number; get_reg does accept Imm(0..=31) as a GCC bare GPR number.
+- vm is hardcoded to 1 (unmasked). RISC-V V 1.0 vmv.v.x has no masked form; llvm-mc rejects trailing v0.t.
+- Assembly order is vd (vector), rs1 (integer). vs2 is encoded as 0. funct3 is 100 (OPIVX).
+- proptest 1.11 requires `#[test]` inside `proptest!`.
+
 # Confirmed invariants (encode_vmv_v_v)
 
 - Valid 2-operand unmasked vmv.v.v with vd, vs1 ∈ {v0..v31} matches llvm-mc `-triple=riscv64 -mattr=+v -show-encoding` (1000 cases). KAT pins vmv.v.v v0, v0 = 0x5e000057; vmv.v.v v1, v2 = 0x5e0100d7; vmv.v.v v31, v30 = 0x5e0f0fd7.
