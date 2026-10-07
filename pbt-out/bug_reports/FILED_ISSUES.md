@@ -83,3 +83,4 @@
 | 28 | src/backend/x86/assembler | CET/shadow-stack (endbr64/wrssd/etc.) missing | **new issue filed** | [#1055](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1055) |
 | 28 | src/backend/arm/assembler | NEON fmaxv/fminv/fmaxnmv/fminnmv + smov missing (5 GAPs) | **new issue filed** | [#1056](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1056) |
 | 28 | src/backend/arm/assembler | NEON fcmp-vs-zero: fcmeq/fcmgt → NOP; fcmlt/fcmle wrong; sqshlu/cmls missing | **new issue filed** | [#1057](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1057) |
+| 28 | src/backend/arm/assembler | NEON fneg v.4s bit 23 clear (wrong instruction) | **new issue filed** | [#1062](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1062) |

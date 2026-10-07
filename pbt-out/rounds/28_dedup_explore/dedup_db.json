@@ -1,5 +1,25 @@
 [
  {
+  "n": 1061,
+  "t": "Bug: encode_v_crypto_vi truncates out-of-range uimm5"
+ },
+ {
+  "n": 1060,
+  "t": "Bug: encode_v_crypto_vi uses OP-P (1110111) instead of OP-V (1010111)"
+ },
+ {
+  "n": 1059,
+  "t": "Bug: encode_v_crypto_vi ignores trailing v0.t on a non-maskable instruction"
+ },
+ {
+  "n": 1058,
+  "t": "Bug: encode_v_crypto_vi ignores extra operands"
+ },
+ {
+  "n": 1057,
+  "t": "Bug: AArch64 NEON: fcmeq/fcmgt v.4s, #0.0 encodes NOP (comparison silently skipped); fcmlt/fcmle #0.0 wrong encoding; sqshlu/cmls missing"
+ },
+ {
   "n": 1056,
   "t": "Bug: AArch64 assembler lacks fmaxv/fminv/fmaxnmv/fminnmv (FP horizontal max/min) and smov (signed move vector to GPR) \u2014 5 forms"
  },
@@ -776,6 +796,10 @@
   "t": "Bug: encode_sxtb accepts FP/SIMD registers as GPRs"
  },
  {
+  "n": 862,
+  "t": "Bug: encode_sxtb accepts FP/SIMD registers as GPRs"
+ },
+ {
   "n": 861,
   "t": "Bug: encode_sxtb silently ignores a 3rd operand"
  },
@@ -1182,18 +1206,6 @@
  {
   "n": 760,
   "t": "Bug: narrow Phase 2 rewrites I64 bitwise ops to I32 without checking the use \u2014 I64 consumers get the zero-extended value"
- },
- {
-  "n": 759,
-  "t": "Bug: constant_fold's 32-bit fast path sign-extends sub-int operands before logical ops (LShr/UDiv/URem at I8/I16 fold wrong)"
- },
- {
-  "n": 758,
-  "t": "Bug: encode_ic accepts W/SP/SIMD registers as IVAU Xt"
- },
- {
-  "n": 757,
-  "t": "Bug: encode_ic encodes IC IVAU without Xt as IVAU XZR"
  },
  {
   "n": 759,
@@ -2786,14 +2798,6 @@
  {
   "n": 362,
   "t": "Bug: encode_int_to_float encodes SP/WSP source as ZR"
- },
- {
-  "n": 361,
-  "t": "Bug: encode_int_to_float encodes H dest as ftype=00 (single)"
- },
- {
-  "n": 360,
-  "t": "Bug: encode_int_to_float ignores extra operands"
  },
  {
   "n": 361,
