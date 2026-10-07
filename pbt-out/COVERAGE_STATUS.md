@@ -1,20 +1,26 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 (campaign: encode_v_crypto_vv, English)
-> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw and encode_v_crypto_vv NOT LINKED in C++ reporter binaries. The Rust `cargo test --lib encode_v_crypto_vv` run executed the symbol.
+> Last updated: 2026-10-07 (campaign: encode_v_crypto_vs, English)
+> Coverage evidence: file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw; encode_v_crypto_vs NOT LINKED in C++ reporter binaries (Rust cargo tests are not those binaries).
 
 ## This campaign
 
+| Function | Source | Tested | Result |
+|----------|--------|--------|--------|
+| encode_v_crypto_vs | vector.rs | yes | 4 passing / 3 failing (3 bugs) |
+
+## Summary
+
 | Metric | Value |
 |--------|-------|
-| Target | encode_v_crypto_vv |
-| Source | vector.rs:201 |
+| Scope | src/backend/riscv/assembler/encoder/vector.rs#encode_v_crypto_vs |
+| PBT candidates in FUNCTION_INDEX | 236 |
+| This campaign target | encode_v_crypto_vs |
 | Properties | 7 (4 passing, 3 failing) |
-| Bugs | 3 |
-| Sweep | 1 round (standard); remaining gaps are the filed bugs |
+| Sweep | 1 round (standard); remaining documented gaps are the three filed bugs |
 
-## File Coverage (this target)
+## File Coverage (this campaign)
 
-| Source File | Function | Tested | Notes |
-|-------------|----------|--------|-------|
-| vector.rs | encode_v_crypto_vv | yes | 4 pass / 3 fail; KATs linked the symbol |
+| Source File | Target | Test file | Status |
+|-------------|--------|-----------|--------|
+| vector.rs | encode_v_crypto_vs | encode_v_crypto_vs_pbt.rs | covered (4 pass / 3 fail) |

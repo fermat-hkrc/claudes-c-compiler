@@ -1,4 +1,4 @@
-> Total files: 16 | Total functions: 383 | PBT candidates: 235 | Excluded: 148
+> Total files: 16 | Total functions: 383 | PBT candidates: 236 | Excluded: 147
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -369,7 +369,7 @@
 | encode_insn_b | compressed.rs | 163 | function | no | out of campaign scope (HARD: test only encode_c_jalr) |
 | encode_insn_u | compressed.rs | 176 | function | no | out of campaign scope (HARD: test only encode_c_jalr) |
 | encode_insn_j | compressed.rs | 187 | function | no | out of campaign scope (HARD: test only encode_c_jalr) |
-| parse_vtypei | vector.rs | 8 | function | no | HARD: test only encode_v_crypto_vv |
+| parse_vtypei | vector.rs | 8 | function | no | HARD: test only encode_v_crypto_vs |
 | encode_vsetvli | vector.rs | 48 | function | yes | already covered |
 | encode_vsetivli | vector.rs | 59 | function | yes | already covered |
 | encode_vsetvl | vector.rs | 70 | function | yes | already covered |
@@ -383,5 +383,5 @@
 | encode_vmv_v_i | vector.rs | 172 | function | yes | already covered |
 | encode_vid_v | vector.rs | 182 | function | yes | already covered |
 | encode_v_crypto_vi | vector.rs | 191 | function | yes | already covered |
-| encode_v_crypto_vv | vector.rs | 201 | function | yes | change surface |
-| encode_v_crypto_vs | vector.rs | 211 | function | no | HARD: test only encode_v_crypto_vv |
+| encode_v_crypto_vv | vector.rs | 201 | function | yes | already covered |
+| encode_v_crypto_vs | vector.rs | 211 | function | yes | change surface |
