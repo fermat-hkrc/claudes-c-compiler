@@ -1,4 +1,4 @@
-> Total files: 17 | Total functions: 397 | PBT candidates: 255 | Excluded: 142
+> Total files: 17 | Total functions: 397 | PBT candidates: 257 | Excluded: 140
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -386,8 +386,8 @@
 | encode_v_crypto_vv | vector.rs | 201 | function | yes | already covered |
 | encode_v_crypto_vs | vector.rs | 211 | function | yes | change surface |
 | encode_prefetch | i686/encoder/system.rs | 11 | method | yes | - |
-| encode_prefetch_0f0d | i686/encoder/system.rs | 25 | method | yes | change-surface target this campaign |
-| encode_out | i686/encoder/system.rs | 39 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_prefetch_0f0d | i686/encoder/system.rs | 25 | method | yes | prior campaign target |
+| encode_out | i686/encoder/system.rs | 39 | method | yes | change-surface target this campaign |
 | encode_in | i686/encoder/system.rs | 75 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_invlpg | i686/encoder/system.rs | 110 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_verw | i686/encoder/system.rs | 124 | method | no | out of campaign scope (HARD: test only encode_prefetch) |

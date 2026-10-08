@@ -1,58 +1,125 @@
-# PBT Campaign Report: encode_prefetch_0f0d
+# PBT Campaign Report: encode_out
 
 ## Summary
 
-**Verdict:** 1 high: `encode_prefetch_0f0d` omits segment-override prefixes on `prefetchw %fs:(…)` / `%es:(…)` / etc., so TLS-relative and far-segment prefetch-for-write assemble to the wrong address space.
+**Verdict:** 3 bugs (2 high, 1 medium): `encode_out` accepts any register pair as OUT DX (`outb %al,%al`→`EE`), silently truncates port immediates (`$256`→`E6 00`), and rejects valid AT&T `(%dx)` port form that llvm-mc and the x86-64 sibling accept.
 **Date:** 2026-10-08
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_prefetch_0f0d (i686 system encoder)
-**Tests:** 9 properties (+ 5 KAT/regression witnesses)
-**Result:** 8 passing, 1 bug
-**Change surface:** 1 changed function (encode_prefetch_0f0d), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no .gcda/.profraw for this Rust target; C++ binaries listed as NOT LINKED are expected (SUT exercised via cargo lib tests)
-**Effort tier:** standard
+**Modules tested:** encode_out (i686 system.rs)
+**Tests:** 8 properties (+ 6 KAT + 3 regression witnesses)
+**Result:** 5 passing properties, 3 failing properties / 3 bugs
+**Change surface:** 1 changed function (encode_out), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no Rust .profraw; C++ reporter listed unrelated binaries and marked encode_out NOT LINKED there (expected). Execution proven by `cargo test --lib encode_out`.
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_prefetch_0f0d | 9 | 1 | differential (llvm-mc), reference KAT, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_out | 8 properties | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_prefetch_0f0d drops segment override prefix
+### B1: encode_out accepts any register pair as OUT DX form
 
-**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, disp ∈ i32. SUT.encode(prefetchw, Mem(seg:base+disp)) = llvm-mc("prefetchw %seg:disp(%base)")
-**Contract evidence:** inferred (sibling x86-64 `encode_sse_mem_only` at sse.rs:605-616 calls `emit_segment_prefix` before `[0x0F, 0x0D]`; i686 `core.rs:31-42` provides `emit_segment_prefix`; Intel SDM / llvm-mc emit ES=0x26 … FS=0x64 before opcode; public AT&T assembler accepts segment overrides on prefetchw)
-**Documentation conflict:** (none) — doc comment only states opcode form `0F 0D /1`, silent on segment prefixes; sibling encoders establish the intended contract
+**Formal:** ∀ m, src, dst. ¬(src=data_reg(m) ∧ dst=dx) ∧ llvm_mc_rejects(m,src,dst) ⇒ encode returns Err
+**Contract evidence:** inferred (Intel SDM OUT fixed AL/AX/EAX+DX; llvm-mc and gas reject other pairs; x86 sibling documents `outb %al, %dx`)
+**Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `prefetchw %es:(%eax)` → SUT `[0x0f, 0x0d, 0x08]`, llvm-mc `[0x26, 0x0f, 0x0d, 0x08]`; also `prefetchw %fs:(%eax)` → SUT omits `0x64`
-**Expected / Actual:** expected `[0x26, 0x0f, 0x0d, 0x08]` (ES) / `[0x64, 0x0f, 0x0d, 0x08]` (FS); actual `[0x0f, 0x0d, 0x08]`
-**Impact:** Assembled `prefetchw` with FS/GS (or other) overrides prefetches DS-relative addresses instead — silent wrong machine code for TLS / far-segment software prefetch-for-write on i686.
-**Root cause:** `system.rs:30-32` emits opcode then ModR/M without calling `emit_segment_prefix(mem)` first (same defect class as `encode_prefetch` for 0F 18).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:30`
+**Counterexample:** `encode("outb", [%al, %al])` then bytes == `[0xEE]`
+**Expected / Actual:** Err / Ok([0xEE])
+**Impact:** Assembler emits a real OUT AL,DX while ignoring the written operands — silent wrong code for mistyped register names
+**Root cause:** system.rs:59-63 matches any `(Register, Register)` and ignores names (`_src`, `_dst`)
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:59`
 ```rust
-            Operand::Memory(mem) => {
-                self.bytes.extend_from_slice(&[0x0F, 0x0D]);
-                self.encode_modrm_mem(hint, mem)
+            (Operand::Register(_src), Operand::Register(_dst)) => {
+                if size == 2 { self.bytes.push(0x66); }
+                self.bytes.push(if size == 1 { 0xEE } else { 0xEF });
+                Ok(())
             }
 ```
-**Suggested fix:** Call the existing helper before the opcode:
+**Suggested fix:** Require data register AL/AX/EAX for the mnemonic and port DX
 ```rust
-            Operand::Memory(mem) => {
-                self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, 0x0D]);
-                self.encode_modrm_mem(hint, mem)
+            (Operand::Register(src), Operand::Register(dst)) => {
+                let expect = match size { 1 => "al", 2 => "ax", 4 => "eax", _ => unreachable!() };
+                if src.name != expect || dst.name != "dx" {
+                    return Err(format!("unsupported {} operands", mnemonic));
+                }
+                if size == 2 { self.bytes.push(0x66); }
+                self.bytes.push(if size == 1 { 0xEE } else { 0xEF });
+                Ok(())
             }
 ```
-**Bug report:** bug_reports/encode_prefetch_0f0d_missing_segment_prefix.md
-**Repro seed:** proptest `cc 09d82a423894d0e5e8a99a503a8df35dbfcad9b380e1bef674ec283302baea3d` (seg=es, base=eax, disp=0)
+**Bug report:** bug_reports/encode_out_wrong_registers.md
+**Repro seed:** mnemonic = "outb", src = "al", dst = "al"
 **Raw output:**
 ```text
-Test failed: assertion failed: `(left == right)`
-  left: `[15, 13, 8]`,
- right: `[38, 15, 13, 8]`: segment prefix diff for `prefetchw %es:(%eax)`: SUT=[0f, 0d, 08] llvm-mc=[26, 0f, 0d, 08]
-minimal failing input: seg = "es", base = "eax", disp = 0
+SUT accepted invalid OUT `outb %al, %al` → [ee]; llvm-mc rejected
+```
+
+### B2: encode_out silently truncates out-of-range port immediate
+
+**Formal:** ∀ m, imm. llvm_mc rejects(m,$imm) ⇒ sut.encode returns Err
+**Contract evidence:** inferred (Intel imm8 port; llvm-mc rejects imm>255)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `encode("outb", [%al, $256])` → `[0xE6, 0x00]`
+**Expected / Actual:** Err / Ok([0xE6, 0x00])
+**Impact:** I/O instruction targets port 0 instead of rejecting an illegal immediate — wrong device access in generated code
+**Root cause:** system.rs:68 `self.bytes.push(*val as u8)` with no range check
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:64`
+```rust
+            (Operand::Register(_src), Operand::Immediate(ImmediateValue::Integer(val))) => {
+                if size == 2 { self.bytes.push(0x66); }
+                self.bytes.push(if size == 1 { 0xE6 } else { 0xE7 });
+                self.bytes.push(*val as u8);
+                Ok(())
+            }
+```
+**Suggested fix:** Reject values outside imm8 range before casting
+```rust
+                if *val < i64::from(i8::MIN) || *val > 255 {
+                    return Err(format!("{} port immediate out of imm8 range", mnemonic));
+                }
+                self.bytes.push(*val as u8);
+```
+**Bug report:** bug_reports/encode_out_imm_truncation.md
+**Repro seed:** mnemonic = "outb", imm_v = 256
+**Raw output:**
+```text
+SUT silently encoded out-of-range port `outb %al, $256` → [e6, 00]
+```
+
+### B3: encode_out rejects AT&T (%dx) port form
+
+**Formal:** ∀ m. encode(m, Reg(data), Mem(dx)) = llvm_mc("{m} %data, (%dx)")
+**Contract evidence:** inferred (llvm-mc accepts; x86 sibling system.rs:35-39 handles Register+Memory as DX form; Intel same EE/EF encoding)
+**Documentation conflict:** (none) — i686 lacks the sibling's documented `(%dx)` arm
+**Severity:** medium
+**Counterexample:** `encode("outb", [%al, Mem(dx)])` → Err("unsupported outb operands"); llvm-mc=[0xEE]
+**Expected / Actual:** Ok([0xEE]) / Err("unsupported outb operands")
+**Impact:** Valid AT&T using parenthesized DX port fails on i686 while x86-64 and llvm-mc accept it
+**Root cause:** system.rs:70 catch-all rejects Memory; no Register+Memory arm
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:70`
+```rust
+            _ => Err(format!("unsupported {} operands", mnemonic)),
+```
+**Suggested fix:** Add Register+Memory arm (base DX) mirroring x86-64 encode_out
+```rust
+            (Operand::Register(src), Operand::Memory(mem))
+                if mem.base.as_ref().map(|r| r.name.as_str()) == Some("dx")
+                    && mem.index.is_none() =>
+            {
+                if size == 2 { self.bytes.push(0x66); }
+                self.bytes.push(if size == 1 { 0xEE } else { 0xEF });
+                Ok(())
+            }
+```
+**Bug report:** bug_reports/encode_out_dx_memory_form.md
+**Repro seed:** mnemonic = "outb"
+**Raw output:**
+```text
+SUT rejected valid AT&T form `outb %al, (%dx)`: unsupported outb operands; llvm-mc=[ee]
 ```
 
 ## Design Caveats
@@ -63,42 +130,41 @@ minimal failing input: seg = "es", base = "eax", disp = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs | 9 proptest properties + 5 KAT/regression |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_prefetch_0f0d_pbt;` |
+| src/backend/i686/assembler/encoder/encode_out_pbt.rs | 8 properties + 6 KAT + 3 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_out_pbt` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_prefetch_0f0d -- --test-threads=1
-cargo test --lib encode_prefetch_0f0d_diff_segment_prefix -- --test-threads=1
-cargo test --lib test_encode_prefetch_0f0d_regression_missing_fs_prefix -- --test-threads=1
+cargo test --lib encode_out -- --test-threads=1
+# single bugs:
+cargo test --lib test_encode_out_regression_wrong_reg_bl_dx -- --test-threads=1
+cargo test --lib test_encode_out_regression_imm_256_truncated -- --test-threads=1
+cargo test --lib test_encode_out_regression_dx_mem_form -- --test-threads=1
 ```
-
-Whole suite (filter): `cargo test --lib encode_prefetch_0f0d -- --test-threads=1`
-Log: pbt-out/run/encode_prefetch_0f0d_test.log
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/REPORT.html (from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
+- pbt-out/INVARIANTS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_prefetch_0f0d_missing_segment_prefix.md
-- pbt-out/bug_reports/encode_prefetch_0f0d_missing_segment_prefix.html (rendered)
-- pbt-out/run/encode_prefetch_0f0d_test.log
-- pbt-out/FUNCTION_INDEX.md (updated)
-- pbt-out/INVARIANTS.md (updated below)
+- pbt-out/bug_reports/encode_out_wrong_registers.md (+ .html)
+- pbt-out/bug_reports/encode_out_imm_truncation.md (+ .html)
+- pbt-out/bug_reports/encode_out_dx_memory_form.md (+ .html)
+- pbt-out/run/encode_out_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-08 03:38 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 255/397 total | PBT candidates: 255 | Tested: 255 (100%) | 1 pass, 255 fail
+> Last updated: 2026-10-08 03:53 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 256/397 total | PBT candidates: 256 | Tested: 256 (100%) | 1 pass, 256 fail
 
 ## Summary
 
@@ -107,10 +173,10 @@ Log: pbt-out/run/encode_prefetch_0f0d_test.log
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 255 |
-| **Tested (of PBT candidates)** | **255 / 255 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 255 / -1 |
-| **Overall (tested / all functions)** | **255 / 397 (64%)** |
+| PBT candidates (from FUNCTION_INDEX) | 256 |
+| **Tested (of PBT candidates)** | **256 / 256 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 256 / -1 |
+| **Overall (tested / all functions)** | **256 / 397 (64%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -118,13 +184,13 @@ Log: pbt-out/run/encode_prefetch_0f0d_test.log
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 255 | 255 | 0 | 100% |
+|  | 256 | 256 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 255 | 255 | 0 | 100% |
+| unknown | 256 | 256 | 0 | 100% |
 
 ## File Coverage
 
@@ -402,3 +468,4 @@ Log: pbt-out/run/encode_prefetch_0f0d_test.log
 | encode_bgtu | pseudo.rs |
 | encode_prefetch | system.rs |
 | encode_prefetch_0f0d | system.rs |
+| encode_out | system.rs |
