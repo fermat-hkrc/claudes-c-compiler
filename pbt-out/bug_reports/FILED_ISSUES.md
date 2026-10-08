@@ -196,3 +196,4 @@
 | 59 | linker symbol resolution | tentative beats strong when tentative file first (order-dependent) | **new issue filed** | [#1203](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1203) |
 | 59 | asm_expr | "m" constraint produces 0 | **new issue filed** | [#1204](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1204) |
 | 59 | traits.rs:347 | int & float bitAND panics (ICE) | **new issue filed** | [#1205](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1205) |
+| 59 | traits.rs | 6 type-mismatch operator violations (struct+int/ptr&int/float%int/~float/struct==) | **new issue filed** | [#1206](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1206) |

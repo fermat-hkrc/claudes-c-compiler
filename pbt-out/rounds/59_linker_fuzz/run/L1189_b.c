@@ -1,1 +1,1 @@
-int sym0 = 1349;
+int sym0;

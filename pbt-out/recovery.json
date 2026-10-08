@@ -2,6 +2,6 @@
   "outcome": "retrying",
   "attempts": 1,
   "strategy": "shorten-old-tool-outputs",
-  "removedCharacters": 260496,
+  "removedCharacters": 260974,
   "sweepToolCalls": 0
 }

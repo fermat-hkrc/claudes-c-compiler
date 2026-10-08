@@ -1,0 +1,3 @@
+int sym0 = 1810;
+extern int sym1;
+extern int sym2;
