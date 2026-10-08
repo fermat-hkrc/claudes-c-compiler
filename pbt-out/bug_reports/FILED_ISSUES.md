@@ -177,3 +177,4 @@
 | 51 | lexer | float 1e empty exponent accepted as 0 | **new issue filed** | [#1179](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1179) |
 | 51 | lexer | 0x and 0x1p empty hex/exponent accepted (values 0/1) | **new issue filed** | [#1180](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1180) |
 | 51 | x86 codegen return path | no TCO — 1M tail recursion SIGSEGV vs gcc returns normally | **new issue filed** | [#1181](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1181) |
+| 51 | diagnostics | -Wall missing 5 warning classes (uninit/unused×2/shadow/paren) | **new issue filed** | [#1182](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1182) |

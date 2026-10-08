@@ -12,3 +12,5 @@
 > #1180
 # no tail-call optimization — 1M-deep tail recursion SEGFAULTS where gcc -O2 returns normally (functional-style C crashes)
 > #1181
+# -Wall produces ZERO warnings for 5 diagnostic classes gcc reports — uninitialized use, unused variable, unused function, variable shadowing, mixed & | parentheses
+> #1182
