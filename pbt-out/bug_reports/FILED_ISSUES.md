@@ -181,3 +181,4 @@
 | 52 | src/common/long_double.rs:1040 | i686 ICE: float→long double panics (subtract overflow) | **new issue filed** | [#1183](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1183) |
 | 53 | arm encoder bitfield.rs | bfi/bfxil/sbfiz/sbfx width=0 → dup #379/#384/#436/#456 (closed #1184) | **found_already** | [#379](https://github.com/fermat-hkrc/claudes-c-compiler/issues/379) |
 | 54 | ALL backends assembler/ELF writer | non-deterministic .o (.s identical, .o differs) | **new issue filed** | [#1185](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1185) |
+| 55 | pp macro expansion | 2500-deep chain SIGABRT (stack overflow) | **new issue filed** | [#1186](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1186) |
