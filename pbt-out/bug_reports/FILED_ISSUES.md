@@ -201,3 +201,10 @@
 | 60 | sema lvalue/call | 4 more: const-arr write, enum-assign, call-var, fn-assign | **new** | [#1209](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1209) |
 | 60 | sema unary & | &5 and &enum_const accepted → SIGSEGV | **new** | [#1210](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1210) |
 | 60 | sema cast | (void)5 as value accepted | **new** | [#1211](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1211) |
+| 61 | sema incomplete | FAM not last + sizeof incomplete array | **new** | [#1212](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1212) |
+| 61 | sema align/decl | _Alignas(3) + array of functions | **new** | [#1213](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1213) |
+| 61 | preprocessor | extra macro args + bare defined + #if 1/0 | **new** | [#1214](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1214) |
+| 61 | sema register | & of register variable | **new** | [#1215](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1215) |
+| 61 | sema prototype | int f(void) then int f(int) | **new** | [#1216](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1216) |
+| 61 | lexer scan.rs:837 | long hex escape ICE (u32 mul overflow) | **new** | [#1217](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1217) |
+| 61 | lexer UCN/ident | invalid UCN + raw UTF-8 ident accepted | **new** | [#1218](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1218) |
