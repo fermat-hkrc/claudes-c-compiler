@@ -1,6 +1,9 @@
-int g0 = 32879;
-extern int h1b(int);
-typeedef int (*fp1)(int);
-fp1 tbl1[2] = { 0, h1b };
-extern int deep2(int);
-int mid2(int x) { return deep2(x + -4) * 2; }
+int g0 = -40814;
+int tent1;
+int init_tent1() { tent1 = 423; return tent1; }
+extern int h2b(int);
+typeedef int (*fp2)(int);
+fp2 tbl2[2] = { 0, h2b };
+int g4 = 26603;
+int tent5;
+int init_tent5() { tent5 = 434; return tent5; }

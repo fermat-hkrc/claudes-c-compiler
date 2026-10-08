@@ -1,4 +1,4 @@
-int tent1;
-static int h4a(int x) { return x + 37; }
-int h4b(int x) { return x * 5; }
-int arr5[4] = { 87, 47, 20, 76 };
+int deep2(int x) { return x - 19; }
+static int h3a(int x) { return x + 59; }
+int h3b(int x) { return x * 7; }
+int f4(int x) { return x * -41 + -45; }

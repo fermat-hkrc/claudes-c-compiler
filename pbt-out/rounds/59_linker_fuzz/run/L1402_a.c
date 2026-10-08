@@ -1,3 +1,3 @@
-int sym0 = 689;
-int sym1;
-__attribute__((weak)) int sym2 = 791;
+int sym0 = 159;
+int sym1 = 160;
+int sym2 = 161;

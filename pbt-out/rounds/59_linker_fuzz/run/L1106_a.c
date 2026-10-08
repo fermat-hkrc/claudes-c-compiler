@@ -1,3 +1,3 @@
-int sym0 = 909;
-int sym1;
-int sym2 = 911;
+int sym0;
+extern int sym1;
+int sym2 = 404;

@@ -1,19 +1,20 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 (campaign pbt-test-v2 — 36 rounds complete)
+> Last updated: 2026-10-07 (campaign pbt-test-v2 — 59 rounds complete)
 > Coverage evidence: file-level (symbol presence) — no .gcda/.profraw; coverage_gaps' passes NOT LINKED list is the known cfg(test) false negative.
-> Total issues filed: 84 unique + 14 found_already (deduped)
+> Total issues filed: 180 unique + 14 found_already (deduped)
+> Unperformed coverage sweep: line-level coverage (.gcda) NOT available in this environment — recorded as incomplete.
 
 ## Round Coverage Map
 
 | Round | Module | Issues | Status |
 |-------|--------|--------|--------|
-| 01 | src/common | #516-518 (+#2 dup) | ✅ complete |
+| 01 | src/common | #516-518 | ✅ complete |
 | 02 | src/frontend/lexer | #526-530 | ✅ complete |
 | 03 | src/frontend/preprocessor | #538-540 | ✅ complete |
 | 04 | src/frontend/parser | 0 bugs | ✅ complete |
 | 05 | src/frontend/sema | #559-563 | ✅ complete |
-| 06 | src/ir | #573-576 (+#3 dup) | ✅ complete |
+| 06 | src/ir | #573-576 | ✅ complete |
 | 07 | src/passes | #759-760 | ✅ complete |
 | 08 | src/backend root | #765 | ✅ complete |
 | 09 | src/backend/x86 E2E | 0 bugs | ✅ complete |
@@ -22,32 +23,56 @@
 | 12 | src/backend/i686 E2E | #770 | ✅ complete |
 | 13 | src/backend/elf+linker | 0 bugs | ✅ complete |
 | 14 | src/driver | 0 bugs | ✅ complete |
-| 15 | x86 assembler deep | #774-777, #782 | ✅ complete |
-| 16 | ARM assembler deep | #791-795 | ✅ complete |
-| 17 | RISC-V assembler deep | #796-798 | ✅ complete |
+| 15-17 | asm deep (x86/ARM/RISC-V) | #774-798 | ✅ complete |
 | 18 | parser battery | #799 | ✅ complete |
-| 19 | i686 asm + C features | #800 | ✅ complete |
-| 20 | linker deep | 0 bugs | ✅ complete |
-| 21 | exotic C battery | #805 | ✅ complete |
-| 22 | ABI/NaN/-S roundtrip | #806-807 | ✅ complete |
-| 23-24 | second loop (frontend+passes) | #808, #812 | ✅ complete |
-| 25 | second loop (ir+common) | 0 bugs | ✅ complete |
-| 26 | asm deep sweep (all 4 arch) | #818-841 | ✅ complete |
-| 27 | third loop (common+opt) | 0 bugs | ✅ complete |
-| 28 | dedup explore + NEON + FP-imm | #1042-1068 | ✅ complete |
-| 29 | random C PBT (500 int+300 float) | 0 bugs | ✅ complete |
-| 30 | encode-level adversarial (ARM/RISC-V) + ir/ core | #1073, #1075, #1077, #1078, #1080 (+11 dups) | ✅ complete |
-| 31 | ir/lowering deep (globals/ptr/complex/compound) | #1084, #1087 | ✅ complete |
-| 32 | preprocessor deep (if-corners/macro/splice) | #1088, #1089 | ✅ complete |
+| 19-20 | i686 + linker deep | #800 | ✅ complete |
+| 21-22 | exotic C / ABI/NaN | #805-807 | ✅ complete |
+| 23-25 | second loop | #808, #812 | ✅ complete |
+| 26 | asm deep all 4 arch | #818-841 | ✅ complete |
+| 27 | third loop | 0 bugs | ✅ complete |
+| 28 | dedup explore + NEON | #1042-1068 | ✅ complete |
+| 29 | random C PBT | 0 bugs | ✅ complete |
+| 30 | encode-level adversarial | #1073-#1080 | ✅ complete |
+| 31 | ir/lowering deep | #1084, #1087 | ✅ complete |
+| 32 | preprocessor deep | #1088, #1089 | ✅ complete |
 | 33 | linker_common multi-TU | 0 bugs | ✅ complete |
-| 34 | stack_layout deep (frames/VLA/alloca) | 0 bugs | ✅ complete |
-| 35 | elf/driver/predefined_macros | #1092 (probe) | ✅ complete |
-| 36 | optimizer interactions @-O1/-O2 + macro SM (strengthening) | 0 bugs | ✅ complete |
+| 34 | stack_layout deep | 0 bugs | ✅ complete |
+| 35 | elf/driver/predefined | #1092 | ✅ complete |
+| 36 | optimizer interaction + macro SM | 0 bugs | ✅ complete |
+| 37-39 | RISC-V encode sweep | #1095-#1131 | ✅ complete |
+| 40-42 | family deepening + GNU ext | #1133-#1153 | ✅ complete |
+| 43-45 | escapes/driver mine | #1156-#1165 | ✅ complete |
+| 46 | robustness fuzz + linker | #1166 | ✅ complete |
+| 47-48 | final sweep | #1072-#1074 | ✅ complete |
+| 49 | self-diff + valgrind | 0 bugs | ✅ complete |
+| 50 | encode deep fuzz 35k | 0 new | ✅ complete |
+| 51 | frontend/IR deep dig | #1175-#1179 | ✅ complete |
+| 52 | i686 deep | #1183 ICE | ✅ complete |
+| 53 | encode systematic | 0 new (all DUP) | ✅ complete |
+| 54 | determinism | #1185 non-det | ✅ complete |
+| 55 | macro depth + stack | #1186 SIGABRT | ✅ complete |
+| 56 | pp constraints + DoS | #1187-#1197 | ✅ complete |
+| 57 | sema + attributes | #1190 noinline | ✅ complete |
+| 58 | constraint fuzz 2000 | 0 new (gated) | ✅ complete |
+| 59 | linker fuzz 1000 + asm | #1198, #1204 | ✅ complete |
 
-## Unperformed Coverage Sweep
+## Unperformed / Incomplete Coverage
 
-- **Coverage-driven sweep (coverage_gaps tool):** NOT AVAILABLE — no .gcda/.profraw in this environment; tool reported "Not in a PBT campaign". File-level evidence used instead.
-- **ARM NEON encoder surface:** EXCLUDED — teammate's territory (#474-#773, 263 issues)
-- **Round 36 strengthening (state-machine, 1000 cases):** completed ALL GREEN — macro-table lifecycle model+gcc dual oracle.
+| Item | Reason | Status |
+|------|--------|--------|
+| Line-level coverage (.gcda) | No gcovr/lcov in environment | ⚠️ INCOMPLETE |
+| Coverage-guided fuzzing | Needs instrumented build | ⚠️ NOT PERFORMED |
+| ARM NEON 65 fns independent deep test | Teammate territory (291 issues) | ⚠️ COVERAGE-VERIFIED ONLY |
+| 10k+ TU scale | Performance dimension | ⚠️ NOT PERFORMED |
+| -g DWARF emission | Known broken (#1163) | ⚠️ KNOWN GAP |
 
-Detail tables for rounds 31-36: see pbt-out/COVERAGE.md (appended sections).
+## Test Infrastructure
+
+| Metric | Value |
+|--------|-------|
+| Total test functions | 874 |
+| Test files | 78 |
+| Resident property groups | 27 |
+| Proptest regression seeds | 5 files |
+| Per-round reports | 57 directories |
+EOF

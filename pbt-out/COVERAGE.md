@@ -209,3 +209,12 @@
 | bitfield imm 0..127×0..127 grid | arm bitfield.rs | data_processing.rs::pbt_encode_systematic | p_bitfield_imm_systematic | 5000 cases → 4 fns panic width=0 → DUP #379/#384/#436/#456 (#1184 closed) |
 | add_sub imm full range | arm data_processing.rs | ::pbt_encode_systematic | p_add_sub_imm_range | 3000 cases green |
 | logical imm patterns | arm data_processing.rs | ::pbt_encode_systematic | p_logical_imm_patterns | 3000 cases green |
+
+## Rounds 57-59 — randomized constraint/linker/parser fuzz + final mines
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| randomized constraint fuzz (16 mutation types × 5 corpus) | sema/pp/lexer | mod.rs::pbt_constraint_fuzz | p_constraint_fuzz | 2000 cases; known gated; 0 NEW |
+| randomized linker sym fuzz (strong/weak/tentative/extern × 2 TUs) | linker_common | mod.rs::pbt_linker_fuzz | p_linker_sym_fuzz | 1000 cases; 1 NEW #1198; #1166 gated |
+| randomized parser fuzz (token insert/delete on valid C) | parser+backend | mod.rs::pbt_parser_fuzz | p_parser_fuzz_no_crash | 3000 cases; 1 NEW #1205 ICE; gated |
+| _Complex transcendentals | libc | manual | value diff | all exact ✓ |
+| inline asm constraints | asm_expr | manual | value diff | "m" broken #1204; r/i/+/& ✓ |

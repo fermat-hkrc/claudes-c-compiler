@@ -1,3 +1,2 @@
-int sym0 = 1903;
-int sym1 = 1904;
-int sym2;
+int sym1 = 1041;
+int sym2 = 1042;

@@ -1,3 +1,2 @@
-extern int sym0;
-int sym1;
-int sym2 = 1559;
+int sym1 = 1161;
+int sym2 = 1162;

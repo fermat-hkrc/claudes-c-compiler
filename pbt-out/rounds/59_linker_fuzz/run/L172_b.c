@@ -1,3 +1,2 @@
-__attribute__((weak)) int sym0 = 1989;
-int sym1 = 1890;
-int sym2 = 1891;
+__attribute__((weak)) int sym1 = 2027;
+extern int sym2;

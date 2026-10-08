@@ -1,7 +1,7 @@
 {
-  "outcome": "response-resumed",
+  "outcome": "retrying",
   "attempts": 1,
   "strategy": "shorten-old-tool-outputs",
-  "removedCharacters": 392165,
-  "sweepToolCalls": 1
+  "removedCharacters": 260496,
+  "sweepToolCalls": 0
 }

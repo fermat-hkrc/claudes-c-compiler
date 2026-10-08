@@ -1,10 +1,9 @@
-int g0 = -90684;
-int tent1;
-int init_tent1() { tent1 = 335; return tent1; }
-extern int h2b(int);
-typeedef int (*fp2)(int);
-fp2 tbl2[2] = { 0, h2b };
-int tent3;
-int init_tent3() { tent3 = 351; return tent3; }
-int tent5;
-int init_tent5() { tent5 = 326; return tent5; }
+int g0 = 28797;
+int g1 = -91623;
+extern int h3b(int);
+typeedef int (*fp3)(int);
+fp3 tbl3[2] = { 0, h3b };
+int g4 = 92124;
+extern int h5b(int);
+typeedef int (*fp5)(int);
+fp5 tbl5[2] = { 0, h5b };

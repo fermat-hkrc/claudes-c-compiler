@@ -1,3 +1,3 @@
-extern int sym0;
-int sym1 = 236;
-__attribute__((weak)) int sym2 = 337;
+int sym0 = 398;
+int sym1;
+extern int sym2;

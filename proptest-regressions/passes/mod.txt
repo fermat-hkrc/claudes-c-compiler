@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 5ed4a6864ca831c32b136cfd8c94216feb837a985aba344fc5b178eaee6c8332 # shrinks to seed = 2522841249, v = 0
 cc f014754c8abce2172af5175c278c01ed0dad779a363279dbed4e0356dc815cea # shrinks to seed = 3767001792, v = 0
+cc 4e869fce1d65570a0f8f8fd696c868b59487580519d9b0015973c2b6491e39c1 # shrinks to corpus_idx = 9187175453611023451, pos = 15008774674259553208, ch_idx = 15155715564960147523, len_del = 0

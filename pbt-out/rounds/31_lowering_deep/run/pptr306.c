@@ -8,11 +8,11 @@ static int *p2 = &arr[4];
 static int *p3 = arr[3];
 static int *p4 = s.x;
 static void *p5 = &s.d;
-static int *p6 = &arr[2] + 7;
-static int *ps[3] = {&a, &arr[4], s.x + 0};
-static char *msg = "alpha";
+static int *p6 = &arr[2] + 6;
+static int *ps[3] = {&a, &arr[4], s.x + 1};
+static char *msg = "beta7";
 static char *tab[3] = {"alpha", "beta7", "gammaXY"};
-static char *sel = tab[0];
+static char *sel = tab[1];
 int main(void) {
     printf("%ld %ld %ld %ld %ld %ld\n",
         (long)((char*)p1 - (char*)&a),
