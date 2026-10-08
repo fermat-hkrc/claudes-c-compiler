@@ -194,3 +194,4 @@
 | 57 | pp #line | #line -1 accepted | **new issue filed** | [#1196](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1196) |
 | 57 | pp expr/directives | 5 constraints: div-zero in #if, digit-name, undef-empty, double-else | **new issue filed** | [#1197](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1197) |
 | 59 | linker symbol resolution | tentative beats strong when tentative file first (order-dependent) | **new issue filed** | [#1203](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1203) |
+| 59 | asm_expr | "m" constraint produces 0 | **new issue filed** | [#1204](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1204) |
