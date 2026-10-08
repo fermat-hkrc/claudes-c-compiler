@@ -1,335 +1,221 @@
-# Properties: encode_bgtu
+# Properties: encode_prefetch
 
-## encode_bgtu_diff_llvm_mc
+## encode_prefetch_diff_llvm_mc
 - Tier: 5
-- Rationale: Strongest independent differential — llvm-mc is an external RISC-V assembler with no shared encode_b/get_reg source. State machine rejected (pure function). Round-trip rejected (no in-tree BGTU/BLTU decoder). Differential vs encode_branch_instr(bltu) demoted to metamorphic (shared encode_b).
-- Doc contract: README.md:330 "| `bgt/ble/bgtu/bleu` | Swapped-operand `blt`/`bge` variants            |" — asserted fingerprint 100b43c8; pseudo.rs:361 "word: encode_b(OP_BRANCH, 0b110, rs2, rs1, 0), // bltu rs2, rs1" — asserted fingerprint 6ebdd4d8
-- Seed: encode_bgt_pbt.rs encode_bgt_diff_llvm_mc (sibling)
-- Formal: ∀ rs, rt ∈ GPRNames. encode_bgtu([Reg(rs), Reg(rt), Imm(0)]).word = llvm_mc("bgtu rs, rt, 0") ∧ reloc = Branch("0", 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
+- Rationale: Strongest oracle is differential vs independent llvm-mc i686 assembler (Intel PREFETCHh 0F 18 /hint). State machine N/A. Round-trip N/A (no decoder). SUT-boundary=internal-helper of GNU-style i686 assembler.
+- Doc contract: system.rs:10 "Encode prefetch instructions (0F 18 /hint)" — asserted fingerprint 7a3c91e2
+- Seed: (none)
+- Formal: ∀ m ∈ {prefetcht0,prefetcht1,prefetcht2,prefetchnta}, ∀ mem ∈ ValidMem32 (no segment). encode(m, [Mem(mem)]).bytes = llvm-mc(-triple=i686, m mem)
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_bgtu
+function: i686.encoder.encode_prefetch
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rs, rt]
-  domain: { rs: gpr_name, rt: gpr_name }
+  vars: [mnemonic, mem]
   relation:
     op: eq
-    lhs: "sut_reloc([Reg(rs), Reg(rt), Imm(0)]).word"
-    rhs: "llvm_mc_word(format!(\"bgtu {}, {}, 0\", rs, rt))"
+    lhs: sut_bytes
+    rhs: llvm_mc_bytes
 generators:
-  rs: { gen: gpr_name }
-  rt: { gen: gpr_name }
-evidence: README.md:330; RISC-V Unprivileged ISA BGTU=BLTU swapped; llvm-mc KAT gate
+  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
+  disp: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
+evidence: system.rs:10 + encoder/mod.rs:739-742 + Intel SDM PREFETCHh
 ```
 
-## encode_bgtu_diff_llvm_mc_bltu
-- Tier: 5
-- Rationale: Documented expansion vs independent assembler (bltu rt, rs, 0). Strengthens the differential by checking the ISA expansion form, not only the pseudo mnemonic.
-- Doc contract: README.md:330 "| `bgt/ble/bgtu/bleu` | Swapped-operand `blt`/`bge` variants            |" — asserted fingerprint 100b43c8
-- Seed: encode_bgt_pbt.rs encode_bgt_diff_llvm_mc_blt
-- Formal: ∀ rs, rt ∈ GPRNames. encode_bgtu([Reg(rs), Reg(rt), Imm(0)]).word = llvm_mc("bltu rt, rs, 0")
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
+## encode_prefetch_hint_modrm_reg
+- Tier: 4
+- Rationale: Algebraic invariant — opcode is always 0F 18 and ModRM.reg equals dispatched hint.
+- Doc contract: system.rs:10 "Encode prefetch instructions (0F 18 /hint)" — asserted fingerprint 7a3c91e2
+- Seed: (none)
+- Formal: ∀ m∈Mnemonics, ∀ mem∈ValidMem32. let b=encode(m,[Mem(mem)]).bytes in b[0]=0x0F ∧ b[1]=0x18 ∧ ((b[2]>>3)&7)=hint(m)
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_bgtu
+function: i686.encoder.encode_prefetch
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [mnemonic, mem]
+  relation:
+    op: holds
+    expr: bytes_ok_opcode_and_hint
+generators:
+  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
+  disp: { gen: int, min: -200, max: 300, type: i64 }
+evidence: system.rs:10-18; mod.rs:739-742
+```
+
+## encode_prefetch_meta_hint_isolates_reg
+- Tier: 4
+- Rationale: Metamorphic — changing only mnemonic/hint changes only ModRM.reg.
+- Doc contract: system.rs:10 "Encode prefetch instructions (0F 18 /hint)" — asserted fingerprint 7a3c91e2
+- Seed: (none)
+- Formal: ∀ m1,m2∈Mnemonics, ∀ mem. let a=encode(m1,[mem]), b=encode(m2,[mem]) in a[0..2)=b[0..2)=[0F,18] ∧ a[3..]=b[3..] ∧ ((a[2]>>3)&7)=hint(m1) ∧ ((b[2]>>3)&7)=hint(m2) ∧ (a[2]&0xC7)=(b[2]&0xC7)
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [m1, m2, mem]
+  relation:
+    op: holds
+    expr: hint_isolates_modrm_reg
+generators:
+  m1: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  m2: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
+  disp: { gen: int, min: -1000, max: 1000, type: i64 }
+evidence: system.rs:16-18
+```
+
+## encode_prefetch_neg_arity
+- Tier: 3
+- Rationale: Negative/error — arity must be exactly 1.
+- Doc contract: system.rs:12-14 arity guard — asserted fingerprint b2e81c04
+- Seed: (none)
+- Formal: ∀ m∈Mnemonics, ∀ ops. len(ops)≠1 ⇒ encode(m,ops)=Err
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, ops]
+  relation:
+    op: throws
+    expr: sut_encode_wrong_arity
+generators:
+  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  arity: { gen: int, min: 0, max: 5, type: usize }
+expected_error: prefetch requires 1 operand
+evidence: system.rs:12-14
+```
+
+## encode_prefetch_neg_non_memory
+- Tier: 3
+- Rationale: Negative/error — non-memory operands rejected.
+- Doc contract: system.rs:20 "prefetch requires memory operand" — asserted fingerprint 9d4a12f0
+- Seed: (none)
+- Formal: ∀ m∈Mnemonics, ∀ op∉Memory. encode(m,[op])=Err
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [mnemonic, op]
+  relation:
+    op: throws
+    expr: sut_encode_non_memory
+generators:
+  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  kind: { gen: int, min: 0, max: 3, type: u8 }
+expected_error: prefetch requires memory operand
+evidence: system.rs:20
+```
+
+## encode_prefetch_diff_sib_esp_ebp_edges
+- Tier: 5
+- Rationale: Differential on ESP/EBP/scale/disp boundary edges vs llvm-mc.
+- Doc contract: system.rs:10 plus encode_modrm_mem ESP/EBP rules in core.rs:84-97
+- Seed: (none)
+- Formal: ∀ m, ∀ edge_mem ∈ EspEbpScaleDispEdges. encode(m,[edge_mem])=llvm-mc(m, att(edge_mem))
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [rs, rt]
-  domain: { rs: gpr_name, rt: gpr_name }
+  vars: [mnemonic, edge_mem]
   relation:
     op: eq
-    lhs: "sut_reloc([Reg(rs), Reg(rt), Imm(0)]).word"
-    rhs: "llvm_mc_word(format!(\"bltu {}, {}, 0\", rt, rs))"
+    lhs: sut_bytes
+    rhs: llvm_mc_bytes
 generators:
-  rs: { gen: gpr_name }
-  rt: { gen: gpr_name }
-evidence: README.md:330; RISC-V ISA BGTU rs,rt,off = BLTU rt,rs,off
+  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  edge: { gen: int, min: 0, max: 11, type: u8 }
+evidence: core.rs:84-97; Intel Vol.2 ModR/M
 ```
 
-## encode_bgtu_eq_bltu_swapped
-- Tier: 4
-- Rationale: Algebraic metamorphic — documented operand-swap expansion against in-tree encode_branch_instr(BLTU). Weaker than llvm-mc differential (shared encode_b) but covers WordWithReloc including symbol targets.
-- Doc contract: pseudo.rs:361 "word: encode_b(OP_BRANCH, 0b110, rs2, rs1, 0), // bltu rs2, rs1" — asserted fingerprint 6ebdd4d8
-- Seed: encode_bgt_pbt.rs encode_bgt_eq_blt_swapped
-- Formal: ∀ r1,r2 ∈ 0..31, tgt ∈ Idents. encode_bgtu([x(r1),x(r2),Symbol(tgt)]) = encode_branch_instr([x(r2),x(r1),Symbol(tgt)], funct3=BLTU)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [r1, r2, tgt]
-  domain: { r1: reg_num, r2: reg_num, tgt: ident }
-  relation:
-    op: eq
-    lhs: "sut_reloc([x(r1), x(r2), Symbol(tgt)])"
-    rhs: "bltu_reloc([x(r2), x(r1), Symbol(tgt)])"
-generators:
-  r1: { gen: int, min: 0, max: 31, type: u32 }
-  r2: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: ident }
-evidence: pseudo.rs:361; RISC-V ISA BGTU = BLTU swapped
-```
-
-## encode_bgtu_isa_b_type
-- Tier: 4
-- Rationale: Algebraic invariant — B-type field layout per RISC-V unprivileged ISA (opcode BRANCH, funct3 BLTU=0b110, rs1=rt, rs2=rs, imm=0, reloc Branch).
-- Doc contract: pseudo.rs:361 "word: encode_b(OP_BRANCH, 0b110, rs2, rs1, 0), // bltu rs2, rs1" — asserted fingerprint 6ebdd4d8
-- Seed: encode_bgt_pbt.rs encode_bgt_isa_b_type
-- Formal: ∀ r1,r2 ∈ 0..31, tgt ∈ Idents. let (w,k,s,a)=encode_bgtu([x(r1),x(r2),Symbol(tgt)]). unpack_b(w)=(OP_BRANCH, 0b110, r2, r1, 0) ∧ k=Branch ∧ s=tgt ∧ a=0
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [r1, r2, tgt]
-  domain: { r1: reg_num, r2: reg_num, tgt: ident }
-  body: "unpack_b(word)=(OP_BRANCH, FUNCT3_BLTU, r2, r1, 0) ∧ reloc=Branch(tgt,0)"
-generators:
-  r1: { gen: int, min: 0, max: 31, type: u32 }
-  r2: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: ident }
-evidence: RISC-V Unprivileged ISA B-type; pseudo.rs:361-363
-```
-
-## encode_bgtu_abi_xn_alias
-- Tier: 4
-- Rationale: Metamorphic — ABI names, xN, and fp/s0/x8 aliases encode identically for the same register numbers.
-- Doc contract: (none on encode_bgtu; ABI table is architectural)
-- Seed: encode_bgt_pbt.rs encode_bgt_abi_xn_alias
-- Formal: ∀ n,m ∈ 0..31, tgt. encode_bgtu([ABI(n),ABI(m),Symbol(tgt)]) = encode_bgtu([xN(n),xN(m),Symbol(tgt)]); when n=8 also fp; when m=8 also fp
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [n, m, tgt]
-  domain: { n: reg_num, m: reg_num, tgt: ident }
-  relation:
-    op: eq
-    lhs: "sut_reloc([ABI(n), ABI(m), Symbol(tgt)])"
-    rhs: "sut_reloc([xN(n), xN(m), Symbol(tgt)])"
-generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: ident }
-evidence: RISC-V ABI register names; get_reg alias table
-```
-
-## encode_bgtu_target_forms
-- Tier: 4
-- Rationale: Metamorphic — Symbol / Label / Reg-as-label targets with the same string yield identical reloc.
-- Doc contract: pseudo.rs:378 "Some(Operand::Symbol(s)) | Some(Operand::Label(s)) => Ok(s.clone())," — asserted fingerprint ad06d32a; pseudo.rs:382 "Some(Operand::Reg(s)) => Ok(s.clone())," — asserted
-- Seed: encode_bgt_pbt.rs encode_bgt_target_forms
-- Formal: ∀ r1,r2,s. encode_bgtu([x(r1),x(r2),Symbol(s)]) = encode_bgtu([…,Label(s)]) = encode_bgtu([…,Reg(s)])
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [r1, r2, s]
-  domain: { r1: reg_num, r2: reg_num, s: ident }
-  body: "sut(Symbol(s)) = sut(Label(s)) = sut(Reg(s))"
-generators:
-  r1: { gen: int, min: 0, max: 31, type: u32 }
-  r2: { gen: int, min: 0, max: 31, type: u32 }
-  s: { gen: ident }
-evidence: pseudo.rs:377-383 get_branch_target
-```
-
-## encode_bgtu_imm_target
-- Tier: 4
-- Rationale: Invariant — Imm target is stringified into reloc.symbol; machine-word immediate stays 0 (reloc deferred).
-- Doc contract: pseudo.rs:379 "Some(Operand::Imm(v)) => Ok(format!(\"{}\", v))," — asserted fingerprint ad06d32a
-- Seed: encode_bgt_pbt.rs encode_bgt_imm_target
-- Formal: ∀ r1,r2,imm. encode_bgtu([x(r1),x(r2),Imm(imm)]) yields B-type BLTU swapped with off=0, reloc Branch(format!("{}",imm), 0)
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [r1, r2, imm]
-  domain: { r1: reg_num, r2: reg_num, imm: i64_edge }
-  body: "unpack_b(w)=(OP_BRANCH,BLTU,r2,r1,0) ∧ reloc=Branch(format!(imm),0)"
-generators:
-  r1: { gen: int, min: 0, max: 31, type: u32 }
-  r2: { gen: int, min: 0, max: 31, type: u32 }
-  imm: { gen: int, min: -64, max: 64, type: i64 }
-evidence: pseudo.rs:379
-```
-
-## encode_bgtu_imm_as_reg
-- Tier: 4
-- Rationale: Metamorphic sweep — bare Imm(0..31) as rs/rt (get_reg GCC bare-number path) equals xN form.
-- Doc contract: (none on encode_bgtu; get_reg bare-number path)
-- Seed: encode_bgt_pbt.rs encode_bgt_imm_as_reg
-- Formal: ∀ n,m ∈ 0..31, tgt. encode_bgtu([Imm(n),Imm(m),Symbol(tgt)]) = encode_bgtu([xN(n),xN(m),Symbol(tgt)])
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [n, m, tgt]
-  domain: { n: reg_num, m: reg_num, tgt: ident }
-  relation:
-    op: eq
-    lhs: "sut_reloc([Imm(n), Imm(m), Symbol(tgt)])"
-    rhs: "sut_reloc([xN(n), xN(m), Symbol(tgt)])"
-generators:
-  n: { gen: int, min: 0, max: 31, type: u32 }
-  m: { gen: int, min: 0, max: 31, type: u32 }
-  tgt: { gen: ident }
-evidence: get_reg Imm 0..31 path
-```
-
-## encode_bgtu_neg_arity
-- Tier: 3
-- Rationale: Negative/error — under-arity (<3 operands) must Err (llvm-mc rejects too few operands; README three-operand form).
-- Doc contract: README.md:330 "| `bgt/ble/bgtu/bleu` | Swapped-operand `blt`/`bge` variants            |" — domain-restriction fingerprint 100b43c8
-- Seed: encode_bgt_pbt.rs encode_bgt_neg_arity
-- Formal: ∀ ops. |ops| < 3 ⇒ encode_bgtu(ops) = Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [ops]
-  domain: { ops: short_ops }
-  relation:
-    op: holds
-    expr: encode_bgtu(&ops).is_err()
-generators:
-  ops: { gen: short_ops }
-expected_error: String
-evidence: README.md:330; llvm-mc rejects too few operands
-```
-
-## encode_bgtu_neg_invalid_regs
-- Tier: 3
-- Rationale: Negative/error — invalid rs or rt must Err.
-- Doc contract: (none on encode_bgtu; get_reg rejects non-GPR — domain-restriction)
-- Seed: encode_bgt_pbt.rs encode_bgt_neg_invalid_regs
-- Formal: ∀ bad ∉ GPR, good ∈ GPR, tgt. encode_bgtu([bad,good,tgt])=Err ∧ encode_bgtu([good,bad,tgt])=Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [bad, good, tgt]
-  domain: { bad: invalid_rs, good: gpr_name, tgt: ident }
-  body: "encode_bgtu([bad,good,tgt]).is_err() ∧ encode_bgtu([good,bad,tgt]).is_err()"
-generators:
-  bad: { gen: invalid_rs }
-  good: { gen: gpr_name }
-  tgt: { gen: ident }
-expected_error: String
-evidence: get_reg contract
-```
-
-## encode_bgtu_neg_invalid_target
-- Tier: 3
-- Rationale: Negative/error — target kinds outside Symbol/Label/Imm/Reg must Err.
-- Doc contract: pseudo.rs:383 "_ => Err(format!(\"expected branch target at operand {}\", idx))," — domain-restriction fingerprint da4c41b9
-- Seed: encode_bgt_pbt.rs encode_bgt_neg_invalid_target
-- Formal: ∀ rs,rt ∈ GPR, bad ∉ {Symbol,Label,Imm,Reg}. encode_bgtu([rs,rt,bad]) = Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bgtu
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [rs, rt, bad]
-  domain: { rs: gpr_name, rt: gpr_name, bad: invalid_target }
-  relation:
-    op: holds
-    expr: encode_bgtu([rs,rt,bad]).is_err()
-generators:
-  rs: { gen: gpr_name }
-  rt: { gen: gpr_name }
-  bad: { gen: invalid_target }
-expected_error: String
-evidence: pseudo.rs:383
-```
-
-## encode_bgtu_neg_extra
-- Tier: 3
-- Rationale: Negative/error — trailing fourth operand must be rejected (README three-operand form; llvm-mc errors). Family defect known on siblings (encode_bgt/ble/…).
-- Doc contract: README.md:330 "| `bgt/ble/bgtu/bleu` | Swapped-operand `blt`/`bge` variants            |" — asserted fingerprint 100b43c8
-- Seed: encode_bgt_pbt.rs encode_bgt_neg_extra; INVARIANTS.md family bug
-- Formal: ∀ rs,rt ∈ GPR, tgt ∈ Idents, extra ∈ Operand. encode_bgtu([rs,rt,Symbol(tgt),extra]) = Err
-- Test file: src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs
+## encode_prefetch_diff_segment_prefix
+- Tier: 5
+- Rationale: Differential — segment overrides must emit prefix before 0F 18, matching llvm-mc and sibling encode_sse_mem_only.
+- Doc contract: system.rs:10; sibling x86/encoder/sse.rs:611; i686 core.rs:31-42
+- Seed: (none)
+- Formal: ∀ m, ∀ seg∈{fs,gs,es,cs,ss,ds}, ∀ base. encode(m,[Mem(seg:base)]) = llvm-mc(m, %seg:(%base))
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
 - Status: failing
-- Counterexample: rs="zero", rt="zero", tgt="foo", extra=Reg("zero")
-- Bug report: bug_reports/encode_bgtu_extra_operand.md
+- Counterexample: mnemonic=prefetcht0, seg=es, base=eax, disp=0 → SUT=[0f,18,08] llvm-mc=[26,0f,18,08]
+- Bug report: bug_reports/encode_prefetch_missing_segment_prefix.md
 
 ```property
-function: encode_bgtu
-oracle: negative_error
+function: i686.encoder.encode_prefetch
+oracle: differential
 predicate:
   quantifier: forall
-  vars: [rs, rt, tgt, extra]
-  domain: { rs: gpr_name, rt: gpr_name, tgt: ident, extra: extra_operand }
+  vars: [mnemonic, seg, base, disp]
+  relation:
+    op: eq
+    lhs: sut_bytes
+    rhs: llvm_mc_bytes
+generators:
+  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  seg: { gen: oneof, values: ["es", "cs", "ss", "ds", "fs", "gs"] }
+  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
+  disp: { gen: int, min: -4, max: 127, type: i64 }
+evidence: core.rs:31-42; x86 sse.rs:611; llvm-mc i686
+```
+
+## encode_prefetch_opcode_len_ge3
+- Tier: 3
+- Rationale: Algebraic invariant — successful encode yields at least 3 bytes starting with 0F 18.
+- Doc contract: system.rs:16-18
+- Seed: (none)
+- Formal: ∀ m, ∀ valid mem. |encode(m,[mem]).bytes| ≥ 3 ∧ starts with 0F 18
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [mnemonic, mem]
   relation:
     op: holds
-    expr: encode_bgtu([rs,rt,Symbol(tgt),extra]).is_err()
+    expr: bytes_len_ge3_and_opcode_0f18
 generators:
-  rs: { gen: gpr_name }
-  rt: { gen: gpr_name }
-  tgt: { gen: ident }
-  extra: { gen: extra_operand }
-expected_error: String
-evidence: README.md:330; llvm-mc rejects extra operand
+  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
+  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
+  disp: { gen: int, min: -65536, max: 65536, type: i64 }
+evidence: system.rs:16-18
 ```

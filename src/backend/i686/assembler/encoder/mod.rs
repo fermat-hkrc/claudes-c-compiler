@@ -11,6 +11,9 @@ mod sse;
 mod x87;
 mod system;
 
+#[cfg(test)]
+mod encode_prefetch_pbt;
+
 pub(crate) use registers::*;
 
 use crate::backend::x86::assembler::parser::*;

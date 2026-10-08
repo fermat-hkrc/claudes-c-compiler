@@ -1,4 +1,4 @@
-> Total files: 16 | Total functions: 383 | PBT candidates: 254 | Excluded: 129
+> Total files: 17 | Total functions: 397 | PBT candidates: 255 | Excluded: 142
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -385,3 +385,17 @@
 | encode_v_crypto_vi | vector.rs | 191 | function | yes | already covered |
 | encode_v_crypto_vv | vector.rs | 201 | function | yes | already covered |
 | encode_v_crypto_vs | vector.rs | 211 | function | yes | change surface |
+| encode_prefetch | i686/encoder/system.rs | 11 | method | yes | - |
+| encode_prefetch_0f0d | i686/encoder/system.rs | 25 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_out | i686/encoder/system.rs | 39 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_in | i686/encoder/system.rs | 75 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_invlpg | i686/encoder/system.rs | 110 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_verw | i686/encoder/system.rs | 124 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_lsl | i686/encoder/system.rs | 144 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_system_table | i686/encoder/system.rs | 170 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_lmsw | i686/encoder/system.rs | 203 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_smsw | i686/encoder/system.rs | 225 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_mov_cr | i686/encoder/system.rs | 250 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_mov_seg | i686/encoder/system.rs | 274 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_pop16 | i686/encoder/system.rs | 325 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_bsr_bsf_16 | i686/encoder/system.rs | 353 | method | no | out of campaign scope (HARD: test only encode_prefetch) |

@@ -1,68 +1,58 @@
-# PBT Campaign Report: encode_bgtu
+# PBT Campaign Report: encode_prefetch
 
 ## Summary
 
-**Verdict:** 1 medium: `encode_bgtu` silently ignores trailing operands beyond the documented three-operand form, so `bgtu a0, a1, foo, a2` assembles as `bgtu a0, a1, foo` and diverges from llvm-mc.
-**Date:** 2026-10-07
+**Verdict:** 1 high: `encode_prefetch` drops segment-override prefixes on memory operands (`%fs:(%eax)` etc.), so i686 software prefetch to FS/GS/ES/… targets the wrong segment.
+**Date:** 2026-10-08
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bgtu
-**Tests:** 12 properties (+ 1 KAT + 1 regression witness)
-**Result:** 11 passing, 1 bug
-**Change surface:** 1 changed function (encode_bgtu), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (Rust harness not C++-instrumented) and listed unrelated OH binaries; execution evidence is `cargo test --lib encode_bgtu_` (14 tests ran against the real symbol)
-**Tier:** standard
+**Modules tested:** encode_prefetch (i686 encoder system.rs)
+**Tests:** 8 properties (+ 5 KAT + 1 regression witness)
+**Result:** 7 passing, 1 bug
+**Change surface:** 1 changed function (encode_prefetch), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` found no .gcda/.profraw for this Rust host target and reported encode_prefetch NOT LINKED in unrelated OH C++ binaries; execution evidence is `cargo test --lib encode_prefetch` (proptest cases=1000)
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bgtu | 12 | 1 | differential (llvm-mc), algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_prefetch | 8 props (+KAT/regression) | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_bgtu silently accepts a fourth (and further) operand
+### B1: encode_prefetch drops segment override prefix
 
-**Formal:** ∀ rs,rt ∈ GPR, tgt ∈ Idents, extra ∈ Operand. encode_bgtu([rs,rt,Symbol(tgt),extra]) = Err
-**Contract evidence:** inferred (README.md:330 three-operand `bgt/ble/bgtu/bleu` form; llvm-mc rejects `bgtu a0, a1, 0, a2` with `invalid operand for instruction`; RISC-V ISA pseudo is three-operand)
-**Documentation conflict:** (none) — README states the three-operand pseudo form; it does not declare extra operands valid
-**Severity:** medium
-**Counterexample:** `encode_bgtu(&[Reg("a0"), Reg("a1"), Symbol("foo"), Reg("a2")])` (proptest minimal: rs="zero", rt="zero", tgt="foo", extra=Reg("zero"))
-**Expected / Actual:** Expected `Err(...)`; actual `Ok(WordWithReloc { word: 0x00a5e063, reloc: Branch "foo" addend 0 })`
-**Impact:** Assembler typos and generator mistakes that append a trailing operand are silently accepted, producing the same encoding as the three-operand form and diverging from llvm-mc / gas — masks bugs in hand-written or generated assembly.
-**Root cause:** `pseudo.rs:356-364` reads only indices 0/1/2 via `get_reg`/`get_branch_target` and never checks `operands.len() == 3`, so trailing operands are discarded.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/riscv/assembler/encoder/pseudo.rs:356`
+**Formal:** ∀ m ∈ {prefetcht0,prefetcht1,prefetcht2,prefetchnta}, ∀ seg∈{fs,gs,es,cs,ss,ds}, ∀ base. encode(m,[Mem(seg:base)]) = llvm-mc(m, %seg:(%base))
+**Contract evidence:** inferred (sibling x86-64 `encode_sse_mem_only` at sse.rs:611 calls `emit_segment_prefix` before `0F 18`; i686 `core.rs:31-42` defines `emit_segment_prefix`; Intel/gas/llvm-mc require the prefix byte)
+**Documentation conflict:** (none — doc comment states `0F 18 /hint` but is silent on segment; limitation not documented)
+**Severity:** high
+**Counterexample:** `encode(prefetcht0, [%es:(%eax)])` then compare bytes — SUT `[0x0f,0x18,0x08]` vs llvm-mc `[0x26,0x0f,0x18,0x08]`
+**Expected / Actual:** `[0x26, 0x0f, 0x18, 0x08]` / `[0x0f, 0x18, 0x08]`
+**Impact:** AT&T forms with `%fs:`/`%gs:`/… assemble without the override; runtime prefetch uses DS instead of the requested segment (TLS / far-segment software prefetch broken on i686).
+**Root cause:** system.rs:16-18 emits opcode then `encode_modrm_mem` without `emit_segment_prefix(mem)`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:16`
 ```rust
-pub(crate) fn encode_bgtu(operands: &[Operand]) -> Result<EncodeResult, String> {
-    let rs1 = get_reg(operands, 0)?;
-    let rs2 = get_reg(operands, 1)?;
-    let label = get_branch_target(operands, 2)?;
-    Ok(EncodeResult::WordWithReloc {
-        word: encode_b(OP_BRANCH, 0b110, rs2, rs1, 0), // bltu rs2, rs1
-        reloc: Relocation { reloc_type: RelocType::Branch, symbol: label, addend: 0 },
-    })
-}
+            Operand::Memory(mem) => {
+                self.bytes.extend_from_slice(&[0x0F, 0x18]);
+                self.encode_modrm_mem(hint, mem)
+            }
 ```
-**Suggested fix:** Reject non-exact arity before decoding operands.
+**Suggested fix:** Call the existing helper before the opcode:
 ```rust
-pub(crate) fn encode_bgtu(operands: &[Operand]) -> Result<EncodeResult, String> {
-    if operands.len() != 3 {
-        return Err(format!("bgtu: expected 3 operands, got {}", operands.len()));
-    }
-    let rs1 = get_reg(operands, 0)?;
-    let rs2 = get_reg(operands, 1)?;
-    let label = get_branch_target(operands, 2)?;
-    Ok(EncodeResult::WordWithReloc {
-        word: encode_b(OP_BRANCH, 0b110, rs2, rs1, 0), // bltu rs2, rs1
-        reloc: Relocation { reloc_type: RelocType::Branch, symbol: label, addend: 0 },
-    })
-}
+            Operand::Memory(mem) => {
+                self.emit_segment_prefix(mem);
+                self.bytes.extend_from_slice(&[0x0F, 0x18]);
+                self.encode_modrm_mem(hint, mem)
+            }
 ```
-**Bug report:** bug_reports/encode_bgtu_extra_operand.md
-**Repro seed:** cc 0ed270b0d2995d0cee2ec7f9e63d37cbafd5fdc5a1f66192027ce019b84151e3
+**Bug report:** bug_reports/encode_prefetch_missing_segment_prefix.md
+**Repro seed:** proptest cc 8b94c9e409b8b296d0a76c8df339818892f3c6e8537791193ce9106556448a8a (minimal: mnemonic=prefetcht0, seg=es, base=eax, disp=0)
 **Raw output:**
 ```text
-thread 'backend::riscv::assembler::encoder::encode_bgtu_pbt::test_encode_bgtu_regression_extra_operand' panicked at src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs:341:5:
-bgtu a0, a1, foo with a fourth operand must be rejected (llvm-mc rejects; README documents three-operand `bgtu rs, rt, label`); got Ok(WordWithReloc { word: 10870883, reloc: Relocation { reloc_type: Branch, symbol: "foo", addend: 0 } })
+Test failed: assertion failed: `(left == right)`
+  left: `[15, 24, 8]`,
+ right: `[38, 15, 24, 8]`: segment prefix diff for `prefetcht0 %es:(%eax)`
+minimal failing input: mnemonic = "prefetcht0", seg = "es", base = "eax", disp = 0
 ```
 
 ## Design Caveats
@@ -73,53 +63,51 @@ bgtu a0, a1, foo with a fourth operand must be rejected (llvm-mc rejects; README
 
 | File | Tests |
 |------|-------|
-| src/backend/riscv/assembler/encoder/encode_bgtu_pbt.rs | 12 properties + KAT + regression |
-| src/backend/riscv/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_bgtu_pbt;` registration |
+| src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs | 8 properties + 5 KAT + 1 regression |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_prefetch_pbt;` (one line) |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bgtu_ -- --test-threads=1
-cargo test --lib test_encode_bgtu_regression_extra_operand -- --test-threads=1
-cargo test --lib encode_bgtu_neg_extra -- --test-threads=1
+cargo test --lib encode_prefetch -- --test-threads=1
+cargo test --lib encode_prefetch_diff_segment_prefix -- --test-threads=1
+cargo test --lib test_encode_prefetch_regression_missing_fs_prefix -- --test-threads=1
 ```
-
-Serial reconfirmation: `PBT_TEST_JOBS=1 cargo test --lib test_encode_bgtu_regression_extra_operand -- --test-threads=1` → FAIL (same Ok(WordWithReloc) witness).
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/REPORT.html (from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/INVARIANTS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_bgtu_extra_operand.md
-- pbt-out/bug_reports/encode_bgtu_extra_operand.html (rendered from report.json)
-- pbt-out/run/encode_bgtu_test.log
-- proptest-regressions/backend/riscv/assembler/encoder/encode_bgtu_pbt.txt
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_prefetch_missing_segment_prefix.md
+- pbt-out/bug_reports/encode_prefetch_missing_segment_prefix.html (from report.json)
+- pbt-out/run/encode_prefetch_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-07 06:13 (campaign: coverage)
-> Files: 16/16 scanned (100%) | Functions: 253/383 total | PBT candidates: 253 | Tested: 253 (100%) | 1 pass, 253 fail
+> Last updated: 2026-10-08 03:27 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 254/397 total | PBT candidates: 254 | Tested: 254 (100%) | 1 pass, 254 fail
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Total source files | 16 |
-| Files scanned | 16 / 16 (100%) |
-| Total functions (all files) | 383 |
-| PBT candidates (from FUNCTION_INDEX) | 253 |
-| **Tested (of PBT candidates)** | **253 / 253 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 253 / -1 |
-| **Overall (tested / all functions)** | **253 / 383 (66%)** |
+| Total source files | 17 |
+| Files scanned | 16 / 17 (94%) |
+| Total functions (all files) | 397 |
+| PBT candidates (from FUNCTION_INDEX) | 254 |
+| **Tested (of PBT candidates)** | **254 / 254 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 254 / -1 |
+| **Overall (tested / all functions)** | **254 / 397 (64%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -127,13 +115,13 @@ Serial reconfirmation: `PBT_TEST_JOBS=1 cargo test --lib test_encode_bgtu_regres
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 253 | 253 | 0 | 100% |
+|  | 254 | 254 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 253 | 253 | 0 | 100% |
+| unknown | 254 | 254 | 0 | 100% |
 
 ## File Coverage
 
@@ -409,3 +397,4 @@ Serial reconfirmation: `PBT_TEST_JOBS=1 cargo test --lib test_encode_bgtu_regres
 | encode_bgt | pseudo.rs |
 | encode_ble | pseudo.rs |
 | encode_bgtu | pseudo.rs |
+| encode_prefetch | system.rs |
