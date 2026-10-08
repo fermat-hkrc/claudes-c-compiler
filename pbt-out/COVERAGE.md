@@ -202,3 +202,10 @@
 | 36 ARM encoders × random ops (edge reg names + extreme imms, 0..6 operands) | arm encoder mod.rs | ::pbt_encode_fuzz | p_encode_fuzz_no_panic | 20000 cases green after gating the KNOWN #74/#80 path (encode_add_sub i64::MIN negation overflow via cmp/cmn/ccmp) — no NEW panic |
 | 19 RISC-V encoders × random ops | riscv pseudo.rs | ::pbt_encode_fuzz_rv | p_rv_encode_fuzz_no_panic | 15000 cases — zero panic |
 | memgraph regression (call-site collateral repair) | passes mod.rs | ::pbt_memgraph | 300×3 levels | green after cmain(0) fix — zero SUT bugs |
+
+## Round 53 — encode systematic PBT (bitfield/add_sub/logical)
+| Function | Source file | Test file | Test target | Notes |
+|----------|-------------|-----------|--------------|-------|
+| bitfield imm 0..127×0..127 grid | arm bitfield.rs | data_processing.rs::pbt_encode_systematic | p_bitfield_imm_systematic | 5000 cases → 4 fns panic width=0 → DUP #379/#384/#436/#456 (#1184 closed) |
+| add_sub imm full range | arm data_processing.rs | ::pbt_encode_systematic | p_add_sub_imm_range | 3000 cases green |
+| logical imm patterns | arm data_processing.rs | ::pbt_encode_systematic | p_logical_imm_patterns | 3000 cases green |
