@@ -183,3 +183,4 @@
 | 54 | ALL backends assembler/ELF writer | non-deterministic .o (.s identical, .o differs) | **new issue filed** | [#1185](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1185) |
 | 55 | pp macro expansion | 2500-deep chain SIGABRT (stack overflow) | **new issue filed** | [#1186](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1186) |
 | 56 | pp includes.rs | 100-file circular include HANGS (DoS) | **new issue filed** | [#1187](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1187) |
+| 56 | pp macro_defs.rs | ## at macro end accepted (C11 6.10.3.3p1) | **new issue filed** | [#1188](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1188) |
