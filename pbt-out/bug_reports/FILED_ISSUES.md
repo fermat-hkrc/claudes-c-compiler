@@ -198,3 +198,4 @@
 | 59 | traits.rs:347 | int & float bitAND panics (ICE) | **new issue filed** | [#1205](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1205) |
 | 59 | traits.rs | 6 type-mismatch operator violations (struct+int/ptr&int/float%int/~float/struct==) | **new issue filed** | [#1206](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1206) |
 | 60 | sema case/init | case float/string + desig out-of-bounds | **new** | [#1207](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1207) |
+| 60 | sema lvalue/call | 4 more: const-arr write, enum-assign, call-var, fn-assign | **new** | [#1209](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1209) |
