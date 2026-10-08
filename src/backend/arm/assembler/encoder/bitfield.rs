@@ -499,3 +499,42 @@ mod pbt_malformed_matrix {
         assert_eq!(bad, 0, "{} violations", bad);
     }
 }
+
+#[cfg(test)]
+mod pbt_bfi_width0 {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    #[test]
+    fn p_bfi_zero_width() {
+        let ops = vec![
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(0),   // lsb
+            Operand::Imm(0),   // width = 0 → imms = width - 1 = 下溢!
+        ];
+        let r = std::panic::catch_unwind(|| encode_bfi(&ops));
+        assert!(r.is_ok(), "encode_bfi panics on width=0");
+    }
+    #[test]
+    fn p_bfxil_zero_width() {
+        let ops = vec![
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+        ];
+        let r = std::panic::catch_unwind(|| encode_bfxil(&ops));
+        assert!(r.is_ok(), "encode_bfxil panics on width=0");
+    }
+    #[test]
+    fn p_sbfiz_zero_width() {
+        let ops = vec![
+            Operand::Reg("x0".into()),
+            Operand::Reg("x1".into()),
+            Operand::Imm(0),
+            Operand::Imm(0),
+        ];
+        let r = std::panic::catch_unwind(|| encode_sbfiz(&ops));
+        assert!(r.is_ok(), "encode_sbfiz panics on width=0");
+    }
+}

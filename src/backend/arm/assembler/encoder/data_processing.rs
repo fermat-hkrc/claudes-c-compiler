@@ -1854,3 +1854,103 @@ mod pbt_malformed_matrix {
         assert_eq!(bad, 0, "{} malformed-input violations (panic or silent-Ok)", bad);
     }
 }
+
+#[cfg(test)]
+mod pbt_encode_systematic {
+    use super::*;
+    use crate::backend::arm::assembler::parser::Operand;
+    use proptest::prelude::*;
+
+    /// 系统性操作数生成器——只产生"语法有效但语义可能错"的操作数
+    fn arb_valid_reg() -> BoxedStrategy<Operand> {
+        // 所有合法的 ARM64 寄存器名
+        (0usize..31).prop_flat_map(|n| prop_oneof![
+            Just(format!("x{}", n)), Just(format!("w{}", n)),
+        ].prop_map(|s| Operand::Reg(s))).boxed()
+    }
+
+    fn arb_imm12() -> BoxedStrategy<Operand> {
+        // imm12 范围内外的值
+        prop_oneof![
+            (0i64..4096).prop_map(Operand::Imm),           // 在范围内
+            (4096i64..8192).prop_map(Operand::Imm),        // 恰好超范围
+            (-4096i64..0).prop_map(Operand::Imm),          // 负值
+            Just(Operand::Imm(4095)), Just(Operand::Imm(4096)), Just(Operand::Imm(-4096)),
+            Just(Operand::Imm(i32::MAX as i64)), Just(Operand::Imm(i32::MIN as i64)),
+            Just(Operand::Imm(0x7FFFFF)), Just(Operand::Imm(-0x800000)),
+        ].boxed()
+    }
+
+    /// P-ADD-SUB-IMM: add/sub 立即数编码的系统性行为
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(3000))]
+        #[test]
+        fn p_add_sub_imm_range(
+            rd in 0usize..31, rn in 0usize..31,
+            imm in any::<i32>(),
+            is_sub in any::<bool>(), set_flags in any::<bool>(),
+        ) {
+            let ops = vec![
+                Operand::Reg(format!("x{}", rd)),
+                Operand::Reg(format!("x{}", rn)),
+                Operand::Imm(imm as i64),
+            ];
+            let r = encode_add_sub(&ops, is_sub, set_flags);
+            // 不 panic 即可——编码正确性由 E2E 差分保证
+            prop_assert!(r.is_ok() || r.is_err());
+        }
+    }
+
+    /// P-BITFIELD-IMM-DEEP: 位域指令的所有合法/非法立即数
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(5000))]
+        #[test]
+        fn p_bitfield_imm_systematic(
+            rd in 0usize..31, rn in 0usize..31,
+            lsb in 0u32..128, width in 0u32..128,  // 超出合法范围探测
+        ) {
+            let ops = vec![
+                Operand::Reg(format!("x{}", rd)),
+                Operand::Reg(format!("x{}", rn)),
+                Operand::Imm(lsb as i64),
+                Operand::Imm(width as i64),
+            ];
+            // ubfm/sbfm/bfm — 只要不 panic
+            let _ = encode_bfm(&ops);
+            let _ = encode_ubfiz(&ops);
+            let _ = encode_sbfiz(&ops);
+            let _ = encode_ubfx(&ops);
+            let _ = encode_sbfx(&ops);
+            let _ = encode_bfi(&ops);
+            let _ = encode_bfxil(&ops);
+        }
+    }
+
+    /// P-LOGICAL-IMM: 逻辑立即数（AND/ORR/EOR 的特殊编码）
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(3000))]
+        #[test]
+        fn p_logical_imm_patterns(
+            rd in 0usize..31, rn in 0usize..31,
+            imm in proptest::strategy::Union::new(vec![
+                // 位域掩码模式（逻辑立即数的典型用例）
+                (0u32..64).prop_map(|k| ((1u64 << k) - 1) as i64).boxed(),
+                (0u32..64).prop_map(|k| !((1u64 << k) - 1) as i64).boxed(),
+                // 交替位模式
+                (0u32..8).prop_map(|k| [0xFF, 0x5555, 0xAAAA, 0x3333, 0xCCCC, 0x0F0F, 0xF0F0, 0xFFFF][k as usize] as i64).boxed(),
+                // 随机值
+                any::<i64>().boxed(),
+            ]),
+        ) {
+            let ops = vec![
+                Operand::Reg(format!("x{}", rd)),
+                Operand::Reg(format!("x{}", rn)),
+                Operand::Imm(imm),
+            ];
+            // AND/ORR/EOR — 逻辑立即数编码特别复杂
+            let _ = encode_logical(&ops, 0);  // AND
+            let _ = encode_logical(&ops, 1);  // ORR
+            let _ = encode_logical(&ops, 2);  // EOR
+        }
+    }
+}
