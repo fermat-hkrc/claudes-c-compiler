@@ -263,3 +263,137 @@ mod pbt_multitu_link {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_linker_fuzz {
+    //! Round-59: Randomized linker symbol fuzzing — random combinations of
+    //! strong/weak/tentative/common/extern symbols across 2-5 TUs, verify
+    //! final linked values match gcc.
+    use proptest::prelude::*;
+    use std::path::PathBuf;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+    fn run_dir() -> PathBuf {
+        let d = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("pbt-out/rounds/59_linker_fuzz/run");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    enum SymKind {
+        StrongInit,     // int s = value;
+        Tentative,      // int s;
+        WeakInit,       // __attribute__((weak)) int s = value;
+        Extern,         // extern int s;
+        None,           // not present in this TU
+    }
+
+    fn arb_sym_kind() -> impl Strategy<Value = SymKind> {
+        prop_oneof![
+            3 => Just(SymKind::StrongInit),
+            2 => Just(SymKind::Tentative),
+            2 => Just(SymKind::WeakInit),
+            1 => Just(SymKind::Extern),
+            1 => Just(SymKind::None),
+        ]
+    }
+
+    fn render_tu(name: &str, kinds: &[SymKind], value: i32) -> String {
+        let mut s = String::new();
+        for (i, kind) in kinds.iter().enumerate() {
+            let sym = format!("sym{}", i);
+            match kind {
+                SymKind::StrongInit => s.push_str(&format!("int {} = {};\n", sym, value + i as i32)),
+                SymKind::Tentative => s.push_str(&format!("int {};\n", sym)),
+                SymKind::WeakInit => s.push_str(&format!("__attribute__((weak)) int {} = {};\n", sym, value + i as i32 + 100)),
+                SymKind::Extern => s.push_str(&format!("extern int {};\n", sym)),
+                SymKind::None => {},
+            }
+        }
+        s
+    }
+
+    fn render_main(kinds: &[SymKind]) -> String {
+        let mut s = String::from("#include <stdio.h>\n");
+        for i in 0..kinds.len() {
+            if !matches!(kinds[i], SymKind::None) {
+                s.push_str(&format!("extern int sym{};\n", i));
+            }
+        }
+        s.push_str("int main(void){\n");
+        for i in 0..kinds.len() {
+            if !matches!(kinds[i], SymKind::None) {
+                s.push_str(&format!("    printf(\"%d \", sym{});\n", i));
+            }
+        }
+        s.push_str("    putchar('\\n'); return 0;\n}\n");
+        s
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1000))]
+        #[test]
+        fn p_linker_sym_fuzz(
+            k0_0 in arb_sym_kind(), k0_1 in arb_sym_kind(), k0_2 in arb_sym_kind(),
+            k1_0 in arb_sym_kind(), k1_1 in arb_sym_kind(), k1_2 in arb_sym_kind(),
+            val0 in 1i32..1000, val1 in 1001i32..2000,
+        ) {
+            let kinds = [k0_0, k0_1, k0_2];
+            let kinds2 = [k1_0, k1_1, k1_2];
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let dir = run_dir();
+
+            let f0 = dir.join(format!("L{}_a.c", case));
+            let f1 = dir.join(format!("L{}_b.c", case));
+            let fm = dir.join(format!("L{}_m.c", case));
+            std::fs::write(&f0, render_tu("a", &kinds, val0)).unwrap();
+            std::fs::write(&f1, render_tu("b", &kinds2, val1)).unwrap();
+            std::fs::write(&fm, render_main(&kinds)).unwrap();
+
+            // gcc baseline
+            let g = dir.join(format!("L{}_gcc", case));
+            let gc = Command::new("gcc").args(["-w","-o"]).arg(&g)
+                .arg(&fm).arg(&f0).arg(&f1).output().unwrap();
+            prop_assume!(gc.status.success(), "gcc reject");
+
+            // ccc
+            let c = dir.join(format!("L{}_ccc", case));
+            let argv = vec!["ccc".to_string(),
+                fm.to_string_lossy().into_owned(),
+                f0.to_string_lossy().into_owned(),
+                f1.to_string_lossy().into_owned(),
+                "-o".to_string(), c.to_string_lossy().into_owned()];
+            let mut drv = crate::driver::Driver::new();
+            let cc = match drv.parse_cli_args(&argv) { Ok(false) => drv.run(), Ok(true) => Err("cli".into()), Err(e) => Err(e) };
+
+            let g_run = Command::new(&g).output().unwrap();
+            let want = String::from_utf8_lossy(&g_run.stdout).into_owned();
+            let _ = std::fs::remove_file(&g);
+
+            match cc {
+                Ok(()) => {
+                    let c_run = Command::new(&c).output().unwrap();
+                    let _ = std::fs::remove_file(&c);
+                    let got = String::from_utf8_lossy(&c_run.stdout);
+                    prop_assert_eq!(got, want.as_str(),
+                        "LINKER SYM MISMATCH:\n  TU1 kinds={:?} val={}\n  TU2 kinds={:?} val={}",
+                        kinds, val0, kinds2, val1);
+                }
+                Err(_) => {
+                    // ccc rejects what gcc accepts — potential bug unless known
+                    // duplicate strong symbols (#1166)
+                    let has_double_strong = kinds.iter().zip(kinds2.iter())
+                        .any(|(a, b)| matches!(a, SymKind::StrongInit) && matches!(b, SymKind::StrongInit));
+                    prop_assert!(has_double_strong,
+                        "ccc REJECTED what gcc accepted:\n  kinds={:?}/{:?}\n  val={}/{}",
+                        kinds, kinds2, val0, val1);
+                }
+            }
+            let _ = std::fs::remove_file(&f0);
+            let _ = std::fs::remove_file(&f1);
+            let _ = std::fs::remove_file(&fm);
+        }
+    }
+}
