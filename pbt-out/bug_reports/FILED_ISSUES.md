@@ -178,3 +178,4 @@
 | 51 | lexer | 0x and 0x1p empty hex/exponent accepted (values 0/1) | **new issue filed** | [#1180](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1180) |
 | 51 | x86 codegen return path | no TCO — 1M tail recursion SIGSEGV vs gcc returns normally | **new issue filed** | [#1181](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1181) |
 | 51 | diagnostics | -Wall missing 5 warning classes (uninit/unused×2/shadow/paren) | **new issue filed** | [#1182](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1182) |
+| 52 | src/common/long_double.rs:1040 | i686 ICE: float→long double panics (subtract overflow) | **new issue filed** | [#1183](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1183) |
