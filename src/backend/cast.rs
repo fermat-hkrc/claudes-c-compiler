@@ -372,3 +372,55 @@ mod pbt_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_cast_classify {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// P-CAST-CLASSIFY: 所有 (from,to) 类型对必须有明确的分类
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(512))]
+        #[test]
+        fn p_cast_all_pairs(
+            from_idx in 0usize..12, to_idx in 0usize..12,
+        ) {
+            let types = [IrType::I8, IrType::I16, IrType::I32, IrType::I64,
+                         IrType::U8, IrType::U16, IrType::U32, IrType::U64,
+                         IrType::F32, IrType::F64, IrType::F128, IrType::I128];
+            let from = types[from_idx % 12];
+            let to = types[to_idx % 12];
+            // 只要不 panic 就行——分类的正确性由 E2E 差分验证
+            let _ = classify_cast(from, to);
+            let _ = classify_cast_with_f128(from, to, true);
+            let _ = classify_cast_with_f128(from, to, false);
+        }
+    }
+
+    /// P-CAST-SYMMETRY: 同类转换应为 Identity
+    #[test]
+    fn p_cast_identity() {
+        for ty in [IrType::I32, IrType::I64, IrType::F32, IrType::F64] {
+            let k = classify_cast(ty, ty);
+            assert!(matches!(k, CastKind::Noop), "{:?}->{:?} should be Identity, got {:?}", ty, ty, k);
+        }
+    }
+
+    /// P-CAST-INT-WIDEN: 窄→宽应为 Extend
+    #[test]
+    fn p_cast_widen() {
+        let k = classify_cast(IrType::I8, IrType::I32);
+        assert!(matches!(k, CastKind::IntWiden { .. }),
+            "I8→I32 should be Extend, got {:?}", k);
+        let k = classify_cast(IrType::U8, IrType::U32);
+        assert!(matches!(k, CastKind::IntWiden { .. }),
+            "U8→U32 should be Extend, got {:?}", k);
+    }
+
+    /// P-CAST-INT-NARROW: 宽→窄应为 Truncate
+    #[test]
+    fn p_cast_narrow() {
+        let k = classify_cast(IrType::I64, IrType::I32);
+        assert!(matches!(k, CastKind::IntNarrow { .. }), "I64→I32 should be Truncate, got {:?}", k);
+    }
+}

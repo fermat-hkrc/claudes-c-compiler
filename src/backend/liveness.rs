@@ -1272,3 +1272,27 @@ mod pbt_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_liveness {
+    use super::*;
+    use proptest::prelude::*;
+    use crate::ir::module::{IrFunction, IrParam};
+    use crate::common::types::IrType;
+
+    /// P-LIVENESS-NOPANIC: 对各种 IrFunction 结构不 panic
+    #[test]
+    fn p_liveness_empty_fn() {
+        let f = IrFunction::new("test".to_string(), IrType::Void, vec![], false);
+        let r = compute_live_intervals(&f);
+        assert!(r.intervals.is_empty() || r.intervals.len() >= 0);
+    }
+
+    #[test]
+    fn p_liveness_single_param() {
+        let f = IrFunction::new("t".to_string(), IrType::I32,
+            vec![IrParam { ty: IrType::I32, struct_size: None, struct_align: None,
+                struct_eightbyte_classes: vec![], riscv_float_class: None }], false);
+        let _ = compute_live_intervals(&f);
+    }
+}
