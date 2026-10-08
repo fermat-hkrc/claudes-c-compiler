@@ -6,3 +6,5 @@
 > #1177
 # empty character constant '' accepted, value 0 (gcc: 'empty character constant')
 > #1178
+# floating literal '1e' with empty exponent accepted, value 0 (gcc: 'exponent has no digits')
+> #1179

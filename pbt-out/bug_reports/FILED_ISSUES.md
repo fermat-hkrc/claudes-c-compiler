@@ -174,3 +174,4 @@
 | 51 | lexer | duplicate suffixes (luL/uu/lll) accepted | **new issue filed** | [#1176](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1176) |
 | 51 | parser | contradictory specifiers (5 forms) | **new issue filed** | [#1177](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1177) |
 | 51 | lexer | empty char constant accepted (value 0) | **new issue filed** | [#1178](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1178) |
+| 51 | lexer | float 1e empty exponent accepted as 0 | **new issue filed** | [#1179](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1179) |
