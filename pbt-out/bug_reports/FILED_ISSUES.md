@@ -190,3 +190,5 @@
 | 57 | lexer escape | incomplete \\U accepted | **new issue filed** | [#1192](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1192) |
 | 57 | lexer comment | unterminated /* silently consumes file | **new issue filed** | [#1193](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1193) |
 | 57 | lexer string | mixed narrow/wide concat rejected (GNU ext) | **new issue filed** | [#1194](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1194) |
+| 57 | pp macro_defs | # not followed by parameter | **new issue filed** | [#1195](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1195) |
+| 57 | pp #line | #line -1 accepted | **new issue filed** | [#1196](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1196) |
