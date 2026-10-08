@@ -1673,3 +1673,49 @@ mod pbt_constraint_fuzz {
         }
     }
 }
+
+#[cfg(test)]
+mod pbt_parser_fuzz {
+    use proptest::prelude::*;
+    use std::process::Command;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CASE: AtomicUsize = AtomicUsize::new(0);
+
+    const CORPUS: &[&str] = &[
+        "int main(void){int x=1;return x;}",
+        "struct S{int a;double b;};int main(){struct S s={1,2.5};return s.a;}",
+        "int f(int a,int b){return a+b;}int main(){return f(1,2);}",
+        "static int a[5]={1,2,3,4,5};int main(){return a[2];}",
+        "int main(){for(int i=0;i<10;i++){}return 0;}",
+    ];
+    const CHARS: &[&str] = &["(", ")", "{", "}", "[", "]", ";", ",", "+", "-", "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "~", "?", ":", ".", "#", "@", "$", "`", "\\"];
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(3000))]
+        #[test]
+        fn p_parser_fuzz_no_crash(
+            corpus_idx in any::<usize>(),
+            pos in any::<usize>(),
+            ch_idx in any::<usize>(),
+            len_del in 0usize..5,
+        ) {
+            let src = CORPUS[corpus_idx % CORPUS.len()];
+            let mut s: Vec<char> = src.chars().collect();
+            let pos = pos % s.len().max(1);
+            // delete 0-5 chars at pos, then insert random char
+            for _ in 0..len_del { if pos < s.len() { s.remove(pos); } }
+            s.insert(pos, CHARS[ch_idx % CHARS.len()].chars().next().unwrap());
+            let mutated: String = s.into_iter().collect();
+
+            let case = CASE.fetch_add(1, Ordering::SeqCst);
+            let f = format!("/tmp/pf_{}.c", case);
+            std::fs::write(&f, &mutated).unwrap();
+            let out = Command::new("./target/debug/ccc")
+                .args(["-c", &f, "-o", "/dev/null"]).output().unwrap();
+            let _ = std::fs::remove_file(&f);
+            let se = String::from_utf8_lossy(&out.stderr);
+            prop_assert!(!se.contains("panicked"), "PARSER ICE on: {}", mutated);
+            prop_assert!(!out.status.to_string().contains("signal"), "PARSER CRASH on: {}", mutated);
+        }
+    }
+}
