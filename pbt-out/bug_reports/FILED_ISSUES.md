@@ -192,3 +192,4 @@
 | 57 | lexer string | mixed narrow/wide concat rejected (GNU ext) | **new issue filed** | [#1194](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1194) |
 | 57 | pp macro_defs | # not followed by parameter | **new issue filed** | [#1195](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1195) |
 | 57 | pp #line | #line -1 accepted | **new issue filed** | [#1196](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1196) |
+| 57 | pp expr/directives | 5 constraints: div-zero in #if, digit-name, undef-empty, double-else | **new issue filed** | [#1197](https://github.com/fermat-hkrc/claudes-c-compiler/issues/1197) |
