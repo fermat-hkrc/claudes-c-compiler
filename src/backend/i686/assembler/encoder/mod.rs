@@ -13,6 +13,8 @@ mod system;
 
 #[cfg(test)]
 mod encode_prefetch_pbt;
+#[cfg(test)]
+mod encode_prefetch_0f0d_pbt;
 
 pub(crate) use registers::*;
 

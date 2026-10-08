@@ -1,39 +1,39 @@
-# PBT Campaign Report: encode_prefetch
+# PBT Campaign Report: encode_prefetch_0f0d
 
 ## Summary
 
-**Verdict:** 1 high: `encode_prefetch` drops segment-override prefixes on memory operands (`%fs:(%eax)` etc.), so i686 software prefetch to FS/GS/ES/… targets the wrong segment.
+**Verdict:** 1 high: `encode_prefetch_0f0d` omits segment-override prefixes on `prefetchw %fs:(…)` / `%es:(…)` / etc., so TLS-relative and far-segment prefetch-for-write assemble to the wrong address space.
 **Date:** 2026-10-08
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_prefetch (i686 encoder system.rs)
-**Tests:** 8 properties (+ 5 KAT + 1 regression witness)
-**Result:** 7 passing, 1 bug
-**Change surface:** 1 changed function (encode_prefetch), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` found no .gcda/.profraw for this Rust host target and reported encode_prefetch NOT LINKED in unrelated OH C++ binaries; execution evidence is `cargo test --lib encode_prefetch` (proptest cases=1000)
+**Modules tested:** encode_prefetch_0f0d (i686 system encoder)
+**Tests:** 9 properties (+ 5 KAT/regression witnesses)
+**Result:** 8 passing, 1 bug
+**Change surface:** 1 changed function (encode_prefetch_0f0d), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no .gcda/.profraw for this Rust target; C++ binaries listed as NOT LINKED are expected (SUT exercised via cargo lib tests)
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_prefetch | 8 props (+KAT/regression) | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_prefetch_0f0d | 9 | 1 | differential (llvm-mc), reference KAT, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_prefetch drops segment override prefix
+### B1: encode_prefetch_0f0d drops segment override prefix
 
-**Formal:** ∀ m ∈ {prefetcht0,prefetcht1,prefetcht2,prefetchnta}, ∀ seg∈{fs,gs,es,cs,ss,ds}, ∀ base. encode(m,[Mem(seg:base)]) = llvm-mc(m, %seg:(%base))
-**Contract evidence:** inferred (sibling x86-64 `encode_sse_mem_only` at sse.rs:611 calls `emit_segment_prefix` before `0F 18`; i686 `core.rs:31-42` defines `emit_segment_prefix`; Intel/gas/llvm-mc require the prefix byte)
-**Documentation conflict:** (none — doc comment states `0F 18 /hint` but is silent on segment; limitation not documented)
+**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, disp ∈ i32. SUT.encode(prefetchw, Mem(seg:base+disp)) = llvm-mc("prefetchw %seg:disp(%base)")
+**Contract evidence:** inferred (sibling x86-64 `encode_sse_mem_only` at sse.rs:605-616 calls `emit_segment_prefix` before `[0x0F, 0x0D]`; i686 `core.rs:31-42` provides `emit_segment_prefix`; Intel SDM / llvm-mc emit ES=0x26 … FS=0x64 before opcode; public AT&T assembler accepts segment overrides on prefetchw)
+**Documentation conflict:** (none) — doc comment only states opcode form `0F 0D /1`, silent on segment prefixes; sibling encoders establish the intended contract
 **Severity:** high
-**Counterexample:** `encode(prefetcht0, [%es:(%eax)])` then compare bytes — SUT `[0x0f,0x18,0x08]` vs llvm-mc `[0x26,0x0f,0x18,0x08]`
-**Expected / Actual:** `[0x26, 0x0f, 0x18, 0x08]` / `[0x0f, 0x18, 0x08]`
-**Impact:** AT&T forms with `%fs:`/`%gs:`/… assemble without the override; runtime prefetch uses DS instead of the requested segment (TLS / far-segment software prefetch broken on i686).
-**Root cause:** system.rs:16-18 emits opcode then `encode_modrm_mem` without `emit_segment_prefix(mem)`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:16`
+**Counterexample:** `prefetchw %es:(%eax)` → SUT `[0x0f, 0x0d, 0x08]`, llvm-mc `[0x26, 0x0f, 0x0d, 0x08]`; also `prefetchw %fs:(%eax)` → SUT omits `0x64`
+**Expected / Actual:** expected `[0x26, 0x0f, 0x0d, 0x08]` (ES) / `[0x64, 0x0f, 0x0d, 0x08]` (FS); actual `[0x0f, 0x0d, 0x08]`
+**Impact:** Assembled `prefetchw` with FS/GS (or other) overrides prefetches DS-relative addresses instead — silent wrong machine code for TLS / far-segment software prefetch-for-write on i686.
+**Root cause:** `system.rs:30-32` emits opcode then ModR/M without calling `emit_segment_prefix(mem)` first (same defect class as `encode_prefetch` for 0F 18).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:30`
 ```rust
             Operand::Memory(mem) => {
-                self.bytes.extend_from_slice(&[0x0F, 0x18]);
+                self.bytes.extend_from_slice(&[0x0F, 0x0D]);
                 self.encode_modrm_mem(hint, mem)
             }
 ```
@@ -41,18 +41,18 @@
 ```rust
             Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, 0x18]);
+                self.bytes.extend_from_slice(&[0x0F, 0x0D]);
                 self.encode_modrm_mem(hint, mem)
             }
 ```
-**Bug report:** bug_reports/encode_prefetch_missing_segment_prefix.md
-**Repro seed:** proptest cc 8b94c9e409b8b296d0a76c8df339818892f3c6e8537791193ce9106556448a8a (minimal: mnemonic=prefetcht0, seg=es, base=eax, disp=0)
+**Bug report:** bug_reports/encode_prefetch_0f0d_missing_segment_prefix.md
+**Repro seed:** proptest `cc 09d82a423894d0e5e8a99a503a8df35dbfcad9b380e1bef674ec283302baea3d` (seg=es, base=eax, disp=0)
 **Raw output:**
 ```text
 Test failed: assertion failed: `(left == right)`
-  left: `[15, 24, 8]`,
- right: `[38, 15, 24, 8]`: segment prefix diff for `prefetcht0 %es:(%eax)`
-minimal failing input: mnemonic = "prefetcht0", seg = "es", base = "eax", disp = 0
+  left: `[15, 13, 8]`,
+ right: `[38, 15, 13, 8]`: segment prefix diff for `prefetchw %es:(%eax)`: SUT=[0f, 0d, 08] llvm-mc=[26, 0f, 0d, 08]
+minimal failing input: seg = "es", base = "eax", disp = 0
 ```
 
 ## Design Caveats
@@ -63,39 +63,42 @@ minimal failing input: mnemonic = "prefetcht0", seg = "es", base = "eax", disp =
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs | 8 properties + 5 KAT + 1 regression |
-| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_prefetch_pbt;` (one line) |
+| src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs | 9 proptest properties + 5 KAT/regression |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_prefetch_0f0d_pbt;` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_prefetch -- --test-threads=1
-cargo test --lib encode_prefetch_diff_segment_prefix -- --test-threads=1
-cargo test --lib test_encode_prefetch_regression_missing_fs_prefix -- --test-threads=1
+cargo test --lib encode_prefetch_0f0d -- --test-threads=1
+cargo test --lib encode_prefetch_0f0d_diff_segment_prefix -- --test-threads=1
+cargo test --lib test_encode_prefetch_0f0d_regression_missing_fs_prefix -- --test-threads=1
 ```
+
+Whole suite (filter): `cargo test --lib encode_prefetch_0f0d -- --test-threads=1`
+Log: pbt-out/run/encode_prefetch_0f0d_test.log
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (from report.json)
+- pbt-out/REPORT.html (rendered from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/report.json
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_prefetch_missing_segment_prefix.md
-- pbt-out/bug_reports/encode_prefetch_missing_segment_prefix.html (from report.json)
-- pbt-out/run/encode_prefetch_test.log
+- pbt-out/bug_reports/encode_prefetch_0f0d_missing_segment_prefix.md
+- pbt-out/bug_reports/encode_prefetch_0f0d_missing_segment_prefix.html (rendered)
+- pbt-out/run/encode_prefetch_0f0d_test.log
+- pbt-out/FUNCTION_INDEX.md (updated)
+- pbt-out/INVARIANTS.md (updated below)
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-08 03:27 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 254/397 total | PBT candidates: 254 | Tested: 254 (100%) | 1 pass, 254 fail
+> Last updated: 2026-10-08 03:38 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 255/397 total | PBT candidates: 255 | Tested: 255 (100%) | 1 pass, 255 fail
 
 ## Summary
 
@@ -104,10 +107,10 @@ cargo test --lib test_encode_prefetch_regression_missing_fs_prefix -- --test-thr
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 254 |
-| **Tested (of PBT candidates)** | **254 / 254 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 254 / -1 |
-| **Overall (tested / all functions)** | **254 / 397 (64%)** |
+| PBT candidates (from FUNCTION_INDEX) | 255 |
+| **Tested (of PBT candidates)** | **255 / 255 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 255 / -1 |
+| **Overall (tested / all functions)** | **255 / 397 (64%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -115,13 +118,13 @@ cargo test --lib test_encode_prefetch_regression_missing_fs_prefix -- --test-thr
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 254 | 254 | 0 | 100% |
+|  | 255 | 255 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 254 | 254 | 0 | 100% |
+| unknown | 255 | 255 | 0 | 100% |
 
 ## File Coverage
 
@@ -398,3 +401,4 @@ cargo test --lib test_encode_prefetch_regression_missing_fs_prefix -- --test-thr
 | encode_ble | pseudo.rs |
 | encode_bgtu | pseudo.rs |
 | encode_prefetch | system.rs |
+| encode_prefetch_0f0d | system.rs |

@@ -386,7 +386,7 @@
 | encode_v_crypto_vv | vector.rs | 201 | function | yes | already covered |
 | encode_v_crypto_vs | vector.rs | 211 | function | yes | change surface |
 | encode_prefetch | i686/encoder/system.rs | 11 | method | yes | - |
-| encode_prefetch_0f0d | i686/encoder/system.rs | 25 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_prefetch_0f0d | i686/encoder/system.rs | 25 | method | yes | change-surface target this campaign |
 | encode_out | i686/encoder/system.rs | 39 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_in | i686/encoder/system.rs | 75 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_invlpg | i686/encoder/system.rs | 110 | method | no | out of campaign scope (HARD: test only encode_prefetch) |

@@ -1,221 +1,246 @@
-# Properties: encode_prefetch
+# Properties: encode_prefetch_0f0d
 
-## encode_prefetch_diff_llvm_mc
+## encode_prefetch_0f0d_kat_llvm_mc_eax
 - Tier: 5
-- Rationale: Strongest oracle is differential vs independent llvm-mc i686 assembler (Intel PREFETCHh 0F 18 /hint). State machine N/A. Round-trip N/A (no decoder). SUT-boundary=internal-helper of GNU-style i686 assembler.
-- Doc contract: system.rs:10 "Encode prefetch instructions (0F 18 /hint)" — asserted fingerprint 7a3c91e2
-- Seed: (none)
-- Formal: ∀ m ∈ {prefetcht0,prefetcht1,prefetcht2,prefetchnta}, ∀ mem ∈ ValidMem32 (no segment). encode(m, [Mem(mem)]).bytes = llvm-mc(-triple=i686, m mem)
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+- Rationale: Reference KAT gate — pins llvm-mc mapping and SUT basic path before PBT. Stronger state-machine N/A (pure encoder). Differential independence established by llvm-mc as external assembler.
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: (none — prior encode_prefetch KAT pattern generalized)
+- Formal: ∃ known input prefetchw (%eax). encode(SUT)=llvm-mc= [0F, 0D, 08]
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.encoder.encode_prefetch
+function: i686.encoder.encode_prefetch_0f0d
+oracle: reference
+predicate:
+  quantifier: exists
+  vars: [kat]
+  domain: { kat: fixed_kat }
+  body: sut_encode("prefetchw", mem_base(eax)) == vec![0x0F, 0x0D, 0x08]
+generators:
+  kat: { gen: const, value: 0 }
+evidence: system.rs:24; encoder/mod.rs:746; llvm-mc -triple=i686
+```
+
+## encode_prefetch_0f0d_diff_llvm_mc_base_disp
+- Tier: 5
+- Rationale: Differential vs llvm-mc over base+disp memory forms. Strongest applicable (no in-tree decoder for round-trip; pure function so no state machine).
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: encode_prefetch_pbt.rs encode_prefetch_diff_llvm_mc_base_disp
+- Formal: ∀ base ∈ GP32, disp ∈ i32. llvm-mc("prefetchw disp(%base)") = SUT.encode(prefetchw, Mem(base,disp))
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch_0f0d
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnemonic, mem]
+  vars: [base, disp]
+  domain: { base: gp32_regs, disp: i32 }
   relation:
     op: eq
-    lhs: sut_bytes
-    rhs: llvm_mc_bytes
+    lhs: sut_encode("prefetchw", mem_base(base, disp))
+    rhs: llvm_mc("prefetchw att_mem(base,disp)")
 generators:
-  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
+  base: { gen: oneof, values: [eax,ecx,edx,ebx,esp,ebp,esi,edi] }
   disp: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-evidence: system.rs:10 + encoder/mod.rs:739-742 + Intel SDM PREFETCHh
+evidence: system.rs:24-35; Intel SDM PREFETCHW 0F 0D /1
 ```
 
-## encode_prefetch_hint_modrm_reg
-- Tier: 4
-- Rationale: Algebraic invariant — opcode is always 0F 18 and ModRM.reg equals dispatched hint.
-- Doc contract: system.rs:10 "Encode prefetch instructions (0F 18 /hint)" — asserted fingerprint 7a3c91e2
-- Seed: (none)
-- Formal: ∀ m∈Mnemonics, ∀ mem∈ValidMem32. let b=encode(m,[Mem(mem)]).bytes in b[0]=0x0F ∧ b[1]=0x18 ∧ ((b[2]>>3)&7)=hint(m)
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+## encode_prefetch_0f0d_diff_llvm_mc_sib
+- Tier: 5
+- Rationale: Differential covering SIB addressing (index≠ESP, optional base, scales 1/2/4/8).
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: encode_prefetch_pbt.rs encode_prefetch_diff_llvm_mc_sib
+- Formal: ∀ base?, index≠esp, scale∈{1,2,4,8}, disp. SUT bytes = llvm-mc bytes for SIB form
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.encoder.encode_prefetch
+function: i686.encoder.encode_prefetch_0f0d
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [base, index, scale, disp]
+  domain: { index: gp32_no_esp, scale: scales_1248 }
+  relation:
+    op: eq
+    lhs: sut_encode("prefetchw", mem_sib(base, index, scale, disp))
+    rhs: llvm_mc(att_form(base, index, scale, disp))
+generators:
+  scale: { gen: oneof, values: [1, 2, 4, 8] }
+  index: { gen: oneof, values: [eax, ecx, edx, ebx, ebp, esi, edi] }
+  disp: { gen: int, min: -512, max: 512, type: i64 }
+evidence: system.rs:30-32 encode_modrm_mem path
+```
+
+## encode_prefetch_0f0d_hint_modrm_reg
+- Tier: 4
+- Rationale: Algebraic invariant — successful encode yields opcode 0F 0D and ModRM.reg = 1 (dispatch hardcodes hint=1). Rejected round-trip (no decoder).
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: encode_prefetch_pbt.rs encode_prefetch_hint_modrm_reg
+- Formal: ∀ valid mem. let b = encode(prefetchw, mem). b[0]=0x0F ∧ b[1]=0x0D ∧ ((b[2]>>3)&7)=1
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch_0f0d
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mnemonic, mem]
+  vars: [mem]
+  domain: { mem: valid_i686_mem }
   relation:
-    op: holds
-    expr: bytes_ok_opcode_and_hint
+    op: eq
+    lhs: "(bytes[2] >> 3) & 7"
+    rhs: "1"
 generators:
-  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
-  disp: { gen: int, min: -200, max: 300, type: i64 }
-evidence: system.rs:10-18; mod.rs:739-742
+  mem: { gen: mem_operand_i686 }
+evidence: system.rs:24; encoder/mod.rs:746 hint=1
 ```
 
-## encode_prefetch_meta_hint_isolates_reg
-- Tier: 4
-- Rationale: Metamorphic — changing only mnemonic/hint changes only ModRM.reg.
-- Doc contract: system.rs:10 "Encode prefetch instructions (0F 18 /hint)" — asserted fingerprint 7a3c91e2
-- Seed: (none)
-- Formal: ∀ m1,m2∈Mnemonics, ∀ mem. let a=encode(m1,[mem]), b=encode(m2,[mem]) in a[0..2)=b[0..2)=[0F,18] ∧ a[3..]=b[3..] ∧ ((a[2]>>3)&7)=hint(m1) ∧ ((b[2]>>3)&7)=hint(m2) ∧ (a[2]&0xC7)=(b[2]&0xC7)
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
+## encode_prefetch_0f0d_neg_arity
+- Tier: 3
+- Rationale: Negative/error contract — ops.len()≠1 must Err with "prefetchw requires 1 operand".
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: encode_prefetch_pbt.rs encode_prefetch_neg_arity
+- Formal: ∀ ops, |ops|≠1. encode(prefetchw, ops) = Err(e) ∧ "requires 1 operand" ∈ e
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.encoder.encode_prefetch
+function: i686.encoder.encode_prefetch_0f0d
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  domain: { ops: operand_lists_len_ne_1 }
+  relation:
+    op: throws
+    expr: sut_encode("prefetchw", ops)
+generators:
+  ops: { gen: list, elem: { gen: string }, minLen: 0, maxLen: 5 }
+expected_error: "prefetchw requires 1 operand"
+evidence: system.rs:26-28
+```
+
+## encode_prefetch_0f0d_neg_non_memory
+- Tier: 3
+- Rationale: Negative/error — single non-memory operand must Err containing "memory operand".
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: encode_prefetch_pbt.rs encode_prefetch_neg_non_memory
+- Formal: ∀ op ∉ Memory. encode(prefetchw, [op]) = Err(e) ∧ "memory operand" ∈ e
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch_0f0d
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [op]
+  domain: { op: non_memory_operand }
+  relation:
+    op: throws
+    expr: sut_encode("prefetchw", vec![op])
+generators:
+  op: { gen: oneof, values: [0, 1, 2, 3] }
+expected_error: "prefetchw requires memory operand"
+evidence: system.rs:34
+```
+
+## encode_prefetch_0f0d_diff_segment_prefix
+- Tier: 5
+- Rationale: Differential — segment overrides must appear as prefixes (x86 sibling emit_segment_prefix before 0F 0D; core.rs provides emit_segment_prefix). Metamorphic required at standard tier is also covered by edges property.
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: encode_prefetch_pbt.rs encode_prefetch_diff_segment_prefix (same class of bug expected)
+- Formal: ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, disp. SUT.encode(prefetchw, Mem(seg:base+disp)) = llvm-mc(...)
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
+- Status: failing
+- Counterexample: seg="es", base="eax", disp=0 → SUT=[0f,0d,08] llvm-mc=[26,0f,0d,08]
+- Bug report: bug_reports/encode_prefetch_0f0d_missing_segment_prefix.md
+- Re-verified: cargo test --lib encode_prefetch_0f0d_diff_segment_prefix -- --test-threads=1 → FAIL (serial)
+
+```property
+function: i686.encoder.encode_prefetch_0f0d
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [seg, base, disp]
+  domain: { seg: segment_regs }
+  relation:
+    op: eq
+    lhs: sut_encode("prefetchw", mem_with_seg)
+    rhs: llvm_mc(att_form_with_seg)
+generators:
+  seg: { gen: oneof, values: [es, cs, ss, ds, fs, gs] }
+evidence: core.rs:31-42 emit_segment_prefix; x86 encode_sse_mem_only; Intel SDM segment override
+```
+
+## encode_prefetch_0f0d_diff_edges_and_abs
+- Tier: 5
+- Rationale: Differential on ESP/EBP forced-SIB/disp edges and absolute disp32 — metamorphic-adjacent structural coverage of encode_modrm_mem corners through prefetchw.
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: encode_prefetch_pbt.rs encode_prefetch_diff_sib_esp_ebp_edges / abs
+- Formal: ∀ edge mem form ∈ {esp, ebp, disp±128 bounds, SIB-esp, abs32}. SUT = llvm-mc
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch_0f0d
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [edge]
+  domain: { edge: addressing_edge_cases }
+  relation:
+    op: eq
+    lhs: sut_encode("prefetchw", edge)
+    rhs: llvm_mc(att_form(edge))
+generators:
+  edge: { gen: oneof, values: [esp0, ebp0, disp_bounds, sib_esp, abs32] }
+evidence: core.rs:45-143 encode_modrm_mem
+```
+
+## encode_prefetch_0f0d_meta_opcode_stable
+- Tier: 4
+- Rationale: Algebraic metamorphic — varying only displacement/base must keep opcode bytes 0F 0D fixed and ModRM.reg=1 (addressing bits may change). Required metamorphic at standard tier.
+- Doc contract: system.rs:24 "Encode prefetchw (0F 0D /1)" — asserted fingerprint 332f809b
+- Seed: (none)
+- Formal: ∀ mem1, mem2 valid. let a=encode(m1), b=encode(m2). a[0..2]=b[0..2]=[0F,0D] ∧ ((a[2]>>3)&7)=((b[2]>>3)&7)=1
+- Test file: src/backend/i686/assembler/encoder/encode_prefetch_0f0d_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: i686.encoder.encode_prefetch_0f0d
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [m1, m2, mem]
-  relation:
-    op: holds
-    expr: hint_isolates_modrm_reg
-generators:
-  m1: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  m2: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
-  disp: { gen: int, min: -1000, max: 1000, type: i64 }
-evidence: system.rs:16-18
-```
-
-## encode_prefetch_neg_arity
-- Tier: 3
-- Rationale: Negative/error — arity must be exactly 1.
-- Doc contract: system.rs:12-14 arity guard — asserted fingerprint b2e81c04
-- Seed: (none)
-- Formal: ∀ m∈Mnemonics, ∀ ops. len(ops)≠1 ⇒ encode(m,ops)=Err
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: i686.encoder.encode_prefetch
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnemonic, ops]
-  relation:
-    op: throws
-    expr: sut_encode_wrong_arity
-generators:
-  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  arity: { gen: int, min: 0, max: 5, type: usize }
-expected_error: prefetch requires 1 operand
-evidence: system.rs:12-14
-```
-
-## encode_prefetch_neg_non_memory
-- Tier: 3
-- Rationale: Negative/error — non-memory operands rejected.
-- Doc contract: system.rs:20 "prefetch requires memory operand" — asserted fingerprint 9d4a12f0
-- Seed: (none)
-- Formal: ∀ m∈Mnemonics, ∀ op∉Memory. encode(m,[op])=Err
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: i686.encoder.encode_prefetch
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnemonic, op]
-  relation:
-    op: throws
-    expr: sut_encode_non_memory
-generators:
-  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  kind: { gen: int, min: 0, max: 3, type: u8 }
-expected_error: prefetch requires memory operand
-evidence: system.rs:20
-```
-
-## encode_prefetch_diff_sib_esp_ebp_edges
-- Tier: 5
-- Rationale: Differential on ESP/EBP/scale/disp boundary edges vs llvm-mc.
-- Doc contract: system.rs:10 plus encode_modrm_mem ESP/EBP rules in core.rs:84-97
-- Seed: (none)
-- Formal: ∀ m, ∀ edge_mem ∈ EspEbpScaleDispEdges. encode(m,[edge_mem])=llvm-mc(m, att(edge_mem))
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: i686.encoder.encode_prefetch
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mnemonic, edge_mem]
+  vars: [mem1, mem2]
+  domain: { mem: valid_i686_mem_no_seg }
   relation:
     op: eq
-    lhs: sut_bytes
-    rhs: llvm_mc_bytes
+    lhs: "encode(mem1)[0..2]"
+    rhs: "[0x0F, 0x0D]"
 generators:
-  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  edge: { gen: int, min: 0, max: 11, type: u8 }
-evidence: core.rs:84-97; Intel Vol.2 ModR/M
-```
-
-## encode_prefetch_diff_segment_prefix
-- Tier: 5
-- Rationale: Differential — segment overrides must emit prefix before 0F 18, matching llvm-mc and sibling encode_sse_mem_only.
-- Doc contract: system.rs:10; sibling x86/encoder/sse.rs:611; i686 core.rs:31-42
-- Seed: (none)
-- Formal: ∀ m, ∀ seg∈{fs,gs,es,cs,ss,ds}, ∀ base. encode(m,[Mem(seg:base)]) = llvm-mc(m, %seg:(%base))
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
-- Status: failing
-- Counterexample: mnemonic=prefetcht0, seg=es, base=eax, disp=0 → SUT=[0f,18,08] llvm-mc=[26,0f,18,08]
-- Bug report: bug_reports/encode_prefetch_missing_segment_prefix.md
-
-```property
-function: i686.encoder.encode_prefetch
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mnemonic, seg, base, disp]
-  relation:
-    op: eq
-    lhs: sut_bytes
-    rhs: llvm_mc_bytes
-generators:
-  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  seg: { gen: oneof, values: ["es", "cs", "ss", "ds", "fs", "gs"] }
-  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
-  disp: { gen: int, min: -4, max: 127, type: i64 }
-evidence: core.rs:31-42; x86 sse.rs:611; llvm-mc i686
-```
-
-## encode_prefetch_opcode_len_ge3
-- Tier: 3
-- Rationale: Algebraic invariant — successful encode yields at least 3 bytes starting with 0F 18.
-- Doc contract: system.rs:16-18
-- Seed: (none)
-- Formal: ∀ m, ∀ valid mem. |encode(m,[mem]).bytes| ≥ 3 ∧ starts with 0F 18
-- Test file: src/backend/i686/assembler/encoder/encode_prefetch_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: i686.encoder.encode_prefetch
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [mnemonic, mem]
-  relation:
-    op: holds
-    expr: bytes_len_ge3_and_opcode_0f18
-generators:
-  mnemonic: { gen: oneof, values: ["prefetcht0", "prefetcht1", "prefetcht2", "prefetchnta"] }
-  base: { gen: oneof, values: ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"] }
-  disp: { gen: int, min: -65536, max: 65536, type: i64 }
-evidence: system.rs:16-18
+  mem1: { gen: mem_operand_i686 }
+  mem2: { gen: mem_operand_i686 }
+evidence: system.rs:31 opcode fixed; mod.rs:746 hint fixed
 ```
