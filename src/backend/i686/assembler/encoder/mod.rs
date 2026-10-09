@@ -29,6 +29,8 @@ mod encode_lsl_pbt;
 mod encode_system_table_pbt;
 #[cfg(test)]
 mod encode_lmsw_pbt;
+#[cfg(test)]
+mod encode_smsw_pbt;
 
 pub(crate) use registers::*;
 

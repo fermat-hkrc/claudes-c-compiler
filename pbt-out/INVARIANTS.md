@@ -57,3 +57,12 @@
 - Metamorphic: same memory → lmsw Mod+RM/SIB/disp equals lidt; only ModRM.reg differs (6 vs 3).
 - Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_invlpg/prefetch/verw/lsl/system_table). Witness: `lmsw %es:(%eax)` → SUT omits 0x26; `lmsw %fs:4(%esi)` omits 0x64. (2) register arm accepts 32/8-bit names via `reg_num` aliasing (eax→same bytes as ax).
 - Fix shapes: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`; gate register form with `reg_size(&reg.name) == 2`.
+
+## encode_smsw (i686 system encoder)
+
+- Opcode: 0F 01 /4 + ModR/M; Intel SMSW is r/m16 or r32/m16 (register form: r16 gets 0x66 operand-size prefix; r32 does not).
+- Non-segment base/disp/SIB/abs and r16/r32 forms match llvm-mc `-triple=i686`.
+- Metamorphic: same memory → smsw Mod+RM/SIB/disp equals lidt; only ModRM.reg differs (4 vs 3).
+- Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_lmsw/invlpg/prefetch/verw/lsl/system_table). Witness: `smsw %es:(%eax)` → SUT omits 0x26; `smsw %fs:4(%esi)` omits 0x64. (2) register arm accepts 8-bit names via `reg_num` aliasing (al→same bytes as eax, no 0x66).
+- Fix shapes: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`; gate register form with `reg_size ∈ {2,4}` (keep 0x66 for size 2).
+- Note: unlike LMSW, SMSW legitimately accepts r32 (smswl); do not reject eax.
