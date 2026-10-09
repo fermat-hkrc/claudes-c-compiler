@@ -262,3 +262,4 @@
 | encode_in | system.rs | encode_in_pbt.rs | cargo test --lib encode_in_pbt | 7 passing / 3 failing properties (plus 5 KAT + 3 failing regression witnesses; 3 bugs: wrong regs, imm truncation, missing (%dx) form) |
 | encode_invlpg | system.rs | encode_invlpg_pbt.rs | cargo test --lib encode_invlpg | 8 passing / 2 failing properties (plus 4 KAT pass + 1 KAT fail + 2 failing regression witnesses; 1 bug: missing segment prefix) |
 | encode_verw | system.rs | encode_verw_pbt.rs | cargo test --lib encode_verw | 7 passing / 3 failing properties (plus 5 KAT; 2 bugs: missing segment prefix, accepts non-r16 register; 2 regression witnesses fail) |
+| encode_lsl | system.rs | encode_lsl_pbt.rs | cargo test --lib encode_lsl_ | 4 passing / 4 failing (plus KAT + 4 regression witnesses; 3 root-cause bugs / 4 reports: missing segment prefix, osize from src not dst, mem16 missing 0x66 base+disp and SIB) |

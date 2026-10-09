@@ -31,3 +31,12 @@
 - Build contract form: `cargo test --lib <filter> -- --test-threads=1`.
 - llvm-mc path: `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
 - proptest cases set explicitly to 1000 for standard tier.
+
+## encode_lsl (i686 system encoder)
+
+- Opcode: 0F 03 /r (Load Segment Limit); AT&T `lsl src, dst` with dest in ModRM.reg.
+- Same-width reg32/reg16 forms match llvm-mc `-triple=i686`.
+- Operand-size override MUST follow destination width (Intel LSL r16/r32, r/m16), not source.
+- Memory form must: (1) `emit_segment_prefix(mem)` before opcode; (2) emit 0x66 when dest is r16.
+- Known defects: (1) memory arm skips segment prefix; (2) register arm keys is_16 off src; (3) memory arm never emits 0x66 for r16 dest.
+- Fix shape: `is_16` on `dst.name`; memory arm `emit_segment_prefix` + optional 0x66 then `0F 03` + modrm_mem.
