@@ -69,6 +69,8 @@ mod encode_test_pbt;
 mod encode_imul_pbt;
 #[cfg(test)]
 mod encode_inc_dec_pbt;
+#[cfg(test)]
+mod encode_double_shift_pbt;
 
 pub(crate) use registers::*;
 

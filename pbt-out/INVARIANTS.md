@@ -238,3 +238,10 @@
 - Fix shapes: `self.emit_segment_prefix(mem);` before opcode on every mem arm; AL short form when size==1 && dst_num==0; gate with `reg_size == mnemonic size` and GP-only check.
 - proptest cases=1000; llvm-mc `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
 - Residual untested (reloc-oracle hard): GOTPC `_GLOBAL_OFFSET_TABLE_`, SymbolDiff, Label-as-memory arms.
+
+## encode_double_shift (i686 gp_integer.rs:920)
+- Opcodes: SHLD Imm `0F A4 /r ib`, CL `0F A5 /r`; SHRD Imm `0F AC /r ib`, CL `0F AD /r`; ModRM.reg=src, r/m=dst.
+- Dispatch: mod.rs shldl|shld → opc 0xA4 size=4; shrdl|shrd → 0xAC size=4. Aliases share encoding.
+- GP r32 Imm/CL RR forms match llvm-mc `-triple=i686`.
+- Known defects: (1) no memory destination arms (Intel r/m32); (2) Imm `*count as u8` truncates out-of-Imm8; (3) no GP-class gate (xmm via reg_num); (4) no width gate (r16/r8 alias); (5) `_size` unused (no 0x66 path).
+- Fix shapes: Imm/CL+Reg+Mem with emit_segment_prefix+encode_modrm_mem; Imm8 range check; is_xmm/is_mm + reg_size==size gates.

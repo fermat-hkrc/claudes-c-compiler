@@ -1,4 +1,4 @@
-> Total files: 17 | Total functions: 399 | PBT candidates: 273 | Excluded: 126
+> Total files: 17 | Total functions: 399 | PBT candidates: 284 | Excluded: 115
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -251,7 +251,7 @@
 | encode_unary_rm | gp_integer.rs | 707 | method | no | out of campaign scope |
 | encode_inc_dec | gp_integer.rs | 806 | method | yes | HARD-scope target this campaign |
 | encode_shift | gp_integer.rs | 756 | method | yes | - |
-| encode_double_shift | gp_integer.rs | 836 | method | no | out of campaign scope |
+| encode_double_shift | gp_integer.rs | 920 | method | yes | HARD-scope target this campaign |
 | encode_bswap | gp_integer.rs | 863 | method | no | out of campaign scope |
 | encode_bit_count | gp_integer.rs | 878 | method | no | out of campaign scope |
 | encode_setcc | gp_integer.rs | 915 | method | no | out of campaign scope |
