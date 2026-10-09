@@ -242,7 +242,7 @@
 | encode_movsx | gp_integer.rs | 272 | method | yes | HARD scope this campaign |
 | encode_movzx | gp_integer.rs | 302 | method | yes | - |
 | encode_lea | gp_integer.rs | 332 | method | yes | HARD scope this campaign |
-| encode_push | gp_integer.rs | 336 | method | no | out of campaign scope |
+| encode_push | gp_integer.rs | 346 | method | yes | - |
 | encode_pop | gp_integer.rs | 378 | method | no | out of campaign scope |
 | encode_alu | gp_integer.rs | 404 | method | no | out of campaign scope |
 | encode_test | gp_integer.rs | 562 | method | no | out of campaign scope |

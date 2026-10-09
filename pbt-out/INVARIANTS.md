@@ -179,3 +179,13 @@
 - Known defects: (1) does not call `emit_segment_prefix` before 0x8D (witness `leal %es:(%eax), %eax` → omits 0x26); (2) dest gated only by `reg_num`, so xmm/mm/st/r8/r16 under `leal` are accepted and aliased to GP encodings; (3) `_size` ignored (no 0x66 path even if leaw were dispatched).
 - Fix shapes: `self.emit_segment_prefix(mem);` before `bytes.push(0x8D)`; gate dest with `reg_size` / reject non-GP; honor size==2 with leading 0x66 when leaw is wired.
 - Harness: encode_lea_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
+
+## encode_push (i686 gp_integer encoder)
+
+- Dispatch: `pushl|push` → encode_push (mod.rs:191); `pushw` → encode_push16 (immediates only).
+- Happy path matches llvm-mc i686: r32 short 50+rd; imm8 6A ib (|v|≤127); imm32 68 id; mem FF /6 (ESP/EBP/SIB/abs).
+- Symbol immediate: 0x68 + R_386_32 reloc + four zero bytes.
+- Known defects (this campaign): (1) memory arm does not call `emit_segment_prefix` (x86-64 sibling does); (2) register arm accepts xmm/mm/r8 via `reg_num` alias as 50+n; (3) no Sreg PUSH table (sibling encode_pop has POP Sreg); (4) r16 via mnemonic `push` missing 0x66 (encodes as r32).
+- Fix shapes: `emit_segment_prefix(mem)` before 0xFF; gate register class/size; Sreg table ES=06/CS=0E/SS=16/DS=1E/FS=0FA0/GS=0FA8; emit 0x66 when reg_size==2.
+- llvm-mc: `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+- proptest cases=1000; harness `encode_push_pbt.rs`.

@@ -1,215 +1,323 @@
-# Properties: encode_lea (i686)
+# Properties: encode_push (i686)
 
-## encode_lea_diff_llvm_mc_base_disp
+## encode_push_diff_r32
 - Tier: 5
-- Rationale: Strongest oracle is differential vs llvm-mc i686 for LEA mem→reg. State machine N/A (pure encoder). Round-trip N/A (no decoder). Evidence: Intel SDM LEA; mod.rs:186 leal|lea; gp_integer.rs:332-344.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations," — other fingerprint 228d9fdf
-- Seed: (none — no prior lea unit tests)
-- Formal: ∀ base ∈ GP32, disp ∈ i32, dst ∈ GP32. llvm_mc("leal mem, %dst") = encode_lea(mem, dst)
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
+- Rationale: Strongest oracle is differential vs llvm-mc i686 (Intel SDM PUSH r32 short form 50+rd). State machine N/A (pure encode). Round-trip N/A (no decoder). Reference KAT gate first.
+- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
+- Seed: (none — no prior encode_push unit tests)
+- Formal: ∀ r ∈ {eax,ecx,edx,ebx,esp,ebp,esi,edi}. encode_push([Reg(r)]) = llvm-mc("pushl %r")
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_lea
+function: gp_integer.encode_push
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [base, disp, dst]
-  domain: { base: GP32, disp: i32, dst: GP32 }
+  vars: [r]
+  domain: { r: gp32_regs }
   relation:
     op: eq
-    lhs: "sut_encode(\"leal\", [Memory(base,disp), Register(dst)])"
-    rhs: "llvm_mc_bytes(\"leal mem, %dst\")"
+    lhs: "sut_encode(\"pushl\", [Reg(r)])"
+    rhs: "llvm_mc_bytes(format!(\"pushl %{r}\"))"
 generators:
-  base: { gen: string, type: "&str" }
-  disp: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-  dst: { gen: string, type: "&str" }
-evidence: gp_integer.rs:332-344; encoder/mod.rs:186; Intel SDM LEA
+  r: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
+evidence: encoder/mod.rs:191 "pushl|push => encode_push"; Intel SDM PUSH 50+rd
 ```
 
-## encode_lea_diff_llvm_mc_sib
+## encode_push_diff_imm
 - Tier: 5
-- Rationale: SIB forms (ESP base, scaled index, no-base) are the densest ModR/M edge surface for LEA.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations," — other fingerprint 228d9fdf
+- Rationale: Imm8 (6A ib) vs Imm32 (68 id) boundary at ±128 is a classic off-by-one; differential vs llvm-mc pins both forms.
+- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
 - Seed: (none)
-- Formal: ∀ base?, index≠esp, scale∈{1,2,4,8}, disp, dst. llvm_mc(SIB lea) = encode_lea(SIB)
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
+- Formal: ∀ v ∈ i32. encode_push([Imm(v)]) = llvm-mc("pushl $v")
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_lea
+function: gp_integer.encode_push
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [base, index, scale, disp, dst]
-  domain: { index: GP32_no_esp, scale: powers_of_two_1_8 }
+  vars: [v]
+  domain: { v: i32_with_i8_boundaries }
   relation:
     op: eq
-    lhs: "sut_encode(\"leal\", SIB)"
-    rhs: "llvm_mc_bytes(SIB lea)"
+    lhs: "sut_encode(\"pushl\", [Imm(v)])"
+    rhs: "llvm_mc_bytes(format!(\"pushl ${v}\"))"
 generators:
-  scale: { gen: int, min: 1, max: 8, type: u8 }
-evidence: core.rs:45-143 encode_modrm_mem; gp_integer.rs:332
+  v: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
+evidence: gp_integer.rs:356-363 imm8 vs imm32 branch; Intel SDM 6A/68
 ```
 
-## encode_lea_diff_llvm_mc_segment
+## encode_push_diff_mem
 - Tier: 5
-- Rationale: All six segment overrides are valid on i686 (core.rs emit_segment_prefix). Prior campaigns found missing emit_segment_prefix on memory ops; encode_lea body has no call.
-- Doc contract: core.rs:31 "Emit segment override prefix if the memory operand has a segment." — asserted fingerprint a1b2c3d4
-- Seed: encode_mov_mem_reg_pbt segment property
-- Formal: ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, dst. llvm_mc("leal %seg:(%base), %dst") = encode_lea(seg:mem, dst)
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
+- Rationale: Memory form FF /6 via encode_modrm_mem; ESP/EBP/SIB/abs edges historically break ModRM. Differential vs llvm-mc.
+- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
+- Seed: (none)
+- Formal: ∀ m ∈ valid_mem32. encode_push([Mem(m)]) = llvm-mc("pushl m") when m has no segment override
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: gp_integer.encode_push
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [m]
+  domain: { m: i686_mem32_no_seg }
+  relation:
+    op: eq
+    lhs: "sut_encode(\"pushl\", [Mem(m)])"
+    rhs: "llvm_mc_bytes(format!(\"pushl {}\", att_mem(m)))"
+generators:
+  m: { gen: "mem32_no_seg", type: MemoryOperand }
+evidence: gp_integer.rs:374-377 FF /6; Intel SDM PUSH r/m32
+```
+
+## encode_push_diff_mem_segment
+- Tier: 5
+- Rationale: Documented contract core.rs:31-42 emit_segment_prefix for all six segs; x86-64 sibling encode_push calls it before FF /6. i686 body does not. Differential must catch missing override.
+- Doc contract: core.rs:31-42 emit_segment_prefix fs/gs/es/cs/ss/ds — asserted fingerprint a1b2c3d4
+- Seed: encode_lea_pbt.rs segment differential
+- Formal: ∀ seg ∈ {es,cs,ss,ds,fs,gs}, b ∈ GP32. encode_push([Mem(seg:b)]) = llvm-mc("pushl %seg:(%b)")
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
 - Status: failing
-- Counterexample: seg="es", base="eax", disp=0, dst="eax"; sut=[0x8d,0x00] mc=[0x26,0x8d,0x00]
-- Bug report: pbt-out/bug_reports/encode_lea_missing_segment_prefix.md
-- Re-verified: cargo test --lib encode_lea_diff_llvm_mc_segment -- --test-threads=1 → FAIL (serial)
+- Counterexample: seg="es", base="eax", disp=0 → sut=[ff,30] mc=[26,ff,30]
+- Bug report: bug_reports/encode_push_missing_segment_prefix.md
 
 ```property
-function: encode_lea
+function: gp_integer.encode_push
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [seg, base, dst]
-  domain: { seg: SEG_REGS }
+  vars: [seg, base]
+  domain: { seg: sregs, base: gp32 }
   relation:
     op: eq
-    lhs: "sut_encode(\"leal\", [Memory(seg,base), Register(dst)])"
-    rhs: "llvm_mc_bytes(\"leal %seg:(%base), %dst\")"
+    lhs: "sut_encode(\"pushl\", [Mem(seg:base)])"
+    rhs: "llvm_mc_bytes(format!(\"pushl %{}:(%{})\", seg, base))"
 generators:
-  seg: { gen: string, type: "&str" }
-evidence: core.rs:31-42; Intel SDM 2.1.1 segment overrides; llvm-mc
+  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
+  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
+evidence: core.rs:31-42; x86-64 gp_integer.rs:369 emit_segment_prefix; Intel SDM 2.1.1
 ```
 
-## encode_lea_diff_edges_esp_ebp_abs
-- Tier: 5
-- Rationale: ESP forces SIB, EBP forces disp8, abs uses mod=00 rm=5.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations," — other fingerprint 228d9fdf
-- Seed: encode_mov_mem_reg_pbt edges
-- Formal: ∀ edge mem form ∈ {esp,ebp,SIB,abs}, dst. llvm_mc = encode_lea
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_lea
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [edge, dst]
-  relation:
-    op: eq
-    lhs: "sut_encode(\"leal\", edge)"
-    rhs: "llvm_mc_bytes(edge)"
-generators:
-  edge: { gen: int, min: 0, max: 13, type: u8 }
-evidence: core.rs encode_modrm_mem ESP/EBP/abs paths
-```
-
-## encode_lea_invariant_opcode_modrm
+## encode_push_invariant_r32_opcode
 - Tier: 4
-- Rationale: Algebraic invariant — LEA opcode is always 0x8D; ModRM.reg = dst number; optional segment prefixes only before opcode.
-- Doc contract: gp_integer.rs:339 self.bytes.push(0x8D) — asserted fingerprint 8dopcode1
+- Rationale: Algebraic invariant — short form is exactly one byte 0x50+n.
+- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
 - Seed: (none)
-- Formal: ∀ valid lea. bytes after optional seg prefixes start with 0x8D ∧ ((modrm>>3)&7)=reg_num(dst)
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
+- Formal: ∀ r ∈ GP32. encode_push([Reg(r)]) = [0x50 + reg_num(r)]
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_lea
+function: gp_integer.encode_push
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mem, dst]
+  vars: [r]
+  domain: { r: gp32 }
   relation:
-    op: holds
-    expr: "strip_seg(bytes)[0] == 0x8D && ((modrm >> 3) & 7) == dst_num"
+    op: eq
+    lhs: "sut_encode(\"pushl\", [Reg(r)])"
+    rhs: "[0x50 + reg_num(r)]"
 generators:
-  dst: { gen: string, type: "&str" }
-evidence: gp_integer.rs:339-340
+  r: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
+evidence: Intel SDM PUSH 50+rd; gp_integer.rs:351-354
 ```
 
-## encode_lea_meta_vs_movl_modrm
+## encode_push_invariant_imm_form
 - Tier: 4
-- Rationale: Metamorphic — LEA and MOV mem→reg (movl) share Mod+RM/SIB/disp for the same memory operand; only opcode differs (8D vs 8B).
-- Doc contract: gp_integer.rs:332 vs encode_mov_mem_reg — other fingerprint 228d9fdf
-- Seed: encode_invlpg metamorphic vs lidt
-- Formal: ∀ mem, dst. tail(encode_lea(mem,dst)) = tail(encode_movl(mem,dst)) where tail drops the single opcode byte
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
+- Rationale: Imm form choice is exact: |v|≤127 → 6A ib else 68 + i32 LE. Boundaries ±127/±128 must be hit.
+- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
+- Seed: (none)
+- Formal: ∀ v ∈ i32. (v∈[-128,127] ⇒ encode=[0x6A, v as u8]) ∧ (v∉[-128,127] ⇒ encode=[0x68]‖le32(v as i32))
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_lea
+function: gp_integer.encode_push
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [v]
+  domain: { v: i32 }
+  body: "if v in [-128,127] then bytes=[0x6A,v as u8] else bytes=[0x68]++le32(v as i32)"
+generators:
+  v: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
+evidence: gp_integer.rs:356-363
+```
+
+## encode_push_meta_segment_stripped_eq_bare
+- Tier: 4
+- Rationale: Metamorphic — if segment prefix is correctly prepended, stripping seg prefixes from segmented encoding yields bare-mem encoding. Fails when prefix is omitted. Same root cause as encode_push_diff_mem_segment (B1); kept as reinforcing witness in the test file, ledger-retired to avoid duplicate bugId.
+- Doc contract: core.rs:31-42 emit_segment_prefix — asserted
+- Seed: encode_lea_pbt metamorphic patterns
+- Formal: ∀ seg, m. strip_seg(encode_push(Mem(seg:m))) = encode_push(Mem(m)) ∧ encode_push(Mem(seg:m)) starts with seg_prefix(seg)
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Status: failing
+- Counterexample: seg="es", base="eax", disp=0 → no 0x26 prefix, got [ff,30]
+- Bug report: bug_reports/encode_push_meta_missing_segment_prefix.md
+- Re-verified: cargo test --lib encode_push_meta_segment_stripped_eq_bare -- --test-threads=1 → FAIL (same witness)
+
+```property
+function: gp_integer.encode_push
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [mem, dst]
-  relation:
-    op: eq
-    lhs: "encode_lea(mem,dst)[1..]"
-    rhs: "encode_movl(mem,dst)[1..]"
+  vars: [seg, m]
+  domain: { seg: sregs, m: mem32 }
+  body: "strip_seg(encode(seg:m)) == encode(m) AND encode(seg:m)[0] == seg_byte(seg)"
 generators:
-  mem: { gen: string, type: "MemoryOperand" }
-evidence: both call encode_modrm_mem with same reg_field=dst
+  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
+  m: { gen: "mem32_simple", type: MemoryOperand }
+evidence: core.rs:31-42; Intel SDM 2.1.1 segment override prefixes
 ```
 
-## encode_lea_neg_arity_and_shape
+## encode_push_neg_arity
 - Tier: 3
-- Rationale: Negative contract — wrong arity and non-(Memory,Register) shapes must Err with documented messages.
-- Doc contract: gp_integer.rs:333-334 "lea requires 2 operands"; gp_integer.rs:342 "lea requires memory source and register destination" — asserted fingerprint leaerr01
+- Rationale: Negative/error — documented arity contract requires exactly 1 operand (gp_integer.rs:347-348).
+- Doc contract: gp_integer.rs:347-348 "push requires 1 operand" — asserted fingerprint bf61b4b6
 - Seed: (none)
-- Formal: ∀ ops. |ops|≠2 ∨ shape≠(Mem,Reg) ⇒ encode_lea(ops)=Err
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
+- Formal: ∀ n ∈ ℕ, n ≠ 1. encode_push(ops with len n) = Err("push requires 1 operand")
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_lea
+function: gp_integer.encode_push
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops]
+  vars: [n]
+  domain: { n: nat_except_1 }
   relation:
-    op: throws
-    expr: "sut_encode(\"leal\", ops)"
+    op: holds
+    expr: "sut_encode(\"pushl\", vec![Reg(eax); n]).is_err()"
 generators:
-  arity: { gen: int, min: 0, max: 3, type: usize }
-expected_error: "lea requires"
-evidence: gp_integer.rs:333-343
+  n: { gen: int, min: 0, max: 3, type: usize }
+expected_error: String
+evidence: gp_integer.rs:347-348 "push requires 1 operand"
 ```
 
-## encode_lea_neg_non_gp_and_r8_dest
+## encode_push_neg_xmm
 - Tier: 3
-- Rationale: LEA destination is r16/r32 GP only (Intel SDM). reg_num aliases xmm/mm/st and r8 names; SUT must reject non-GP and r8 dest (llvm-mc rejects). Also r16 dest via leal is invalid without 0x66/leaw.
-- Doc contract: (none on function) — inferred from Intel SDM LEA r16/r32,m + llvm-mc rejection
-- Seed: encode_movzx_neg_non_gp
-- Formal: ∀ bad_dst ∈ NON_GP ∪ R8 ∪ R16. encode_lea(mem, bad_dst)=Err under mnemonic leal
-- Test file: src/backend/i686/assembler/encoder/encode_lea_pbt.rs
+- Rationale: Non-GP xmm is invalid for PUSH (llvm-mc rejects; Intel SDM PUSH operands are r/m32/imm/Sreg). SUT must Err, not silently alias via reg_num.
+- Doc contract: registers.rs:4-15 reg_num aliases xmm→0..7 — limitation fingerprint b871ec83; Intel SDM PUSH operand set is the contract
+- Seed: encode_lea_regression_non_gp_xmm0
+- Formal: ∀ x ∈ {xmm0..xmm7}. encode_push([Reg(x)]) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
 - Status: failing
-- Counterexample: mode=4, dst=xmm0; leal (%eax), %xmm0 → sut=[0x8d,0x00]
-- Bug report: pbt-out/bug_reports/encode_lea_accepts_non_gp_dest.md
-- Re-verified: cargo test --lib encode_lea_neg_shape_and_dest -- --test-threads=1 → FAIL (serial)
+- Counterexample: x="xmm0" → Ok([0x50])
+- Bug report: bug_reports/encode_push_accepts_non_gp_register.md
 
 ```property
-function: encode_lea
+function: gp_integer.encode_push
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad_dst]
+  vars: [x]
+  domain: { x: xmm0_7 }
   relation:
-    op: throws
-    expr: "sut_encode(\"leal\", [mem, Register(bad_dst)])"
+    op: holds
+    expr: "sut_encode(\"pushl\", [Reg(x)]).is_err()"
 generators:
-  bad_dst: { gen: string, type: "&str" }
-expected_error: "bad dst|lea requires"
-evidence: Intel SDM LEA; registers.rs reg_num aliases; llvm-mc
+  x: { gen: oneof, values: ["xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7"], type: "&str" }
+expected_error: String
+evidence: Intel SDM PUSH operand set; llvm-mc rejects pushl %xmm0
+```
+
+## encode_push_neg_r8
+- Tier: 3
+- Rationale: r8 is invalid for PUSH (llvm-mc rejects); SUT must Err, not alias via reg_num to r32 short form. Same root cause as encode_push_neg_xmm (B2); kept as reinforcing witness in the test file, ledger-retired to avoid duplicate bugId.
+- Doc contract: registers.rs:4-15 reg_num aliases al→0 same as eax — limitation fingerprint b871ec83
+- Seed: encode_push_neg_xmm
+- Formal: ∀ r8 ∈ {al,cl,dl,bl,ah,ch,dh,bh}. encode_push([Reg(r8)]) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Status: failing
+- Counterexample: r8="al" → Ok([0x50])
+- Bug report: bug_reports/encode_push_accepts_r8_register.md
+- Re-verified: cargo test --lib encode_push_neg_r8 -- --test-threads=1 → FAIL (same witness)
+
+```property
+function: gp_integer.encode_push
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [r8]
+  domain: { r8: r8_regs }
+  relation:
+    op: holds
+    expr: "sut_encode(\"pushl\", [Reg(r8)]).is_err()"
+generators:
+  r8: { gen: oneof, values: ["al","cl","dl","bl","ah","ch","dh","bh"], type: "&str" }
+expected_error: String
+evidence: Intel SDM PUSH operand set; llvm-mc rejects pushl %al
+```
+
+## encode_push_diff_sreg
+- Tier: 5
+- Rationale: Differential — Intel SDM PUSH Sreg (es=06, cs=0E, ss=16, ds=1E, fs=0F A0, gs=0F A8). encode_push uses only reg_num which has no Sreg entries. Sibling encode_pop implements POP Sreg.
+- Doc contract: gp_integer.rs:3 PUSH/POP listed — other fingerprint 65ffa4c5; Intel SDM PUSH Sreg forms
+- Seed: encode_pop16_diff_sreg
+- Formal: ∀ s ∈ {es,cs,ss,ds,fs,gs}. encode_push([Reg(s)]) = llvm-mc("pushl %s")
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Status: failing
+- Counterexample: sreg="es" → Err("bad register"), mc=[0x06]
+- Bug report: bug_reports/encode_push_missing_sreg_forms.md
+
+```property
+function: gp_integer.encode_push
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [s]
+  domain: { s: sregs }
+  relation:
+    op: eq
+    lhs: "sut_encode(\"pushl\", [Reg(s)])"
+    rhs: "llvm_mc_bytes(format!(\"pushl %{}\", s))"
+generators:
+  s: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
+evidence: Intel SDM PUSH Sreg; llvm-mc i686 encodings; sibling encode_pop Sreg table
+```
+
+## encode_push_diff_r16
+- Tier: 5
+- Rationale: Differential — push %ax must emit 0x66 0x50+n (operand-size override), not bare 0x50+n which is pushl of the corresponding r32.
+- Doc contract: gp_integer.rs:3 PUSH/POP — other fingerprint 65ffa4c5; Intel SDM operand-size override
+- Seed: (none)
+- Formal: ∀ r16 ∈ {ax..di}. encode via mnemonic "push"([Reg(r16)]) = llvm-mc("push %r16")
+- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Status: failing
+- Counterexample: r16="ax" → sut=[0x50] mc=[0x66,0x50]
+- Bug report: bug_reports/encode_push_missing_r16_operand_size_prefix.md
+
+```property
+function: gp_integer.encode_push
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [r16]
+  domain: { r16: r16_regs }
+  relation:
+    op: eq
+    lhs: "sut_encode(\"push\", [Reg(r16)])"
+    rhs: "llvm_mc_bytes(format!(\"push %{}\", r16))"
+generators:
+  r16: { gen: oneof, values: ["ax","cx","dx","bx","sp","bp","si","di"], type: "&str" }
+evidence: Intel SDM PUSH r16 with 0x66 in 32-bit mode; llvm-mc
 ```
