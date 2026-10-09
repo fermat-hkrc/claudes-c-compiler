@@ -1,20 +1,16 @@
-# Confirmed invariants (encode_out)
+# Confirmed invariants / environment quirks
 
-## Behavioral invariants
-- Canonical DX-port forms encode as Intel fixed bytes: outb→EE, outw→66 EF, outl→EF when data is al/ax/eax and port is dx.
-- Canonical imm8-port forms: outb→E6 ib, outw→66 E7 ib, outl→E7 ib for imm in the domain llvm-mc accepts (0..=255 and signed byte equivalents).
-- outw encoding is always a single 0x66 prefix prepended to the corresponding outl encoding (same operand shape).
-- Arity other than 0 or 2 returns Err containing `requires 0 or 2 operands`.
-- **Bug:** any Register+Register pair is accepted and emits EE/EF without checking AL/AX/EAX and DX (system.rs:59-63).
-- **Bug:** imm port is truncated with `*val as u8` with no range check (system.rs:68) — e.g. $256 → E6 00.
-- **Bug:** AT&T `(%dx)` memory port form is rejected (`unsupported … operands`); x86-64 sibling and llvm-mc accept it as DX-port OUT.
+## encode_in / encode_out (i686 system encoder)
 
-## Environment
-- llvm-mc: /home/toan/tools/llvm15-official/bin/llvm-mc (LLVM 15), `-triple=i686 -show-encoding`.
-- Harness: src/backend/i686/assembler/encoder/encode_out_pbt.rs, cargo test --lib encode_out, proptest cases=1000.
-- Dispatch: encoder/mod.rs "outb"|"outw"|"outl" => encode_out(ops, mnemonic).
-- coverage_gaps had no LLVM profraw for this Rust target (C++ reporter listed unrelated binaries).
+- Intel IN/OUT fix data register to AL/AX/EAX and port to DX (or imm8).
+- AT&T operand order: OUT is `outb %al, %dx` / `outb %al, $imm`; IN is `inb %dx, %al` / `inb $imm, %al`.
+- AT&T parenthesized port `(%dx)` is accepted by llvm-mc as alias of `%dx` (same EC/ED or EE/EF bytes).
+- Operand-size override: inw/outw = `[0x66] ++ inl/outl` for the same port shape.
+- llvm-mc path used by campaigns: `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+- proptest cases set explicitly to 1000 for standard tier.
+- Known defect class (both encode_in and encode_out): (1) any Register,Register pair accepted; (2) `*val as u8` truncates OOR imm; (3) missing Memory port form on i686 (x86-64 sibling handles it).
 
-## Quirks
-- encode_out is `pub(super)`; tests reach it via public `InstructionEncoder::encode`.
-- Operand order is AT&T (source data first, destination port last).
+## Harness
+
+- PBT files: `src/backend/i686/assembler/encoder/*_pbt.rs` + `#[cfg(test)] mod` in `encoder/mod.rs`.
+- Build contract form: `cargo test --lib <filter> -- --test-threads=1`.

@@ -1,27 +1,30 @@
-# Coverage status — encode_out campaign
+# Coverage Status
 
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (Rust target; C++ reporter listed unrelated OH binaries). `encode_out` marked NOT LINKED in those C++ binaries (expected). Execution evidence is the cargo lib test run of `encode_out_pbt` (12 pass / 7 fail including KAT/regressions).
+**Campaign target:** encode_in (src/backend/i686/assembler/encoder/system.rs:75)
+**Effort tier:** standard
+**Coverage evidence:** file-level (symbol presence) — no .gcda/.profraw for the Rust cargo lib target; `coverage_gaps` inspected unrelated OH C++ pbt binaries and reported encode_in NOT LINKED there (expected). Execution evidence is the cargo test run of `encode_in_pbt` (12 passing / 7 failing cases including KAT/regression).
 
-## This campaign
+## Sweep round 1 (standard allowance)
+
+- Tool: `coverage_gaps` → no line-level data; file-level only on OH C++ binaries.
+- Documented behaviors of encode_in already have properties:
+  - DX-port differential + opcode invariant
+  - imm8-port differential + opcode invariant
+  - metamorphic inw = 66|inl
+  - metamorphic DX vs imm opcode families
+  - negative arity
+  - negative wrong registers (FAIL → bug B1)
+  - negative imm OOR (FAIL → bug B2)
+  - differential (%dx) memory form (FAIL → bug B3)
+- No additional documented branch without a property; sweep closed.
+
+## Counts
+
 | Metric | Value |
 |--------|-------|
-| Target | encode_out (system.rs:39) |
-| Properties | 8 (5 passing, 3 failing) |
-| KAT | 5 passing deterministic + 1 failing (%dx) |
-| Regression witnesses | 3 failing (one per bug) |
-| Bugs | 3 |
-| Generator cases | 1000 (proptest) |
-| Tier | standard |
-
-## Documented behaviors covered
-- DX-port outb/outw/outl vs llvm-mc
-- Imm8-port vs llvm-mc (accepted domain)
-- Intel fixed opcode invariant
-- outw = 0x66 ‖ outl metamorphic
-- Wrong arity → Err
-- Wrong registers → must Err (bug: accepts)
-- Imm out of imm8 range → must Err (bug: truncates)
-- (%dx) memory port form vs llvm-mc (bug: unsupported)
-
-## Sweep
-Round 1 complete; no additional documented branch without a property.
+| Properties | 10 |
+| Passing | 7 |
+| Failing | 3 |
+| Bugs filed | 3 |
+| KAT | 6 (5 pass, 1 fail on (%dx)) |
+| Regression witnesses | 3 (all fail, confirming bugs) |

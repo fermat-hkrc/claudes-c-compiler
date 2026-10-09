@@ -1,125 +1,128 @@
-# PBT Campaign Report: encode_out
+# PBT Campaign Report: encode_in
 
 ## Summary
 
-**Verdict:** 3 bugs (2 high, 1 medium): `encode_out` accepts any register pair as OUT DX (`outb %al,%al`→`EE`), silently truncates port immediates (`$256`→`E6 00`), and rejects valid AT&T `(%dx)` port form that llvm-mc and the x86-64 sibling accept.
-**Date:** 2026-10-08
+**Verdict:** 3 high/medium bugs in i686 `encode_in`: non-canonical register pairs encode as EC/ED, out-of-range port immediates silently truncate via `as u8`, and the AT&T `(%dx)` port form is rejected — same defect class as the sibling `encode_out`.
+**Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_out (i686 system.rs)
-**Tests:** 8 properties (+ 6 KAT + 3 regression witnesses)
-**Result:** 5 passing properties, 3 failing properties / 3 bugs
-**Change surface:** 1 changed function (encode_out), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no Rust .profraw; C++ reporter listed unrelated binaries and marked encode_out NOT LINKED there (expected). Execution proven by `cargo test --lib encode_out`.
-**Tier:** standard
+**Modules tested:** encode_in (src/backend/i686/assembler/encoder/system.rs)
+**Tests:** 10 properties (+ 6 KAT + 3 regression witnesses)
+**Result:** 7 passing, 3 failing properties → 3 bugs
+**Change surface:** 1 changed function (encode_in), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reports no native line-level profraw for this Rust cargo target; encode_in is linked into the lib test binary via encode_in_pbt.rs
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_out | 8 properties | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_in | 10 props (+KAT/regression) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_out accepts any register pair as OUT DX form
+### B1: encode_in accepts non-canonical register pairs
 
-**Formal:** ∀ m, src, dst. ¬(src=data_reg(m) ∧ dst=dx) ∧ llvm_mc_rejects(m,src,dst) ⇒ encode returns Err
-**Contract evidence:** inferred (Intel SDM OUT fixed AL/AX/EAX+DX; llvm-mc and gas reject other pairs; x86 sibling documents `outb %al, %dx`)
+**Formal:** ∀ m ∈ {inb,inw,inl}, src, dst. ¬(src=dx ∧ dst=data_reg(m)) ∧ llvm_mc rejects ⇒ encode_in(m,[src,dst]) = Err(_)
+**Contract evidence:** inferred (Intel SDM IN fixed DX + AL/AX/EAX; llvm-mc rejects other pairs; AT&T syntax `inb %dx, %al`)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `encode("outb", [%al, %al])` then bytes == `[0xEE]`
-**Expected / Actual:** Err / Ok([0xEE])
-**Impact:** Assembler emits a real OUT AL,DX while ignoring the written operands — silent wrong code for mistyped register names
-**Root cause:** system.rs:59-63 matches any `(Register, Register)` and ignores names (`_src`, `_dst`)
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:59`
+**Counterexample:** `encode_in("inb", [%al, %al])` → Ok([0xec]); llvm-mc rejects
+**Expected / Actual:** Err / Ok([0xec])
+**Impact:** Invalid source operands assemble to a real IN DX-port instruction, so wrong I/O code is emitted silently.
+**Root cause:** system.rs:94 matches any `(Register, Register)` and ignores names.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:94`
 ```rust
-            (Operand::Register(_src), Operand::Register(_dst)) => {
-                if size == 2 { self.bytes.push(0x66); }
-                self.bytes.push(if size == 1 { 0xEE } else { 0xEF });
-                Ok(())
-            }
+(Operand::Register(_src), Operand::Register(_dst)) => {
+    if size == 2 { self.bytes.push(0x66); }
+    self.bytes.push(if size == 1 { 0xEC } else { 0xED });
+    Ok(())
+}
 ```
-**Suggested fix:** Require data register AL/AX/EAX for the mnemonic and port DX
+**Suggested fix:** Require `src.name == "dx"` and `dst.name` equal to the size-canonical data register; else Err.
 ```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
-                let expect = match size { 1 => "al", 2 => "ax", 4 => "eax", _ => unreachable!() };
-                if src.name != expect || dst.name != "dx" {
-                    return Err(format!("unsupported {} operands", mnemonic));
-                }
-                if size == 2 { self.bytes.push(0x66); }
-                self.bytes.push(if size == 1 { 0xEE } else { 0xEF });
-                Ok(())
-            }
+(Operand::Register(src), Operand::Register(dst))
+    if src.name == "dx"
+        && matches!((size, dst.name.as_str()), (1, "al") | (2, "ax") | (4, "eax")) =>
+{
+    if size == 2 { self.bytes.push(0x66); }
+    self.bytes.push(if size == 1 { 0xEC } else { 0xED });
+    Ok(())
+}
 ```
-**Bug report:** bug_reports/encode_out_wrong_registers.md
-**Repro seed:** mnemonic = "outb", src = "al", dst = "al"
+**Bug report:** bug_reports/encode_in_wrong_registers.md
+**Repro seed:** mnemonic="inb", src="al", dst="al"
 **Raw output:**
 ```text
-SUT accepted invalid OUT `outb %al, %al` → [ee]; llvm-mc rejected
+SUT accepted invalid IN `inb %al, %al` → [ec]; llvm-mc rejected
+minimal failing input: mnemonic = "inb", src = "al", dst = "al"
 ```
 
-### B2: encode_out silently truncates out-of-range port immediate
+### B2: encode_in silently truncates out-of-range port immediates
 
-**Formal:** ∀ m, imm. llvm_mc rejects(m,$imm) ⇒ sut.encode returns Err
-**Contract evidence:** inferred (Intel imm8 port; llvm-mc rejects imm>255)
+**Formal:** ∀ m ∈ {inb,inw,inl}, v ∉ imm8_accepted. llvm_mc rejects(m,$v) ⇒ encode_in(m,[imm(v),data_reg(m)]) = Err(_)
+**Contract evidence:** inferred (Intel SDM imm8 port; llvm-mc rejects $256; signature accepts Immediate i64)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `encode("outb", [%al, $256])` → `[0xE6, 0x00]`
-**Expected / Actual:** Err / Ok([0xE6, 0x00])
-**Impact:** I/O instruction targets port 0 instead of rejecting an illegal immediate — wrong device access in generated code
-**Root cause:** system.rs:68 `self.bytes.push(*val as u8)` with no range check
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:64`
+**Counterexample:** `encode_in("inb", [$256, %al])` → Ok([0xe4, 0x00])
+**Expected / Actual:** Err / Ok([0xe4, 0x00])
+**Impact:** Port 256 becomes port 0; wrong I/O port selected without diagnostic.
+**Root cause:** system.rs:102 `self.bytes.push(*val as u8)` truncates without range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:99`
 ```rust
-            (Operand::Register(_src), Operand::Immediate(ImmediateValue::Integer(val))) => {
-                if size == 2 { self.bytes.push(0x66); }
-                self.bytes.push(if size == 1 { 0xE6 } else { 0xE7 });
-                self.bytes.push(*val as u8);
-                Ok(())
-            }
+(Operand::Immediate(ImmediateValue::Integer(val)), Operand::Register(_dst)) => {
+    if size == 2 { self.bytes.push(0x66); }
+    self.bytes.push(if size == 1 { 0xE4 } else { 0xE5 });
+    self.bytes.push(*val as u8);
+    Ok(())
+}
 ```
-**Suggested fix:** Reject values outside imm8 range before casting
+**Suggested fix:** Reject values outside the imm8 domain before casting.
 ```rust
-                if *val < i64::from(i8::MIN) || *val > 255 {
-                    return Err(format!("{} port immediate out of imm8 range", mnemonic));
-                }
-                self.bytes.push(*val as u8);
+if *val < -128 || *val > 255 {
+    return Err(format!("IN port immediate out of imm8 range: {val}"));
+}
+self.bytes.push(*val as u8);
 ```
-**Bug report:** bug_reports/encode_out_imm_truncation.md
-**Repro seed:** mnemonic = "outb", imm_v = 256
+**Bug report:** bug_reports/encode_in_imm_truncation.md
+**Repro seed:** mnemonic="inb", imm_v=256
 **Raw output:**
 ```text
-SUT silently encoded out-of-range port `outb %al, $256` → [e6, 00]
+SUT silently encoded out-of-range port `inb $256, %al` → [e4, 00] (truncated?); llvm-mc rejected
+minimal failing input: mnemonic = "inb", imm_v = 256
 ```
 
-### B3: encode_out rejects AT&T (%dx) port form
+### B3: encode_in rejects AT&T (%dx) memory port form
 
-**Formal:** ∀ m. encode(m, Reg(data), Mem(dx)) = llvm_mc("{m} %data, (%dx)")
-**Contract evidence:** inferred (llvm-mc accepts; x86 sibling system.rs:35-39 handles Register+Memory as DX form; Intel same EE/EF encoding)
-**Documentation conflict:** (none) — i686 lacks the sibling's documented `(%dx)` arm
+**Formal:** ∀ m ∈ {inb,inw,inl}. encode_in(m, [mem(%dx), data_reg(m)]) = llvm_mc(m " (%dx), %" ++ data_reg(m))
+**Contract evidence:** documented sibling x86/system.rs:75 "Also handle parenthesized form: inl (%dx), %eax"; llvm-mc accepts and emits EC/ED
+**Documentation conflict:** (none for i686 — gap relative to sibling + llvm-mc)
 **Severity:** medium
-**Counterexample:** `encode("outb", [%al, Mem(dx)])` → Err("unsupported outb operands"); llvm-mc=[0xEE]
-**Expected / Actual:** Ok([0xEE]) / Err("unsupported outb operands")
-**Impact:** Valid AT&T using parenthesized DX port fails on i686 while x86-64 and llvm-mc accept it
-**Root cause:** system.rs:70 catch-all rejects Memory; no Register+Memory arm
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:70`
+**Counterexample:** `encode_in("inb", [Memory(%dx), %al])` → Err("unsupported inb operands"); llvm-mc=[0xec]
+**Expected / Actual:** Ok([0xec]) / Err("unsupported inb operands")
+**Impact:** Valid AT&T forms used in kernel/boot code fail to assemble on the i686 backend.
+**Root cause:** No `(Memory, Register)` match arm; falls through to `_ => Err`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:93`
 ```rust
-            _ => Err(format!("unsupported {} operands", mnemonic)),
+match (&ops[0], &ops[1]) {
+    (Operand::Register(_src), Operand::Register(_dst)) => { ... }
+    (Operand::Immediate(ImmediateValue::Integer(val)), Operand::Register(_dst)) => { ... }
+    _ => Err(format!("unsupported {} operands", mnemonic)),
+}
 ```
-**Suggested fix:** Add Register+Memory arm (base DX) mirroring x86-64 encode_out
+**Suggested fix:** Add Memory,Register arm (mirror x86 sibling system.rs:83-87).
 ```rust
-            (Operand::Register(src), Operand::Memory(mem))
-                if mem.base.as_ref().map(|r| r.name.as_str()) == Some("dx")
-                    && mem.index.is_none() =>
-            {
-                if size == 2 { self.bytes.push(0x66); }
-                self.bytes.push(if size == 1 { 0xEE } else { 0xEF });
-                Ok(())
-            }
+(Operand::Memory(_), Operand::Register(_)) => {
+    if size == 2 { self.bytes.push(0x66); }
+    self.bytes.push(if size == 1 { 0xEC } else { 0xED });
+    Ok(())
+}
 ```
-**Bug report:** bug_reports/encode_out_dx_memory_form.md
-**Repro seed:** mnemonic = "outb"
+**Bug report:** bug_reports/encode_in_missing_dx_mem_form.md
+**Repro seed:** mnemonic="inb"
 **Raw output:**
 ```text
-SUT rejected valid AT&T form `outb %al, (%dx)`: unsupported outb operands; llvm-mc=[ee]
+SUT rejected valid AT&T form `inb (%dx), %al`: unsupported inb operands; llvm-mc=[ec].
+minimal failing input: mnemonic = "inb"
 ```
 
 ## Design Caveats
@@ -130,41 +133,42 @@ SUT rejected valid AT&T form `outb %al, (%dx)`: unsupported outb operands; llvm-
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_out_pbt.rs | 8 properties + 6 KAT + 3 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_out_pbt` |
+| src/backend/i686/assembler/encoder/encode_in_pbt.rs | 10 properties + 6 KAT + 3 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_in_pbt` registration |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_out -- --test-threads=1
-# single bugs:
-cargo test --lib test_encode_out_regression_wrong_reg_bl_dx -- --test-threads=1
-cargo test --lib test_encode_out_regression_imm_256_truncated -- --test-threads=1
-cargo test --lib test_encode_out_regression_dx_mem_form -- --test-threads=1
+cargo test --lib encode_in_pbt -- --test-threads=1
+# narrowed:
+cargo test --lib encode_in_pbt::test_encode_in_regression_wrong_reg_al_al -- --test-threads=1
+cargo test --lib encode_in_pbt::test_encode_in_regression_imm_256_truncated -- --test-threads=1
+cargo test --lib encode_in_pbt::test_encode_in_regression_dx_mem_form -- --test-threads=1
 ```
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (from report.json)
+- pbt-out/REPORT.html (rendered from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_out_wrong_registers.md (+ .html)
-- pbt-out/bug_reports/encode_out_imm_truncation.md (+ .html)
-- pbt-out/bug_reports/encode_out_dx_memory_form.md (+ .html)
-- pbt-out/run/encode_out_test.log
+- pbt-out/bug_reports/encode_in_wrong_registers.md (+ .html)
+- pbt-out/bug_reports/encode_in_imm_truncation.md (+ .html)
+- pbt-out/bug_reports/encode_in_missing_dx_mem_form.md (+ .html)
+- pbt-out/run/encode_in_pbt_serial.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-08 03:53 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 256/397 total | PBT candidates: 256 | Tested: 256 (100%) | 1 pass, 256 fail
+> Last updated: 2026-10-09 01:08 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 257/397 total | PBT candidates: 257 | Tested: 257 (100%) | 1 pass, 257 fail
 
 ## Summary
 
@@ -173,10 +177,10 @@ cargo test --lib test_encode_out_regression_dx_mem_form -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 256 |
-| **Tested (of PBT candidates)** | **256 / 256 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 256 / -1 |
-| **Overall (tested / all functions)** | **256 / 397 (64%)** |
+| PBT candidates (from FUNCTION_INDEX) | 257 |
+| **Tested (of PBT candidates)** | **257 / 257 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 257 / -1 |
+| **Overall (tested / all functions)** | **257 / 397 (65%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -184,13 +188,13 @@ cargo test --lib test_encode_out_regression_dx_mem_form -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 256 | 256 | 0 | 100% |
+|  | 257 | 257 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 256 | 256 | 0 | 100% |
+| unknown | 257 | 257 | 0 | 100% |
 
 ## File Coverage
 
@@ -469,3 +473,4 @@ cargo test --lib test_encode_out_regression_dx_mem_form -- --test-threads=1
 | encode_prefetch | system.rs |
 | encode_prefetch_0f0d | system.rs |
 | encode_out | system.rs |
+| encode_in | system.rs |
