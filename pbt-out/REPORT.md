@@ -1,35 +1,36 @@
-# PBT Campaign Report: encode_movsx (i686)
+# PBT Campaign Report: encode_movzx (i686)
 
 ## Summary
 
-**Verdict:** 4 filed findings (3 root causes) in `encode_movsx`: (1–2) high — all segment overrides silently omitted on base and SIB mem→reg forms so `%es:(%eax)` / `%es:(%eax,%eax,1)` encode without 0x26; (3) high — mismatched register widths accepted (`movsbl %ax, %eax` → GP bytes); (4) medium — non-GP names (xmm/mm/st) accepted via `reg_num` aliases.
-**Date:** 2026-10-09
+**Verdict:** 3 distinct defects (4 bug reports): high missing segment prefix (base+disp and SIB), high mismatched width accepted, medium non-GP accepted — `encode_movzx` drops all segment overrides on mem→reg and accepts wrong-width / non-GP names via `reg_num` aliasing (same class as twin `encode_movsx`).
+**Date:** 2026-04-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_movsx (src/backend/i686/assembler/encoder/gp_integer.rs)
-**Tests:** 11 properties (+ KAT + 3 regression witnesses)
-**Result:** 7 passing, 4 failing properties (4 bug reports; B1+B4 share missing emit_segment_prefix root cause)
-**Change surface:** 1 changed function (encode_movsx), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` had no Rust .profraw and pointed at unrelated OH binaries (NOT LINKED false negative). Campaign evidence: cargo lib tests execute production encode_movsx.
+**Modules tested:** encode_movzx (src/backend/i686/assembler/encoder/gp_integer.rs)
+**Tests:** 12 properties (+ 6 KAT + 3 regression witnesses)
+**Result:** 8 passing, 4 failing properties → 4 SUT bug reports (3 root causes)
+**Change surface:** encode_movzx only (`--func`); 1 of 1 with properties; no dedicated error-handling-only change
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps saw no Rust .profraw and listed C++ binaries; symbol was executed via `cargo test --lib encode_movzx` (failures prove execution). Sweep round 1 added P12 unsupported-shape Err path (passing).
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_movsx | 11 properties | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_movzx | 12 | 4 | differential (llvm-mc), algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_movsx omits all segment-override prefixes
-**Formal:** ∀ form ∈ {movsbl,movsbw,movswl}, seg ∈ {es,cs,ss,ds,fs,gs}, base, disp, dst. encode(form %seg:mem, %dst) = llvm-mc(same) including Group-2 override prefix
-**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` implements all six prefixes for i686; Intel SDM 2.1.1; llvm-mc emits 26/2E/36/3E/64/65; sibling encoders call emit_segment_prefix or inline fs/gs)
-**Documentation conflict:** (none)
+### B1: encode_movzx omits all segment-override prefixes
+
+**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, mnemonic ∈ {movzbl,movzbw,movzwl}, valid mem→reg. encode(mnemonic, mem(seg:…), dst) = llvm_mc(…) including segment-override prefix byte before optional 0x66 and 0F B6/B7
+**Contract evidence:** inferred (core.rs:31-42 emit_segment_prefix documents all six overrides; twin encode_movsx same contract; Intel SDM 2.1.1; llvm-mc emits 26/2E/36/3E/64/65)
+**Documentation conflict:** (none) — no comment on encode_movzx excludes segment forms
 **Severity:** high
-**Counterexample:** `movsbl %es:(%eax), %eax` then compare bytes
-**Expected / Actual:** `[0x26, 0x0f, 0xbe, 0x00]` / `[0x0f, 0xbe, 0x00]`
-**Impact:** AT&T asm with segment overrides assembles to wrong-segment loads — silent correctness failure in kernel/OS code
-**Root cause:** gp_integer.rs:292-295 memory arm extends opcode and calls `encode_modrm_mem` without `emit_segment_prefix(mem)`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:292`
+**Counterexample:** `movzbl %es:(%eax), %eax` → SUT `[0f,b6,00]` vs llvm-mc `[26,0f,b6,00]`
+**Expected / Actual:** `[26, 0f, b6, 00]` / `[0f, b6, 00]`
+**Impact:** AT&T with segment overrides assembles to wrong-segment loads; silent wrong machine code for OS/kernel-style asm
+**Root cause:** gp_integer.rs:307-325 pushes optional 0x66 and opcode then `encode_modrm_mem` without `emit_segment_prefix`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:322`
 ```rust
             (Operand::Memory(mem), Operand::Register(dst)) => {
                 let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
@@ -37,59 +38,34 @@
                 self.encode_modrm_mem(dst_num, mem)?;
             }
 ```
-**Suggested fix:** Call `emit_segment_prefix` before 0x66/opcode on the memory path (seg → 66 → 0F BE/BF):
+**Suggested fix:** Call `emit_segment_prefix` before 0x66/opcode on the memory arm:
 ```rust
             (Operand::Memory(mem), Operand::Register(dst)) => {
                 let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
                 self.emit_segment_prefix(mem);
-                if dst_size == 2 { /* ensure 0x66 after seg */ }
+                if dst_size == 2 { self.bytes.push(0x66); }
                 self.bytes.extend_from_slice(&opcode);
                 self.encode_modrm_mem(dst_num, mem)?;
             }
 ```
-**Bug report:** bug_reports/encode_movsx_missing_segment_prefix.md
-**Repro seed:** proptest cc 3e5df830510f81e00a7e2eba1acfffc1b72cb82954401d5535de7615917a7b11 (segment property)
+**Bug report:** bug_reports/encode_movzx_missing_segment_prefix.md
+**Repro seed:** fi=0, seg="es", base="eax", disp=0, di=0
 **Raw output:**
 ```text
-segment diff `movsbl %es:(%eax), %eax`: sut=[0f, be, 00] mc=[26, 0f, be, 00]
-minimal failing input: fi = 0, seg = "es", base = "eax", disp = 0, di = 0
+segment diff `movzbl %es:(%eax), %eax`: sut=[0f, b6, 00] mc=[26, 0f, b6, 00]
 ```
 
-### B4: encode_movsx omits segment-override prefixes on SIB memory forms
-**Formal:** ∀ form, seg, base, index≠esp, scale, disp, dst. encode(%seg:SIB, %dst) = llvm-mc including override
-**Contract evidence:** inferred (same as B1; core.rs emit_segment_prefix; Intel SDM 2.1.1)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `movsbl %es:(%eax,%eax,1), %eax`
-**Expected / Actual:** `[0x26, 0x0f, 0xbe, 0x04, 0x00]` / `[0x0f, 0xbe, 0x04, 0x00]`
-**Impact:** SIB+segment AT&T forms drop the override (same root as B1)
-**Root cause:** gp_integer.rs:292-295 memory arm never calls emit_segment_prefix (SIB via encode_modrm_mem)
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:292`
-```rust
-            (Operand::Memory(mem), Operand::Register(dst)) => {
-                let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.encode_modrm_mem(dst_num, mem)?;
-            }
-```
-**Suggested fix:** Same as B1 — `self.emit_segment_prefix(mem);` before opcode on the memory arm.
-**Bug report:** bug_reports/encode_movsx_missing_segment_prefix_sib.md
-**Repro seed:** fi=0,seg=es,base=eax,index=eax,scale=1,disp=0,di=0
-**Raw output:**
-```text
-segment+SIB diff `movsbl %es:(%eax,%eax,1), %eax`: sut=[0f, be, 04, 00] mc=[26, 0f, be, 04, 00]
-```
+### B2: encode_movzx accepts mismatched register widths
 
-### B2: encode_movsx accepts mismatched register widths
-**Formal:** ∀ form, src, dst where width(src)≠src_size(form) ∨ width(dst)≠dst_size(form). encode(form) = Err
-**Contract evidence:** inferred (Intel SDM MOVSX operand sizes; llvm-mc rejects `movsbl %ax, %eax`; AT&T mnemonic encodes fixed widths)
+**Formal:** ∀ form ∈ {movzbl,movzbw,movzwl}, src/dst register widths must match mnemonic sizes; llvm-mc-rejected pairs ⇒ SUT Err
+**Contract evidence:** inferred (Intel SDM MOVZX operand sizes; llvm-mc rejects; twin encode_movsx same gate owed)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `movsbl %ax, %eax`
-**Expected / Actual:** Err / Ok([0x0f, 0xbe, 0xc0])
-**Impact:** Invalid width pairs assemble as if the same-numbered correct-width register were used (ax≡al in reg_num)
-**Root cause:** gp_integer.rs:286-290 uses `reg_num` only; never checks `reg_size` against src_size/dst_size
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:286`
+**Counterexample:** `movzbl %ax, %eax` → Ok([0f,b6,c0])
+**Expected / Actual:** Err / Ok([0f, b6, c0])
+**Impact:** Wrong-width AT&T silently encodes as the GP alias of the name (ax→al num)
+**Root cause:** gp_integer.rs:316-320 uses only mnemonic sizes; never checks `reg_size`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:316`
 ```rust
             (Operand::Register(src), Operand::Register(dst)) => {
                 let src_num = reg_num(&src.name).ok_or("bad src register")?;
@@ -101,30 +77,56 @@ segment+SIB diff `movsbl %es:(%eax,%eax,1), %eax`: sut=[0f, be, 04, 00] mc=[26, 
 **Suggested fix:**
 ```rust
                 if reg_size(&src.name) != src_size {
-                    return Err(format!("movsx src size mismatch: {}", src.name));
+                    return Err(format!("movzx src size mismatch: {}", src.name));
                 }
                 if reg_size(&dst.name) != dst_size {
-                    return Err(format!("movsx dst size mismatch: {}", dst.name));
+                    return Err(format!("movzx dst size mismatch: {}", dst.name));
                 }
 ```
-**Bug report:** bug_reports/encode_movsx_mismatched_width.md
+**Bug report:** bug_reports/encode_movzx_mismatched_width.md
 **Repro seed:** mode=0, si=0, di=0
 **Raw output:**
 ```text
-SUT accepted size-mismatched MOVSX `movsbl %ax, %eax` → [0f, be, c0]
-minimal failing input: mode = 0, si = 0, di = 0
+SUT accepted size-mismatched MOVZX `movzbl %ax, %eax` → [0f, b6, c0]
 ```
 
-### B3: encode_movsx accepts non-GP registers via reg_num aliases
-**Formal:** ∀ form, non_gp ∈ {xmm*,mm*,st*,ymm*}. encode with non_gp operand = Err
-**Contract evidence:** inferred (Intel SDM MOVSX is GP form; llvm-mc rejects; registers.rs:4-15 aliases xmm/mm/st/ymm onto 0–7)
+### B4: encode_movzx omits segment-override prefixes on SIB mem→reg (same root as B1)
+
+**Formal:** ∀ seg, SIB mem, mnemonic, dst. encode = llvm_mc including segment prefix
+**Contract evidence:** inferred (core.rs:31-42; Intel SDM 2.1.1; llvm-mc)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `movzbl %es:(%eax,%eax,1), %eax` → SUT `[0f,b6,04,00]` vs `[26,0f,b6,04,00]`
+**Expected / Actual:** `[26, 0f, b6, 04, 00]` / `[0f, b6, 04, 00]`
+**Impact:** SIB + segment forms silently drop override (same as B1)
+**Root cause:** same memory arm without emit_segment_prefix (gp_integer.rs:322)
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:322`
+```rust
+            (Operand::Memory(mem), Operand::Register(dst)) => {
+                let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
+                self.bytes.extend_from_slice(&opcode);
+                self.encode_modrm_mem(dst_num, mem)?;
+            }
+```
+**Suggested fix:** same as B1 — `self.emit_segment_prefix(mem);` before 0x66/opcode.
+**Bug report:** bug_reports/encode_movzx_missing_segment_prefix_sib.md
+**Repro seed:** fi=0, seg=es, base=eax, index=eax, scale=1, disp=0, di=0
+**Raw output:**
+```text
+segment+SIB diff `movzbl %es:(%eax,%eax,1), %eax`: sut=[0f, b6, 04, 00] mc=[26, 0f, b6, 04, 00]
+```
+
+### B3: encode_movzx accepts non-GP registers via reg_num aliases
+
+**Formal:** ∀ form ∈ {movzbl,movzbw,movzwl}, xmm/mm/st/ymm operands must Err — 0F B6/B7 is GP-only
+**Contract evidence:** inferred (Intel SDM MOVZX GP form; llvm-mc rejects; registers.rs maps xmm0→0)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** `movsbl %al, %xmm0`
-**Expected / Actual:** Err / Ok([0x0f, 0xbe, 0xc0]) (same as %eax)
-**Impact:** Non-GP names silently become GP encodings
-**Root cause:** reg_num aliases non-GP names; encode_movsx does not reject is_xmm/is_mm/st/ymm
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:286`
+**Counterexample:** `movzbl %al, %xmm0` → Ok([0f,b6,c0]) (= movzbl %al, %eax)
+**Expected / Actual:** Err / Ok([0f, b6, c0])
+**Impact:** Invalid SIMD/x87 names assemble to GP encodings
+**Root cause:** reg_num aliases non-GP names to 0–7; encode_movzx never rejects them
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:316`
 ```rust
             (Operand::Register(src), Operand::Register(dst)) => {
                 let src_num = reg_num(&src.name).ok_or("bad src register")?;
@@ -133,20 +135,12 @@ minimal failing input: mode = 0, si = 0, di = 0
                 self.bytes.push(self.modrm(3, dst_num, src_num));
             }
 ```
-**Suggested fix:** Reject non-GP names before reg_num:
-```rust
-                if is_xmm(&src.name) || is_mm(&src.name) || src.name.starts_with("st") || src.name.starts_with("ymm")
-                    || is_xmm(&dst.name) || is_mm(&dst.name) || dst.name.starts_with("st") || dst.name.starts_with("ymm")
-                {
-                    return Err(format!("movsx requires GP registers"));
-                }
-```
-**Bug report:** bug_reports/encode_movsx_non_gp_accepted.md
+**Suggested fix:** Reject is_xmm/is_mm/st/ymm before reg_num on both operands.
+**Bug report:** bug_reports/encode_movzx_non_gp_accepted.md
 **Repro seed:** fi=0, ni=0, on_src=false, gi=0
 **Raw output:**
 ```text
-SUT accepted non-GP MOVSX `movsbl %al, %xmm0` → [0f, be, c0]
-minimal failing input: fi = 0, ni = 0, on_src = false, gi = 0
+SUT accepted non-GP MOVZX `movzbl %al, %xmm0` → [0f, b6, c0]
 ```
 
 ## Design Caveats
@@ -157,44 +151,40 @@ minimal failing input: fi = 0, ni = 0, on_src = false, gi = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_movsx_pbt.rs | 11 properties + 6 KAT + 3 regression |
-| src/backend/i686/assembler/encoder/mod.rs | `mod encode_movsx_pbt` registration |
+| src/backend/i686/assembler/encoder/encode_movzx_pbt.rs | 11 properties + 6 KAT + 3 regression |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_movzx_pbt;` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_movsx -- --test-threads=1
-cargo test --lib encode_movsx_diff_llvm_mc_segment -- --test-threads=1
-cargo test --lib encode_movsx_diff_llvm_mc_segment_sib -- --test-threads=1
-cargo test --lib encode_movsx_neg_mismatched_width -- --test-threads=1
-cargo test --lib encode_movsx_neg_non_gp -- --test-threads=1
-cargo test --lib encode_movsx_regression_es_segment_prefix -- --test-threads=1
-cargo test --lib encode_movsx_regression_mismatched_width_eax_src -- --test-threads=1
-cargo test --lib encode_movsx_regression_non_gp_xmm_dst -- --test-threads=1
+cargo test --lib encode_movzx -- --test-threads=1
+cargo test --lib encode_movzx_diff_llvm_mc_segment -- --test-threads=1
+cargo test --lib encode_movzx_neg_mismatched_width -- --test-threads=1
+cargo test --lib encode_movzx_neg_non_gp -- --test-threads=1
+cargo test --lib encode_movzx_regression -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html (rendered from report.json)
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
+- pbt-out/REPORT.md, pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md, pbt-out/PLAN.md
+- pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_movsx_missing_segment_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_movsx_missing_segment_prefix_sib.md (+ .html)
-- pbt-out/bug_reports/encode_movsx_mismatched_width.md (+ .html)
-- pbt-out/bug_reports/encode_movsx_non_gp_accepted.md (+ .html)
-- pbt-out/run/encode_movsx_test1.log, encode_movsx_test2.log
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_movzx_missing_segment_prefix.md (+ .html)
+- pbt-out/bug_reports/encode_movzx_missing_segment_prefix_sib.md (+ .html)
+- pbt-out/bug_reports/encode_movzx_mismatched_width.md (+ .html)
+- pbt-out/bug_reports/encode_movzx_non_gp_accepted.md (+ .html)
+- pbt-out/run/encode_movzx_test.log
+- pbt-out/run/encode_movzx_sweep.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 05:24 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 273/398 total | PBT candidates: 273 | Tested: 273 (100%) | 1 pass, 273 fail
+> Last updated: 2026-10-09 05:42 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 274/398 total | PBT candidates: 274 | Tested: 274 (100%) | 1 pass, 274 fail
 
 ## Summary
 
@@ -203,10 +193,10 @@ cargo test --lib encode_movsx_regression_non_gp_xmm_dst -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 398 |
-| PBT candidates (from FUNCTION_INDEX) | 273 |
-| **Tested (of PBT candidates)** | **273 / 273 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 273 / -1 |
-| **Overall (tested / all functions)** | **273 / 398 (69%)** |
+| PBT candidates (from FUNCTION_INDEX) | 274 |
+| **Tested (of PBT candidates)** | **274 / 274 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 274 / -1 |
+| **Overall (tested / all functions)** | **274 / 398 (69%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -214,13 +204,13 @@ cargo test --lib encode_movsx_regression_non_gp_xmm_dst -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 273 | 273 | 0 | 100% |
+|  | 274 | 274 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 273 | 273 | 0 | 100% |
+| unknown | 274 | 274 | 0 | 100% |
 
 ## File Coverage
 
@@ -231,7 +221,7 @@ cargo test --lib encode_movsx_regression_non_gp_xmm_dst -- --test-threads=1
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 30 | 7 | 7 | 100% | covered |
+| gp_integer.rs | 30 | 8 | 8 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -516,3 +506,4 @@ cargo test --lib encode_movsx_regression_non_gp_xmm_dst -- --test-threads=1
 | encode_mov_reg_mem | gp_integer.rs |
 | encode_mov_imm_mem | gp_integer.rs |
 | encode_movsx | gp_integer.rs |
+| encode_movzx | gp_integer.rs |

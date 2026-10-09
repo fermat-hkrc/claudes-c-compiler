@@ -1,18 +1,16 @@
-# Coverage Status — encode_movsx campaign
+# Coverage Status
 
+**Campaign:** encode_movzx (i686 gp_integer)
 **Tier:** standard
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (Rust cargo host build) and falsely listed encode_movsx as NOT LINKED against unrelated OH test binaries. Real execution evidence: `cargo test --lib encode_movsx -- --test-threads=1` links and runs production `InstructionEncoder::encode` → `encode_movsx` (gp_integer.rs:272) for KAT + proptest properties (1000 cases each).
-
-## This campaign
+**Evidence level:** file-level (Rust lib tests exercise the symbol via InstructionEncoder::encode → encode_movzx); native line coverage may appear under pbt-out/code-coverage/ when instrumented.
 
 | Metric | Value |
 |--------|-------|
-| Target function | encode_movsx |
-| Properties | 11 (7 passing, 4 failing — segment + segment_sib share one bug) |
-| Bugs filed | 3 |
-| Generator runs | 1000 per proptest property |
-| Strengthen rounds | 1 (segment+SIB differential added) |
-| Sweep rounds | 1 (coverage_gaps + cargo execution) |
+| Target function | encode_movzx |
+| Properties | 12 (8 passing, 4 failing) |
+| Bugs | 4 reports / 3 root causes |
+| Test file | src/backend/i686/assembler/encoder/encode_movzx_pbt.rs |
+| Contract-surface sweep | 1 round — coverage_gaps (file-level; no Rust .profraw); added P12 unsupported-shape Err path (passing) |
 
-## Untested documented branches under HARD scope
-(none remaining — arity/src_size error paths exercised; mem and RR arms both hit; segment/width/non-GP contracts covered by failing properties)
+## Untested in this campaign
+HARD scope is encode_movzx only; other gp_integer symbols deferred.

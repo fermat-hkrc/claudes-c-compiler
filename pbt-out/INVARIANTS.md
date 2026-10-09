@@ -160,3 +160,13 @@
 - Known defects: (1) no segment prefix at all on mem arm — emit_segment_prefix never called; (2) no reg_size vs mnemonic size gate; (3) reg_num aliases xmm/mm/st as GP.
 - Fix shapes: `self.emit_segment_prefix(mem);` before 66/opcode on mem arm; `if reg_size(&name) != size { return Err(...); }`; reject is_xmm/is_mm/st/ymm.
 - Harness: encode_movsx_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
+
+## encode_movzx (i686 gp_integer encoder)
+
+- Opcodes: 0F B6 (src byte) / 0F B7 (src word); optional leading 0x66 when dst_size==2 (movzbw).
+- Dispatch: movzbl→(1,4), movzwl→(2,4), movzbw→(1,2) via encoder/mod.rs:179-181.
+- RR and non-segment mem base/disp/SIB/abs forms match llvm-mc `-triple=i686`.
+- Metamorphic: same operands movzx vs movsx share prefixes+ModRM/SIB/disp; only opcode lo differs (B6↔BE, B7↔BF).
+- Known defects: (1) no segment prefix at all on mem arm — emit_segment_prefix never called; (2) no reg_size vs mnemonic size gate; (3) reg_num aliases xmm/mm/st as GP.
+- Fix shapes: `self.emit_segment_prefix(mem);` before 66/opcode on mem arm; `if reg_size(&name) != size { return Err(...); }`; reject is_xmm/is_mm/st/ymm.
+- Harness: encode_movzx_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
