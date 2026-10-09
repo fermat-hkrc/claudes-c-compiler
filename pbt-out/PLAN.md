@@ -1,21 +1,21 @@
-# PBT Campaign: encode_mov_infer_size (i686)
+# PBT Campaign: encode_mov_rr (i686)
 
 ## Scan findings
-- **Spec:** (none found beyond in-source doc comment) — GNU AS unsuffixed `mov` infers operand size from register operands; ambiguous forms (imm→mem, size-mismatched regs) require an explicit suffix. llvm-mc `-triple=i686` is the independent reference. Doc at gp_integer.rs:111 `"Handle unsuffixed mov from inline asm - infer size from operands"`.
+- **Spec:** (none found beyond inline comments) — Intel SDM Vol.2 MOV r/m,r/r: opcode 88/89 /r with optional 0x66 operand-size override for 16-bit; AT&T `movb`/`movw`/`movl %src, %dst`. llvm-mc `-triple=i686` is the independent reference. Inline comment at gp_integer.rs:163–176 documents segment-register arms (`mov %r16, %sreg` 8E /r; `mov %sreg, %r16` 8C /r); GP path has no separate doc comment.
 - **Test layout:** project-owned Rust module tests under `src/backend/i686/assembler/encoder/`; pattern `encode_*_pbt.rs` + `#[cfg(test)] mod` in `encoder/mod.rs`; runner `cargo test --lib <filter> -- --test-threads=1`; framework `proptest = "1.11.0"` (dev-dependency).
-- **Buildability probe:** `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` → PASS (prebuilt SUT contract; log pbt-out/build.log).
-- **Harness placement:** extend existing cargo lib-test target — new file `src/backend/i686/assembler/encoder/encode_mov_infer_size_pbt.rs` + one `#[cfg(test)] mod encode_mov_infer_size_pbt;` line in `encoder/mod.rs` (rung 1).
-- **Candidate modules:** encode_mov_infer_size (gp_integer.rs:112) — sole HARD-scope / change-surface target.
-- **Skipped modules:** encode_mov and all other gp_integer symbols, plus every other encoder — HARD scope: test only encode_mov_infer_size. (Dispatch path through `InstructionEncoder::encode("mov", …)` is used so the production symbol is reached.)
-- **Oracle (strongest):** differential vs llvm-mc `-triple=i686 -show-encoding`; algebraic.metamorphic (`mov` ≡ `movb`/`movw`/`movl` when size is unambiguous); algebraic.invariant (inferred size = `reg_size` of the chosen register operand); negative_error (arity ≠ 2; ambiguous imm→mem; size-mismatched GP regs).
-- **Doc contract:** gp_integer.rs:111 `"Handle unsuffixed mov from inline asm - infer size from operands"` — asserted fingerprint 7b2e4c91. Body: arity check → size from first Register else second else 4 → `encode_mov(ops, size)`.
-- **Dispatch path:** `encode_mnemonic` routes `"mov"` → `encode_mov_infer_size` (mod.rs:163). Suffixed `movb`/`movw`/`movl` go to `encode_mov` with fixed size.
-- **Seed:** encode_mov_cr_pbt.rs:321 (`encode_mov_cr_diff_mnemonic_aliases` already checks unsuffixed `mov` for CR forms) — generalize to GP size inference.
-- **Contract-surface sweep:** 1 round via `coverage_gaps` after first full run — file-level (Rust proptest suite; coverage_gaps reported no .gcda/.profraw and OH-style binaries NOT LINKED; campaign evidence is cargo test execution of the production symbol via InstructionEncoder::encode("mov")).
+- **Buildability probe:** `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` → PASS (prebuilt SUT contract; log pbt-out/build.log; re-probed this campaign: 2 passed).
+- **Harness placement:** extend existing cargo lib-test target — new file `src/backend/i686/assembler/encoder/encode_mov_rr_pbt.rs` + one `#[cfg(test)] mod encode_mov_rr_pbt;` line in `encoder/mod.rs` (rung 1).
+- **Candidate modules:** encode_mov_rr (gp_integer.rs:162) — sole HARD-scope / change-surface target.
+- **Skipped modules:** encode_mov and all other gp_integer symbols, plus every other encoder — HARD scope: test only encode_mov_rr. (Dispatch path through `InstructionEncoder::encode("movl"|"movw"|"movb", …)` with two GP registers reaches the production symbol via encode_mov → encode_mov_rr. Segment/CR RR forms are routed away by encode_mov before encode_mov_rr and are covered by prior encode_mov_seg / encode_mov_cr campaigns.)
+- **Oracle (strongest):** differential vs llvm-mc `-triple=i686 -show-encoding`; algebraic.invariant (opcode 88|89, optional 0x66, mod=3); algebraic.metamorphic (identity + swap); negative_error (mismatched width; non-GP aliases).
+- **Doc contract:** gp_integer.rs:163 `"// Handle segment register moves"` — other fingerprint 28e3197a. GP path: no width/GP-class validation before reg_num.
+- **Dispatch path:** encoder/mod.rs:161-163 `movl`→size 4, `movw`→2, `movb`→1 → encode_mov → encode_mov_rr for Register,Register when neither is CR/seg.
+- **Seed:** encode_mov_infer_size_pbt.rs:175; encode_mov_cr_pbt width-rejection pattern.
+- **Contract-surface sweep:** 1 round via `coverage_gaps` after first full run — tool reported no .gcda/.profraw (Rust cargo; file-level). Campaign evidence: cargo test executes production symbol via InstructionEncoder::encode; NOT LINKED listing referred to unrelated OH C++ binaries, not this Rust lib test. Documented behaviors covered: same-width differential, invariant, metamorphic identity/swap, mismatched-width negative, non-GP negative. No further documented GP-path branch left untargeted.
 
-## Module: encode_mov_infer_size
+## Module: encode_mov_rr
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
 - [x] Test: write and run
 - [x] Review: triage results
-- [x] Contract-surface sweep (1 round via coverage_gaps; file-level evidence)
+- [x] Contract-surface sweep (1 round via coverage_gaps; file-level evidence + cargo execution)

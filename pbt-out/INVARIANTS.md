@@ -77,6 +77,15 @@
 - Known defect: register arm accepts 8/16-bit GP names via `reg_num` aliasing (ax/al → same bytes as eax); also accepts `movw` CR forms. Witness: `movl %cr0, %ax` → `[0f,20,c0]`; llvm-mc rejects.
 - Fix shape: `if reg_size(&gp.name) != 4 { return Err(...); }` on both arms before `reg_num`.
 
+## encode_mov_rr (i686 gp_integer encoder)
+
+- GP RR path: opcodes 0x88 (size=1) / 0x89 (else) + optional leading 0x66 when size=2; ModRM mod=3, reg=src, rm=dst (AT&T %src, %dst).
+- Same-width GP pairs (r8/r16/r32 including ah..bh) match llvm-mc `-triple=i686`.
+- Metamorphic: swap src/dst swaps ModRM.reg ↔ ModRM.rm; identity mov is well-formed.
+- Segment arms inside encode_mov_rr (8E/8C) are normally bypassed: encode_mov routes segment regs to encode_mov_seg first.
+- Known defects: (1) no width check — mismatched GP names accepted via reg_num aliasing (movl %ax,%ebx → same as movl %eax,%ebx); (2) non-GP names (xmm/mm/st) accepted via reg_num (movl %xmm0,%eax → movl %eax,%eax bytes).
+- Fix shape: before reg_num on GP path, require `reg_size(src)==size && reg_size(dst)==size` and reject xmm/mm/st/ymm prefixes.
+
 ## encode_mov_seg (i686 system encoder)
 
 - Opcode: 8C /r (Sreg→r/m) or 8E /r (r/m→Sreg); ModRM.reg = segment number (es=0..gs=5).

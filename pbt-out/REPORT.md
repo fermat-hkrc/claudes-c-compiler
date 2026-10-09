@@ -1,100 +1,144 @@
-# PBT Campaign Report: encode_mov_infer_size
+# PBT Campaign Report: encode_mov_rr (i686)
 
 ## Summary
 
-**Verdict:** 2 high bugs: unsuffixed `mov $imm, mem` silently defaults to movl, and mismatched-width GP `mov` silently encodes using the first register's size — both accepted where llvm-mc/GAS reject.
+**Verdict:** 3 high findings (2 root causes): `encode_mov_rr` silently accepts size-mismatched GP pairs (and both-wrong-width) and non-GP names (xmm/mm/st) via `reg_num` aliasing, emitting 88/89 bytes that look like valid same-width MOV; same-width GP paths match llvm-mc.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mov_infer_size (i686 gp_integer)
-**Tests:** 9 properties (+ 7 KAT / strengthen unit tests + 2 regression witnesses)
-**Result:** 7 passing properties, 2 failing properties, 2 bugs
-**Change surface:** 1 changed function (encode_mov_infer_size), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence / cargo test execution) — `coverage_gaps` found no .gcda/.profraw (Rust build not gcov-instrumented in this tree) and listed unrelated OH binaries as NOT LINKED; campaign evidence is the lib-test binary executing `InstructionEncoder::encode("mov")` → `encode_mov_infer_size` (KATs + 1000-case proptest runs). Tier: standard.
-**Effort tier:** standard (≥1000 proptest cases; 1 strengthen round; 1 contract-surface sweep)
+**Modules tested:** encode_mov_rr (gp_integer.rs)
+**Tests:** 8 properties (+ 5 KAT + 3 deterministic regressions)
+**Result:** 5 passing, 3 failing properties, 3 bug reports (2 root causes)
+**Change surface:** 1 changed function (encode_mov_rr), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — coverage_gaps reported no .gcda/.profraw (Rust cargo not producing gcov/llvm-cov artifacts the tool reads); production symbol exercised by `cargo test --lib encode_mov_rr`. Tool NOT LINKED list pointed at unrelated OH C++ binaries.
+**Effort tier:** standard (≥1000 proptest cases; 1 strengthen round; 1 contract-surface sweep; ≥1 metamorphic/differential)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mov_infer_size | 9 props (+KAT/regression) | 2 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_mov_rr | 8 props (+KAT/regressions) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: Unsuffixed `mov $imm, mem` silently defaults to 32-bit
+### B1: encode_mov_rr accepts size-mismatched GP pairs
 
-**Formal:** ∀ imm, mem. llvm_mc rejects "mov $imm, mem" ⇒ encode_mov_infer_size([Imm,Mem]).is_err()
-**Contract evidence:** inferred (GAS/llvm-mc ambiguous-suffix contract for unsuffixed mov without a register operand; doc claims size is inferred from operands)
-**Documentation conflict:** (none) — gp_integer.rs:121 `_ => 4 // default to 32-bit` is the producing statement, not a domain restriction
+**Formal:** ∀ src ∈ GP_a, dst ∈ GP_b, mnemonic size s. (reg_size(src)≠s ∨ reg_size(dst)≠s) ∧ llvm-mc rejects ⇒ encode returns Err
+**Contract evidence:** inferred (Intel SDM MOV same-size operands; AT&T suffix encodes width; llvm-mc `-triple=i686` rejects `movl %ax, %ebx` / `movb %eax, %bl`; same class as encode_mov_cr r32-only gate)
+**Documentation conflict:** (none) — no comment declares mismatched width valid or out-of-domain
 **Severity:** high
-**Counterexample:** `mov $0, (%eax)` → Ok([c7, 00, 00, 00, 00, 00])
-**Expected / Actual:** Err(ambiguous) / Ok(movl encoding)
-**Impact:** Assembler accepts ambiguous store-immediate and always emits dword width, risking memory corruption vs intended byte/word stores.
-**Root cause:** gp_integer.rs:121 `_ => 4` defaults size when neither operand is a Register, then encode_mov emits C7.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:117`
+**Counterexample:** `movl %ax, %ebx` → `Ok([0x89, 0xc3])`
+**Expected / Actual:** Err / Ok with aliased same-width encoding
+**Impact:** Assembler accepts wrong-sized register names and emits machine code identical to the full-width form, so callers get no diagnostic and may assume a different width move occurred.
+**Root cause:** gp_integer.rs:179-191 uses `reg_num` without `reg_size(src)==size && reg_size(dst)==size`; `reg_num` collapses ax/eax/al to one code.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:179`
 ```rust
-        let size = match (&ops[0], &ops[1]) {
-            (Operand::Register(r), _) => reg_size(&r.name),
-            (_, Operand::Register(r)) => reg_size(&r.name),
-            _ => 4, // default to 32-bit
-        };
-        self.encode_mov(ops, size)
-```
-**Suggested fix:** Reject the no-register case:
-```rust
-            _ => {
-                return Err(
-                    "ambiguous mov: no register operand to infer size (use movb/movw/movl)"
-                        .to_string(),
-                );
-            }
-```
-**Bug report:** bug_reports/encode_mov_infer_size_ambiguous_imm_mem.md
-**Repro seed:** cc d01348f11493b4893fbc4fbc4fd75495baa5f95445f568547559ec9cc02c1242
-**Raw output:**
-```text
-Test failed: ambiguous imm→mem `mov $0, (%eax)` must Err; got Ok(Some([c7, 00, 00, 00, 00, 00]))
-minimal failing input: bi = 0, imm = 0, disp = 0
-```
+        let src_num = reg_num(&src.name).ok_or_else(|| format!("bad register: {}", src.name))?;
+        let dst_num = reg_num(&dst.name).ok_or_else(|| format!("bad register: {}", dst.name))?;
 
-### B2: Mismatched-width GP `mov` silently uses first-register size
-
-**Formal:** ∀ src∈GP_w1, dst∈GP_w2, w1≠w2. llvm_mc rejects "mov %src, %dst" ⇒ encode_mov_infer_size.is_err()
-**Contract evidence:** inferred (GAS/llvm-mc reject unsuffixed mov with unequal GP widths; doc claims size inference from operands implies a single consistent size)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `mov %ax, %al` → Ok([66, 89, c0])
-**Expected / Actual:** Err(size mismatch) / Ok(16-bit mov encoding)
-**Impact:** Wrong opcode/prefix for mismatched register pairs; code other assemblers reject is accepted with incorrect machine code.
-**Root cause:** gp_integer.rs:118 takes only the first Register's `reg_size` and never compares widths when both operands are GP registers.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:117`
-```rust
-        let size = match (&ops[0], &ops[1]) {
-            (Operand::Register(r), _) => reg_size(&r.name),
-            (_, Operand::Register(r)) => reg_size(&r.name),
-            _ => 4, // default to 32-bit
-        };
-        self.encode_mov(ops, size)
+        if size == 2 {
+            self.bytes.push(0x66);
+        }
+        if size == 1 {
+            self.bytes.push(0x88);
+        } else {
+            self.bytes.push(0x89);
+        }
+        self.bytes.push(self.modrm(3, src_num, dst_num));
+        Ok(())
 ```
-**Suggested fix:** When both operands are GP registers, require `reg_size(a) == reg_size(b)` (leave CR/Sreg pairs to encode_mov specialized paths):
+**Suggested fix:** Gate GP path on matching widths:
 ```rust
-        if let (Operand::Register(a), Operand::Register(b)) = (&ops[0], &ops[1]) {
-            if !is_control_reg(&a.name) && !is_control_reg(&b.name)
-                && !is_segment_reg(&a.name) && !is_segment_reg(&b.name)
-                && reg_size(&a.name) != reg_size(&b.name)
-            {
-                return Err(format!(
-                    "mov operand size mismatch: {} vs {}",
-                    a.name, b.name
-                ));
-            }
+        if reg_size(&src.name) != size || reg_size(&dst.name) != size {
+            return Err(format!(
+                "mov register size mismatch: src={}, dst={}, expected size {}",
+                src.name, dst.name, size
+            ));
         }
 ```
-**Bug report:** bug_reports/encode_mov_infer_size_mismatched_width.md
-**Repro seed:** (deterministic regression; proptest shrunk to w1=2,w2=1,si=0,di=0)
+**Bug report:** bug_reports/encode_mov_rr_mismatched_width.md
+**Repro seed:** proptest cc 7b19cc18f6043dfb5ca479fd1de321557b945c55e208a9c6c2812cccbff1fe37 (both-wrong-width); mode=0,a_i=0,b_i=0 (mismatched)
 **Raw output:**
 ```text
-Test failed: mismatched-width `mov %ax, %al` must Err; got Ok(Some([66, 89, c0]))
-minimal failing input: w1 = 2, w2 = 1, si = 0, di = 0
+SUT accepted size-mismatched `movl %ax, %eax` → [89, c0]
+movl %ax, %ebx must Err; got Ok(Ok([137, 195]))
+```
+
+### B3: encode_mov_rr accepts both-operands wrong width
+
+**Formal:** ∀ src,dst both wrong width for mnemonic. llvm-mc rejects ⇒ encode returns Err
+**Contract evidence:** inferred (same as B1)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `movl %al, %al` → `Ok([0x89, 0xc0])`
+**Expected / Actual:** Err / Ok([0x89, 0xc0])
+**Impact:** Same as B1; strengthen-round witness where both operands are wrong-sized.
+**Root cause:** gp_integer.rs:179-191 — same missing `reg_size` gate as B1.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:179`
+```rust
+        let src_num = reg_num(&src.name).ok_or_else(|| format!("bad register: {}", src.name))?;
+        let dst_num = reg_num(&dst.name).ok_or_else(|| format!("bad register: {}", dst.name))?;
+
+        if size == 2 {
+            self.bytes.push(0x66);
+        }
+        if size == 1 {
+            self.bytes.push(0x88);
+        } else {
+            self.bytes.push(0x89);
+        }
+        self.bytes.push(self.modrm(3, src_num, dst_num));
+        Ok(())
+```
+**Suggested fix:** Same width gate as B1:
+```rust
+        if reg_size(&src.name) != size || reg_size(&dst.name) != size {
+            return Err(format!(
+                "mov register size mismatch: src={}, dst={}, expected size {}",
+                src.name, dst.name, size
+            ));
+        }
+```
+**Bug report:** bug_reports/encode_mov_rr_both_wrong_width.md
+**Repro seed:** cc 7b19cc18f6043dfb5ca479fd1de321557b945c55e208a9c6c2812cccbff1fe37
+**Raw output:**
+```text
+SUT accepted both-wrong-width `movl %al, %al` → [89, c0]
+minimal failing input: pair = 0, a_i = 0, b_i = 0
+```
+
+### B2: encode_mov_rr accepts non-GP registers (xmm/mm/st)
+
+**Formal:** ∀ r ∈ {xmm*,mm*,st*}, gp ∈ GP_w, m ∈ {movb,movw,movl}. llvm-mc rejects ⇒ encode(m, …)=Err
+**Contract evidence:** inferred (Intel SDM 88/89 GP-only; registers.rs:4-15 maps xmm/mm/st into reg_num 0–7; llvm-mc rejects)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `movl %xmm0, %eax` → `Ok([0x89, 0xc0])`
+**Expected / Actual:** Err / Ok aliased as GP0
+**Impact:** Mistyped or mis-parsed SSE/x87 names assemble as GP MOV to/from the aliased register number with no error.
+**Root cause:** Same GP path at gp_integer.rs:179 uses `reg_num` without excluding non-GP classes.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:179`
+```rust
+        let src_num = reg_num(&src.name).ok_or_else(|| format!("bad register: {}", src.name))?;
+        let dst_num = reg_num(&dst.name).ok_or_else(|| format!("bad register: {}", dst.name))?;
+```
+**Suggested fix:**
+```rust
+        fn is_gp_name(name: &str) -> bool {
+            !name.starts_with("xmm")
+                && !name.starts_with("ymm")
+                && !(name.starts_with("mm") && !name.starts_with("mmx"))
+                && !name.starts_with("st")
+        }
+        if !is_gp_name(&src.name) || !is_gp_name(&dst.name) {
+            return Err(format!("non-GP register in mov: {}, {}", src.name, dst.name));
+        }
+```
+**Bug report:** bug_reports/encode_mov_rr_non_gp.md
+**Repro seed:** ni=0, gi=0, width=1, non_gp_as_src=false
+**Raw output:**
+```text
+SUT accepted non-GP MOV RR `movb %al, %xmm0` → [88, c0]
+movl %xmm0, %eax must Err; got Ok(Ok([137, 192]))
 ```
 
 ## Design Caveats
@@ -105,28 +149,20 @@ minimal failing input: w1 = 2, w2 = 1, si = 0, di = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_mov_infer_size_pbt.rs | 9 properties, 7 KAT/strengthen units, 2 regression witnesses |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_mov_infer_size_pbt` |
+| src/backend/i686/assembler/encoder/encode_mov_rr_pbt.rs | 8 properties + 5 KAT + 3 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_mov_rr_pbt;` |
 
 ## Reproduction
 
-Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_mov_infer_size -- --test-threads=1
+cargo test --lib encode_mov_rr -- --test-threads=1
+cargo test --lib test_encode_mov_rr_regression_rejects_movl_ax_ebx -- --test-threads=1
+cargo test --lib test_encode_mov_rr_regression_rejects_movb_eax_bl -- --test-threads=1
+cargo test --lib test_encode_mov_rr_regression_rejects_xmm -- --test-threads=1
 ```
 
-B1 regression:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mov_infer_size_regression_ambiguous_imm_mem -- --test-threads=1
-```
-
-B2 regression:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_mov_infer_size_regression_mismatched_width -- --test-threads=1
-```
+Build contract (unchanged form): `cargo test --lib encode_mov_rr -- --test-threads=1`
 
 ## Output Directories
 
@@ -138,18 +174,17 @@ cargo test --lib test_encode_mov_infer_size_regression_mismatched_width -- --tes
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_mov_infer_size_ambiguous_imm_mem.md (+ .html)
-- pbt-out/bug_reports/encode_mov_infer_size_mismatched_width.md (+ .html)
-- pbt-out/run/encode_mov_infer_size_test1.log
-- pbt-out/run/encode_mov_infer_size_test2.log
+- pbt-out/bug_reports/encode_mov_rr_mismatched_width.md (+ .html)
+- pbt-out/bug_reports/encode_mov_rr_non_gp.md (+ .html)
+- pbt-out/bug_reports/encode_mov_rr_both_wrong_width.md (+ .html)
+- pbt-out/run/encode_mov_rr_test2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 04:05 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 268/398 total | PBT candidates: 268 | Tested: 268 (100%) | 1 pass, 268 fail
+> Last updated: 2026-10-09 04:23 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 269/398 total | PBT candidates: 269 | Tested: 269 (100%) | 1 pass, 269 fail
 
 ## Summary
 
@@ -158,10 +193,10 @@ cargo test --lib test_encode_mov_infer_size_regression_mismatched_width -- --tes
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 398 |
-| PBT candidates (from FUNCTION_INDEX) | 268 |
-| **Tested (of PBT candidates)** | **268 / 268 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 268 / -1 |
-| **Overall (tested / all functions)** | **268 / 398 (67%)** |
+| PBT candidates (from FUNCTION_INDEX) | 269 |
+| **Tested (of PBT candidates)** | **269 / 269 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 269 / -1 |
+| **Overall (tested / all functions)** | **269 / 398 (68%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -169,13 +204,13 @@ cargo test --lib test_encode_mov_infer_size_regression_mismatched_width -- --tes
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 268 | 268 | 0 | 100% |
+|  | 269 | 269 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 268 | 268 | 0 | 100% |
+| unknown | 269 | 269 | 0 | 100% |
 
 ## File Coverage
 
@@ -186,7 +221,7 @@ cargo test --lib test_encode_mov_infer_size_regression_mismatched_width -- --tes
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 30 | 2 | 2 | 100% | covered |
+| gp_integer.rs | 30 | 3 | 3 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -466,3 +501,4 @@ cargo test --lib test_encode_mov_infer_size_regression_mismatched_width -- --tes
 | encode_pop16 | system.rs |
 | encode_bsr_bsf_16 | system.rs |
 | encode_mov_infer_size | gp_integer.rs |
+| encode_mov_rr | gp_integer.rs |
