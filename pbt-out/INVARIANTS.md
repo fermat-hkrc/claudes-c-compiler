@@ -170,3 +170,12 @@
 - Known defects: (1) no segment prefix at all on mem arm — emit_segment_prefix never called; (2) no reg_size vs mnemonic size gate; (3) reg_num aliases xmm/mm/st as GP.
 - Fix shapes: `self.emit_segment_prefix(mem);` before 66/opcode on mem arm; `if reg_size(&name) != size { return Err(...); }`; reject is_xmm/is_mm/st/ymm.
 - Harness: encode_movzx_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
+
+## encode_lea (i686 gp_integer encoder)
+
+- Opcode: 0x8D /r; AT&T `leal mem, %dst` with ModRM.reg=dst; dispatch `leal|lea` → encode_lea(ops, 4) at encoder/mod.rs:186 (no `leaw` yet).
+- Non-segment base/disp/SIB/abs forms match llvm-mc `-triple=i686`.
+- Metamorphic: same mem+dst → lea Mod+RM/SIB/disp equals movl mem→reg; only opcode differs (8D vs 8B).
+- Known defects: (1) does not call `emit_segment_prefix` before 0x8D (witness `leal %es:(%eax), %eax` → omits 0x26); (2) dest gated only by `reg_num`, so xmm/mm/st/r8/r16 under `leal` are accepted and aliased to GP encodings; (3) `_size` ignored (no 0x66 path even if leaw were dispatched).
+- Fix shapes: `self.emit_segment_prefix(mem);` before `bytes.push(0x8D)`; gate dest with `reg_size` / reject non-GP; honor size==2 with leading 0x66 when leaw is wired.
+- Harness: encode_lea_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.

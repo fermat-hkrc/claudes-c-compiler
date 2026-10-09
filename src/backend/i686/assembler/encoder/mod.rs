@@ -53,6 +53,8 @@ mod encode_mov_imm_mem_pbt;
 mod encode_movsx_pbt;
 #[cfg(test)]
 mod encode_movzx_pbt;
+#[cfg(test)]
+mod encode_lea_pbt;
 
 pub(crate) use registers::*;
 
