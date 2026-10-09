@@ -1,146 +1,113 @@
-# PBT Campaign Report: encode_mov_seg (i686)
+# PBT Campaign Report: encode_pop16
 
 ## Summary
 
-**Verdict:** 4 high/medium bug reports (3 root causes) in `encode_mov_seg`: (1) high — memory forms omit segment-override prefixes (base and SIB witnesses); (2) high — `movw %sreg, %r16` omits the 0x66 operand-size prefix; (3) medium — 8-bit GP registers are accepted via `reg_num` aliasing.
+**Verdict:** 1 high + 1 high + 1 medium: `encode_pop16` omits the 0x66 prefix on segment-register `popw`, rejects all memory forms (`popw (%eax)`), and silently accepts r32/r8 GP names as r16 — three assembler correctness bugs vs llvm-mc/Intel POP.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mov_seg (src/backend/i686/assembler/encoder/system.rs)
-**Tests:** 12 properties (+ 6 KAT + 3 regression witnesses)
-**Result:** 8 passing, 4 failing properties; 4 bug reports (3 root causes)
-**Change surface:** 1 function (`encode_mov_seg`), 1 with properties, 0 error-handling-only changes (arity path still covered by negative property)
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw and scanned unrelated OH binaries (false NOT LINKED); cargo lib-test binary contains encode_mov_seg_pbt and executed the real symbol (failing props returned SUT bytes). Sweep round 1: all documented branches already had properties; no new props required.
-**Effort tier:** standard
+**Modules tested:** encode_pop16
+**Tests:** 8 properties (+ KAT + 3 regression witnesses)
+**Result:** 4 passing, 3 failing, 1 retired (duplicate metamorphic of b1); 3 bugs
+**Change surface:** 1 changed function (encode_pop16), 1 with properties, 0 error-handling-only changes without failure-path coverage (arity/cs/wrong-width negatives included)
+**Coverage evidence:** none from native profraw (`coverage_gaps` found no .gcda/.profraw and listed unrelated OH binaries); execution evidenced by cargo lib tests printing SUT encodings from `encode_pop16` — record as file-level (symbol exercised via cargo test)
+**Effort tier:** standard (proptest cases=1000; ≥1 metamorphic; 1 coverage_gaps sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mov_seg | 12 props (+6 KAT, +3 regression) | 4 (3 root causes) | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_pop16 | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_mov_seg omits memory segment-override prefix
+### B1: encode_pop16 omits 0x66 on segment-register popw
 
-**Formal:** ∀ sreg ∈ SEG, mem ∈ MemWithSeg, dir ∈ {store,load}. encode_mov_seg(movw, sreg↔mem) = llvm_mc(movw AT&T with segment prefix)
-**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` is the in-tree contract for memory segment overrides; llvm-mc `-triple=i686` emits 0x26/0x64/…; sibling encoders document the same requirement)
+**Formal:** ∀ s ∈ {es,ss,ds,fs,gs}. encode_pop16([s]) = llvm_mc("popw %s")
+**Contract evidence:** inferred (llvm-mc i686 + Intel operand-size override on 16-bit mnemonic; sibling popl omits 0x66 by design) — author comment at system.rs:333 asserts the opposite for all segment pops
+**Documentation conflict:** system.rs:333 `// Segment register pops don't use 0x66 prefix` — known limitation / incorrect claim for `popw` (true for `popl`); does not declare the input invalid; severity one step down from impact high → **medium (documented by the author)** would apply only if we treat it as admitted gap — here the comment states intended behavior that contradicts the public `popw` contract and llvm-mc; classify as **documented-and-violated** relative to the popw mnemonic contract, severity **high** (wrong machine code, not a disclosed "暂不支持")
+**Severity:** high
+**Counterexample:** `popw %es` then compare bytes — SUT `[0x07]`, expected `[0x66, 0x07]`
+**Expected / Actual:** `[0x66, 0x07]` / `[0x07]`
+**Impact:** Wrong encoding for every 16-bit segment pop; breaks gas/llvm-mc compatibility.
+**Root cause:** system.rs:333-336 emits bare Sreg POP opcodes without 0x66 under the popw path.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:333`
+```rust
+                    // Segment register pops don't use 0x66 prefix
+                    match reg.name.as_str() {
+                        "es" => { self.bytes.push(0x07); Ok(()) }
+```
+**Suggested fix:** Push 0x66 before the Sreg opcode match in `encode_pop16` only.
+```rust
+                    self.bytes.push(0x66);
+                    match reg.name.as_str() {
+                        "es" => { self.bytes.push(0x07); Ok(()) }
+```
+**Bug report:** bug_reports/encode_pop16_sreg_missing_66.md
+**Repro seed:** proptest minimal `sreg = "es"`
+**Raw output:**
+```text
+left: `[7]`, right: `[102, 7]`: Sreg popw must match llvm-mc (incl. 0x66) for popw %es
+```
+
+### B2: encode_pop16 rejects memory operands (POP m16)
+
+**Formal:** ∀ mem ∈ valid_i686_mem. encode_pop16([mem]) = llvm_mc("popw mem")
+**Contract evidence:** inferred (Intel POP r/m16; llvm-mc `popw (%eax)` = `[66,8f,00]`; sibling `encode_pop` implements memory for popl)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `movw %es:(%eax), %es` then compare bytes — SUT `[8e,00]`, llvm-mc `[26,8e,00]`
-**Expected / Actual:** `[0x26, 0x8e, 0x00]` / `[0x8e, 0x00]`
-**Impact:** Segmented memory MOV Sreg forms assemble without the override; runtime uses the wrong segment.
-**Root cause:** system.rs:309-319 pushes 0x8C/0x8E then `encode_modrm_mem` without `emit_segment_prefix(mem)`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:309`
+**Counterexample:** `popw (%eax)` → SUT `Err("unsupported popw operand")`, expected `[0x66, 0x8f, 0x00]`
+**Expected / Actual:** Ok`[0x66, 0x8f, 0x00]` / Err(`unsupported popw operand`)
+**Impact:** Valid AT&T memory popw forms cannot be assembled.
+**Root cause:** system.rs:348 blanket `_ => Err` with no `Operand::Memory` arm.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:348`
 ```rust
-            (Operand::Register(src), Operand::Memory(mem)) if is_segment_reg(&src.name) => {
-                let sr = seg_num(&src.name).ok_or("bad segment register")?;
-                self.bytes.push(0x8C);
-                self.encode_modrm_mem(sr, mem)
-            }
+            _ => Err("unsupported popw operand".to_string()),
 ```
-**Suggested fix:** Call `emit_segment_prefix` before the opcode on both memory arms.
+**Suggested fix:**
 ```rust
+            Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
-                self.bytes.push(0x8C);
-                self.encode_modrm_mem(sr, mem)
-```
-**Bug report:** bug_reports/encode_mov_seg_missing_segment_prefix.md
-**Repro seed:** proptest cc e526b10267810067b3b6bef737c44be9c4b94a960db33efddf0c5811ff379113
-**Raw output:**
-```text
-left: `[142, 0]`, right: `[38, 142, 0]`: segmented mem must include override prefix for movw %es:(%eax), %es
-```
-
-### B2: encode_mov_seg omits 0x66 for movw Sreg→r16
-
-**Formal:** ∀ sreg ∈ SEG, r16 ∈ R16. encode_mov_seg(movw, sreg, r16) = llvm_mc("movw %sreg, %r16")
-**Contract evidence:** inferred (Intel SDM MOV r/m16,Sreg; llvm-mc `movw %ds, %ax` → `[66,8c,d8]`)
-**Documentation conflict:** (none) — comment says "mov %sreg, %reg32" but the public path accepts `movw`
-**Severity:** high
-**Counterexample:** `movw %es, %ax` — SUT `[8c,c0]`, llvm-mc `[66,8c,c0]`
-**Expected / Actual:** `[0x66, 0x8c, 0xc0]` / `[0x8c, 0xc0]`
-**Impact:** 16-bit-width MOV from segment silently drops the operand-size prefix.
-**Root cause:** system.rs:293-298 always emits bare 0x8C; size from `movw` is discarded when `encode_mov` routes to `encode_mov_seg`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:293`
-```rust
-            (Operand::Register(src), Operand::Register(dst)) if is_segment_reg(&src.name) => {
-                let sr = seg_num(&src.name).ok_or("bad segment register")?;
-                let gp = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.push(0x8C);
-                self.bytes.push(self.modrm(3, sr, gp));
-                Ok(())
+                self.bytes.push(0x66);
+                self.bytes.push(0x8F);
+                self.encode_modrm_mem(0, mem)
             }
 ```
-**Suggested fix:** Emit 0x66 when `reg_size(&dst.name) == 2`.
-```rust
-                if reg_size(&dst.name) == 2 { self.bytes.push(0x66); }
-                self.bytes.push(0x8C);
-```
-**Bug report:** bug_reports/encode_mov_seg_missing_66_r16.md
-**Repro seed:** (deterministic KAT / proptest minimal sreg=es,r16=ax)
+**Bug report:** bug_reports/encode_pop16_mem_unsupported.md
+**Repro seed:** `kind = 0, base = "eax"`
 **Raw output:**
 ```text
-left: `[140, 192]`, right: `[102, 140, 192]`: Sreg->r16 must match llvm-mc (incl. 0x66) for movw %es, %ax
+SUT rejected `popw (%eax)`: unsupported popw operand
 ```
 
-### B3: encode_mov_seg accepts 8-bit GP registers
+### B3: encode_pop16 accepts r32/r8 via reg_num aliasing
 
-**Formal:** ∀ r8 ∈ R8, sreg ∈ SEG, dir. encode(movl with r8↔sreg) = Err
-**Contract evidence:** inferred (Intel SDM MOV Sreg is r/m16 or r32; llvm-mc rejects `movl %al, %ds` / `movl %es, %al`)
+**Formal:** ∀ r ∈ R32 ∪ R8. encode_pop16([r]) is Err
+**Contract evidence:** inferred (llvm-mc rejects `popw %eax`/`%al`; popw requires r16)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** `movl %es, %al` → Ok(`[8c,c0]`); `movl %al, %ds` → Ok(`[8e,d8]`)
-**Expected / Actual:** Err / Ok with r32-aliased encoding
-**Impact:** Illegal 8-bit operands silently encode as the corresponding r32 slot.
-**Root cause:** `reg_num` maps al/ah/… onto eax-slot codes with no `reg_size` gate (system.rs:293-306).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:295`
+**Counterexample:** `popw %eax` → Ok`[0x66, 0x58]` (same as `popw %ax`)
+**Expected / Actual:** Err / Ok`[0x66, 0x58]`
+**Impact:** Typos and wrong-width operands assemble silently as r16.
+**Root cause:** system.rs:341 uses `reg_num` without `reg_size == 2` gate.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:340`
 ```rust
-                let gp = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.push(0x8C);
-                self.bytes.push(self.modrm(3, sr, gp));
+                } else {
+                    let num = reg_num(&reg.name).ok_or("bad register")?;
+                    self.bytes.push(0x66);
+                    self.bytes.push(0x58 + num);
 ```
-**Suggested fix:** Reject `reg_size(&gp.name) == 1` on both register arms.
+**Suggested fix:**
 ```rust
-                if reg_size(&dst.name) == 1 {
-                    return Err(format!("MOV Sreg does not accept 8-bit register {}", dst.name));
-                }
+                    if reg_size(&reg.name) != 2 {
+                        return Err(format!("popw requires r16, got {}", reg.name));
+                    }
+                    let num = reg_num(&reg.name).ok_or("bad register")?;
 ```
-**Bug report:** bug_reports/encode_mov_seg_accepts_r8.md
-**Repro seed:** proptest minimal to_sreg=false, sreg=es, r8=al
+**Bug report:** bug_reports/encode_pop16_wrong_width_gp.md
+**Repro seed:** `r32 = "eax"`
 **Raw output:**
 ```text
-SUT accepted invalid-width r8 `movl %es, %al` → [8c, c0]
-```
-
-### B4: encode_mov_seg omits segment-override prefix on SIB memory forms
-
-**Formal:** ∀ sreg, mseg, base, index≠esp, scale, dir. encode(movw, SIB+seg) = llvm_mc
-**Contract evidence:** inferred (core.rs:31-42 emit_segment_prefix; llvm-mc; same root cause as B1)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `movw %es:4(%eax,%eax,1), %es` — SUT `[8e,44,00,04]`, llvm-mc `[26,8e,44,00,04]`
-**Expected / Actual:** `[0x26, 0x8e, 0x44, 0x00, 0x04]` / `[0x8e, 0x44, 0x00, 0x04]`
-**Impact:** SIB+segment MOV Sreg forms assemble without the override.
-**Root cause:** system.rs:315-319 pushes 0x8E then encode_modrm_mem without emit_segment_prefix (same class as B1).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:315`
-```rust
-            (Operand::Memory(mem), Operand::Register(dst)) if is_segment_reg(&dst.name) => {
-                let sr = seg_num(&dst.name).ok_or("bad segment register")?;
-                self.bytes.push(0x8E);
-                self.encode_modrm_mem(sr, mem)
-            }
-```
-**Suggested fix:** Call `emit_segment_prefix` before the opcode on both memory arms.
-```rust
-                self.emit_segment_prefix(mem);
-                self.bytes.push(0x8E);
-                self.encode_modrm_mem(sr, mem)
-```
-**Bug report:** bug_reports/encode_mov_seg_missing_segment_prefix_sib.md
-**Repro seed:** proptest cc 6d83c90075a50c4f2a71c235f2a7dde1b2077320ad034076be76100d6ffdc27c
-**Raw output:**
-```text
-left: `[142, 68, 0, 4]`, right: `[38, 142, 68, 0, 4]`: seg+SIB must match llvm-mc for movw %es:4(%eax,%eax,1), %es
+popw %eax must be Err like llvm-mc, got Ok([66, 58])
 ```
 
 ## Design Caveats
@@ -151,18 +118,23 @@ left: `[142, 68, 0, 4]`, right: `[38, 142, 68, 0, 4]`: seg+SIB must match llvm-m
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs | 12 properties + 6 KAT + 3 regression |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_mov_seg_pbt;` |
+| src/backend/i686/assembler/encoder/encode_pop16_pbt.rs | 8 properties + 5 KAT + 3 regression |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_pop16_pbt` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_mov_seg -- --test-threads=1
-cargo test --lib test_encode_mov_seg_regression_es_segment_prefix -- --test-threads=1
-cargo test --lib test_encode_mov_seg_regression_movw_ds_ax_66 -- --test-threads=1
-cargo test --lib test_encode_mov_seg_regression_rejects_al -- --test-threads=1
+cargo test --lib encode_pop16 -- --test-threads=1
+cargo test --lib encode_pop16_diff_sreg -- --test-threads=1
+cargo test --lib encode_pop16_diff_mem -- --test-threads=1
+cargo test --lib encode_pop16_neg_r32 -- --test-threads=1
+cargo test --lib test_encode_pop16_regression_sreg_missing_66 -- --test-threads=1
+cargo test --lib test_encode_pop16_regression_mem_unsupported -- --test-threads=1
+cargo test --lib test_encode_pop16_regression_r32_accepted -- --test-threads=1
 ```
+
+Build contract (user-supplied): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` (swapped filter to `encode_pop16`).
 
 ## Output Directories
 
@@ -174,18 +146,17 @@ cargo test --lib test_encode_mov_seg_regression_rejects_al -- --test-threads=1
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_mov_seg_missing_segment_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_mov_seg_missing_66_r16.md (+ .html)
-- pbt-out/bug_reports/encode_mov_seg_accepts_r8.md (+ .html)
-- pbt-out/bug_reports/encode_mov_seg_missing_segment_prefix_sib.md (+ .html)
-- pbt-out/run/encode_mov_seg_test.log
+- pbt-out/bug_reports/encode_pop16_sreg_missing_66.md (+ .html)
+- pbt-out/bug_reports/encode_pop16_mem_unsupported.md (+ .html)
+- pbt-out/bug_reports/encode_pop16_wrong_width_gp.md (+ .html)
+- pbt-out/run/encode_pop16_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 03:18 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 265/397 total | PBT candidates: 265 | Tested: 265 (100%) | 1 pass, 265 fail
+> Last updated: 2026-10-09 03:31 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 266/397 total | PBT candidates: 266 | Tested: 266 (100%) | 1 pass, 266 fail
 
 ## Summary
 
@@ -194,10 +165,10 @@ cargo test --lib test_encode_mov_seg_regression_rejects_al -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 265 |
-| **Tested (of PBT candidates)** | **265 / 265 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 265 / -1 |
-| **Overall (tested / all functions)** | **265 / 397 (67%)** |
+| PBT candidates (from FUNCTION_INDEX) | 266 |
+| **Tested (of PBT candidates)** | **266 / 266 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 266 / -1 |
+| **Overall (tested / all functions)** | **266 / 397 (67%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -205,13 +176,13 @@ cargo test --lib test_encode_mov_seg_regression_rejects_al -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 265 | 265 | 0 | 100% |
+|  | 266 | 266 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 265 | 265 | 0 | 100% |
+| unknown | 266 | 266 | 0 | 100% |
 
 ## File Coverage
 
@@ -499,3 +470,4 @@ cargo test --lib test_encode_mov_seg_regression_rejects_al -- --test-threads=1
 | encode_smsw | system.rs |
 | encode_mov_cr | system.rs |
 | encode_mov_seg | system.rs |
+| encode_pop16 | system.rs |

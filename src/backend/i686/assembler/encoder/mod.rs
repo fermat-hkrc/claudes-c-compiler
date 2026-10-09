@@ -35,6 +35,8 @@ mod encode_smsw_pbt;
 mod encode_mov_cr_pbt;
 #[cfg(test)]
 mod encode_mov_seg_pbt;
+#[cfg(test)]
+mod encode_pop16_pbt;
 
 pub(crate) use registers::*;
 

@@ -1,30 +1,30 @@
-# Coverage status — encode_mov_seg campaign
+# Coverage Status
 
+**Campaign:** encode_pop16 (i686)
 **Tier:** standard
-**Target:** encode_mov_seg (system.rs:274)
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no native .gcda/.profraw and listed unrelated OH pbt binaries as NOT LINKED for encode_mov_seg. Campaign cargo tests nevertheless executed the real symbol: failing properties returned concrete SUT byte vectors from `InstructionEncoder::encode` → `encode_mov_seg`.
+**Date:** 2026-10-09
 
-## Sweep round 1 (standard tier allowance)
-
-- Called `coverage_gaps` after first full test run.
-- Tool: no line-level data; file-level scan of non-cargo binaries → false NOT LINKED.
-- Documented behaviors of encode_mov_seg already each have a property:
-  - arity error path (neg_arity)
-  - Sreg→GP / GP→Sreg register (diff + invariant + metamorphic)
-  - Sreg→r16 0x66 path (diff_sreg_to_r16 — failing bug)
-  - r16→Sreg (diff_r16_to_sreg)
-  - mem no-seg base/disp/SIB/abs (diff_mem)
-  - mem with segment override + SIB (diff_mem_segment, diff_segment_sib — failing bug)
-  - r8 rejection (neg_r8 — failing bug)
-  - mnemonic alias mov/movl (diff_mnemonic_aliases)
-- No additional documented branch without a property. Sweep closed (tier's 1 round done).
-
-## This campaign
+## Summary
 
 | Metric | Value |
 |--------|-------|
-| Properties | 12 (8 passing, 4 failing) |
-| KAT | 4 pass, 2 fail (contract witnesses) |
-| Regression witnesses | 3 (all fail — expected until fix) |
-| Bugs | 3 root causes |
-| Generator runs | 1000 cases/property (proptest) |
+| Target function | encode_pop16 |
+| Source | src/backend/i686/assembler/encoder/system.rs:325 |
+| Properties | 8 (4 passing, 4 failing) |
+| Bugs filed | 3 |
+| Coverage evidence | file-level / execution via cargo test (coverage_gaps: no .profraw; reported unrelated OH binaries NOT LINKED — Rust lib tests still executed the symbol; SUT byte outputs prove linkage) |
+
+## Module breakdown
+
+| Module | Scanned | Tested | Notes |
+|--------|---------|--------|-------|
+| encode_pop16 | yes | yes | HARD scope sole target |
+| other system.rs fns | indexed | skipped | HARD scope |
+
+## Untested in this campaign
+
+All other functions in system.rs (HARD scope: encode_pop16 only).
+
+## Contract-surface sweep
+
+1 round via `coverage_gaps`: no line-level data; file-level tool mis-attributed (OH binaries). Documented behaviors all have properties: r16 differential, Sreg differential, memory (+segment), r16 invariant, popw↔popl GP metamorphic, Sreg metamorphic, arity/cs negative, wrong-width negative. Closed because tier's one sweep round is done and every documented behavior has a property.

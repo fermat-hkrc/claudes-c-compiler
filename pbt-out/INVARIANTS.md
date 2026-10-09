@@ -87,3 +87,10 @@
 - Metamorphic: same sreg/GP → read and write share ModRM; only opcode differs (0x8C vs 0x8E).
 - Known defects: (1) memory arms do not call `emit_segment_prefix` before opcode (same class as lmsw/invlpg/smsw/…). Witness: `movw %ds, %es:(%eax)` → SUT omits 0x26. (2) Sreg→r16 omits 0x66 (`movw %ds, %ax` → `[8c,d8]` vs `[66,8c,d8]`). (3) register arms accept r8 via `reg_num` aliasing (`movl %al, %ds` → same as eax).
 - Fix shapes: `self.emit_segment_prefix(mem);` before 0x8C/0x8E on mem arms; `if reg_size(&gp)==2 { push 0x66 }` on Sreg→GP arm; `if reg_size(&gp)==1 { return Err }` on both register arms.
+
+## encode_pop16 (i686 system encoder)
+
+- Opcode forms: r16 short `66 58+rw`; Sreg one-byte/0F (`07`/`17`/`1F`/`0F A1`/`0F A9`) **must** carry `0x66` under `popw` (llvm-mc); memory `66 8F /0` (+ optional segment prefix).
+- GP r16 forms match llvm-mc `-triple=i686`. Metamorphic: popw r16 = `[0x66] ‖` popl r32 short form.
+- Known defects: (1) Sreg arm omits 0x66 (comment at system.rs:333 is wrong for popw; true for popl). Witness: `popw %es` → `[07]` vs `[66,07]`. (2) Memory arm missing entirely (`unsupported popw operand`). Witness: `popw (%eax)`. (3) non-segment arm accepts r32/r8 via `reg_num` aliasing. Witness: `popw %eax` → `[66,58]`.
+- Fix shapes: push 0x66 before Sreg opcodes; add Memory arm with emit_segment_prefix + 0x66 + 8F /0; gate GP with `reg_size==2`.
