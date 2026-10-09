@@ -1,141 +1,93 @@
-# PBT Campaign Report: encode_smsw (i686)
+# PBT Campaign Report: encode_mov_cr (i686)
 
 ## Summary
 
-**Verdict:** 2 high + 1 medium (2 root causes): `encode_smsw` omits segment-override prefixes on memory operands (base+disp and SIB; wrong segment at runtime) and silently accepts 8-bit registers that llvm-mc rejects.
-**Date:** 2026-04-09
+**Verdict:** 2 medium (one root cause): `encode_mov_cr` accepts 8/16-bit GP names and `movw` and silently emits the r32 CR-move encoding (`movl %cr0, %ax` / `movw %cr0, %ax` → `0F 20 C0`), so invalid-width CR moves assemble instead of erroring.
+**Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_smsw (src/backend/i686/assembler/encoder/system.rs)
-**Tests:** 12 properties + 7 KAT + 4 regression witnesses
-**Result:** 9 properties passing, 3 failing, 3 bug reports (2 root causes)
-**Change surface:** 1 changed function (encode_smsw), 1 with properties, 0 error-handling-only changes without a failure-path property
-**Coverage evidence:** file-level (symbol presence / cargo test execution) — native line coverage unavailable (no .gcda/.profraw); coverage_gaps reported NOT LINKED against unrelated host binaries; execution proven by cargo test output
-**Effort tier:** standard (1000 proptest cases; ≥1 metamorphic; 1 strengthening round; 1 contract-surface sweep)
+**Modules tested:** encode_mov_cr (src/backend/i686/assembler/encoder/system.rs)
+**Tests:** 8 properties + 5 KAT + 2 regression witnesses
+**Result:** 6 properties passing, 2 failing; 2 bug reports (shared root cause)
+**Change surface:** 1 changed function (encode_mov_cr), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) / none native — `coverage_gaps` reported no .profraw/.gcda; execution proven by KAT/PBT byte assertions against the live symbol
+**Effort tier:** standard (≥1000 proptest cases; ≥1 metamorphic; 1 strengthen round; 1 coverage_gaps sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_smsw | 12 props (+7 KAT, +4 regression) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_mov_cr | 8 props + 5 KAT | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_smsw omits segment override prefix on memory operands
+### B1: encode_mov_cr accepts non-r32 GP operands
 
-**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, d. encode_smsw(%seg:d(%base)) = llvm_mc(same)
-**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` + llvm-mc i686 reference; same contract as sibling encode_lmsw/invlpg)
+**Formal:** ∀ cr ∈ {cr0,cr2,cr3,cr4}, gp ∈ r8∪r16. llvm_mc rejects movl %cr,%gp (and symmetric write) ⇒ SUT must Err (not emit 0F 20/22 as if r32)
+**Contract evidence:** inferred (Intel SDM MOV to/from control registers is r32 on IA-32; llvm-mc `-triple=i686` rejects `movl %cr0, %ax`; doc asserts 0F 20/22 /r without authorizing narrow GP)
 **Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `smsw %es:(%eax)` then compare bytes — SUT `[0f,01,20]`, llvm-mc `[26,0f,01,20]`
-**Expected / Actual:** `[0x26,0x0f,0x01,0x20]` / `[0x0f,0x01,0x20]`
-**Impact:** Segmented SMSW memory forms assemble to default-DS addressing, silently wrong machine code for privileged sequences.
-**Root cause:** system.rs:241-244 memory arm never calls `emit_segment_prefix(mem)` before `0F 01`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:241`
-```rust
-            Operand::Memory(mem) => {
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(4, mem)
-            }
-```
-**Suggested fix:** Call `emit_segment_prefix` before the opcode.
-```rust
-            Operand::Memory(mem) => {
-                self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(4, mem)
-            }
-```
-**Bug report:** bug_reports/encode_smsw_missing_segment_prefix.md
-**Repro seed:** proptest `cc 2b57e94ed2bb4542e27c6680bb4b2c0baf63b63668d7b1d250c1c62b4d6d0402` (seg=es, base=eax, disp=0)
-**Raw output:**
-```text
-Test failed: assertion failed: `(left == right)`
-  left: `[15, 1, 32]`,
- right: `[38, 15, 1, 32]`: segment prefix diff for `smsw %es:(%eax)`: SUT=[0f, 01, 20] llvm-mc=[26, 0f, 01, 20]
-minimal failing input: seg = "es", base = "eax", disp = 0
-```
-
-### B2: encode_smsw accepts 8-bit registers (r/m16 or r32/m16 only)
-
-**Formal:** ∀ bad ∈ {al,cl,dl,bl,ah,ch,dh,bh}. encode_smsw(%bad) = Err
-**Contract evidence:** inferred (Intel SDM SMSW r/m16|r32/m16; llvm-mc rejects `smsw %al`; `reg_num` aliasing)
-**Documentation conflict:** system.rs:223 "Accepts a 16-bit register or memory operand" — incomplete vs Intel r32 (r32 is valid per differential); does not authorize r8. Comment is domain restriction for non-memory non-r16, but r32 is allowed by the stronger reference — r8 remains invalid.
 **Severity:** medium
-**Counterexample:** `smsw %al` → Ok(`[0f,01,e0]`) (same as `%eax`); llvm-mc rejects
-**Expected / Actual:** Err / Ok(`[0x0f,0x01,0xe0]`)
-**Impact:** Width mistakes on SMSW register form are silently accepted and encode as r32 form without 0x66.
-**Root cause:** system.rs:230-239 uses `reg_num` without rejecting `reg_size == 1`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:230`
+**Counterexample:** `movl %cr0, %ax` → Ok([0x0f, 0x20, 0xc0]); also `movl %al, %cr0`
+**Expected / Actual:** Err / Ok([0x0f, 0x20, 0xc0]) (same as `%eax`)
+**Impact:** Accidental narrow-register CR moves assemble silently as r32 forms; disagrees with llvm-mc and Intel operand-size rules.
+**Root cause:** system.rs:257-258 and 263-264 use `reg_num` which aliases al/ax/eax to one index, with no `reg_size == 4` check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:255`
 ```rust
-            Operand::Register(reg) => {
-                let rm = reg_num(&reg.name).ok_or("bad register")?;
-                // 16-bit register form needs operand size prefix
-                let is_16 = matches!(reg.name.as_str(), "ax"|"bx"|"cx"|"dx"|"si"|"di"|"sp"|"bp");
-                if is_16 {
-                    self.bytes.push(0x66);
-                }
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.bytes.push(self.modrm(3, 4, rm));
+            (Operand::Register(cr), Operand::Register(gp)) if is_control_reg(&cr.name) => {
+                let cr_num = control_reg_num(&cr.name).ok_or("bad control register")?;
+                let gp_num = reg_num(&gp.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x20]);
+                self.bytes.push(self.modrm(3, cr_num, gp_num));
                 Ok(())
             }
 ```
-**Suggested fix:** Gate on `reg_size ∈ {2,4}`; keep 0x66 only for size 2.
+**Suggested fix:** Gate both arms with `reg_size(&gp.name) == 4` before encoding.
 ```rust
-            Operand::Register(reg) => {
-                let sz = reg_size(&reg.name);
-                if sz != 2 && sz != 4 {
-                    return Err(format!("smsw requires 16- or 32-bit register, got {}", reg.name));
+                if reg_size(&gp.name) != 4 {
+                    return Err("mov cr requires 32-bit register".to_string());
                 }
-                let rm = reg_num(&reg.name).ok_or("bad register")?;
-                if sz == 2 {
-                    self.bytes.push(0x66);
-                }
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.bytes.push(self.modrm(3, 4, rm));
-                Ok(())
-            }
+                let gp_num = reg_num(&gp.name).ok_or("bad register")?;
 ```
-**Bug report:** bug_reports/encode_smsw_accepts_r8_register.md
-**Repro seed:** proptest `cc 93d37eda77d85780f645ed263b38a423e28fa64144fdd53249ca06f933b88d20` (kind=2, bad_reg=al)
+**Bug report:** bug_reports/encode_mov_cr_non_r32_gp.md
+**Repro seed:** proptest cc 11bc540d850d59d89636a58f251f4d9027d380054df80d63af5d56346fa706d5 (neg_bad_operands); deterministic regressions need no seed
 **Raw output:**
 ```text
-Test failed: SUT accepted invalid-width register `smsw %al` → [0f, 01, e0]; SMSW requires r/m16 or r32/m16 (llvm-mc rejects r8).
-minimal failing input: kind = 2, bad_reg = "al", imm = 0
+SUT accepted invalid-width GP `movl %cr0, %ax` → [0f, 20, c0]; MOV CR requires r32 (Intel SDM; llvm-mc rejects).
+minimal failing input: kind = 3, cr = "cr0", r16 = "ax"
+movl %cr0, %ax must Err (r32 only); got Ok(Ok([15, 32, 192]))
 ```
 
-### B3: encode_smsw omits segment override prefix on SIB memory operands
+### B2: encode_mov_cr accepts movw with control registers
 
-**Formal:** ∀ seg, base, index≠esp, scale, d. encode_smsw(%seg:SIB) = llvm_mc(same)
-**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` + llvm-mc; same root cause as B1)
+**Formal:** ∀ cr, r16. llvm_mc rejects movw CR form ⇒ SUT Err
+**Contract evidence:** inferred (Intel SDM r32-only; llvm-mc rejects `movw %cr0, %ax`)
 **Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `smsw %es:(%eax,%eax,1)` — SUT `[0f,01,24,00]`, llvm-mc `[26,0f,01,24,00]`
-**Expected / Actual:** `[0x26,0x0f,0x01,0x24,0x00]` / `[0x0f,0x01,0x24,0x00]`
-**Impact:** Segmented SMSW SIB forms assemble to default-DS addressing.
-**Root cause:** system.rs:241-244 memory arm never calls `emit_segment_prefix(mem)` (same as B1).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:241`
+**Severity:** medium
+**Counterexample:** `movw %cr0, %ax` → Ok([0x0f, 0x20, 0xc0])
+**Expected / Actual:** Err / Ok([0x0f, 0x20, 0xc0])
+**Impact:** 16-bit-sized mov involving CR silently becomes a 32-bit CR move.
+**Root cause:** `encode_mov` routes `movw` into `encode_mov_cr`; no `reg_size == 4` gate (same statements as B1).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:255`
 ```rust
-            Operand::Memory(mem) => {
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(4, mem)
+            (Operand::Register(cr), Operand::Register(gp)) if is_control_reg(&cr.name) => {
+                let cr_num = control_reg_num(&cr.name).ok_or("bad control register")?;
+                let gp_num = reg_num(&gp.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x20]);
+                self.bytes.push(self.modrm(3, cr_num, gp_num));
+                Ok(())
             }
 ```
-**Suggested fix:** Call `emit_segment_prefix` before the opcode.
+**Suggested fix:** Same r32 gate as B1.
 ```rust
-            Operand::Memory(mem) => {
-                self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(4, mem)
-            }
+                if reg_size(&gp.name) != 4 {
+                    return Err("mov cr requires 32-bit register".to_string());
+                }
 ```
-**Bug report:** bug_reports/encode_smsw_missing_segment_prefix_sib.md
-**Repro seed:** (deterministic minimal input above)
+**Bug report:** bug_reports/encode_mov_cr_movw_accepted.md
+**Repro seed:** (deterministic proptest shrink; no separate seed required)
 **Raw output:**
 ```text
-Test failed: assertion failed: `(left == right)`
-  left: `[15, 1, 36, 0]`,
- right: `[38, 15, 1, 36, 0]`: seg+SIB diff for `smsw %es:(%eax,%eax,1)`
-minimal failing input: seg = "es", base = "eax", index = "eax", scale = 1, disp = 0
+SUT accepted `movw %cr0, %ax` → [0f, 20, c0]; MOV CR is r32-only
+minimal failing input: write = false, cr = "cr0", r16 = "ax"
 ```
 
 ## Design Caveats
@@ -146,56 +98,44 @@ minimal failing input: seg = "es", base = "eax", index = "eax", scale = 1, disp 
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_smsw_pbt.rs | 12 properties + 7 KAT + 4 regression |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_smsw_pbt;` |
+| src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs | 8 properties + 5 KAT + 2 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_mov_cr_pbt;` registration |
 
 ## Reproduction
 
-Whole suite (serial):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_smsw -- --test-threads=1
+cargo test --lib encode_mov_cr -- --test-threads=1
+cargo test --lib test_encode_mov_cr_regression_rejects_ax -- --test-threads=1
+cargo test --lib test_encode_mov_cr_regression_rejects_al -- --test-threads=1
+cargo test --lib encode_mov_cr_neg_bad_operands -- --test-threads=1
+cargo test --lib encode_mov_cr_neg_movw_width -- --test-threads=1
 ```
 
-B1 (segment prefix):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_smsw_diff_segment -- --test-threads=1
-cargo test --lib test_encode_smsw_regression_missing_es_prefix -- --test-threads=1
-```
-
-B2 (r8 accept):
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_smsw_neg_bad_operand -- --test-threads=1
-cargo test --lib test_encode_smsw_regression_rejects_al -- --test-threads=1
-```
+Build contract (immutable): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` — rebuilt by swapping filter to `encode_mov_cr`.
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/REPORT.html (from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_smsw_missing_segment_prefix.md
-- pbt-out/bug_reports/encode_smsw_missing_segment_prefix.html
-- pbt-out/bug_reports/encode_smsw_missing_segment_prefix_sib.md
-- pbt-out/bug_reports/encode_smsw_missing_segment_prefix_sib.html
-- pbt-out/bug_reports/encode_smsw_accepts_r8_register.md
-- pbt-out/bug_reports/encode_smsw_accepts_r8_register.html
-- pbt-out/run/encode_smsw_test1.log
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_mov_cr_non_r32_gp.md
+- pbt-out/bug_reports/encode_mov_cr_non_r32_gp.html (from report.json)
+- pbt-out/bug_reports/encode_mov_cr_movw_accepted.md
+- pbt-out/bug_reports/encode_mov_cr_movw_accepted.html (from report.json)
+- pbt-out/run/encode_mov_cr_full2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 02:44 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 263/397 total | PBT candidates: 263 | Tested: 263 (100%) | 1 pass, 263 fail
+> Last updated: 2026-10-09 03:00 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 264/397 total | PBT candidates: 264 | Tested: 264 (100%) | 1 pass, 264 fail
 
 ## Summary
 
@@ -204,10 +144,10 @@ cargo test --lib test_encode_smsw_regression_rejects_al -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 263 |
-| **Tested (of PBT candidates)** | **263 / 263 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 263 / -1 |
-| **Overall (tested / all functions)** | **263 / 397 (66%)** |
+| PBT candidates (from FUNCTION_INDEX) | 264 |
+| **Tested (of PBT candidates)** | **264 / 264 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 264 / -1 |
+| **Overall (tested / all functions)** | **264 / 397 (66%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -215,13 +155,13 @@ cargo test --lib test_encode_smsw_regression_rejects_al -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 263 | 263 | 0 | 100% |
+|  | 264 | 264 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 263 | 263 | 0 | 100% |
+| unknown | 264 | 264 | 0 | 100% |
 
 ## File Coverage
 
@@ -507,3 +447,4 @@ cargo test --lib test_encode_smsw_regression_rejects_al -- --test-threads=1
 | encode_system_table | system.rs |
 | encode_lmsw | system.rs |
 | encode_smsw | system.rs |
+| encode_mov_cr | system.rs |

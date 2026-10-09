@@ -66,3 +66,13 @@
 - Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_lmsw/invlpg/prefetch/verw/lsl/system_table). Witness: `smsw %es:(%eax)` → SUT omits 0x26; `smsw %fs:4(%esi)` omits 0x64. (2) register arm accepts 8-bit names via `reg_num` aliasing (al→same bytes as eax, no 0x66).
 - Fix shapes: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`; gate register form with `reg_size ∈ {2,4}` (keep 0x66 for size 2).
 - Note: unlike LMSW, SMSW legitimately accepts r32 (smswl); do not reject eax.
+
+## encode_mov_cr (i686 system encoder)
+
+- Opcode: 0F 20 /r (CR→GP read) or 0F 22 /r (GP→CR write); ModRM mod=3, reg=CR number, rm=GP number.
+- Control regs recognized: cr0, cr2, cr3, cr4 (`is_control_reg` / `control_reg_num`); cr1 not in the set (dispatch never reaches encode_mov_cr for cr1).
+- Valid GP forms are r32 only (eax..edi). AT&T `movl %cr0, %eax` / `movl %eax, %cr0`.
+- Non-segment r32×CR forms match llvm-mc `-triple=i686`.
+- Metamorphic: same CR/GP → read and write share ModRM; only opcode byte differs (0x20 vs 0x22).
+- Known defect: register arm accepts 8/16-bit GP names via `reg_num` aliasing (ax/al → same bytes as eax); also accepts `movw` CR forms. Witness: `movl %cr0, %ax` → `[0f,20,c0]`; llvm-mc rejects.
+- Fix shape: `if reg_size(&gp.name) != 4 { return Err(...); }` on both arms before `reg_num`.

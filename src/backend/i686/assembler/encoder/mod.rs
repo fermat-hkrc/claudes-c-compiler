@@ -31,6 +31,8 @@ mod encode_system_table_pbt;
 mod encode_lmsw_pbt;
 #[cfg(test)]
 mod encode_smsw_pbt;
+#[cfg(test)]
+mod encode_mov_cr_pbt;
 
 pub(crate) use registers::*;
 

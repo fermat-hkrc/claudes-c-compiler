@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 02:44 (campaign: English campaign)
-> Files: 16/17 scanned (94%) | Functions: 263/397 total | PBT candidates: 263 | Tested: 263 (100%) | 1 pass, 263 fail
+> Last updated: 2026-10-09 03:00 (campaign: English campaign)
+> Files: 16/17 scanned (94%) | Functions: 264/397 total | PBT candidates: 264 | Tested: 264 (100%) | 1 pass, 264 fail
 
 ## Summary
 
@@ -10,10 +10,10 @@
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 263 |
-| **Tested (of PBT candidates)** | **263 / 263 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 263 / -1 |
-| **Overall (tested / all functions)** | **263 / 397 (66%)** |
+| PBT candidates (from FUNCTION_INDEX) | 264 |
+| **Tested (of PBT candidates)** | **264 / 264 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 264 / -1 |
+| **Overall (tested / all functions)** | **264 / 397 (66%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -21,13 +21,13 @@
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 263 | 263 | 0 | 100% |
+|  | 264 | 264 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 263 | 263 | 0 | 100% |
+| unknown | 264 | 264 | 0 | 100% |
 
 ## File Coverage
 
@@ -313,3 +313,4 @@
 | encode_system_table | system.rs |
 | encode_lmsw | system.rs |
 | encode_smsw | system.rs |
+| encode_mov_cr | system.rs |
