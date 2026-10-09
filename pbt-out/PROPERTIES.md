@@ -1,86 +1,105 @@
-# Properties: encode_mov_imm_mem (i686)
+# Properties: encode_movsx (i686)
 
-## encode_mov_imm_mem_diff_llvm_mc_base_disp
+## encode_movsx_diff_llvm_mc_rr
 - Tier: 4
-- Rationale: Strongest oracle is differential vs independent llvm-mc i686 assembler. State machine rejected (pure encoder). Round-trip rejected (no i686 MOV decoder). Evidence: Intel SDM MOV r/m,imm; AT&T `$imm, mem`; gp_integer.rs:238-270; dispatch mod.rs:167-169.
-- Doc contract: (none) — other fingerprint 552e4230
-- Seed: encode_mov_reg_mem_pbt.rs base+disp differential
-- Formal: ∀ base ∈ GP32, disp ∈ i32, width ∈ {1,2,4}, imm ∈ range(width). encode(movb|movw|movl $imm, disp(base)) = llvm-mc(same)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
+- Rationale: Strongest oracle is differential vs independent llvm-mc i686. State machine rejected (pure encoder). Round-trip rejected (no i686 MOVSX decoder). Evidence: Intel SDM MOVSX 0F BE/BF; AT&T movsbl/movsbw/movswl; gp_integer.rs:272-300; dispatch mod.rs:174-176.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_rr_pbt.rs RR differential
+- Formal: ∀ form ∈ {movsbl,movsbw,movswl}, src ∈ GPsrc(form), dst ∈ GPdst(form). encode(form %src, %dst) = llvm-mc(same)
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_imm_mem
+function: encode_movsx
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [base, disp, width, imm]
+  vars: [form, src, dst]
   domain:
-    base: gp32
-    disp: i32
-    width: "1|2|4"
-    imm: signed_for_width
+    form: "movsbl|movsbw|movswl"
+    src: gp_matching_src_size
+    dst: gp_matching_dst_size
   relation:
     op: eq
-    lhs: sut_encode(suffix(width), Imm(imm), Mem(base, disp))
+    lhs: sut_encode(form, Reg(src), Reg(dst))
     rhs: llvm_mc(att)
+generators:
+  form: { gen: oneof, values: [movsbl, movsbw, movswl], type: str }
+evidence: gp_integer.rs:272 + Intel SDM MOVSX + llvm-mc -triple=i686
+```
+
+## encode_movsx_diff_llvm_mc_base_disp
+- Tier: 4
+- Rationale: Memory-source MOVSX (ModRM via encode_modrm_mem) must match llvm-mc for base+disp forms.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_mem_reg_pbt.rs base+disp
+- Formal: ∀ form, base ∈ GP32, disp ∈ i32, dst ∈ GPdst(form). encode(form disp(base), %dst) = llvm-mc(same)
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_movsx
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [form, base, disp, dst]
+  relation:
+    op: eq
+    lhs: sut_encode
+    rhs: llvm_mc
 generators:
   base: { gen: oneof, values: [eax, ecx, edx, ebx, esp, ebp, esi, edi], type: str }
   disp: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-  width: { gen: oneof, values: [1, 2, 4], type: u8 }
-  imm: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-evidence: gp_integer.rs:238 + Intel SDM MOV r/m,imm + llvm-mc -triple=i686
+evidence: gp_integer.rs:292-295 + encode_modrm_mem core.rs:45
 ```
 
-## encode_mov_imm_mem_diff_llvm_mc_sib
+## encode_movsx_diff_llvm_mc_sib
 - Tier: 4
-- Rationale: SIB address forms (index/scale/esp) must match llvm-mc under C6/C7 /0.
-- Doc contract: (none) — other fingerprint 552e4230
-- Seed: encode_mov_reg_mem_pbt.rs SIB differential
-- Formal: ∀ base?, index ≠ esp, scale ∈ {1,2,4,8}, disp, width, imm. SUT encoding = llvm-mc encoding
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
+- Rationale: SIB address forms must match llvm-mc under 0F BE/BF.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_mem_reg_pbt.rs SIB
+- Formal: ∀ form, base?, index ≠ esp, scale ∈ {1,2,4,8}, disp, dst. SUT = llvm-mc
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_imm_mem
+function: encode_movsx
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [base, index, scale, disp, width, imm]
-  domain:
-    index: gp32_minus_esp
-    scale: "1|2|4|8"
+  vars: [form, base, index, scale, disp, dst]
   relation:
     op: eq
     lhs: sut_encode
     rhs: llvm_mc
 generators:
   scale: { gen: oneof, values: [1, 2, 4, 8], type: u8 }
-  width: { gen: oneof, values: [1, 2, 4], type: u8 }
-evidence: gp_integer.rs:238 + encode_modrm_mem core.rs:45
+evidence: gp_integer.rs:292-295 + encode_modrm_mem
 ```
 
-## encode_mov_imm_mem_diff_llvm_mc_segment
+## encode_movsx_diff_llvm_mc_segment
 - Tier: 4
-- Rationale: All six segment overrides are valid on i686 (core.rs emit_segment_prefix; Intel SDM 2.1.1). x86-64 sibling calls emit_segment_prefix. i686 encode_mov_imm_mem emits no segment prefix — differential must catch silent wrong bytes.
-- Doc contract: (none) — other fingerprint 552e4230
-- Seed: encode_mov_reg_mem_pbt.rs segment differential; x86-64 gp_integer.rs:180
-- Formal: ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, disp, width, imm. encode($imm, %seg:mem) = llvm-mc (includes override prefix)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
+- Rationale: All six segment overrides are valid on i686 (core.rs emit_segment_prefix; Intel SDM 2.1.1). encode_movsx never calls emit_segment_prefix — differential must catch silent wrong bytes.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_mem_reg_pbt.rs segment differential; core.rs:31-42
+- Formal: ∀ form, seg ∈ {es,cs,ss,ds,fs,gs}, base, disp, dst. encode(form %seg:mem, %dst) = llvm-mc (includes override prefix)
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
 - Status: failing
-- Counterexample: seg="es", base="eax", disp=0, width=1, imm=0 → movb $0, %es:(%eax); sut=[c6,00,00] mc=[26,c6,00,00]
-- Bug report: bug_reports/encode_mov_imm_mem_missing_segment_prefix.md
+- Counterexample: movsbl %es:(%eax), %eax
+- Bug report: bug_reports/encode_movsx_missing_segment_prefix.md
 
 ```property
-function: encode_mov_imm_mem
+function: encode_movsx
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [seg, base, disp, width, imm]
+  vars: [form, seg, base, disp, dst]
   domain:
     seg: "es|cs|ss|ds|fs|gs"
   relation:
@@ -89,173 +108,191 @@ predicate:
     rhs: llvm_mc
 generators:
   seg: { gen: oneof, values: [es, cs, ss, ds, fs, gs], type: str }
-evidence: core.rs:31-42 emit_segment_prefix; x86 gp_integer.rs:180; Intel SDM 2.1.1
+evidence: core.rs:31-42 emit_segment_prefix; Intel SDM 2.1.1; gp_integer.rs:292-295 omits call
 ```
 
-## encode_mov_imm_mem_diff_edges_esp_ebp_abs
+## encode_movsx_diff_llvm_mc_segment_sib
 - Tier: 4
-- Rationale: ESP (SIB forced), EBP (disp0 forced), abs disp32 edges must match llvm-mc C6/C7 /0 (no moffs for imm→mem).
-- Doc contract: (none) — other fingerprint 552e4230
-- Seed: encode_mov_reg_mem_pbt.rs edges
-- Formal: ∀ edge mem form, width, imm. SUT = llvm-mc
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
+- Rationale: Strengthen round — segment override combined with SIB must still emit Group-2 prefix before 0x66/0F BE/BF (Intel SDM prefix order). Same root cause as base+disp segment bug; filed as confirmatory SIB witness.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_movsx_diff_llvm_mc_segment + SIB
+- Formal: ∀ form, seg, base, index≠esp, scale, disp, dst. encode(%seg:disp(base,index,scale), %dst) = llvm-mc
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
+- Status: failing
+- Counterexample: movsbl %es:(%eax,%eax,1), %eax
+- Bug report: bug_reports/encode_movsx_missing_segment_prefix_sib.md
+
+```property
+function: encode_movsx
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [form, seg, base, index, scale, disp, dst]
+  relation:
+    op: eq
+    lhs: sut_encode
+    rhs: llvm_mc
+generators:
+  seg: { gen: oneof, values: [es, cs, ss, ds, fs, gs], type: str }
+  scale: { gen: oneof, values: [1, 2, 4, 8], type: u8 }
+evidence: Intel SDM 2.1.1 prefix order; core.rs:31-42
+```
+
+## encode_movsx_diff_edges_esp_ebp_abs
+- Tier: 4
+- Rationale: ESP (SIB forced), EBP (disp0 forced), abs disp32 edges must match llvm-mc.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_mem_reg_pbt.rs edges
+- Formal: ∀ edge mem form, form, dst. SUT = llvm-mc
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_imm_mem
+function: encode_movsx
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [edge, width, imm]
-  domain:
-    edge: esp_ebp_sib_abs
+  vars: [edge, form, dst]
   relation:
     op: eq
     lhs: sut_encode
     rhs: llvm_mc
 generators:
   edge: { gen: int, min: 0, max: 13, type: u8 }
-evidence: core.rs encode_modrm_mem ESP/EBP special cases
+evidence: encode_modrm_mem core.rs:45
 ```
 
-## encode_mov_imm_mem_invariant_opcode_modrm_imm
+## encode_movsx_invariant_opcode_modrm
 - Tier: 3
-- Rationale: Algebraic invariant from Intel SDM: opcode C6 (size1) / C7 (else), optional 0x66 for size2, ModRM.reg=/0, trailing imm width bytes LE.
-- Doc contract: (none) — other fingerprint 552e4230
-- Seed: encode_mov_reg_mem_pbt.rs opcode invariant
-- Formal: ∀ valid base+disp/SIB no-seg forms. bytes = [0x66?] ++ [C6|C7] ++ modrm(reg=0,…) ++ imm_le(width)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
+- Rationale: Algebraic invariant — 0x66 iff dst_size==2; opcode 0F BE (src1) / 0F BF (src2); ModRM.reg=dst, mod=11 for RR.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_mem_reg_pbt.rs invariant
+- Formal: ∀ form, ops valid. bytes = [0x66?] ++ [0x0F, op_lo] ++ [modrm…] ∧ modrm.reg=dst_num
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_imm_mem
+function: encode_movsx
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mem, width, imm]
-  domain:
-    width: "1|2|4"
-    segment: none
+  vars: [form, ops]
   relation:
     op: holds
-    expr: opcode_modrm_reg0_and_imm_trail_ok(sut)
+    expr: "prefix_ok(bytes) && opcode_ok(bytes) && modrm_reg_eq_dst(bytes)"
 generators:
-  width: { gen: oneof, values: [1, 2, 4], type: u8 }
-evidence: Intel SDM MOV r/m,imm /0; gp_integer.rs:239-254
+  form: { gen: oneof, values: [movsbl, movsbw, movswl], type: str }
+evidence: gp_integer.rs:278-290; Intel SDM MOVSX
 ```
 
-## encode_mov_imm_mem_meta_same_mem_imm_trail
+## encode_movsx_meta_vs_movzx
 - Tier: 3
-- Rationale: Metamorphic — same memory address, two different integer immediates of same width share all prefix+opcode+ModRM+SIB+disp; only trailing imm bytes differ. Required STANDARD metamorphic.
-- Doc contract: (none) — other fingerprint 552e4230
-- Seed: (none) — derived from C6/C7 /0 layout
-- Formal: ∀ mem, width, imm1≠imm2. drop_imm(encode(imm1,mem)) = drop_imm(encode(imm2,mem)) ∧ trail(encode(imm_i)) = le_bytes(imm_i, width)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
+- Rationale: Metamorphic — movsx and movzx with identical operands share prefixes and ModRM/SIB/disp; only opcode lo differs (BE↔B6, BF↔B7). Required metamorphic/differential angle at standard tier.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: Intel SDM MOVSX/MOVZX twin opcodes; gp_integer encode_movzx sibling
+- Formal: ∀ form_sx, ops. strip(encode_sx(ops))[2..] = strip(encode_zx(ops))[2..] ∧ opcode_lo differs by BE/B6 or BF/B7
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_imm_mem
+function: encode_movsx
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [mem, width, imm1, imm2]
-  domain:
-    width: "1|2|4"
+  vars: [form_sx, ops]
   relation:
     op: eq
-    lhs: prefix_body(encode(imm1))
-    rhs: prefix_body(encode(imm2))
+    lhs: "modrm_tail(encode_movsx(ops))"
+    rhs: "modrm_tail(encode_movzx(ops))"
 generators:
-  width: { gen: oneof, values: [1, 2, 4], type: u8 }
-evidence: gp_integer.rs:248-256 Integer arm appends size-dependent LE imm after modrm_mem
+  form_sx: { gen: oneof, values: [movsbl, movsbw, movswl], type: str }
+evidence: Intel SDM MOVSX/MOVZX; gp_integer.rs:272 + :302
 ```
 
-## encode_mov_imm_mem_diff_symbol_imm32
-- Tier: 4
-- Rationale: Symbol immediate for movl must emit R_386_32 reloc + 4 zero imm bytes matching llvm-mc A,A,A,A placeholders.
-- Doc contract: (none) — other fingerprint 552e4230
-- Seed: encode_system_table_pbt.rs label/fixup A parse
-- Formal: ∀ base,disp,sym. encode(movl $sym, mem) bytes = llvm-mc placeholders-as-0 ∧ reloc.symbol=sym ∧ reloc_type=R_386_32
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_mov_imm_mem
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [base, disp, sym]
-  domain:
-    width: 4
-    imm: Symbol
-  relation:
-    op: eq
-    lhs: sut_bytes
-    rhs: llvm_mc_A_as_0
-generators:
-  base: { gen: oneof, values: [eax, ecx, edx, ebx, esp, ebp, esi, edi], type: str }
-evidence: gp_integer.rs:259-264; R_386_32
-```
-
-## encode_mov_imm_mem_diff_symbol_narrow
-- Tier: 4
-- Rationale: llvm-mc accepts movb/movw $sym (FK_Data_1/2). AT&T path movb/movw → encode_mov_imm_mem accepts Symbol. Body returns Err with message admitting size==4 only — known limitation on accepted input, not a domain exclusion that retires the property. Keep domain full; expect differential match; file failure as documented-limitation bug.
-- Doc contract: gp_integer.rs:265 "symbol immediate only supported for 32-bit mov to memory" — limitation fingerprint 073edab9
-- Seed: (none)
-- Formal: ∀ width ∈ {1,2}, base, disp. encode(mov{b,w} $sym, mem) = llvm-mc(same)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
-- Status: failing
-- Counterexample: width=1, base="eax", disp=0 → movb $sym, (%eax); SUT Err("symbol immediate only supported for 32-bit mov to memory"); llvm-mc=[c6,00,00]
-- Bug report: bug_reports/encode_mov_imm_mem_narrow_symbol_imm_rejected.md
-
-```property
-function: encode_mov_imm_mem
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [width, base, disp]
-  domain:
-    width: "1|2"
-    imm: Symbol
-  relation:
-    op: eq
-    lhs: sut_encode
-    rhs: llvm_mc
-generators:
-  width: { gen: oneof, values: [1, 2], type: u8 }
-evidence: llvm-mc FK_Data_1/2; mod.rs:167-169 accepts movb/movw $sym
-```
-
-## encode_mov_imm_mem_neg_symbol_mod_diff
+## encode_movsx_neg_arity
 - Tier: 2
-- Rationale: SymbolMod and SymbolDiff have no supported encoding path — body returns Err("unsupported immediate for mov to memory"). True negative/error contract for unsupported kinds (not symbol-on-narrow).
-- Doc contract: gp_integer.rs:267 "unsupported immediate for mov to memory" — domain-restriction fingerprint df6c6ae1
-- Seed: (none)
-- Formal: ∀ width ∈ {1,2,4}, kind ∈ {SymbolMod, SymbolDiff}. encode = Err
-- Test file: src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs
+- Rationale: Negative — ops.len()!=2 must Err with movsx arity message.
+- Doc contract: gp_integer.rs:273-275 "movsx requires 2 operands" — asserted fingerprint a1b2c3d4
+- Seed: body guard gp_integer.rs:273
+- Formal: ∀ n≠2, ops with |ops|=n. encode_movsx(ops) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_imm_mem
+function: encode_movsx
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [kind, width]
+  vars: [n, ops]
   domain:
-    kind: SymbolMod_or_SymbolDiff
-  body: sut_encode(kind, width).is_err()
+    n: "neq 2"
+  relation:
+    op: throws
+    expr: "sut_encode(mnemonic, ops_of_len(n))"
 generators:
-  width: { gen: oneof, values: [1, 2, 4], type: u8 }
-expected_error: String
-evidence: gp_integer.rs:267-268
+  n: { gen: oneof, values: [0, 1, 3], type: usize }
+expected_error: "movsx requires 2 operands"
+evidence: gp_integer.rs:273-275
+```
+
+## encode_movsx_neg_mismatched_width
+- Tier: 4
+- Rationale: MOVSX requires matching operand sizes (Intel SDM; llvm-mc rejects). encode_movsx ignores register widths and only uses mnemonic sizes — must Err on mismatched GP widths.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_rr_pbt / encode_mov_mem_reg_pbt mismatched width
+- Formal: ∀ form, src, dst where width(src)≠src_size(form) ∨ width(dst)≠dst_size(form). encode = Err ∧ llvm-mc rejects
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
+- Status: failing
+- Counterexample: movsbl %ax, %eax
+- Bug report: bug_reports/encode_movsx_mismatched_width.md
+
+```property
+function: encode_movsx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [form, src, dst]
+  domain:
+    mismatch: true
+  relation:
+    op: throws
+    expr: "sut_encode(form, Reg(src), Reg(dst))"
+generators:
+  form: { gen: oneof, values: [movsbl, movsbw, movswl], type: str }
+expected_error: size mismatch rejection
+evidence: Intel SDM MOVSX; llvm-mc rejects; gp_integer.rs:286-290 uses reg_num only
+```
+
+## encode_movsx_neg_non_gp
+- Tier: 4
+- Rationale: 0F BE/BF is GP-only. reg_num aliases xmm/mm/st — SUT must not emit GP encodings for non-GP names.
+- Doc contract: (none) — other fingerprint 00000000
+- Seed: encode_mov_rr_pbt non-GP negative
+- Formal: ∀ form, non_gp ∈ {xmm,mm,st,ymm}, paired with GP. encode = Err ∧ llvm-mc rejects
+- Test file: src/backend/i686/assembler/encoder/encode_movsx_pbt.rs
+- Status: failing
+- Counterexample: movsbl %al, %xmm0
+- Bug report: bug_reports/encode_movsx_non_gp_accepted.md
+
+```property
+function: encode_movsx
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [form, non_gp, gp]
+  relation:
+    op: throws
+    expr: "sut_encode(form, Reg(non_gp_or_gp), Reg(gp_or_non_gp))"
+generators:
+  non_gp: { gen: oneof, values: [xmm0, mm0, st, ymm0], type: str }
+expected_error: non-GP rejection
+evidence: Intel SDM MOVSX GP-only; registers.rs reg_num aliases
 ```

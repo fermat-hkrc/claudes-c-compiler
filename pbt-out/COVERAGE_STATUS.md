@@ -1,36 +1,18 @@
-# PBT Coverage Status
+# Coverage Status — encode_movsx campaign
 
-> Last updated: 2026-10-09 (campaign: encode_mov_imm_mem)
-> Scope: HARD — `encode_mov_imm_mem` only (gp_integer.rs:238)
-> Coverage evidence: file-level (symbol presence) + cargo execution evidence — `coverage_gaps` reported no .gcda/.profraw and NOT LINKED against unrelated OH binaries; ignored. Real evidence: `cargo test --lib encode_mov_imm_mem` linked and ran production `InstructionEncoder::encode` → `encode_mov_imm_mem`.
+**Tier:** standard
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (Rust cargo host build) and falsely listed encode_movsx as NOT LINKED against unrelated OH test binaries. Real execution evidence: `cargo test --lib encode_movsx -- --test-threads=1` links and runs production `InstructionEncoder::encode` → `encode_movsx` (gp_integer.rs:272) for KAT + proptest properties (1000 cases each).
 
-## Summary
+## This campaign
 
 | Metric | Value |
 |--------|-------|
-| Target function | encode_mov_imm_mem |
-| Source file | gp_integer.rs |
-| Properties | 9 (7 passing, 2 failing) |
-| KAT / regression | 5 KAT pass, 2 KAT fail (segment), 2 regression fail |
-| Bugs filed | 2 |
-| Sweep | 1/1 STANDARD round complete |
+| Target function | encode_movsx |
+| Properties | 11 (7 passing, 4 failing — segment + segment_sib share one bug) |
+| Bugs filed | 3 |
+| Generator runs | 1000 per proptest property |
+| Strengthen rounds | 1 (segment+SIB differential added) |
+| Sweep rounds | 1 (coverage_gaps + cargo execution) |
 
-## Function
-
-| Function | Tested | Result |
-|----------|--------|--------|
-| encode_mov_imm_mem | yes | 7 pass / 2 fail properties; 2 bugs |
-
-## Documented behaviors vs properties
-
-| Behavior | Property | Status |
-|----------|----------|--------|
-| base+disp integer imm C6/C7 | diff_llvm_mc_base_disp | passing |
-| SIB forms | diff_llvm_mc_sib | passing |
-| all six segment overrides | diff_llvm_mc_segment | failing (bug) |
-| ESP/EBP/abs edges | diff_edges_esp_ebp_abs | passing |
-| opcode/modrm/imm trail invariant | invariant_opcode_modrm_imm | passing |
-| same-mem metamorphic imm trail | meta_same_mem_imm_trail | passing |
-| movl $sym reloc R_386_32 | diff_symbol_imm32 | passing |
-| movb/movw $sym | diff_symbol_narrow | failing (bug) |
-| SymbolMod/SymbolDiff reject | neg_symbol_mod_diff | passing |
+## Untested documented branches under HARD scope
+(none remaining — arity/src_size error paths exercised; mem and RR arms both hit; segment/width/non-GP contracts covered by failing properties)
