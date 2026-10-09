@@ -1,127 +1,188 @@
-# PBT Campaign Report: encode_pop (i686)
+# PBT Campaign Report: encode_alu (i686)
 
 ## Summary
 
-**Verdict:** 2 high/medium bugs in `encode_pop`: (1) high — memory POP omits segment-override prefixes so `popl %fs:(%eax)` addresses the wrong segment; (2) medium — r8/r16/xmm names silently encode as r32 short-form POP via `reg_num` aliasing.
+**Verdict:** 4 high/medium bugs in `encode_alu`: missing segment-override prefix on all memory forms (high — silent wrong-address access); AL imm8 short form never emitted (medium); size-mismatched GP pairs and non-GP names accepted via `reg_num` aliasing (high — silent mis-assembly).
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_pop (src/backend/i686/assembler/encoder/gp_integer.rs)
-**Tests:** 8 properties (+ KATs/regressions)
-**Result:** 5 passing, 3 failing (2 root-cause defects; 3 bug report entries — b3 is metamorphic witness of b1)
-**Change surface:** 1 changed function (encode_pop), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — coverage_gaps: no .gcda/.profraw; tool reported encode_pop NOT LINKED against unrelated OH binaries (false negative). Cargo lib test `encode_pop_pbt` executed the real symbol (13 pass / 11 fail including KATs/regressions). Sweep round 1: no additional documented branch without a property; strengthening already covers Sreg invariant, pop≡popl, mixed arity.
-**Tier:** standard
+**Modules tested:** encode_alu
+**Tests:** 9 properties (+ 7 KAT + 4 regression witnesses)
+**Result:** 4 passing, 5 failing properties; 5 bug reports (4 root causes; b1+b5 share missing segment prefix)
+**Change surface:** 1 changed function (encode_alu), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no Rust line profiles; cargo lib test log proves SUT execution. Residual reloc-only arms (GOTPC/SymbolDiff/Label) noted, not invented.
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_pop | 8 | 2 root-cause (3 reports) | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_alu | 9 | 5 (4 root causes) | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_pop omits segment-override prefix on memory form
+### B1: encode_alu omits segment-override prefix on memory forms
 
-**Formal:** ∀ seg ∈ SREGS, base ∈ GP32, d ∈ disp. encode_pop([Mem(seg:base+d)]) = llvm_mc("popl %seg:d(%base)")
-**Contract evidence:** documented core.rs:31 "Emit segment override prefix if the memory operand has a segment."; inferred (x86-64 sibling gp_integer.rs:393 calls emit_segment_prefix before 8F; Intel SDM 2.1.1)
-**Documentation conflict:** (none) — helper is documented; call site simply omits it
+**Formal:** ∀ op, seg∈{es,cs,ss,ds,fs,gs}, shape∈{m2r,r2m,i2m}. encode_alu(… %seg:(base) …) = llvm_mc(…) ∧ bytes[0]=seg_prefix(seg)
+**Contract evidence:** documented core.rs:30 "Emit segment override prefix if the memory operand has a segment."; inferred (x86-64 sibling encode_alu calls emit_segment_prefix on every memory arm; llvm-mc -triple=i686 emits the prefix)
+**Documentation conflict:** (none) — core.rs documents the helper; encode_alu simply never calls it
 **Severity:** high
-**Counterexample:** `popl %es:(%eax)` → sut `[8f,00]` vs mc `[26,8f,00]`; also `popl %fs:(%eax)` omits `0x64`
-**Expected / Actual:** `[0x26,0x8f,0x00]` / `[0x8f,0x00]`
-**Impact:** Segmented memory POP addresses DS (default) instead of the requested segment — wrong TLS/far-data code generation.
-**Root cause:** gp_integer.rs:424-427 pushes 0x8F then encode_modrm_mem without emit_segment_prefix.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:424`
+**Counterexample:** `addl %ebx, %es:(%eax)` then compare bytes; also `addb %es:(%eax), %al`
+**Expected / Actual:** `[0x26, 0x01, 0x18]` / `[0x01, 0x18]`
+**Impact:** Segmented memory ALU (TLS via %gs:/%fs:, explicit %es:) assembles without the override → CPU uses default segment → silent wrong-address access.
+**Root cause:** gp_integer.rs:505-517 (and imm→mem / symbol mem arms) call `encode_modrm_mem` without `emit_segment_prefix(mem)`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:511`
 ```rust
-            Operand::Memory(mem) => {
-                // pop m32: 0x8F /0
-                self.bytes.push(0x8F);
-                self.encode_modrm_mem(0, mem)
+            (Operand::Register(src), Operand::Memory(mem)) => {
+                let src_num = reg_num(&src.name).ok_or("bad src register")?;
+                if size == 2 { self.bytes.push(0x66); }
+                self.bytes.push(if size == 1 { 0x00 } else { 0x01 } + alu_op * 8);
+                self.encode_modrm_mem(src_num, mem)
             }
 ```
-**Suggested fix:** Emit the segment prefix first.
+**Suggested fix:** Call `self.emit_segment_prefix(mem);` before 0x66/opcode on every memory arm.
 ```rust
-            Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
-                self.bytes.push(0x8F);
-                self.encode_modrm_mem(0, mem)
-            }
+                if size == 2 { self.bytes.push(0x66); }
 ```
-**Bug report:** bug_reports/encode_pop_missing_segment_prefix.md
-**Repro seed:** proptest minimal: seg="es", base="eax", disp=0
+**Bug report:** bug_reports/encode_alu_missing_segment_prefix.md
+**Repro seed:** (deterministic regression; proptest seed in proptest-regressions/backend/i686/assembler/encoder/encode_alu_pbt.txt)
 **Raw output:**
 ```text
-segment diff `popl %es:(%eax)`: sut=[8f, 00] mc=[26, 8f, 00]
+assertion `left == right` failed: regression: segmented ALU must match llvm-mc (got [01, 18])
+  left: [1, 24]
+ right: [38, 1, 24]
 ```
 
-### B3: encode_pop metamorphic segment strip fails (same root cause as B1)
+### B2: encode_alu never emits AL imm8 accumulator short form
 
-**Formal:** ∀ seg, base, d. strip_seg(encode_pop(Mem(seg:…))) = encode_pop(Mem(bare)) ∧ first_byte = seg_prefix(seg)
-**Contract evidence:** documented core.rs:31 emit_segment_prefix
+**Formal:** ∀ op, imm8 I. encode_alu(opb, $I, %al) = [0x04+alu_op*8, I as u8] = llvm_mc(opb $I, %al)
+**Contract evidence:** documented gp_integer.rs:457 "Short form: op eax, imm32" (intent for accumulator short forms; dead `0x04` branch at line 458); differential vs llvm-mc
+**Documentation conflict:** (none) — comment asserts short form for EAX; size==1 AL short form is the missing sibling of that path
+**Severity:** medium
+**Counterexample:** `addb $1, %al` (also `addb $-128, %al`)
+**Expected / Actual:** `[0x04, 0x01]` / `[0x80, 0xc0, 0x01]`
+**Impact:** Byte-immediate ALU to AL is 3 bytes instead of 2; bit-exact mismatch with gas/llvm-mc on a hot path.
+**Root cause:** gp_integer.rs:447-450 always uses general `0x80 /r` for size==1 before the short-form branch; `if size == 1 { 0x04 }` at 458 is dead.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:447`
+```rust
+                if size == 1 {
+                    self.bytes.push(0x80);
+                    self.bytes.push(self.modrm(3, alu_op, dst_num));
+                    self.bytes.push(val as u8);
+```
+**Suggested fix:** For size==1 and dst_num==0 emit `0x04 + alu_op*8`; else `0x80 /r`.
+```rust
+                if size == 1 {
+                    if dst_num == 0 {
+                        self.bytes.push(0x04 + alu_op * 8);
+                    } else {
+                        self.bytes.push(0x80);
+                        self.bytes.push(self.modrm(3, alu_op, dst_num));
+                    }
+                    self.bytes.push(val as u8);
+```
+**Bug report:** bug_reports/encode_alu_al_imm8_short_form.md
+**Repro seed:** cc dcddcf4dd3d67123c5c3cabd06c23de179d8e6d3e9edde18a5cdb3d871a9ccac
+**Raw output:**
+```text
+assertion `left == right` failed: regression: AL imm8 short form (got [80, c0, 01])
+  left: [128, 192, 1]
+ right: [4, 1]
+```
+
+### B3: encode_alu accepts size-mismatched GP register pairs
+
+**Formal:** ∀ mismatched (src,dst,mnem) rejected by llvm-mc. encode_alu(mnem, %src, %dst) = Err(_)
+**Contract evidence:** inferred (Intel SDM operand-size rules; llvm-mc -triple=i686 rejects `addl %ax, %ebx`; same defect class as encode_mov_rr)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** seg=es base=eax disp=0 → with_seg=[8f,00] missing 0x26
-**Expected / Actual:** `[0x26,0x8f,0x00]` / `[0x8f,0x00]`
-**Impact:** Same as B1 (independent metamorphic oracle witness).
-**Root cause:** Same as B1 — gp_integer.rs:424-427 omits emit_segment_prefix.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:424`
+**Counterexample:** `addl %ax, %ebx` → Ok([0x01, 0xc3]) (same as `addl %eax, %ebx`)
+**Expected / Actual:** Err / Ok([0x01, 0xc3])
+**Impact:** Silent mis-assembly of invalid AT&T into a same-width form via reg_num width aliasing.
+**Root cause:** gp_integer.rs:496-504 RR arm uses only `reg_num` (no `reg_size` vs mnemonic width check).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:496`
 ```rust
-            Operand::Memory(mem) => {
-                // pop m32: 0x8F /0
-                self.bytes.push(0x8F);
-                self.encode_modrm_mem(0, mem)
+            (Operand::Register(src), Operand::Register(dst)) => {
+                let src_num = reg_num(&src.name).ok_or("bad src register")?;
+                let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
+
+                if size == 2 { self.bytes.push(0x66); }
+                self.bytes.push(if size == 1 { 0x00 } else { 0x01 } + alu_op * 8);
+                self.bytes.push(self.modrm(3, src_num, dst_num));
+                Ok(())
             }
 ```
-**Suggested fix:** Same as B1.
+**Suggested fix:** Require `reg_size(&src.name) == size && reg_size(&dst.name) == size`.
+```rust
+                if reg_size(&src.name) != size || reg_size(&dst.name) != size {
+                    return Err(format!("register size mismatch for {mnemonic}"));
+                }
+```
+**Bug report:** bug_reports/encode_alu_accepts_mismatched_width.md
+**Repro seed:** (deterministic)
+**Raw output:**
+```text
+regression: size-mismatched ALU must Err, got Ok([1, 195])
+```
+
+### B4: encode_alu accepts non-GP register names (xmm/mm/st)
+
+**Formal:** ∀ non_gp∈{xmm,mm,st,…}, gp∈GP. encode_alu(op, non_gp, gp) = Err(_) ∧ encode_alu(op, gp, non_gp) = Err(_)
+**Contract evidence:** inferred (Intel SDM ALU r/m is GP-only; llvm-mc rejects; same class as encode_mov_rr)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `addb %al, %xmm0` → Ok([0x00, 0xc0]) (same as `addb %al, %al`)
+**Expected / Actual:** Err / Ok([0x00, 0xc0])
+**Impact:** Silent mis-assembly when a non-GP name slips through.
+**Root cause:** `reg_num` aliases xmm/mm/st to 0..7; encode_alu never filters to GP-only.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:496`
+```rust
+            (Operand::Register(src), Operand::Register(dst)) => {
+                let src_num = reg_num(&src.name).ok_or("bad src register")?;
+                let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
+```
+**Suggested fix:** Reject non-GP names before `reg_num`.
+```rust
+                if !is_gp_reg(&src.name) || !is_gp_reg(&dst.name) {
+                    return Err(format!("non-GP register in {mnemonic}"));
+                }
+```
+**Bug report:** bug_reports/encode_alu_accepts_non_gp.md
+**Repro seed:** (deterministic minimal: op_i=0, ni=0, gi=0, width=1, non_gp_as_src=false)
+**Raw output:**
+```text
+Test failed: SUT accepted non-GP ALU RR `addb %al, %xmm0` → [00, c0]; ALU r/m forms are GP-only (Intel SDM). reg_num aliases xmm/mm/st to 0-7.
+```
+
+### B5: encode_alu omits segment prefix (metamorphic seg‖bare witness)
+
+**Formal:** ∀ op, seg, bare_mem. encode(op, seg:bare) = [seg_prefix(seg)] ++ encode(op, bare)
+**Contract evidence:** documented core.rs:30 emit_segment_prefix (same root cause as B1)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `addb %es:(%eax), %al` vs bare `addb (%eax), %al`
+**Expected / Actual:** `[0x26, 0x02, 0x00]` / `[0x02, 0x00]`
+**Impact:** Same as B1 — silent wrong-address access when a segment override is requested.
+**Root cause:** gp_integer.rs:505-510 Memory→Register arm omits `emit_segment_prefix` (same class as B1).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:505`
+```rust
+            (Operand::Memory(mem), Operand::Register(dst)) => {
+                let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
+                if size == 2 { self.bytes.push(0x66); }
+                self.bytes.push(if size == 1 { 0x02 } else { 0x03 } + alu_op * 8);
+                self.encode_modrm_mem(dst_num, mem)
+            }
+```
+**Suggested fix:** `self.emit_segment_prefix(mem);` before the opcode (same as B1).
 ```rust
 self.emit_segment_prefix(mem);
-self.bytes.push(0x8F);
+if size == 2 { self.bytes.push(0x66); }
 ```
-**Bug report:** bug_reports/encode_pop_meta_missing_segment_prefix.md
-**Repro seed:** seg=es,base=eax,disp=0
+**Bug report:** bug_reports/encode_alu_missing_segment_prefix_metamorphic.md
+**Repro seed:** (deterministic)
 **Raw output:**
 ```text
-segmented pop must start with 0x26 for %es:, got [8f, 00]
-```
-
-### B2: encode_pop accepts r8/r16/xmm via reg_num aliasing
-
-**Formal:** ∀ bad ∈ XMM∪R8∪R16. llvm_mc rejects "popl %bad" ⇒ encode_pop([Reg(bad)]) = Err
-**Contract evidence:** inferred (llvm-mc -triple=i686 rejects; Intel SDM POP r32 short form is 32-bit GP only for popl; registers.rs maps al/ax/eax/xmm0 to the same number)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** `popl %xmm0` → Ok([0x58]); `popl %al` → Ok([0x58]); `popl %ax` → Ok([0x58])
-**Expected / Actual:** Err / Ok([0x58]) (= popl %eax)
-**Impact:** Mis-typed register operands silently assemble to a different instruction.
-**Root cause:** gp_integer.rs:418-421 uses reg_num without width/non-GP checks; registers.rs aliases widths and xmm onto 0..7.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:418`
-```rust
-                } else {
-                    let num = reg_num(&reg.name).ok_or("bad register")?;
-                    self.bytes.push(0x58 + num);
-                    Ok(())
-                }
-```
-**Suggested fix:** Require reg_size==4 and reject xmm/mm/st before encoding.
-```rust
-                } else {
-                    if is_xmm(&reg.name) || is_mm(&reg.name) || reg.name.starts_with("st") {
-                        return Err(format!("cannot pop to {}", reg.name));
-                    }
-                    if reg_size(&reg.name) != 4 {
-                        return Err(format!("popl requires r32, got {}", reg.name));
-                    }
-                    let num = reg_num(&reg.name).ok_or("bad register")?;
-                    self.bytes.push(0x58 + num);
-                    Ok(())
-                }
-```
-**Bug report:** bug_reports/encode_pop_wrong_width_and_non_gp.md
-**Repro seed:** x="xmm0"; r8="al"; r16="ax"
-**Raw output:**
-```text
-encode_pop must reject non-GP `xmm0`, got Ok([88])
-encode_pop must reject r8 `al`, got Ok([88])
-encode_pop (popl) must reject r16 `ax`, got Ok([88])
+metamorphic seg||bare for addb %es:(%eax): got [02, 00] expect [26, 02, 00]
 ```
 
 ## Design Caveats
@@ -132,38 +193,44 @@ encode_pop (popl) must reject r16 `ax`, got Ok([88])
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_pop_pbt.rs | 8 properties + KATs + 4 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | +1 cfg(test) mod encode_pop_pbt |
+| src/backend/i686/assembler/encoder/encode_alu_pbt.rs | 9 properties + 7 KAT + 4 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_alu_pbt;` registration |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_pop_pbt -- --test-threads=1
-# single-case witnesses:
-cargo test --lib encode_pop_regression_missing_fs_prefix -- --test-threads=1
-cargo test --lib encode_pop_regression_non_gp_xmm0 -- --test-threads=1
-cargo test --lib encode_pop_diff_mem_segment -- --test-threads=1
+cargo test --lib backend::i686::assembler::encoder::encode_alu_pbt -- --test-threads=1
+
+# Per-bug:
+cargo test --lib 'backend::i686::assembler::encoder::encode_alu_pbt::encode_alu_regression_es_segment_prefix_reg_mem' -- --test-threads=1 --nocapture
+cargo test --lib 'backend::i686::assembler::encoder::encode_alu_pbt::encode_alu_regression_addb_al_short_form' -- --test-threads=1 --nocapture
+cargo test --lib 'backend::i686::assembler::encoder::encode_alu_pbt::encode_alu_regression_mismatched_width_addl_ax_ebx' -- --test-threads=1 --nocapture
+cargo test --lib 'backend::i686::assembler::encoder::encode_alu_pbt::encode_alu_regression_non_gp_xmm' -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md, pbt-out/REPORT.html
-- pbt-out/PROPERTIES.md, pbt-out/PLAN.md
-- pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_pop_missing_segment_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_pop_meta_missing_segment_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_pop_wrong_width_and_non_gp.md (+ .html)
-- pbt-out/run/encode_pop_pbt_only.log
-- pbt-out/INVARIANTS.md (updated)
+- `pbt-out/REPORT.md` — this report
+- `pbt-out/REPORT.html` — customer-facing overview (from report.json)
+- `pbt-out/PROPERTIES.md` — property ledger
+- `pbt-out/PLAN.md` — campaign plan
+- `pbt-out/COVERAGE.md` — coverage ledger row for encode_alu
+- `pbt-out/COVERAGE_STATUS.md` — coverage evidence notes
+- `pbt-out/report.json` — machine-readable report
+- `pbt-out/bug_reports/encode_alu_missing_segment_prefix.md` (+ .html)
+- `pbt-out/bug_reports/encode_alu_missing_segment_prefix_metamorphic.md` (+ .html)
+- `pbt-out/bug_reports/encode_alu_al_imm8_short_form.md` (+ .html)
+- `pbt-out/bug_reports/encode_alu_accepts_mismatched_width.md` (+ .html)
+- `pbt-out/bug_reports/encode_alu_accepts_non_gp.md` (+ .html)
+- `pbt-out/run/encode_alu_i686.log` — full test log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 06:46 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 278/399 total | PBT candidates: 278 | Tested: 278 (100%) | 1 pass, 278 fail
+> Last updated: 2026-10-09 07:08 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 279/399 total | PBT candidates: 279 | Tested: 279 (100%) | 1 pass, 279 fail
 
 ## Summary
 
@@ -172,10 +239,10 @@ cargo test --lib encode_pop_diff_mem_segment -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 399 |
-| PBT candidates (from FUNCTION_INDEX) | 278 |
-| **Tested (of PBT candidates)** | **278 / 278 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 278 / -1 |
-| **Overall (tested / all functions)** | **278 / 399 (70%)** |
+| PBT candidates (from FUNCTION_INDEX) | 279 |
+| **Tested (of PBT candidates)** | **279 / 279 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 279 / -1 |
+| **Overall (tested / all functions)** | **279 / 399 (70%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -183,13 +250,13 @@ cargo test --lib encode_pop_diff_mem_segment -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 278 | 278 | 0 | 100% |
+|  | 279 | 279 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 278 | 278 | 0 | 100% |
+| unknown | 279 | 279 | 0 | 100% |
 
 ## File Coverage
 
@@ -200,7 +267,7 @@ cargo test --lib encode_pop_diff_mem_segment -- --test-threads=1
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 31 | 12 | 12 | 100% | covered |
+| gp_integer.rs | 31 | 13 | 13 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -490,3 +557,4 @@ cargo test --lib encode_pop_diff_mem_segment -- --test-threads=1
 | encode_push | gp_integer.rs |
 | encode_push16 | gp_integer.rs |
 | encode_pop | gp_integer.rs |
+| encode_alu | gp_integer.rs |

@@ -1,218 +1,241 @@
-# Properties: encode_pop
+# Properties: encode_alu (i686)
 
-## encode_pop_diff_r32
+## encode_alu_diff_rr_same_width
 - Tier: 4
-- Rationale: Differential vs llvm-mc is strongest available; no in-tree i686 decoder for round-trip; pure encoder so no state machine. Intel SDM POP r32 short form 58+rd.
-- Doc contract: gp_integer.rs:402 (none on function) — other fingerprint 00000000
-- Seed: encode_push_pbt.rs encode_push_diff_r32
-- Formal: ∀ r ∈ {eax,ecx,edx,ebx,esp,ebp,esi,edi}. encode_pop([Reg(r)]) = llvm_mc("popl %r")
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
+- Rationale: Strongest applicable is differential vs llvm-mc (independent GNU-style assembler). State machine rejected (pure encoder). Round-trip rejected (no in-tree i686 ALU decoder). Intel SDM Vol.2 documents ALU r/m,r forms; mod.rs:204-211 routes add/or/adc/sbb/and/sub/xor/cmp to encode_alu.
+- Doc contract: (none) — encode_alu has no doc comment; dispatch at mod.rs:204-211 — other fingerprint 552e4230
+- Seed: encode_mov_rr_pbt.rs:encode_mov_rr_diff_same_width_gp
+- Formal: ∀ op∈{add,or,adc,sbb,and,sub,xor,cmp}, w∈{1,2,4}, src,dst∈GP_w. encode_alu(op_w, %src, %dst) = llvm_mc(op_w %src, %dst)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_pop
+function: encode_alu
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [r]
-  domain: { r: gp32 }
+  vars: [op, width, src, dst]
+  domain: { op: alu_mnemonic, width: {1,2,4}, src: gp_w, dst: gp_w }
   relation:
     op: eq
-    lhs: "sut_encode(\"popl\", [Reg(r)])"
-    rhs: "llvm_mc(\"popl %\" + r)"
+    lhs: "sut_encode(mnemonic(op,width), [Reg(src), Reg(dst)])"
+    rhs: "llvm_mc_bytes(att_rr(op,width,src,dst))"
 generators:
-  r: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-evidence: gp_integer.rs:418-421; Intel SDM POP r32 58+rd; llvm-mc -triple=i686
+  op: { gen: int, min: 0, max: 7, type: u8 }
+  width: { gen: oneof, values: [1, 2, 4], type: u8 }
+evidence: src/backend/i686/assembler/encoder/mod.rs:204-211
 ```
 
-## encode_pop_diff_sreg
+## encode_alu_diff_imm_reg
 - Tier: 4
-- Rationale: Sreg pop forms are explicit in encode_pop body (es/ss/ds/fs/gs); cs rejected. Differential vs llvm-mc.
-- Doc contract: gp_integer.rs:408 "Pop to segment register" — asserted fingerprint a1b2c3d4
-- Seed: encode_pop16_pbt.rs encode_pop16_diff_sreg
-- Formal: ∀ s ∈ {es,ss,ds,fs,gs}. encode_pop([Reg(s)]) = llvm_mc("popl %s")
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_pop
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [s]
-  domain: { s: sreg_pop }
-  relation:
-    op: eq
-    lhs: "sut_encode(\"popl\", [Reg(s)])"
-    rhs: "llvm_mc(\"popl %\" + s)"
-generators:
-  s: { gen: oneof, values: ["es","ss","ds","fs","gs"], type: "&str" }
-evidence: gp_integer.rs:408-417; Intel SDM POP Sreg
-```
-
-## encode_pop_diff_mem
-- Tier: 4
-- Rationale: Memory form 8F /0; differential vs llvm-mc over base/disp/SIB/abs shapes without segment.
-- Doc contract: gp_integer.rs:425 "pop m32: 0x8F /0" — asserted fingerprint b2c3d4e5
-- Seed: encode_push_pbt.rs encode_push_diff_mem
-- Formal: ∀ m ∈ valid_mem32. encode_pop([Mem(m)]) = llvm_mc("popl " + att(m))
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_pop
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [m]
-  domain: { m: mem32_no_seg }
-  relation:
-    op: eq
-    lhs: "sut_encode(\"popl\", [Mem(m)])"
-    rhs: "llvm_mc(\"popl \" + att(m))"
-generators:
-  m: { gen: mem32_shapes, type: "MemoryOperand" }
-evidence: gp_integer.rs:424-427; Intel SDM POP r/m32 8F /0
-```
-
-## encode_pop_diff_mem_segment
-- Tier: 4
-- Rationale: Segment override on memory POP must emit prefix (core.rs emit_segment_prefix; x86-64 sibling does before 8F). Differential vs llvm-mc for all six segments.
-- Doc contract: core.rs:31 "Emit segment override prefix if the memory operand has a segment." — asserted fingerprint c3d4e5f6
-- Seed: encode_push_pbt.rs encode_push_diff_mem_segment
-- Formal: ∀ seg ∈ SREGS, base ∈ GP32, d ∈ disp. encode_pop([Mem(seg:base+d)]) = llvm_mc("popl %seg:d(%base)")
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
+- Rationale: Imm→reg is the densest ALU path (sign-extended imm8 vs imm16/32, EAX short form, AL short form). Differential vs llvm-mc. Accumulators may use short form (04+op*8 / 05+op*8).
+- Doc contract: gp_integer.rs:457 "Short form: op eax, imm32" — asserted fingerprint 8a2518e3
+- Seed: (none)
+- Formal: ∀ op, w∈{1,2,4}, dst∈GP_w, imm∈imm_domain(w). encode_alu(op_w, $imm, %dst) = llvm_mc(op_w $imm, %dst)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
 - Status: failing
-- Counterexample: popl %es:(%eax) → sut=[8f,00] mc=[26,8f,00]
-- Bug report: bug_reports/encode_pop_missing_segment_prefix.md
+- Counterexample: addb $1, %al
+- Bug report: pbt-out/bug_reports/encode_alu_al_imm8_short_form.md
 
 ```property
-function: encode_pop
+function: encode_alu
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [seg, base, d]
-  domain: { seg: sregs, base: gp32, d: disp_edge }
+  vars: [op, width, dst, imm]
+  domain: { op: alu_mnemonic, width: {1,2,4}, dst: gp_w, imm: int_for_width }
   relation:
     op: eq
-    lhs: "sut_encode(\"popl\", [Mem(seg:base+d)])"
-    rhs: "llvm_mc(att)"
+    lhs: "sut_encode(mnemonic(op,width), [Imm(imm), Reg(dst)])"
+    rhs: "llvm_mc_bytes(att_imm_reg(op,width,imm,dst))"
 generators:
-  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
-  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-  d: { gen: oneof, values: [0, 8, -4, 127, -128], type: i64 }
-evidence: core.rs:31-42; x86-64 gp_integer.rs:393 emit_segment_prefix before 8F; Intel SDM 2.1.1
+  op: { gen: int, min: 0, max: 7, type: u8 }
+  width: { gen: oneof, values: [1, 2, 4], type: u8 }
+  imm: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
+evidence: src/backend/i686/assembler/encoder/gp_integer.rs:441-469
 ```
 
-## encode_pop_invariant_r32_opcode
-- Tier: 3
-- Rationale: Algebraic invariant — short form is exactly one byte 0x58+n.
-- Doc contract: (none)
-- Seed: encode_push_pbt.rs encode_push_invariant_r32_opcode
-- Formal: ∀ r ∈ GP32. encode_pop([Reg(r)]) = [0x58 + reg_num(r)]
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
+## encode_alu_diff_mem_forms
+- Tier: 4
+- Rationale: Three memory shapes (mem→reg, reg→mem, imm→mem) with base+disp, no segment. Differential vs llvm-mc.
+- Doc contract: (none) — other fingerprint 552e4230
+- Seed: encode_mov_mem_reg_pbt.rs
+- Formal: ∀ op, w, base∈GP32, disp, reg∈GP_w, shape∈{m2r,r2m,i2m}. encode_alu(shape) = llvm_mc(att(shape))
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_pop
+function: encode_alu
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [op, width, shape, base, reg, disp, imm]
+  domain: { shape: {m2r, r2m, i2m}, base: gp32, reg: gp_w }
+  relation:
+    op: eq
+    lhs: sut_bytes
+    rhs: llvm_mc_bytes
+generators:
+  shape: { gen: int, min: 0, max: 2, type: u8 }
+evidence: src/backend/i686/assembler/encoder/gp_integer.rs:505-538
+```
+
+## encode_alu_diff_segment_prefix
+- Tier: 4
+- Rationale: core.rs:30 documents emit_segment_prefix for es/cs/ss/ds/fs/gs; x86-64 sibling encode_alu calls it on every memory arm. i686 encode_alu memory arms call encode_modrm_mem without emit_segment_prefix.
+- Doc contract: core.rs:30 "Emit segment override prefix if the memory operand has a segment." — asserted fingerprint 00a663e1
+- Seed: encode_pop_pbt.rs segment property
+- Formal: ∀ op, seg∈{es,cs,ss,ds,fs,gs}, shape∈{m2r,r2m,i2m}. encode_alu(… %seg:(%eax) …) = llvm_mc(…) ∧ bytes[0]=seg_prefix(seg)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
+- Status: failing
+- Counterexample: addl %ebx, %es:(%eax)
+- Bug report: pbt-out/bug_reports/encode_alu_missing_segment_prefix.md
+
+```property
+function: encode_alu
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [op, seg, shape]
+  domain: { seg: {es,cs,ss,ds,fs,gs}, shape: mem_shapes }
+  relation:
+    op: eq
+    lhs: sut_bytes
+    rhs: llvm_mc_bytes
+generators:
+  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+evidence: src/backend/i686/assembler/encoder/core.rs:30
+```
+
+## encode_alu_invariant_rr_opcode_modrm
+- Tier: 3
+- Rationale: Algebraic invariant from Intel SDM: RR form opcode = (size==1?0x00:0x01)+alu_op*8; optional 0x66 for w=2; ModRM mod=3, reg=src, rm=dst.
+- Doc contract: (none) — other fingerprint 552e4230
+- Seed: encode_mov_rr_pbt.rs invariant
+- Formal: ∀ op,w,src,dst. let b=encode_alu(op_w,%src,%dst) in opcode(b)=base(op,w) ∧ modrm(b).mod=3 ∧ modrm.reg=n(src) ∧ modrm.rm=n(dst) ∧ (w=2 ⇒ b[0]=0x66)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_alu
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [r]
-  domain: { r: gp32 }
+  vars: [op, width, src, dst]
   relation:
-    op: eq
-    lhs: "sut_encode(\"popl\", [Reg(r)])"
-    rhs: "[0x58 + reg_num(r)]"
+    op: holds
+    expr: "rr_struct_ok(encode_alu(op, width, src, dst))"
 generators:
-  r: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-evidence: gp_integer.rs:419-421; Intel SDM POP r32
+  op: { gen: int, min: 0, max: 7, type: u8 }
+evidence: Intel SDM Vol.2 ADD — 01 /r
 ```
 
-## encode_pop_meta_segment_stripped_eq_bare
-- Tier: 4
-- Rationale: Metamorphic — segmented memory encoding must equal seg_prefix ‖ bare encoding. Required metamorphic/differential at standard tier. Same root cause as encode_pop_diff_mem_segment (b1); ledger bugId owned by p4, this entry remains failing as a secondary witness.
-- Doc contract: core.rs:31 emit_segment_prefix — asserted fingerprint c3d4e5f6
-- Seed: encode_push_pbt.rs encode_push_meta_segment_stripped_eq_bare
-- Formal: ∀ seg, base, d. strip_seg(encode_pop(Mem(seg:…))) = encode_pop(Mem(bare)) ∧ first_byte = seg_prefix(seg)
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
+## encode_alu_metamorphic_segment_prefix
+- Tier: 3
+- Rationale: Metamorphic: segmented encoding must equal seg_prefix ‖ bare encoding (behavior-preserving transform of attaching a segment override).
+- Doc contract: core.rs:30 "Emit segment override prefix if the memory operand has a segment." — asserted fingerprint 00a663e1
+- Seed: encode_pop_pbt.rs metamorphic segment
+- Formal: ∀ op, seg, bare_mem. encode(op, seg:bare) = [seg_prefix(seg)] ++ encode(op, bare)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
 - Status: failing
-- Counterexample: seg=es base=eax disp=0 → with_seg=[8f,00] (missing 0x26)
-- Bug report: bug_reports/encode_pop_meta_missing_segment_prefix.md
+- Counterexample: addb %es:(%eax) vs bare → got [0x02,0x00] expect [0x26,0x02,0x00]
+- Bug report: pbt-out/bug_reports/encode_alu_missing_segment_prefix_metamorphic.md
 
 ```property
-function: encode_pop
+function: encode_alu
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [seg, base, d]
-  domain: { seg: sregs, base: gp32, d: disp_edge }
-  body: "with_seg[0]==seg_prefix(seg) ∧ strip_seg(with_seg)==bare"
+  vars: [op, seg]
+  relation:
+    op: eq
+    lhs: "encode(seg:mem)"
+    rhs: "[seg_prefix] ++ encode(mem)"
 generators:
-  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
-  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-  d: { gen: oneof, values: [0, 4, -1, 127], type: i64 }
-evidence: core.rs:31-42; x86-64 sibling emit_segment_prefix
+  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+evidence: src/backend/i686/assembler/encoder/core.rs:30
 ```
 
-## encode_pop_neg_arity
+## encode_alu_neg_arity
 - Tier: 3
-- Rationale: Negative/error — arity ≠ 1 must Err with documented message path.
-- Doc contract: gp_integer.rs:403-405 "pop requires 1 operand" — asserted fingerprint d4e5f6a7
-- Seed: encode_push_pbt.rs encode_push_neg_arity
-- Formal: ∀ n ∈ {0,2,3}. encode_pop(ops_n) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
+- Rationale: Negative/error — arity ≠ 2 must Err (gp_integer.rs:434-436).
+- Doc contract: gp_integer.rs:435 "{} requires 2 operands" — asserted fingerprint f363de33
+- Seed: encode_mov_rr_pbt.rs neg properties
+- Formal: ∀ op, w, n≠2. encode_alu(op_w, ops) with |ops|=n = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_pop
+function: encode_alu
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [n]
-  domain: { n: "0|2|3" }
+  vars: [arity]
   relation:
     op: throws
-    expr: "sut_encode(\"popl\", ops_n)"
+    expr: "encode_alu(ops) where len(ops) != 2"
 generators:
-  n: { gen: int, min: 0, max: 3, type: usize }
-expected_error: "pop requires 1 operand"
-evidence: gp_integer.rs:403-405
+  arity: { gen: int, min: 0, max: 3, type: u8 }
+expected_error: String
+evidence: src/backend/i686/assembler/encoder/gp_integer.rs:435
 ```
 
-## encode_pop_neg_non_gp_and_wrong_width
+## encode_alu_neg_mismatched_width
 - Tier: 3
-- Rationale: Negative — cs is invalid POP destination (Intel, passes); non-GP xmm and r8/r16 must not silently alias via reg_num (llvm-mc rejects).
-- Doc contract: gp_integer.rs:416 cannot pop to cs; registers.rs reg_num aliases r8/r16/xmm — asserted fingerprint e5f6a7b8
-- Seed: encode_push_pbt.rs encode_push_neg_xmm
-- Formal: ∀ bad ∈ XMM∪R8∪R16. llvm_mc("popl %bad") rejects ⇒ encode_pop rejects
-- Test file: src/backend/i686/assembler/encoder/encode_pop_pbt.rs
+- Rationale: Size-mismatched GP pairs that llvm-mc rejects must Err (reg_num must not silently alias widths).
+- Doc contract: (none) — inferred from Intel SDM operand-size rules and llvm-mc reject set — other fingerprint 552e4230
+- Seed: encode_mov_rr_pbt.rs encode_mov_rr_neg_mismatched_width
+- Formal: ∀ mismatched (src,dst,mnem) that llvm-mc rejects. encode_alu = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
 - Status: failing
-- Counterexample: popl %xmm0 → Ok([0x58]); popl %al → Ok([0x58]); popl %ax → Ok([0x58])
-- Bug report: bug_reports/encode_pop_wrong_width_and_non_gp.md
+- Counterexample: addl %ax, %ebx
+- Bug report: pbt-out/bug_reports/encode_alu_accepts_mismatched_width.md
 
 ```property
-function: encode_pop
+function: encode_alu
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad]
-  domain: { bad: "xmm*|r8|r16" }
+  vars: [src, dst, mnem]
   relation:
     op: throws
-    expr: "sut_encode(\"popl\", [Reg(bad)])"
+    expr: "encode_alu(mismatched_width_pair)"
 generators:
-  bad: { gen: oneof, values: ["xmm0","al","ax"], type: "&str" }
-expected_error: "bad register / wrong width"
-evidence: Intel SDM POP r32 only on popl; llvm-mc rejects; registers.rs reg_num aliases
+  mode: { gen: int, min: 0, max: 5, type: u8 }
+expected_error: String
+evidence: Intel SDM Vol.2; llvm-mc -triple=i686 rejects
+```
+
+## encode_alu_neg_non_gp
+- Tier: 3
+- Rationale: Non-GP names (xmm/mm/st) that alias through reg_num must Err; ALU r/m is GP-only.
+- Doc contract: (none) — inferred from Intel SDM GP-only r/m forms — other fingerprint 552e4230
+- Seed: encode_mov_rr_pbt.rs encode_mov_rr_neg_non_gp
+- Formal: ∀ non_gp∈{xmm,mm,st,…}, gp∈GP_w. encode_alu(op_w, non_gp, gp) = Err(_) ∧ encode_alu(op_w, gp, non_gp) = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_alu_pbt.rs
+- Status: failing
+- Counterexample: addb %al, %xmm0
+- Bug report: pbt-out/bug_reports/encode_alu_accepts_non_gp.md
+
+```property
+function: encode_alu
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [non_gp, gp, width]
+  relation:
+    op: throws
+    expr: "encode_alu(op_w, non_gp_pair)"
+generators:
+  non_gp: { gen: oneof, values: ["xmm0","mm0","st"] }
+expected_error: String
+evidence: Intel SDM Vol.2; llvm-mc -triple=i686 rejects
 ```

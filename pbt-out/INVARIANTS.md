@@ -210,3 +210,13 @@
 - Known defects (this campaign): (1) memory arm does not call `emit_segment_prefix` before 0x8F (x86-64 sibling does). Witness: `popl %es:(%eax)` → SUT `[8f,00]` vs mc `[26,8f,00]`; `popl %fs:(%eax)` omits 0x64. (2) non-segment register arm accepts r8/r16/xmm via `reg_num` aliasing (`popl %xmm0`/`%al`/`%ax` → `[0x58]`).
 - Fix shapes: `self.emit_segment_prefix(mem);` before `push(0x8F)`; gate GP arm with `reg_size==4` and reject xmm/mm/st.
 - proptest cases=1000; harness `encode_pop_pbt.rs`.
+
+## encode_alu (i686 gp_integer)
+
+- Dispatches add/or/adc/sbb/and/sub/xor/cmp (*b/*w/*l) via mod.rs:204-211 → encode_alu(alu_op 0..7).
+- RR and bare mem forms (no segment) match llvm-mc `-triple=i686` for same-width GP.
+- EAX short form for large imm (0x05+op*8) matches llvm-mc; sign-ext imm8 via 0x83 matches.
+- Known defects (this campaign): (1) memory arms do not call `emit_segment_prefix` (x86-64 sibling does). Witness: `addl %ebx, %es:(%eax)` → SUT `[01,18]` vs mc `[26,01,18]`. (2) size==1 imm→reg always uses 0x80 /r — never AL short form 0x04+op*8 (dead `0x04` branch at line 458). Witness: `addb $1, %al` → `[80,c0,01]` vs `[04,01]`. (3) RR accepts mismatched width via reg_num (`addl %ax, %ebx` → same as eax). (4) RR accepts xmm/mm/st via reg_num (`addb %al, %xmm0` → addb %al,%al).
+- Fix shapes: `self.emit_segment_prefix(mem);` before opcode on every mem arm; AL short form when size==1 && dst_num==0; gate with `reg_size == mnemonic size` and GP-only check.
+- proptest cases=1000; llvm-mc `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+- Residual untested (reloc-oracle hard): GOTPC `_GLOBAL_OFFSET_TABLE_`, SymbolDiff, Label-as-memory arms.
