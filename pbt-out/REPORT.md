@@ -1,112 +1,100 @@
-# PBT Campaign Report: encode_bsr_bsf_16
+# PBT Campaign Report: encode_mov_infer_size
 
 ## Summary
 
-**Verdict:** 2 bugs — 1 high (segment override omitted on `bsfw`/`bsrw` memory forms, so segmented loads assemble to the wrong address) and 1 medium (r32/r8 accepted via `reg_num` aliasing and silently encoded as r16).
+**Verdict:** 2 high bugs: unsuffixed `mov $imm, mem` silently defaults to movl, and mismatched-width GP `mov` silently encodes using the first register's size — both accepted where llvm-mc/GAS reject.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bsr_bsf_16
-**Tests:** 7 active properties (5 passing, 2 failing) + KAT + regression witnesses
-**Result:** 5 passing, 2 bugs
-**Change surface:** 1 changed function (encode_bsr_bsf_16), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no line-level `.profraw` and a false NOT LINKED against unrelated OH binaries; cargo lib tests executed the SUT (KATs and shrunk counterexamples from the real encoder body). Recorded as file-level.
-**Effort tier:** standard (≥1000 proptest cases; differential + metamorphic required; 1 contract-surface sweep round)
+**Modules tested:** encode_mov_infer_size (i686 gp_integer)
+**Tests:** 9 properties (+ 7 KAT / strengthen unit tests + 2 regression witnesses)
+**Result:** 7 passing properties, 2 failing properties, 2 bugs
+**Change surface:** 1 changed function (encode_mov_infer_size), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence / cargo test execution) — `coverage_gaps` found no .gcda/.profraw (Rust build not gcov-instrumented in this tree) and listed unrelated OH binaries as NOT LINKED; campaign evidence is the lib-test binary executing `InstructionEncoder::encode("mov")` → `encode_mov_infer_size` (KATs + 1000-case proptest runs). Tier: standard.
+**Effort tier:** standard (≥1000 proptest cases; 1 strengthen round; 1 contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bsr_bsf_16 | 7 active + KAT/regression | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_mov_infer_size | 9 props (+KAT/regression) | 2 | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_bsr_bsf_16 omits segment-override prefix on memory forms
+### B1: Unsuffixed `mov $imm, mem` silently defaults to 32-bit
 
-**Formal:** ∀ m ∈ {bsfw,bsrw}, ∀ seg ∈ SREG, ∀ base ∈ R32, ∀ d ∈ R16. encode(m, %seg:(%base), %d) = llvm-mc(m %seg:(%base), %d)
-**Contract evidence:** inferred (Intel SDM / AT&T segment override ordering; independent reference llvm-mc `-triple=i686` emits seg then 0x66 then 0F BC/BD; same contract as sibling i686 encoders that call `emit_segment_prefix`)
+**Formal:** ∀ imm, mem. llvm_mc rejects "mov $imm, mem" ⇒ encode_mov_infer_size([Imm,Mem]).is_err()
+**Contract evidence:** inferred (GAS/llvm-mc ambiguous-suffix contract for unsuffixed mov without a register operand; doc claims size is inferred from operands)
+**Documentation conflict:** (none) — gp_integer.rs:121 `_ => 4 // default to 32-bit` is the producing statement, not a domain restriction
+**Severity:** high
+**Counterexample:** `mov $0, (%eax)` → Ok([c7, 00, 00, 00, 00, 00])
+**Expected / Actual:** Err(ambiguous) / Ok(movl encoding)
+**Impact:** Assembler accepts ambiguous store-immediate and always emits dword width, risking memory corruption vs intended byte/word stores.
+**Root cause:** gp_integer.rs:121 `_ => 4` defaults size when neither operand is a Register, then encode_mov emits C7.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:117`
+```rust
+        let size = match (&ops[0], &ops[1]) {
+            (Operand::Register(r), _) => reg_size(&r.name),
+            (_, Operand::Register(r)) => reg_size(&r.name),
+            _ => 4, // default to 32-bit
+        };
+        self.encode_mov(ops, size)
+```
+**Suggested fix:** Reject the no-register case:
+```rust
+            _ => {
+                return Err(
+                    "ambiguous mov: no register operand to infer size (use movb/movw/movl)"
+                        .to_string(),
+                );
+            }
+```
+**Bug report:** bug_reports/encode_mov_infer_size_ambiguous_imm_mem.md
+**Repro seed:** cc d01348f11493b4893fbc4fbc4fd75495baa5f95445f568547559ec9cc02c1242
+**Raw output:**
+```text
+Test failed: ambiguous imm→mem `mov $0, (%eax)` must Err; got Ok(Some([c7, 00, 00, 00, 00, 00]))
+minimal failing input: bi = 0, imm = 0, disp = 0
+```
+
+### B2: Mismatched-width GP `mov` silently uses first-register size
+
+**Formal:** ∀ src∈GP_w1, dst∈GP_w2, w1≠w2. llvm_mc rejects "mov %src, %dst" ⇒ encode_mov_infer_size.is_err()
+**Contract evidence:** inferred (GAS/llvm-mc reject unsuffixed mov with unequal GP widths; doc claims size inference from operands implies a single consistent size)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `bsfw %es:(%eax), %bx` then compare bytes to llvm-mc
-**Expected / Actual:** `[0x26, 0x66, 0x0f, 0xbc, 0x18]` / `[0x66, 0x0f, 0xbc, 0x18]`
-**Impact:** Segmented memory sources assemble without the override; the CPU reads DS (default) instead of the requested segment — silent wrong-address bit-scans in boot/kernel code.
-**Root cause:** `system.rs:362-375` pushes `0x66` and opcode then `encode_modrm_mem` without `emit_segment_prefix(mem)` (and the shared `0x66` is emitted before the match, so a naive post-hoc prefix would still be out of order).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:362`
+**Counterexample:** `mov %ax, %al` → Ok([66, 89, c0])
+**Expected / Actual:** Err(size mismatch) / Ok(16-bit mov encoding)
+**Impact:** Wrong opcode/prefix for mismatched register pairs; code other assemblers reject is accepted with incorrect machine code.
+**Root cause:** gp_integer.rs:118 takes only the first Register's `reg_size` and never compares widths when both operands are GP registers.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:117`
 ```rust
-        self.bytes.push(0x66); // 16-bit operand size prefix
-        match (&ops[0], &ops[1]) {
-            (Operand::Register(src), Operand::Register(dst)) => {
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.bytes.push(self.modrm(3, dst_num, src_num));
-                Ok(())
-            }
-            (Operand::Memory(mem), Operand::Register(dst)) => {
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.encode_modrm_mem(dst_num, mem)
-            }
+        let size = match (&ops[0], &ops[1]) {
+            (Operand::Register(r), _) => reg_size(&r.name),
+            (_, Operand::Register(r)) => reg_size(&r.name),
+            _ => 4, // default to 32-bit
+        };
+        self.encode_mov(ops, size)
 ```
-**Suggested fix:** Emit segment override before `0x66` on the memory arm:
+**Suggested fix:** When both operands are GP registers, require `reg_size(a) == reg_size(b)` (leave CR/Sreg pairs to encode_mov specialized paths):
 ```rust
-            (Operand::Memory(mem), Operand::Register(dst)) => {
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.emit_segment_prefix(mem); // before 0x66
-                self.bytes.push(0x66);
-                self.bytes.extend_from_slice(&opcode);
-                self.encode_modrm_mem(dst_num, mem)
+        if let (Operand::Register(a), Operand::Register(b)) = (&ops[0], &ops[1]) {
+            if !is_control_reg(&a.name) && !is_control_reg(&b.name)
+                && !is_segment_reg(&a.name) && !is_segment_reg(&b.name)
+                && reg_size(&a.name) != reg_size(&b.name)
+            {
+                return Err(format!(
+                    "mov operand size mismatch: {} vs {}",
+                    a.name, b.name
+                ));
             }
+        }
 ```
-**Bug report:** bug_reports/encode_bsr_bsf_16_missing_segment_prefix.md
-**Repro seed:** proptest `cc 8e74ee16fc4a2c3ddacab95a3cd26558b2eb772b0ed18706653c37559c1fb850` (diff_mem_segment); deterministic regression also available
+**Bug report:** bug_reports/encode_mov_infer_size_mismatched_width.md
+**Repro seed:** (deterministic regression; proptest shrunk to w1=2,w2=1,si=0,di=0)
 **Raw output:**
 ```text
-assertion failed: `(left == right)`
-  left: `[102, 15, 188, 0]`,
- right: `[38, 102, 15, 188, 0]`: segmented mem must include override before 0x66 for bsfw %es:(%eax), %ax
-minimal failing input: mnemonic = "bsfw", mseg = "es", base = "eax", dst = "ax", disp = 0
-```
-
-### B2: encode_bsr_bsf_16 accepts r32/r8 via reg_num aliasing
-
-**Formal:** ∀ m ∈ {bsfw,bsrw}, ∀ bad ∈ R32∪R8, ∀ good ∈ R16. encode(m, bad, good) = Err ∧ encode(m, good, bad) = Err
-**Contract evidence:** inferred (function doc "16-bit BSF/BSR"; Intel SDM r16,r/m16; llvm-mc rejects `bsfw %eax, %bx` / `bsrw %ax, %al`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** `bsfw %eax, %bx` (also `bsfw %ax, %eax`, `bsrw %ax, %al`)
-**Expected / Actual:** `Err` / `Ok([0x66, 0x0f, 0xbc, 0xd8])` (same as `bsfw %ax, %bx`)
-**Impact:** Typos and wrong-width operands assemble without diagnostic, producing a 16-bit bit-scan encoding under a 32/8-bit name.
-**Root cause:** `system.rs:365-368` calls `reg_num` with no `reg_size(...) == 2` gate; `reg_num` aliases eax/al→0, ebx/bl→3.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:365`
-```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.bytes.push(self.modrm(3, dst_num, src_num));
-                Ok(())
-            }
-```
-**Suggested fix:**
-```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
-                if reg_size(&src.name) != 2 || reg_size(&dst.name) != 2 {
-                    return Err(format!("unsupported {} operands", mnemonic));
-                }
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.bytes.push(self.modrm(3, dst_num, src_num));
-                Ok(())
-            }
-```
-**Bug report:** bug_reports/encode_bsr_bsf_16_wrong_width_accepted.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-`bsfw %ax, %eax` must be Err like llvm-mc, got Ok([66, 0f, bc, c0])
-minimal failing input: mnemonic = "bsfw", bad = "eax", good = "ax", bad_is_src = false
-regression: bsfw %eax, %bx must be Err, got Ok([66, 0f, bc, d8])
+Test failed: mismatched-width `mov %ax, %al` must Err; got Ok(Some([66, 89, c0]))
+minimal failing input: w1 = 2, w2 = 1, si = 0, di = 0
 ```
 
 ## Design Caveats
@@ -117,17 +105,27 @@ regression: bsfw %eax, %bx must be Err, got Ok([66, 0f, bc, d8])
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_bsr_bsf_16_pbt.rs | 7 proptest properties + 5 KAT + 3 regression |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_bsr_bsf_16_pbt;` |
+| src/backend/i686/assembler/encoder/encode_mov_infer_size_pbt.rs | 9 properties, 7 KAT/strengthen units, 2 regression witnesses |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_mov_infer_size_pbt` |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bsr_bsf_16 -- --test-threads=1
-cargo test --lib test_encode_bsr_bsf_16_regression_segment_es_missing -- --test-threads=1
-cargo test --lib test_encode_bsr_bsf_16_regression_r32_src_accepted -- --test-threads=1
-cargo test --lib test_encode_bsr_bsf_16_regression_r8_dst_accepted -- --test-threads=1
+cargo test --lib encode_mov_infer_size -- --test-threads=1
+```
+
+B1 regression:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_mov_infer_size_regression_ambiguous_imm_mem -- --test-threads=1
+```
+
+B2 regression:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_mov_infer_size_regression_mismatched_width -- --test-threads=1
 ```
 
 ## Output Directories
@@ -141,22 +139,17 @@ cargo test --lib test_encode_bsr_bsf_16_regression_r8_dst_accepted -- --test-thr
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_bsr_bsf_16_missing_segment_prefix.md
-- pbt-out/bug_reports/encode_bsr_bsf_16_missing_segment_prefix.html
-- pbt-out/bug_reports/encode_bsr_bsf_16_wrong_width_accepted.md
-- pbt-out/bug_reports/encode_bsr_bsf_16_wrong_width_accepted.html
-- pbt-out/run/encode_bsr_bsf_16_test1.log
-
-## Contract-surface sweep
-
-1 round via `coverage_gaps` after first full run. No line-level data; file-level false NOT LINKED ignored (cargo executed SUT). All documented behaviors of `encode_bsr_bsf_16` (arity, opcode select, 0x66, r16-r16, mem-r16, segment, width gate) have properties. Closed: tier round done.
+- pbt-out/bug_reports/encode_mov_infer_size_ambiguous_imm_mem.md (+ .html)
+- pbt-out/bug_reports/encode_mov_infer_size_mismatched_width.md (+ .html)
+- pbt-out/run/encode_mov_infer_size_test1.log
+- pbt-out/run/encode_mov_infer_size_test2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 03:45 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 267/397 total | PBT candidates: 267 | Tested: 267 (100%) | 1 pass, 267 fail
+> Last updated: 2026-10-09 04:05 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 268/398 total | PBT candidates: 268 | Tested: 268 (100%) | 1 pass, 268 fail
 
 ## Summary
 
@@ -164,11 +157,11 @@ cargo test --lib test_encode_bsr_bsf_16_regression_r8_dst_accepted -- --test-thr
 |--------|-------|
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
-| Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 267 |
-| **Tested (of PBT candidates)** | **267 / 267 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 267 / -1 |
-| **Overall (tested / all functions)** | **267 / 397 (67%)** |
+| Total functions (all files) | 398 |
+| PBT candidates (from FUNCTION_INDEX) | 268 |
+| **Tested (of PBT candidates)** | **268 / 268 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 268 / -1 |
+| **Overall (tested / all functions)** | **268 / 398 (67%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -176,13 +169,13 @@ cargo test --lib test_encode_bsr_bsf_16_regression_r8_dst_accepted -- --test-thr
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 267 | 267 | 0 | 100% |
+|  | 268 | 268 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 267 | 267 | 0 | 100% |
+| unknown | 268 | 268 | 0 | 100% |
 
 ## File Coverage
 
@@ -193,7 +186,7 @@ cargo test --lib test_encode_bsr_bsf_16_regression_r8_dst_accepted -- --test-thr
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 29 | 1 | 1 | 100% | covered |
+| gp_integer.rs | 30 | 2 | 2 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -472,3 +465,4 @@ cargo test --lib test_encode_bsr_bsf_16_regression_r8_dst_accepted -- --test-thr
 | encode_mov_seg | system.rs |
 | encode_pop16 | system.rs |
 | encode_bsr_bsf_16 | system.rs |
+| encode_mov_infer_size | gp_integer.rs |

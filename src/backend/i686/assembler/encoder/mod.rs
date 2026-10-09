@@ -39,6 +39,8 @@ mod encode_mov_seg_pbt;
 mod encode_pop16_pbt;
 #[cfg(test)]
 mod encode_bsr_bsf_16_pbt;
+#[cfg(test)]
+mod encode_mov_infer_size_pbt;
 
 pub(crate) use registers::*;
 

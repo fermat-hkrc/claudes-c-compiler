@@ -103,3 +103,13 @@
 - Segment override must precede `0x66` (llvm-mc: `bsfw %es:(%eax), %bx` → `[26,66,0f,bc,18]`).
 - Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as lmsw/invlpg/pop16/…). Witness: `bsfw %es:(%eax), %bx` → SUT omits `0x26`. (2) register arm accepts r32/r8 via `reg_num` aliasing. Witness: `bsfw %eax, %bx` → `[66,0f,bc,d8]`.
 - Fix shapes: `emit_segment_prefix(mem)` before `0x66` on mem arm; gate both regs with `reg_size==2`.
+
+## encode_mov_infer_size (i686 gp_integer)
+
+- Unsuffixed `mov` (mod.rs:163) → encode_mov_infer_size; size from first Register else second else default 4; then encode_mov.
+- Same-width GP forms (RR / Imm→Reg / Mem↔Reg) at widths 1/2/4 match llvm-mc `-triple=i686`.
+- Metamorphic: unambiguous `mov` ≡ `movb`/`movw`/`movl` for the inferred width.
+- CR/Sreg pairs through unsuffixed `mov` still match llvm-mc (specialized paths inside encode_mov).
+- Known defects: (1) no-register form (imm→mem) defaults to size 4 instead of rejecting ambiguous; (2) mismatched GP widths take first-reg size instead of Err.
+- Fix shapes: reject `_ =>` default; when both ops are GP regs require equal reg_size before encode_mov.
+

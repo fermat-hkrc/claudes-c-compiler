@@ -1,4 +1,4 @@
-> Total files: 17 | Total functions: 397 | PBT candidates: 267 | Excluded: 130
+> Total files: 17 | Total functions: 398 | PBT candidates: 269 | Excluded: 129
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -232,6 +232,7 @@
 | extract_modifier_symbol | pseudo.rs | 573 | function | no | out of campaign scope |
 | parse_reloc_modifier | pseudo.rs | 583 | function | no | out of campaign scope |
 | encode_mov | gp_integer.rs | 6 | method | no | out of campaign scope |
+| encode_mov_infer_size | gp_integer.rs | 112 | method | yes | - |
 | encode_mov_imm_reg | gp_integer.rs | 58 | method | no | out of campaign scope |
 | encode_mov_rr | gp_integer.rs | 127 | method | no | out of campaign scope |
 | encode_mov_mem_reg | gp_integer.rs | 144 | method | no | out of campaign scope |
