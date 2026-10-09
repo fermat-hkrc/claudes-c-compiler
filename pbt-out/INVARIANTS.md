@@ -211,6 +211,15 @@
 - Fix shapes: `self.emit_segment_prefix(mem);` before `push(0x8F)`; gate GP arm with `reg_size==4` and reject xmm/mm/st.
 - proptest cases=1000; harness `encode_pop_pbt.rs`.
 
+## encode_test (i686 gp_integer)
+
+- Dispatch: `testl|testw|testb|test` → encode_test (mod.rs:214); size from mnemonic_size_suffix (default 4).
+- Happy path matches llvm-mc i686: RR 84/85 (+0x66 for *w); Imm→Reg A8/A9 short on AL/AX/EAX else F6/F7 /0; Imm→Mem bare F6/F7 /0 + modrm.
+- Metamorphic intended: segmented Imm→Mem = seg_prefix ‖ bare Imm→Mem (currently broken — no emit_segment_prefix).
+- Known defects (this campaign): (1) no Reg→Mem arm — `testl %eax, (%ebx)` → Err("unsupported test operands") vs `[85,03]`; x86-64 sibling has the arm. (2) Imm→Mem skips `emit_segment_prefix` (witness `testl $5, %es:(%eax)` omits 0x26). (3) RR accepts mismatched width via reg_num (`testl %ax, %ebx` → same as eax). (4) RR accepts xmm/mm/st via reg_num (`testb %al, %xmm0` → testb %al,%al).
+- Fix shapes: add `(Register, Memory)` with emit_segment_prefix + 84/85 + encode_modrm_mem; `emit_segment_prefix(mem)` on Imm→Mem; gate `reg_size == mnemonic size` and GP-only.
+- proptest cases=1000; harness `encode_test_pbt.rs`; llvm-mc `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+
 ## encode_alu (i686 gp_integer)
 
 - Dispatches add/or/adc/sbb/and/sub/xor/cmp (*b/*w/*l) via mod.rs:204-211 → encode_alu(alu_op 0..7).

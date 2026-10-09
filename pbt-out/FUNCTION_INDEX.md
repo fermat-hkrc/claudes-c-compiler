@@ -246,7 +246,7 @@
 | encode_push16 | gp_integer.rs | 382 | method | yes | HARD-scope target this campaign |
 | encode_pop | gp_integer.rs | 402 | method | yes | HARD-scope target this campaign |
 | encode_alu | gp_integer.rs | 433 | method | yes | HARD-scope target this campaign |
-| encode_test | gp_integer.rs | 562 | method | no | out of campaign scope |
+| encode_test | gp_integer.rs | 645 | method | yes | HARD-scope target this campaign |
 | encode_imul | gp_integer.rs | 641 | method | no | out of campaign scope |
 | encode_unary_rm | gp_integer.rs | 707 | method | no | out of campaign scope |
 | encode_inc_dec | gp_integer.rs | 733 | method | no | out of campaign scope |
