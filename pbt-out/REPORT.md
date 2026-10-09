@@ -1,113 +1,112 @@
-# PBT Campaign Report: encode_pop16
+# PBT Campaign Report: encode_bsr_bsf_16
 
 ## Summary
 
-**Verdict:** 1 high + 1 high + 1 medium: `encode_pop16` omits the 0x66 prefix on segment-register `popw`, rejects all memory forms (`popw (%eax)`), and silently accepts r32/r8 GP names as r16 — three assembler correctness bugs vs llvm-mc/Intel POP.
+**Verdict:** 2 bugs — 1 high (segment override omitted on `bsfw`/`bsrw` memory forms, so segmented loads assemble to the wrong address) and 1 medium (r32/r8 accepted via `reg_num` aliasing and silently encoded as r16).
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_pop16
-**Tests:** 8 properties (+ KAT + 3 regression witnesses)
-**Result:** 4 passing, 3 failing, 1 retired (duplicate metamorphic of b1); 3 bugs
-**Change surface:** 1 changed function (encode_pop16), 1 with properties, 0 error-handling-only changes without failure-path coverage (arity/cs/wrong-width negatives included)
-**Coverage evidence:** none from native profraw (`coverage_gaps` found no .gcda/.profraw and listed unrelated OH binaries); execution evidenced by cargo lib tests printing SUT encodings from `encode_pop16` — record as file-level (symbol exercised via cargo test)
-**Effort tier:** standard (proptest cases=1000; ≥1 metamorphic; 1 coverage_gaps sweep round)
+**Modules tested:** encode_bsr_bsf_16
+**Tests:** 7 active properties (5 passing, 2 failing) + KAT + regression witnesses
+**Result:** 5 passing, 2 bugs
+**Change surface:** 1 changed function (encode_bsr_bsf_16), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no line-level `.profraw` and a false NOT LINKED against unrelated OH binaries; cargo lib tests executed the SUT (KATs and shrunk counterexamples from the real encoder body). Recorded as file-level.
+**Effort tier:** standard (≥1000 proptest cases; differential + metamorphic required; 1 contract-surface sweep round)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_pop16 | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_bsr_bsf_16 | 7 active + KAT/regression | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_pop16 omits 0x66 on segment-register popw
+### B1: encode_bsr_bsf_16 omits segment-override prefix on memory forms
 
-**Formal:** ∀ s ∈ {es,ss,ds,fs,gs}. encode_pop16([s]) = llvm_mc("popw %s")
-**Contract evidence:** inferred (llvm-mc i686 + Intel operand-size override on 16-bit mnemonic; sibling popl omits 0x66 by design) — author comment at system.rs:333 asserts the opposite for all segment pops
-**Documentation conflict:** system.rs:333 `// Segment register pops don't use 0x66 prefix` — known limitation / incorrect claim for `popw` (true for `popl`); does not declare the input invalid; severity one step down from impact high → **medium (documented by the author)** would apply only if we treat it as admitted gap — here the comment states intended behavior that contradicts the public `popw` contract and llvm-mc; classify as **documented-and-violated** relative to the popw mnemonic contract, severity **high** (wrong machine code, not a disclosed "暂不支持")
-**Severity:** high
-**Counterexample:** `popw %es` then compare bytes — SUT `[0x07]`, expected `[0x66, 0x07]`
-**Expected / Actual:** `[0x66, 0x07]` / `[0x07]`
-**Impact:** Wrong encoding for every 16-bit segment pop; breaks gas/llvm-mc compatibility.
-**Root cause:** system.rs:333-336 emits bare Sreg POP opcodes without 0x66 under the popw path.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:333`
-```rust
-                    // Segment register pops don't use 0x66 prefix
-                    match reg.name.as_str() {
-                        "es" => { self.bytes.push(0x07); Ok(()) }
-```
-**Suggested fix:** Push 0x66 before the Sreg opcode match in `encode_pop16` only.
-```rust
-                    self.bytes.push(0x66);
-                    match reg.name.as_str() {
-                        "es" => { self.bytes.push(0x07); Ok(()) }
-```
-**Bug report:** bug_reports/encode_pop16_sreg_missing_66.md
-**Repro seed:** proptest minimal `sreg = "es"`
-**Raw output:**
-```text
-left: `[7]`, right: `[102, 7]`: Sreg popw must match llvm-mc (incl. 0x66) for popw %es
-```
-
-### B2: encode_pop16 rejects memory operands (POP m16)
-
-**Formal:** ∀ mem ∈ valid_i686_mem. encode_pop16([mem]) = llvm_mc("popw mem")
-**Contract evidence:** inferred (Intel POP r/m16; llvm-mc `popw (%eax)` = `[66,8f,00]`; sibling `encode_pop` implements memory for popl)
+**Formal:** ∀ m ∈ {bsfw,bsrw}, ∀ seg ∈ SREG, ∀ base ∈ R32, ∀ d ∈ R16. encode(m, %seg:(%base), %d) = llvm-mc(m %seg:(%base), %d)
+**Contract evidence:** inferred (Intel SDM / AT&T segment override ordering; independent reference llvm-mc `-triple=i686` emits seg then 0x66 then 0F BC/BD; same contract as sibling i686 encoders that call `emit_segment_prefix`)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `popw (%eax)` → SUT `Err("unsupported popw operand")`, expected `[0x66, 0x8f, 0x00]`
-**Expected / Actual:** Ok`[0x66, 0x8f, 0x00]` / Err(`unsupported popw operand`)
-**Impact:** Valid AT&T memory popw forms cannot be assembled.
-**Root cause:** system.rs:348 blanket `_ => Err` with no `Operand::Memory` arm.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:348`
+**Counterexample:** `bsfw %es:(%eax), %bx` then compare bytes to llvm-mc
+**Expected / Actual:** `[0x26, 0x66, 0x0f, 0xbc, 0x18]` / `[0x66, 0x0f, 0xbc, 0x18]`
+**Impact:** Segmented memory sources assemble without the override; the CPU reads DS (default) instead of the requested segment — silent wrong-address bit-scans in boot/kernel code.
+**Root cause:** `system.rs:362-375` pushes `0x66` and opcode then `encode_modrm_mem` without `emit_segment_prefix(mem)` (and the shared `0x66` is emitted before the match, so a naive post-hoc prefix would still be out of order).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:362`
 ```rust
-            _ => Err("unsupported popw operand".to_string()),
-```
-**Suggested fix:**
-```rust
-            Operand::Memory(mem) => {
-                self.emit_segment_prefix(mem);
-                self.bytes.push(0x66);
-                self.bytes.push(0x8F);
-                self.encode_modrm_mem(0, mem)
+        self.bytes.push(0x66); // 16-bit operand size prefix
+        match (&ops[0], &ops[1]) {
+            (Operand::Register(src), Operand::Register(dst)) => {
+                let src_num = reg_num(&src.name).ok_or("bad register")?;
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&opcode);
+                self.bytes.push(self.modrm(3, dst_num, src_num));
+                Ok(())
+            }
+            (Operand::Memory(mem), Operand::Register(dst)) => {
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&opcode);
+                self.encode_modrm_mem(dst_num, mem)
             }
 ```
-**Bug report:** bug_reports/encode_pop16_mem_unsupported.md
-**Repro seed:** `kind = 0, base = "eax"`
+**Suggested fix:** Emit segment override before `0x66` on the memory arm:
+```rust
+            (Operand::Memory(mem), Operand::Register(dst)) => {
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.emit_segment_prefix(mem); // before 0x66
+                self.bytes.push(0x66);
+                self.bytes.extend_from_slice(&opcode);
+                self.encode_modrm_mem(dst_num, mem)
+            }
+```
+**Bug report:** bug_reports/encode_bsr_bsf_16_missing_segment_prefix.md
+**Repro seed:** proptest `cc 8e74ee16fc4a2c3ddacab95a3cd26558b2eb772b0ed18706653c37559c1fb850` (diff_mem_segment); deterministic regression also available
 **Raw output:**
 ```text
-SUT rejected `popw (%eax)`: unsupported popw operand
+assertion failed: `(left == right)`
+  left: `[102, 15, 188, 0]`,
+ right: `[38, 102, 15, 188, 0]`: segmented mem must include override before 0x66 for bsfw %es:(%eax), %ax
+minimal failing input: mnemonic = "bsfw", mseg = "es", base = "eax", dst = "ax", disp = 0
 ```
 
-### B3: encode_pop16 accepts r32/r8 via reg_num aliasing
+### B2: encode_bsr_bsf_16 accepts r32/r8 via reg_num aliasing
 
-**Formal:** ∀ r ∈ R32 ∪ R8. encode_pop16([r]) is Err
-**Contract evidence:** inferred (llvm-mc rejects `popw %eax`/`%al`; popw requires r16)
+**Formal:** ∀ m ∈ {bsfw,bsrw}, ∀ bad ∈ R32∪R8, ∀ good ∈ R16. encode(m, bad, good) = Err ∧ encode(m, good, bad) = Err
+**Contract evidence:** inferred (function doc "16-bit BSF/BSR"; Intel SDM r16,r/m16; llvm-mc rejects `bsfw %eax, %bx` / `bsrw %ax, %al`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** `popw %eax` → Ok`[0x66, 0x58]` (same as `popw %ax`)
-**Expected / Actual:** Err / Ok`[0x66, 0x58]`
-**Impact:** Typos and wrong-width operands assemble silently as r16.
-**Root cause:** system.rs:341 uses `reg_num` without `reg_size == 2` gate.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:340`
+**Counterexample:** `bsfw %eax, %bx` (also `bsfw %ax, %eax`, `bsrw %ax, %al`)
+**Expected / Actual:** `Err` / `Ok([0x66, 0x0f, 0xbc, 0xd8])` (same as `bsfw %ax, %bx`)
+**Impact:** Typos and wrong-width operands assemble without diagnostic, producing a 16-bit bit-scan encoding under a 32/8-bit name.
+**Root cause:** `system.rs:365-368` calls `reg_num` with no `reg_size(...) == 2` gate; `reg_num` aliases eax/al→0, ebx/bl→3.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:365`
 ```rust
-                } else {
-                    let num = reg_num(&reg.name).ok_or("bad register")?;
-                    self.bytes.push(0x66);
-                    self.bytes.push(0x58 + num);
+            (Operand::Register(src), Operand::Register(dst)) => {
+                let src_num = reg_num(&src.name).ok_or("bad register")?;
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&opcode);
+                self.bytes.push(self.modrm(3, dst_num, src_num));
+                Ok(())
+            }
 ```
 **Suggested fix:**
 ```rust
-                    if reg_size(&reg.name) != 2 {
-                        return Err(format!("popw requires r16, got {}", reg.name));
-                    }
-                    let num = reg_num(&reg.name).ok_or("bad register")?;
+            (Operand::Register(src), Operand::Register(dst)) => {
+                if reg_size(&src.name) != 2 || reg_size(&dst.name) != 2 {
+                    return Err(format!("unsupported {} operands", mnemonic));
+                }
+                let src_num = reg_num(&src.name).ok_or("bad register")?;
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&opcode);
+                self.bytes.push(self.modrm(3, dst_num, src_num));
+                Ok(())
+            }
 ```
-**Bug report:** bug_reports/encode_pop16_wrong_width_gp.md
-**Repro seed:** `r32 = "eax"`
+**Bug report:** bug_reports/encode_bsr_bsf_16_wrong_width_accepted.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-popw %eax must be Err like llvm-mc, got Ok([66, 58])
+`bsfw %ax, %eax` must be Err like llvm-mc, got Ok([66, 0f, bc, c0])
+minimal failing input: mnemonic = "bsfw", bad = "eax", good = "ax", bad_is_src = false
+regression: bsfw %eax, %bx must be Err, got Ok([66, 0f, bc, d8])
 ```
 
 ## Design Caveats
@@ -118,23 +117,18 @@ popw %eax must be Err like llvm-mc, got Ok([66, 58])
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_pop16_pbt.rs | 8 properties + 5 KAT + 3 regression |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_pop16_pbt` |
+| src/backend/i686/assembler/encoder/encode_bsr_bsf_16_pbt.rs | 7 proptest properties + 5 KAT + 3 regression |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_bsr_bsf_16_pbt;` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_pop16 -- --test-threads=1
-cargo test --lib encode_pop16_diff_sreg -- --test-threads=1
-cargo test --lib encode_pop16_diff_mem -- --test-threads=1
-cargo test --lib encode_pop16_neg_r32 -- --test-threads=1
-cargo test --lib test_encode_pop16_regression_sreg_missing_66 -- --test-threads=1
-cargo test --lib test_encode_pop16_regression_mem_unsupported -- --test-threads=1
-cargo test --lib test_encode_pop16_regression_r32_accepted -- --test-threads=1
+cargo test --lib encode_bsr_bsf_16 -- --test-threads=1
+cargo test --lib test_encode_bsr_bsf_16_regression_segment_es_missing -- --test-threads=1
+cargo test --lib test_encode_bsr_bsf_16_regression_r32_src_accepted -- --test-threads=1
+cargo test --lib test_encode_bsr_bsf_16_regression_r8_dst_accepted -- --test-threads=1
 ```
-
-Build contract (user-supplied): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` (swapped filter to `encode_pop16`).
 
 ## Output Directories
 
@@ -146,17 +140,23 @@ Build contract (user-supplied): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_pop16_sreg_missing_66.md (+ .html)
-- pbt-out/bug_reports/encode_pop16_mem_unsupported.md (+ .html)
-- pbt-out/bug_reports/encode_pop16_wrong_width_gp.md (+ .html)
-- pbt-out/run/encode_pop16_test.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_bsr_bsf_16_missing_segment_prefix.md
+- pbt-out/bug_reports/encode_bsr_bsf_16_missing_segment_prefix.html
+- pbt-out/bug_reports/encode_bsr_bsf_16_wrong_width_accepted.md
+- pbt-out/bug_reports/encode_bsr_bsf_16_wrong_width_accepted.html
+- pbt-out/run/encode_bsr_bsf_16_test1.log
+
+## Contract-surface sweep
+
+1 round via `coverage_gaps` after first full run. No line-level data; file-level false NOT LINKED ignored (cargo executed SUT). All documented behaviors of `encode_bsr_bsf_16` (arity, opcode select, 0x66, r16-r16, mem-r16, segment, width gate) have properties. Closed: tier round done.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 03:31 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 266/397 total | PBT candidates: 266 | Tested: 266 (100%) | 1 pass, 266 fail
+> Last updated: 2026-10-09 03:45 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 267/397 total | PBT candidates: 267 | Tested: 267 (100%) | 1 pass, 267 fail
 
 ## Summary
 
@@ -165,10 +165,10 @@ Build contract (user-supplied): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 266 |
-| **Tested (of PBT candidates)** | **266 / 266 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 266 / -1 |
-| **Overall (tested / all functions)** | **266 / 397 (67%)** |
+| PBT candidates (from FUNCTION_INDEX) | 267 |
+| **Tested (of PBT candidates)** | **267 / 267 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 267 / -1 |
+| **Overall (tested / all functions)** | **267 / 397 (67%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -176,13 +176,13 @@ Build contract (user-supplied): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 266 | 266 | 0 | 100% |
+|  | 267 | 267 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 266 | 266 | 0 | 100% |
+| unknown | 267 | 267 | 0 | 100% |
 
 ## File Coverage
 
@@ -471,3 +471,4 @@ Build contract (user-supplied): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1
 | encode_mov_cr | system.rs |
 | encode_mov_seg | system.rs |
 | encode_pop16 | system.rs |
+| encode_bsr_bsf_16 | system.rs |

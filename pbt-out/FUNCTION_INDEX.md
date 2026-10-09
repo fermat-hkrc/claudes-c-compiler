@@ -398,4 +398,4 @@
 | encode_mov_cr | i686/encoder/system.rs | 250 | method | yes | change-surface target this campaign |
 | encode_mov_seg | i686/encoder/system.rs | 274 | method | yes | change-surface target this campaign |
 | encode_pop16 | i686/encoder/system.rs | 325 | method | yes | HARD-scope target this campaign |
-| encode_bsr_bsf_16 | i686/encoder/system.rs | 353 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_bsr_bsf_16 | i686/encoder/system.rs | 353 | method | yes | HARD-scope target this campaign |
