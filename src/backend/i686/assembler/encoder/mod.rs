@@ -59,6 +59,8 @@ mod encode_lea_pbt;
 mod encode_push_pbt;
 #[cfg(test)]
 mod encode_push16_pbt;
+#[cfg(test)]
+mod encode_pop_pbt;
 
 pub(crate) use registers::*;
 

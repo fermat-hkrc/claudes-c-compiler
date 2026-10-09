@@ -200,3 +200,13 @@
 - Fix shapes: r16 arm `0x66; 0x50+n` with `reg_size==2`; Sreg table with 0x66 + classic opcodes; Memory: `emit_segment_prefix` + 0x66 + FF /6.
 - llvm-mc: `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
 - proptest cases=1000; harness `encode_push16_pbt.rs`.
+
+## encode_pop (i686 gp_integer encoder)
+
+- Dispatch: `popl|pop` → encode_pop (mod.rs:196); `popw` → encode_pop16 (separate).
+- r32 short form 0x58+n and Sreg forms (es=07, ss=17, ds=1F, fs=0F A1, gs=0F A9; cs rejected) match llvm-mc `-triple=i686`.
+- Bare memory form 8F /0 (base/disp/SIB/abs, no segment) matches llvm-mc.
+- Metamorphic: `pop` mnemonic alias equals `popl` for r32.
+- Known defects (this campaign): (1) memory arm does not call `emit_segment_prefix` before 0x8F (x86-64 sibling does). Witness: `popl %es:(%eax)` → SUT `[8f,00]` vs mc `[26,8f,00]`; `popl %fs:(%eax)` omits 0x64. (2) non-segment register arm accepts r8/r16/xmm via `reg_num` aliasing (`popl %xmm0`/`%al`/`%ax` → `[0x58]`).
+- Fix shapes: `self.emit_segment_prefix(mem);` before `push(0x8F)`; gate GP arm with `reg_size==4` and reject xmm/mm/st.
+- proptest cases=1000; harness `encode_pop_pbt.rs`.

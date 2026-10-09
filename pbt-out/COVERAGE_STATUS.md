@@ -1,29 +1,28 @@
-# PBT Coverage Status
+# Coverage status
 
-> Last updated: 2026-10-09 (campaign: encode_push16)
-> Coverage evidence: file-level (symbol presence via cargo lib test) — no Rust .profraw/.gcda from this host build; coverage_gaps reported NOT LINKED against unrelated OH binaries (ignored). Real execution evidence: `cargo test --lib encode_push16` ran encode_push16 via InstructionEncoder::encode("pushw", …) (8 pass / 12 fail including KAT/regression).
+> Last updated: 2026-10-09 (campaign: encode_pop)
+> Coverage evidence: file-level (symbol presence via cargo lib test) — coverage_gaps: no line-level .gcda/.profraw; tool listed unrelated OH binaries and reported encode_pop NOT LINKED (false negative — cargo test --lib encode_pop_pbt executed the symbol; 13 pass / 11 fail including KATs)
+> Tier: standard
 
-## This campaign target
+## Change-surface function
 
-| Function | Source | Tested | Result |
-|----------|--------|--------|--------|
-| encode_push16 | gp_integer.rs:382 | yes | 5 props passing, 4 failing (3 bugs) |
+| Function | Location | Property? | Notes |
+|----------|----------|-----------|-------|
+| encode_pop | gp_integer.rs:402 | yes | 5 props passing, 3 failing (2 root-cause bugs; b1 also has metamorphic witness b3) |
 
-## Documented behaviors vs properties
+## Branch / behavior coverage (file-level)
 
 | Behavior | Property | Status |
 |----------|----------|--------|
-| Imm integer form (66 6A / 66 68) | encode_push16_diff_imm, encode_push16_invariant_imm_form | passing |
-| Imm8 metamorphic vs pushl | encode_push16_metamorphic_imm8_vs_pushl | passing |
-| Arity ≠ 1 → Err | encode_push16_neg_arity | passing |
-| r32/r8 rejected | encode_push16_neg_wrong_width_gp | passing |
-| r16 short form | encode_push16_diff_r16 | failing (bug) |
-| Sreg forms | encode_push16_diff_sreg | failing (bug) |
-| Memory FF /6 | encode_push16_diff_mem | failing (bug) |
-| Segmented memory | encode_push16_diff_mem_segment | failing (same bug) |
+| r32 short form 58+n | encode_pop_diff_r32, encode_pop_invariant_r32_opcode | passing |
+| Sreg es/ss/ds/fs/gs | encode_pop_diff_sreg | passing |
+| Memory 8F /0 bare | encode_pop_diff_mem | passing |
+| Segmented memory | encode_pop_diff_mem_segment, encode_pop_meta_segment_stripped_eq_bare | failing (bug) |
+| Arity ≠ 1 → Err | encode_pop_neg_arity | passing |
+| cs rejected | encode_pop_neg_cs | passing |
+| r8/r16/xmm rejected | encode_pop_neg_r8/r16/xmm | failing (bug) |
+| pop == popl alias | encode_pop_meta_pop_eq_popl | passing |
 
 ## Contract-surface sweep
 
-- Round 1 (standard tier): coverage_gaps → no line-level data; file-level cargo evidence shows encode_push16 exercised.
-- Uncovered documented arms still absent in SUT body: Register r16, Sreg, Memory, Symbol imm — already targeted by failing properties; no additional properties owed beyond the three filed bugs.
-- Close reason: tier sweep round complete; every documented llvm-mc pushw form has a property.
+- Round 1 (standard tier): coverage_gaps → no line-level data; file-level cargo test executes encode_pop. No additional documented branch without a property. Strengthening covers Sreg invariant, pop≡popl, mixed arity (all pass).
