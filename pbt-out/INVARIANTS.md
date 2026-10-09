@@ -131,3 +131,13 @@
 - Known defects: (1) segment arm only accepts fs/gs and Errs on es/cs/ss/ds (should call emit_segment_prefix); (2) no reg_size vs mnemonic size gate (movl mem,%ax accepted); (3) reg_num aliases xmm/mm/st as GP dest.
 - Fix shapes: `self.emit_segment_prefix(mem);`; `if reg_size(&dst.name) != size { return Err(...); }`; reject is_xmm/is_mm/st/ymm dest.
 - Harness: encode_mov_mem_reg_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
+
+## encode_mov_reg_mem (i686 gp_integer encoder)
+
+- Opcode: 88 (size1) / 89 (else) + optional 0x66 for size2; ModRM.reg = src; memory via encode_modrm_mem.
+- Non-segment base/disp/SIB/abs forms (except moffs-preferred eAX→abs) match llvm-mc `-triple=i686`.
+- Metamorphic: same mem+GP → store (88/89) and load (8A/8B) share prefixes+ModRM/SIB/disp; only opcode differs.
+- moffs note: llvm-mc may emit A2/A3 for al/ax/eax→abs; SUT uses general 88/89 form — both valid; differential skips moffs when llvm chooses it.
+- Known defects: (1) segment arm only accepts fs/gs and Errs on es/cs/ss/ds (should call emit_segment_prefix); (2) no reg_size vs mnemonic size gate (movl %ax,mem accepted); (3) reg_num aliases xmm/mm/st as GP src.
+- Fix shapes: `self.emit_segment_prefix(mem);`; `if reg_size(&src.name) != size { return Err(...); }`; reject is_xmm/is_mm/st/ymm src.
+- Harness: encode_mov_reg_mem_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.

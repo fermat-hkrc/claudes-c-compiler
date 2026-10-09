@@ -45,6 +45,8 @@ mod encode_mov_infer_size_pbt;
 mod encode_mov_rr_pbt;
 #[cfg(test)]
 mod encode_mov_mem_reg_pbt;
+#[cfg(test)]
+mod encode_mov_reg_mem_pbt;
 
 pub(crate) use registers::*;
 

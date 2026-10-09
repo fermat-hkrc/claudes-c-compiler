@@ -1,4 +1,4 @@
-> Total files: 17 | Total functions: 398 | PBT candidates: 269 | Excluded: 129
+> Total files: 17 | Total functions: 398 | PBT candidates: 272 | Excluded: 126
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -236,7 +236,7 @@
 | encode_mov_imm_reg | gp_integer.rs | 58 | method | no | out of campaign scope |
 | encode_mov_rr | gp_integer.rs | 162 | method | yes | HARD scope this campaign |
 | encode_mov_mem_reg | gp_integer.rs | 194 | method | yes | HARD scope this campaign |
-| encode_mov_reg_mem | gp_integer.rs | 162 | method | no | out of campaign scope |
+| encode_mov_reg_mem | gp_integer.rs | 216 | method | yes | HARD scope this campaign |
 | encode_mov_imm_mem | gp_integer.rs | 179 | method | no | out of campaign scope |
 | encode_movabs | gp_integer.rs | 222 | method | no | out of campaign scope |
 | encode_movsx | gp_integer.rs | 250 | method | no | out of campaign scope |
