@@ -76,3 +76,14 @@
 - Metamorphic: same CR/GP → read and write share ModRM; only opcode byte differs (0x20 vs 0x22).
 - Known defect: register arm accepts 8/16-bit GP names via `reg_num` aliasing (ax/al → same bytes as eax); also accepts `movw` CR forms. Witness: `movl %cr0, %ax` → `[0f,20,c0]`; llvm-mc rejects.
 - Fix shape: `if reg_size(&gp.name) != 4 { return Err(...); }` on both arms before `reg_num`.
+
+## encode_mov_seg (i686 system encoder)
+
+- Opcode: 8C /r (Sreg→r/m) or 8E /r (r/m→Sreg); ModRM.reg = segment number (es=0..gs=5).
+- Segment regs: es, cs, ss, ds, fs, gs (`is_segment_reg` / local seg_num).
+- r32 forms (`movl %ds, %eax` / `movl %eax, %ds`) match llvm-mc `-triple=i686` with no 0x66.
+- r16 → Sreg (`movw %ax, %ds`) matches llvm-mc with no 0x66.
+- Memory forms without segment override (base/disp/SIB/abs) match llvm-mc under `movw`.
+- Metamorphic: same sreg/GP → read and write share ModRM; only opcode differs (0x8C vs 0x8E).
+- Known defects: (1) memory arms do not call `emit_segment_prefix` before opcode (same class as lmsw/invlpg/smsw/…). Witness: `movw %ds, %es:(%eax)` → SUT omits 0x26. (2) Sreg→r16 omits 0x66 (`movw %ds, %ax` → `[8c,d8]` vs `[66,8c,d8]`). (3) register arms accept r8 via `reg_num` aliasing (`movl %al, %ds` → same as eax).
+- Fix shapes: `self.emit_segment_prefix(mem);` before 0x8C/0x8E on mem arms; `if reg_size(&gp)==2 { push 0x66 }` on Sreg→GP arm; `if reg_size(&gp)==1 { return Err }` on both register arms.

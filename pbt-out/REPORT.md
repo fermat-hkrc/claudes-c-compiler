@@ -1,93 +1,146 @@
-# PBT Campaign Report: encode_mov_cr (i686)
+# PBT Campaign Report: encode_mov_seg (i686)
 
 ## Summary
 
-**Verdict:** 2 medium (one root cause): `encode_mov_cr` accepts 8/16-bit GP names and `movw` and silently emits the r32 CR-move encoding (`movl %cr0, %ax` / `movw %cr0, %ax` → `0F 20 C0`), so invalid-width CR moves assemble instead of erroring.
+**Verdict:** 4 high/medium bug reports (3 root causes) in `encode_mov_seg`: (1) high — memory forms omit segment-override prefixes (base and SIB witnesses); (2) high — `movw %sreg, %r16` omits the 0x66 operand-size prefix; (3) medium — 8-bit GP registers are accepted via `reg_num` aliasing.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mov_cr (src/backend/i686/assembler/encoder/system.rs)
-**Tests:** 8 properties + 5 KAT + 2 regression witnesses
-**Result:** 6 properties passing, 2 failing; 2 bug reports (shared root cause)
-**Change surface:** 1 changed function (encode_mov_cr), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) / none native — `coverage_gaps` reported no .profraw/.gcda; execution proven by KAT/PBT byte assertions against the live symbol
-**Effort tier:** standard (≥1000 proptest cases; ≥1 metamorphic; 1 strengthen round; 1 coverage_gaps sweep)
+**Modules tested:** encode_mov_seg (src/backend/i686/assembler/encoder/system.rs)
+**Tests:** 12 properties (+ 6 KAT + 3 regression witnesses)
+**Result:** 8 passing, 4 failing properties; 4 bug reports (3 root causes)
+**Change surface:** 1 function (`encode_mov_seg`), 1 with properties, 0 error-handling-only changes (arity path still covered by negative property)
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw and scanned unrelated OH binaries (false NOT LINKED); cargo lib-test binary contains encode_mov_seg_pbt and executed the real symbol (failing props returned SUT bytes). Sweep round 1: all documented branches already had properties; no new props required.
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mov_cr | 8 props + 5 KAT | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_mov_seg | 12 props (+6 KAT, +3 regression) | 4 (3 root causes) | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_mov_cr accepts non-r32 GP operands
+### B1: encode_mov_seg omits memory segment-override prefix
 
-**Formal:** ∀ cr ∈ {cr0,cr2,cr3,cr4}, gp ∈ r8∪r16. llvm_mc rejects movl %cr,%gp (and symmetric write) ⇒ SUT must Err (not emit 0F 20/22 as if r32)
-**Contract evidence:** inferred (Intel SDM MOV to/from control registers is r32 on IA-32; llvm-mc `-triple=i686` rejects `movl %cr0, %ax`; doc asserts 0F 20/22 /r without authorizing narrow GP)
+**Formal:** ∀ sreg ∈ SEG, mem ∈ MemWithSeg, dir ∈ {store,load}. encode_mov_seg(movw, sreg↔mem) = llvm_mc(movw AT&T with segment prefix)
+**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` is the in-tree contract for memory segment overrides; llvm-mc `-triple=i686` emits 0x26/0x64/…; sibling encoders document the same requirement)
 **Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** `movl %cr0, %ax` → Ok([0x0f, 0x20, 0xc0]); also `movl %al, %cr0`
-**Expected / Actual:** Err / Ok([0x0f, 0x20, 0xc0]) (same as `%eax`)
-**Impact:** Accidental narrow-register CR moves assemble silently as r32 forms; disagrees with llvm-mc and Intel operand-size rules.
-**Root cause:** system.rs:257-258 and 263-264 use `reg_num` which aliases al/ax/eax to one index, with no `reg_size == 4` check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:255`
+**Severity:** high
+**Counterexample:** `movw %es:(%eax), %es` then compare bytes — SUT `[8e,00]`, llvm-mc `[26,8e,00]`
+**Expected / Actual:** `[0x26, 0x8e, 0x00]` / `[0x8e, 0x00]`
+**Impact:** Segmented memory MOV Sreg forms assemble without the override; runtime uses the wrong segment.
+**Root cause:** system.rs:309-319 pushes 0x8C/0x8E then `encode_modrm_mem` without `emit_segment_prefix(mem)`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:309`
 ```rust
-            (Operand::Register(cr), Operand::Register(gp)) if is_control_reg(&cr.name) => {
-                let cr_num = control_reg_num(&cr.name).ok_or("bad control register")?;
-                let gp_num = reg_num(&gp.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&[0x0F, 0x20]);
-                self.bytes.push(self.modrm(3, cr_num, gp_num));
+            (Operand::Register(src), Operand::Memory(mem)) if is_segment_reg(&src.name) => {
+                let sr = seg_num(&src.name).ok_or("bad segment register")?;
+                self.bytes.push(0x8C);
+                self.encode_modrm_mem(sr, mem)
+            }
+```
+**Suggested fix:** Call `emit_segment_prefix` before the opcode on both memory arms.
+```rust
+                self.emit_segment_prefix(mem);
+                self.bytes.push(0x8C);
+                self.encode_modrm_mem(sr, mem)
+```
+**Bug report:** bug_reports/encode_mov_seg_missing_segment_prefix.md
+**Repro seed:** proptest cc e526b10267810067b3b6bef737c44be9c4b94a960db33efddf0c5811ff379113
+**Raw output:**
+```text
+left: `[142, 0]`, right: `[38, 142, 0]`: segmented mem must include override prefix for movw %es:(%eax), %es
+```
+
+### B2: encode_mov_seg omits 0x66 for movw Sreg→r16
+
+**Formal:** ∀ sreg ∈ SEG, r16 ∈ R16. encode_mov_seg(movw, sreg, r16) = llvm_mc("movw %sreg, %r16")
+**Contract evidence:** inferred (Intel SDM MOV r/m16,Sreg; llvm-mc `movw %ds, %ax` → `[66,8c,d8]`)
+**Documentation conflict:** (none) — comment says "mov %sreg, %reg32" but the public path accepts `movw`
+**Severity:** high
+**Counterexample:** `movw %es, %ax` — SUT `[8c,c0]`, llvm-mc `[66,8c,c0]`
+**Expected / Actual:** `[0x66, 0x8c, 0xc0]` / `[0x8c, 0xc0]`
+**Impact:** 16-bit-width MOV from segment silently drops the operand-size prefix.
+**Root cause:** system.rs:293-298 always emits bare 0x8C; size from `movw` is discarded when `encode_mov` routes to `encode_mov_seg`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:293`
+```rust
+            (Operand::Register(src), Operand::Register(dst)) if is_segment_reg(&src.name) => {
+                let sr = seg_num(&src.name).ok_or("bad segment register")?;
+                let gp = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.push(0x8C);
+                self.bytes.push(self.modrm(3, sr, gp));
                 Ok(())
             }
 ```
-**Suggested fix:** Gate both arms with `reg_size(&gp.name) == 4` before encoding.
+**Suggested fix:** Emit 0x66 when `reg_size(&dst.name) == 2`.
 ```rust
-                if reg_size(&gp.name) != 4 {
-                    return Err("mov cr requires 32-bit register".to_string());
-                }
-                let gp_num = reg_num(&gp.name).ok_or("bad register")?;
+                if reg_size(&dst.name) == 2 { self.bytes.push(0x66); }
+                self.bytes.push(0x8C);
 ```
-**Bug report:** bug_reports/encode_mov_cr_non_r32_gp.md
-**Repro seed:** proptest cc 11bc540d850d59d89636a58f251f4d9027d380054df80d63af5d56346fa706d5 (neg_bad_operands); deterministic regressions need no seed
+**Bug report:** bug_reports/encode_mov_seg_missing_66_r16.md
+**Repro seed:** (deterministic KAT / proptest minimal sreg=es,r16=ax)
 **Raw output:**
 ```text
-SUT accepted invalid-width GP `movl %cr0, %ax` → [0f, 20, c0]; MOV CR requires r32 (Intel SDM; llvm-mc rejects).
-minimal failing input: kind = 3, cr = "cr0", r16 = "ax"
-movl %cr0, %ax must Err (r32 only); got Ok(Ok([15, 32, 192]))
+left: `[140, 192]`, right: `[102, 140, 192]`: Sreg->r16 must match llvm-mc (incl. 0x66) for movw %es, %ax
 ```
 
-### B2: encode_mov_cr accepts movw with control registers
+### B3: encode_mov_seg accepts 8-bit GP registers
 
-**Formal:** ∀ cr, r16. llvm_mc rejects movw CR form ⇒ SUT Err
-**Contract evidence:** inferred (Intel SDM r32-only; llvm-mc rejects `movw %cr0, %ax`)
+**Formal:** ∀ r8 ∈ R8, sreg ∈ SEG, dir. encode(movl with r8↔sreg) = Err
+**Contract evidence:** inferred (Intel SDM MOV Sreg is r/m16 or r32; llvm-mc rejects `movl %al, %ds` / `movl %es, %al`)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** `movw %cr0, %ax` → Ok([0x0f, 0x20, 0xc0])
-**Expected / Actual:** Err / Ok([0x0f, 0x20, 0xc0])
-**Impact:** 16-bit-sized mov involving CR silently becomes a 32-bit CR move.
-**Root cause:** `encode_mov` routes `movw` into `encode_mov_cr`; no `reg_size == 4` gate (same statements as B1).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:255`
+**Counterexample:** `movl %es, %al` → Ok(`[8c,c0]`); `movl %al, %ds` → Ok(`[8e,d8]`)
+**Expected / Actual:** Err / Ok with r32-aliased encoding
+**Impact:** Illegal 8-bit operands silently encode as the corresponding r32 slot.
+**Root cause:** `reg_num` maps al/ah/… onto eax-slot codes with no `reg_size` gate (system.rs:293-306).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:295`
 ```rust
-            (Operand::Register(cr), Operand::Register(gp)) if is_control_reg(&cr.name) => {
-                let cr_num = control_reg_num(&cr.name).ok_or("bad control register")?;
-                let gp_num = reg_num(&gp.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&[0x0F, 0x20]);
-                self.bytes.push(self.modrm(3, cr_num, gp_num));
-                Ok(())
-            }
+                let gp = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.push(0x8C);
+                self.bytes.push(self.modrm(3, sr, gp));
 ```
-**Suggested fix:** Same r32 gate as B1.
+**Suggested fix:** Reject `reg_size(&gp.name) == 1` on both register arms.
 ```rust
-                if reg_size(&gp.name) != 4 {
-                    return Err("mov cr requires 32-bit register".to_string());
+                if reg_size(&dst.name) == 1 {
+                    return Err(format!("MOV Sreg does not accept 8-bit register {}", dst.name));
                 }
 ```
-**Bug report:** bug_reports/encode_mov_cr_movw_accepted.md
-**Repro seed:** (deterministic proptest shrink; no separate seed required)
+**Bug report:** bug_reports/encode_mov_seg_accepts_r8.md
+**Repro seed:** proptest minimal to_sreg=false, sreg=es, r8=al
 **Raw output:**
 ```text
-SUT accepted `movw %cr0, %ax` → [0f, 20, c0]; MOV CR is r32-only
-minimal failing input: write = false, cr = "cr0", r16 = "ax"
+SUT accepted invalid-width r8 `movl %es, %al` → [8c, c0]
+```
+
+### B4: encode_mov_seg omits segment-override prefix on SIB memory forms
+
+**Formal:** ∀ sreg, mseg, base, index≠esp, scale, dir. encode(movw, SIB+seg) = llvm_mc
+**Contract evidence:** inferred (core.rs:31-42 emit_segment_prefix; llvm-mc; same root cause as B1)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `movw %es:4(%eax,%eax,1), %es` — SUT `[8e,44,00,04]`, llvm-mc `[26,8e,44,00,04]`
+**Expected / Actual:** `[0x26, 0x8e, 0x44, 0x00, 0x04]` / `[0x8e, 0x44, 0x00, 0x04]`
+**Impact:** SIB+segment MOV Sreg forms assemble without the override.
+**Root cause:** system.rs:315-319 pushes 0x8E then encode_modrm_mem without emit_segment_prefix (same class as B1).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:315`
+```rust
+            (Operand::Memory(mem), Operand::Register(dst)) if is_segment_reg(&dst.name) => {
+                let sr = seg_num(&dst.name).ok_or("bad segment register")?;
+                self.bytes.push(0x8E);
+                self.encode_modrm_mem(sr, mem)
+            }
+```
+**Suggested fix:** Call `emit_segment_prefix` before the opcode on both memory arms.
+```rust
+                self.emit_segment_prefix(mem);
+                self.bytes.push(0x8E);
+                self.encode_modrm_mem(sr, mem)
+```
+**Bug report:** bug_reports/encode_mov_seg_missing_segment_prefix_sib.md
+**Repro seed:** proptest cc 6d83c90075a50c4f2a71c235f2a7dde1b2077320ad034076be76100d6ffdc27c
+**Raw output:**
+```text
+left: `[142, 68, 0, 4]`, right: `[38, 142, 68, 0, 4]`: seg+SIB must match llvm-mc for movw %es:4(%eax,%eax,1), %es
 ```
 
 ## Design Caveats
@@ -98,44 +151,41 @@ minimal failing input: write = false, cr = "cr0", r16 = "ax"
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs | 8 properties + 5 KAT + 2 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_mov_cr_pbt;` registration |
+| src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs | 12 properties + 6 KAT + 3 regression |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_mov_seg_pbt;` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_mov_cr -- --test-threads=1
-cargo test --lib test_encode_mov_cr_regression_rejects_ax -- --test-threads=1
-cargo test --lib test_encode_mov_cr_regression_rejects_al -- --test-threads=1
-cargo test --lib encode_mov_cr_neg_bad_operands -- --test-threads=1
-cargo test --lib encode_mov_cr_neg_movw_width -- --test-threads=1
+cargo test --lib encode_mov_seg -- --test-threads=1
+cargo test --lib test_encode_mov_seg_regression_es_segment_prefix -- --test-threads=1
+cargo test --lib test_encode_mov_seg_regression_movw_ds_ax_66 -- --test-threads=1
+cargo test --lib test_encode_mov_seg_regression_rejects_al -- --test-threads=1
 ```
-
-Build contract (immutable): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` — rebuilt by swapping filter to `encode_mov_cr`.
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (from report.json)
+- pbt-out/REPORT.html (rendered from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_mov_cr_non_r32_gp.md
-- pbt-out/bug_reports/encode_mov_cr_non_r32_gp.html (from report.json)
-- pbt-out/bug_reports/encode_mov_cr_movw_accepted.md
-- pbt-out/bug_reports/encode_mov_cr_movw_accepted.html (from report.json)
-- pbt-out/run/encode_mov_cr_full2.log
+- pbt-out/bug_reports/encode_mov_seg_missing_segment_prefix.md (+ .html)
+- pbt-out/bug_reports/encode_mov_seg_missing_66_r16.md (+ .html)
+- pbt-out/bug_reports/encode_mov_seg_accepts_r8.md (+ .html)
+- pbt-out/bug_reports/encode_mov_seg_missing_segment_prefix_sib.md (+ .html)
+- pbt-out/run/encode_mov_seg_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 03:00 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 264/397 total | PBT candidates: 264 | Tested: 264 (100%) | 1 pass, 264 fail
+> Last updated: 2026-10-09 03:18 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 265/397 total | PBT candidates: 265 | Tested: 265 (100%) | 1 pass, 265 fail
 
 ## Summary
 
@@ -144,10 +194,10 @@ Build contract (immutable): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- 
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 264 |
-| **Tested (of PBT candidates)** | **264 / 264 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 264 / -1 |
-| **Overall (tested / all functions)** | **264 / 397 (66%)** |
+| PBT candidates (from FUNCTION_INDEX) | 265 |
+| **Tested (of PBT candidates)** | **265 / 265 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 265 / -1 |
+| **Overall (tested / all functions)** | **265 / 397 (67%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -155,13 +205,13 @@ Build contract (immutable): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- 
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 264 | 264 | 0 | 100% |
+|  | 265 | 265 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 264 | 264 | 0 | 100% |
+| unknown | 265 | 265 | 0 | 100% |
 
 ## File Coverage
 
@@ -448,3 +498,4 @@ Build contract (immutable): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- 
 | encode_lmsw | system.rs |
 | encode_smsw | system.rs |
 | encode_mov_cr | system.rs |
+| encode_mov_seg | system.rs |

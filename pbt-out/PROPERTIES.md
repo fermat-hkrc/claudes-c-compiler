@@ -1,222 +1,332 @@
-# Properties: encode_mov_cr (i686)
+# Properties: encode_mov_seg (i686)
 
-## encode_mov_cr_diff_cr_to_gp
-- Tier: 5
-- Rationale: Strongest oracle is differential vs llvm-mc (independent assembler). State machine N/A (pure encode). Round-trip N/A (no i686 CR decoder). Intel/AT&T MOV CR→GP is 0F 20 /r.
-- Doc contract: system.rs:249 "Encode MOV to/from control register: 0F 20 /r (read) or 0F 22 /r (write)" — asserted fingerprint 8d63ee6c
-- Seed: (none — no prior mov-cr unit tests)
-- Formal: ∀ cr ∈ {cr0,cr2,cr3,cr4}, gp ∈ GP32. encode(movl %cr, %gp) = llvm_mc("movl %cr, %gp")
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_mov_cr
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [cr, gp]
-  domain: { cr: control_regs, gp: gp32 }
-  relation:
-    op: eq
-    lhs: "sut_encode(movl, [Reg(cr), Reg(gp)])"
-    rhs: "llvm_mc(movl %cr, %gp)"
-generators:
-  cr: { gen: oneof, values: ["cr0", "cr2", "cr3", "cr4"] }
-  gp: { gen: oneof, values: ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"] }
-evidence: system.rs:249-260; Intel SDM MOV CR; llvm-mc i686
-```
-
-## encode_mov_cr_diff_gp_to_cr
-- Tier: 5
-- Rationale: Symmetric write direction 0F 22 /r; same differential reference.
-- Doc contract: system.rs:249 "Encode MOV to/from control register: 0F 20 /r (read) or 0F 22 /r (write)" — asserted fingerprint 8d63ee6c
-- Seed: (none)
-- Formal: ∀ cr ∈ CR, gp ∈ GP32. encode(movl %gp, %cr) = llvm_mc("movl %gp, %cr")
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_mov_cr
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [gp, cr]
-  domain: { gp: gp32, cr: control_regs }
-  relation:
-    op: eq
-    lhs: "sut_encode(movl, [Reg(gp), Reg(cr)])"
-    rhs: "llvm_mc(movl %gp, %cr)"
-generators:
-  gp: { gen: oneof, values: ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"] }
-  cr: { gen: oneof, values: ["cr0", "cr2", "cr3", "cr4"] }
-evidence: system.rs:249-267
-```
-
-## encode_mov_cr_invariant_opcode_modrm
+## encode_mov_seg_diff_sreg_to_gp32
 - Tier: 4
-- Rationale: Algebraic invariant from Intel encoding: bytes = [0F, 20|22, modrm(3, cr_num, gp_num)].
-- Doc contract: system.rs:249 "Encode MOV to/from control register: 0F 20 /r (read) or 0F 22 /r (write)" — asserted fingerprint 8d63ee6c
-- Seed: (none)
-- Formal: ∀ dir, cr, gp. let b = encode(...). b = [0x0F, opc, m] ∧ opc∈{0x20,0x22} ∧ (m>>6)=3 ∧ ((m>>3)&7)=cr_num(cr) ∧ (m&7)=reg_num(gp)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
+- Rationale: Strongest oracle is differential vs llvm-mc (independent assembler). State machine N/A (pure encode). Round-trip N/A (no decoder). Evidence: system.rs:273-322; Intel SDM MOV Sreg; llvm-mc `movl %ds, %eax` → `[8c,d8]`.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: (none) — generalized from sibling encode_mov_cr_pbt KAT pattern
+- Formal: ∀ sreg ∈ {es,cs,ss,ds,fs,gs}, gp ∈ GP32. encode_mov_seg(movl, sreg, gp) = llvm_mc("movl %sreg, %gp")
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_cr
+function: encode_mov_seg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [sreg, gp]
+  domain: { sreg: segment_regs, gp: gp32 }
+  relation:
+    op: eq
+    lhs: "sut_encode(movl, [sreg, gp])"
+    rhs: "llvm_mc(movl %sreg, %gp)"
+generators:
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  gp: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+evidence: system.rs:293-298
+```
+
+## encode_mov_seg_diff_gp32_to_sreg
+- Tier: 4
+- Rationale: Differential write direction (8E /r). Same evidence chain as read form.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: (none)
+- Formal: ∀ gp ∈ GP32, sreg ∈ SEG. encode_mov_seg(movl, gp, sreg) = llvm_mc("movl %gp, %sreg")
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_mov_seg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [gp, sreg]
+  domain: { gp: gp32, sreg: segment_regs }
+  relation:
+    op: eq
+    lhs: "sut_encode(movl, [gp, sreg])"
+    rhs: "llvm_mc(movl %gp, %sreg)"
+generators:
+  gp: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+evidence: system.rs:301-306
+```
+
+## encode_mov_seg_diff_sreg_to_r16
+- Tier: 4
+- Rationale: Differential for 16-bit dest: llvm-mc emits 0x66 operand-size prefix (`movw %ds, %ax` → `[66,8c,d8]`). encode_mov_seg ignores size once routed — misses 0x66.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: (none)
+- Formal: ∀ sreg ∈ SEG, r16 ∈ R16. encode_mov_seg(movw, sreg, r16) = llvm_mc("movw %sreg, %r16")
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
+- Status: failing
+- Counterexample: movw %es, %ax → SUT [8c,c0] vs llvm-mc [66,8c,c0]
+- Bug report: bug_reports/encode_mov_seg_missing_66_r16.md
+
+```property
+function: encode_mov_seg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [sreg, r16]
+  domain: { sreg: segment_regs, r16: r16 }
+  relation:
+    op: eq
+    lhs: "sut_encode(movw, [sreg, r16])"
+    rhs: "llvm_mc(movw %sreg, %r16)"
+generators:
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  r16: { gen: oneof, values: ["ax","cx","dx","bx","sp","bp","si","di"] }
+evidence: system.rs:293-298; llvm-mc movw %ds,%ax = [66,8c,d8]
+```
+
+## encode_mov_seg_diff_r16_to_sreg
+- Tier: 4
+- Rationale: Write to sreg from r16; llvm-mc encodes without 0x66 (`movw %ax, %ds` → `[8e,d8]`).
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: (none)
+- Formal: ∀ r16 ∈ R16, sreg ∈ SEG. encode_mov_seg(movw, r16, sreg) = llvm_mc("movw %r16, %sreg")
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_mov_seg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [r16, sreg]
+  domain: { r16: r16, sreg: segment_regs }
+  relation:
+    op: eq
+    lhs: "sut_encode(movw, [r16, sreg])"
+    rhs: "llvm_mc(movw %r16, %sreg)"
+generators:
+  r16: { gen: oneof, values: ["ax","cx","dx","bx","sp","bp","si","di"] }
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+evidence: system.rs:301-306
+```
+
+## encode_mov_seg_diff_mem
+- Tier: 4
+- Rationale: Memory forms use 8C/8E + ModR/M; llvm-mc requires movw for mem. Covers base/disp/SIB/abs without segment override.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_smsw_pbt.rs memory differential pattern
+- Formal: ∀ sreg ∈ SEG, mem ∈ MemNoSeg, dir ∈ {store,load}. encode_mov_seg(movw, sreg↔mem) = llvm_mc(movw AT&T form)
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_mov_seg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [sreg, mem, dir]
+  domain: { sreg: segment_regs, mem: mem_no_seg, dir: {store,load} }
+  relation:
+    op: eq
+    lhs: "sut_encode(movw, sreg_mem_ops)"
+    rhs: "llvm_mc(movw att)"
+generators:
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  mem: { gen: mem_forms_no_seg }
+evidence: system.rs:309-319
+```
+
+## encode_mov_seg_diff_mem_segment
+- Tier: 4
+- Rationale: Memory with segment override must emit 0x26/0x2E/0x36/0x3E/0x64/0x65 before opcode (core.rs:31-42 emit_segment_prefix). Sibling system encoders omit this — confirmed fail.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_lmsw_pbt / encode_invlpg_pbt segment differential
+- Formal: ∀ sreg ∈ SEG, mem ∈ MemWithSeg, dir ∈ {store,load}. encode_mov_seg(movw, …) = llvm_mc including segment prefix
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
+- Status: failing
+- Counterexample: movw %es:(%eax), %es → SUT [8e,00] vs llvm-mc [26,8e,00]
+- Bug report: bug_reports/encode_mov_seg_missing_segment_prefix.md
+
+```property
+function: encode_mov_seg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [sreg, mem, dir]
+  domain: { sreg: segment_regs, mem: mem_with_seg, dir: {store,load} }
+  relation:
+    op: eq
+    lhs: "sut_encode(movw, sreg_mem_ops)"
+    rhs: "llvm_mc(movw %seg:…)"
+generators:
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  mem: { gen: mem_forms_with_seg }
+evidence: system.rs:309-319; core.rs:31-42
+```
+
+## encode_mov_seg_diff_segment_sib
+- Tier: 4
+- Rationale: Strengthening — SIB addressing plus segment override must still emit the override prefix (same root cause as mem_segment).
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_lmsw_pbt segment+SIB
+- Formal: ∀ sreg, mseg, base, index≠esp, scale, dir. encode(movw, SIB+seg) = llvm_mc
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
+- Status: failing
+- Counterexample: movw %es:4(%eax,%eax,1), %es → SUT [8e,44,00,04] vs llvm-mc [26,8e,44,00,04]
+- Bug report: bug_reports/encode_mov_seg_missing_segment_prefix_sib.md
+
+```property
+function: encode_mov_seg
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [sreg, mseg, base, index, scale, dir]
+  domain: { sreg: segment_regs, mseg: segment_regs, base: gp32, index: gp32_no_esp, scale: scales, dir: store_or_load }
+  relation:
+    op: eq
+    lhs: "sut_encode(movw, sib_seg_ops)"
+    rhs: "llvm_mc(movw att)"
+generators:
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  mseg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+evidence: system.rs:309-319; core.rs:31-42
+```
+
+## encode_mov_seg_invariant_opcode_modrm
+- Tier: 3
+- Rationale: Algebraic invariant — register form is exactly 2 bytes: opc ∈ {0x8C,0x8E}, ModRM mod=3, reg=sreg#, rm=gp#.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_mov_cr_pbt invariant
+- Formal: ∀ write ∈ Bool, sreg, gp32. bytes = encode(movl,…) ⇒ |bytes|=2 ∧ bytes[0]=8C|8E ∧ mod=3 ∧ reg=sreg_num ∧ rm=gp_num
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_mov_seg
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [dir, cr, gp]
-  domain: { dir: {read,write}, cr: control_regs, gp: gp32 }
-  relation:
-    op: holds
-    expr: "bytes==[0x0F, opc, modrm] && opc in {0x20,0x22} && mod==3 && reg==cr_num && rm==gp_num"
+  vars: [write, sreg, gp]
+  domain: { write: bool, sreg: segment_regs, gp: gp32 }
+  body: "let b = sut_encode(movl, ops(write,sreg,gp)); b.len()==2 && b[0]==(if write {0x8E} else {0x8C}) && (b[1]>>6)==3 && ((b[1]>>3)&7)==seg_num(sreg) && (b[1]&7)==gp_num(gp)"
 generators:
-  dir: { gen: bool }
-  cr: { gen: oneof, values: ["cr0", "cr2", "cr3", "cr4"] }
-  gp: { gen: oneof, values: ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"] }
-evidence: system.rs:249-267; Intel SDM
+  write: { gen: bool }
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  gp: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+evidence: system.rs:293-306
 ```
 
-## encode_mov_cr_metamorphic_read_write
-- Tier: 4
-- Rationale: Required metamorphic: same CR/GP pair — read and write encodings share ModRM; only opcode byte differs (0x20 vs 0x22).
-- Doc contract: system.rs:249 "Encode MOV to/from control register: 0F 20 /r (read) or 0F 22 /r (write)" — asserted fingerprint 8d63ee6c
-- Seed: (none)
-- Formal: ∀ cr, gp. encode(cr→gp)[0]=encode(gp→cr)[0]=0x0F ∧ encode(cr→gp)[1]=0x20 ∧ encode(gp→cr)[1]=0x22 ∧ encode(cr→gp)[2]=encode(gp→cr)[2]
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
+## encode_mov_seg_metamorphic_read_write
+- Tier: 3
+- Rationale: Required metamorphic — same sreg/gp pair, read (8C) and write (8E) share ModRM; only opcode differs.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_mov_cr_pbt metamorphic
+- Formal: ∀ sreg, gp. encode(sreg→gp)[1] = encode(gp→sreg)[1] ∧ opc_read=0x8C ∧ opc_write=0x8E
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_cr
+function: encode_mov_seg
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [cr, gp]
-  domain: { cr: control_regs, gp: gp32 }
+  vars: [sreg, gp]
+  domain: { sreg: segment_regs, gp: gp32 }
   relation:
-    op: holds
-    expr: "read[0]==write[0]==0x0F && read[1]==0x20 && write[1]==0x22 && read[2]==write[2]"
+    op: eq
+    lhs: "encode(sreg,gp)[1]"
+    rhs: "encode(gp,sreg)[1]"
 generators:
-  cr: { gen: oneof, values: ["cr0", "cr2", "cr3", "cr4"] }
-  gp: { gen: oneof, values: ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"] }
-evidence: system.rs:255-267
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  gp: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+evidence: system.rs:293-306
 ```
 
-## encode_mov_cr_neg_arity
+## encode_mov_seg_neg_arity
 - Tier: 3
-- Rationale: Negative contract — arity must be exactly 2.
-- Doc contract: system.rs:251-253 if ops.len() != 2 return Err("mov cr requires 2 operands") — domain-restriction fingerprint a1b2c3d4
-- Seed: (none)
-- Formal: ∀ ops. len(ops)≠2 ⇒ encode path for movl with CR-shaped ops yields Err mentioning 2 operands
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
+- Rationale: Negative/error — wrong arity must Err with "2 operand" message.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_mov_cr_pbt neg
+- Formal: ∀ n≠2. encode_mov_seg(n ops including a segment) = Err containing "2 operand"
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_cr
+function: encode_mov_seg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [ops]
-  domain: { ops: arity != 2 }
-  relation:
-    op: holds
-    expr: "sut_encode(movl, ops).is_err()"
-expected_error: "mov cr requires 2 operands"
+  vars: [n]
+  domain: { n: arity_not_2 }
+  body: "sut_encode(movl, ops_of_len(n)).is_err()"
 generators:
-  n: { gen: int, min: 0, max: 5 }
-evidence: system.rs:251-253
+  n: { gen: int, min: 0, max: 4 }
+expected_error: String
+evidence: system.rs:275-277
 ```
 
-## encode_mov_cr_neg_bad_operands
+## encode_mov_seg_neg_r8
 - Tier: 3
-- Rationale: Non CR↔r32 pairs must Err. 8/16-bit GP rejected by llvm-mc (Intel r32 only). Found: SUT accepts r16/r8 via reg_num aliasing.
-- Doc contract: system.rs:249 "Encode MOV to/from control register: 0F 20 /r (read) or 0F 22 /r (write)" — asserted fingerprint 8d63ee6c
-- Seed: encode_lmsw_pbt.rs non-r16 rejection pattern
-- Formal: ∀ bad ∈ {r16,r8,...}. llvm_mc rejects ⇒ SUT Err (no silent encode as r32)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
+- Rationale: Negative/error — r8 GP must be rejected (Intel MOV Sreg is r/m16 or r32, not r8; llvm-mc rejects).
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_mov_cr_pbt neg
+- Formal: ∀ r8,sreg,dir. encode(movl with r8) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
 - Status: failing
-- Counterexample: movl %cr0, %ax → Ok([0x0f, 0x20, 0xc0]); also movl %al, %cr0 → Ok([0x0f, 0x22, 0xc0])
-- Bug report: pbt-out/bug_reports/encode_mov_cr_non_r32_gp.md
+- Counterexample: movl %es, %al → Ok([8c,c0]); llvm-mc rejects
+- Bug report: bug_reports/encode_mov_seg_accepts_r8.md
 
 ```property
-function: encode_mov_cr
+function: encode_mov_seg
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [kind, bad]
-  domain: { kind: imm|mem|label|r16|r8|seg }
-  relation:
-    op: holds
-    expr: "sut_rejects_or_matches_llvm_mc_reject(kind, bad)"
-expected_error: unsupported mov cr operands
+  vars: [sreg, r8, to_sreg]
+  domain: { sreg: segment_regs, r8: r8, to_sreg: bool }
+  body: "sut_encode(movl, r8_ops(sreg,r8,to_sreg)).is_err()"
 generators:
-  kind: { gen: int, min: 0, max: 7 }
-evidence: system.rs:269; Intel MOV CR r32; llvm-mc rejects r16/r8
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  r8: { gen: oneof, values: ["al","cl","dl","bl","ah","ch","dh","bh"] }
+  to_sreg: { gen: bool }
+expected_error: String
+evidence: system.rs:293-306; Intel SDM MOV Sreg r/m16
 ```
 
-## encode_mov_cr_diff_mnemonic_aliases
-- Tier: 5
-- Rationale: Strengthen — unsuffixed `mov` and `movl` must agree with llvm-mc for valid CR↔r32 forms.
-- Doc contract: system.rs:249 "Encode MOV to/from control register: 0F 20 /r (read) or 0F 22 /r (write)" — asserted fingerprint 8d63ee6c
-- Seed: (none)
-- Formal: ∀ cr, gp, dir. encode(mov, ...) = encode(movl, ...) = llvm_mc(movl ...)
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
+## encode_mov_seg_diff_mnemonic_aliases
+- Tier: 4
+- Rationale: Strengthening — unsuffixed `mov` must agree with `movl` / llvm-mc for r32 forms.
+- Doc contract: system.rs:273 "Encode MOV to/from segment register" — asserted fingerprint f66b8f37
+- Seed: encode_mov_cr_pbt mnemonic aliases
+- Formal: ∀ write,sreg,gp. encode(mov,…) = encode(movl,…) = llvm_mc(movl …)
+- Test file: src/backend/i686/assembler/encoder/encode_mov_seg_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_mov_cr
+function: encode_mov_seg
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [cr, gp, dir]
-  domain: { cr: control_regs, gp: gp32, dir: {r,w} }
+  vars: [write, sreg, gp]
+  domain: { write: bool, sreg: segment_regs, gp: gp32 }
   relation:
     op: eq
     lhs: "sut_encode(mov, ops)"
-    rhs: "llvm_mc(movl ...)"
+    rhs: "llvm_mc(movl att)"
 generators:
-  cr: { gen: oneof, values: ["cr0", "cr2", "cr3", "cr4"] }
-  gp: { gen: oneof, values: ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"] }
-evidence: mod.rs:151-155; gp_integer.rs:18-19
-```
-
-## encode_mov_cr_neg_movw_width
-- Tier: 3
-- Rationale: Strengthening round — `movw` with CR must not emit 0F 20/22 (Intel r32-only; llvm-mc rejects). Same root-cause class as non-r32 GP acceptance.
-- Doc contract: system.rs:249 "Encode MOV to/from control register: 0F 20 /r (read) or 0F 22 /r (write)" — asserted fingerprint 8d63ee6c
-- Seed: (none)
-- Formal: ∀ cr, r16, dir. llvm_mc rejects movw CR form ⇒ SUT Err
-- Test file: src/backend/i686/assembler/encoder/encode_mov_cr_pbt.rs
-- Status: failing
-- Counterexample: movw %cr0, %ax → Ok([0x0f, 0x20, 0xc0])
-- Bug report: pbt-out/bug_reports/encode_mov_cr_movw_accepted.md
-
-```property
-function: encode_mov_cr
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [cr, r16, write]
-  domain: { cr: control_regs, r16: gp16 }
-  relation:
-    op: holds
-    expr: "sut_encode(movw, ops).is_err()"
-expected_error: width / unsupported
-generators:
-  cr: { gen: oneof, values: ["cr0", "cr2", "cr3", "cr4"] }
-  r16: { gen: oneof, values: ["ax", "cx", "dx", "bx", "sp", "bp", "si", "di"] }
-evidence: Intel SDM MOV CR r32; llvm-mc rejects movw %cr0, %ax
+  write: { gen: bool }
+  sreg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  gp: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+evidence: gp_integer.rs:21-23; mod.rs mov dispatch
 ```
