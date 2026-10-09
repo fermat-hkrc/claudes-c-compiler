@@ -1,28 +1,23 @@
-# PBT Coverage Status
+# Coverage Status — encode_bit_count campaign
 
-> Last updated: 2026-10-09 (campaign: encode_bswap)
-> Coverage evidence: file-level (symbol presence) — no .gcda/.profraw from cargo host run
-> Change-surface target encode_bswap: tested (8 properties, linked in ccc libtest binary per `nm`)
+**Tier:** standard
+**Coverage evidence:** file-level (symbol presence) — no native line coverage (.gcda/.profraw absent)
+**coverage_gaps:** reported NOT LINKED for `encode_bit_count` (Rust mangling false negative). nm confirms:
 
-## This campaign
+```
+_ZN3ccc7backend4i6869assembler7encoder10gp_integer76_$LT$impl$u20$ccc..backend..i686..assembler..encoder..InstructionEncoder$GT$16encode_bit_count17h0e4a317da3c81d5eE
+```
+
+in `target/debug/deps/ccc-70d56e2a1978a8d3`. KAT + differential properties execute the real symbol.
 
 | Metric | Value |
 |--------|-------|
-| Target | encode_bswap (gp_integer.rs:945) |
-| Properties | 8 (6 passing, 2 failing) |
-| Bugs | 2 medium |
-| Test binary | target/debug/deps/ccc-70d56e2a1978a8d3 |
-| Symbol evidence | `InstructionEncoder::encode_bswap` present (nm); error strings `bswap requires 1 operand` / `bswap requires register operand` in binary |
-| coverage_gaps | no line-level; matcher reported NOT LINKED (Rust name mangling false negative) — overridden by nm + executed KAT/differential |
+| Target function | encode_bit_count |
+| Properties | 9 (6 pass / 3 fail) |
+| KAT | 4 pass |
+| Strengthen round | 1 (meta mnemonic opcodes) pass |
+| Regression witnesses | 3 fail (as expected) |
+| Bugs filed | 3 |
+| Sweep | 1 round; documented behaviors covered (rr success, mem, arity, width, non-GP, imm/label, opc invariant/meta) |
 
-## Sweep decision
-
-Documented behaviors of encode_bswap:
-1. r32 success → differential + invariant + metamorphic (covered, passing)
-2. arity ≠ 1 → neg_arity (covered, passing)
-3. non-register → neg_non_register (covered, passing)
-4. wrong width r16/r8 → neg_wrong_width (covered, failing = bug B1)
-5. non-GP aliased → neg_non_gp (covered, failing = bug B2)
-6. sreg/cr unknown → neg_unknown_reg (covered, passing; strengthen round)
-
-No further documented branch without a property. Sweep closed.
+**Sweep close reason:** tier rounds done — all documented encode_bit_count behaviors have properties; no additional gap properties required after nm/KAT proof of link/execution.

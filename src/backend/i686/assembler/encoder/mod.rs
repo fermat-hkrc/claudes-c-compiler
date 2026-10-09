@@ -73,6 +73,8 @@ mod encode_inc_dec_pbt;
 mod encode_double_shift_pbt;
 #[cfg(test)]
 mod encode_bswap_pbt;
+#[cfg(test)]
+mod encode_bit_count_pbt;
 
 pub(crate) use registers::*;
 

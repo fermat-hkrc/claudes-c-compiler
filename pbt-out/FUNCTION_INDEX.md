@@ -253,7 +253,7 @@
 | encode_shift | gp_integer.rs | 756 | method | yes | - |
 | encode_double_shift | gp_integer.rs | 920 | method | yes | HARD-scope target this campaign |
 | encode_bswap | gp_integer.rs | 945 | method | yes | HARD-scope target this campaign |
-| encode_bit_count | gp_integer.rs | 878 | method | no | out of campaign scope |
+| encode_bit_count | gp_integer.rs | 959 | method | yes | HARD-scope target this campaign |
 | encode_setcc | gp_integer.rs | 915 | method | no | out of campaign scope |
 | encode_cmovcc | gp_integer.rs | 949 | method | no | out of campaign scope |
 | encode_jmp | gp_integer.rs | 988 | method | no | out of campaign scope |
