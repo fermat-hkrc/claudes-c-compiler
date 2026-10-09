@@ -249,7 +249,7 @@
 | encode_test | gp_integer.rs | 645 | method | yes | HARD-scope target this campaign |
 | encode_imul | gp_integer.rs | 711 | method | yes | change-surface sole target |
 | encode_unary_rm | gp_integer.rs | 707 | method | no | out of campaign scope |
-| encode_inc_dec | gp_integer.rs | 733 | method | no | out of campaign scope |
+| encode_inc_dec | gp_integer.rs | 806 | method | yes | HARD-scope target this campaign |
 | encode_shift | gp_integer.rs | 756 | method | yes | - |
 | encode_double_shift | gp_integer.rs | 836 | method | no | out of campaign scope |
 | encode_bswap | gp_integer.rs | 863 | method | no | out of campaign scope |
