@@ -1,37 +1,29 @@
-# Coverage Status — encode_push campaign
+# PBT Coverage Status
 
-**Date:** 2026-10-09
-**Tier:** standard
-**Coverage evidence:** file-level (symbol presence) + cargo execution
+> Last updated: 2026-10-09 (campaign: encode_push16)
+> Coverage evidence: file-level (symbol presence via cargo lib test) — no Rust .profraw/.gcda from this host build; coverage_gaps reported NOT LINKED against unrelated OH binaries (ignored). Real execution evidence: `cargo test --lib encode_push16` ran encode_push16 via InstructionEncoder::encode("pushw", …) (8 pass / 12 fail including KAT/regression).
 
-## Summary
+## This campaign target
 
-| Metric | Value |
-|--------|-------|
-| Target function | encode_push |
-| Source | gp_integer.rs:346 |
-| Test file | encode_push_pbt.rs |
-| Properties | 12 (6 passing, 6 failing) |
-| Bugs | 4 |
-| Line-level .profraw | none (coverage_gaps: no Rust instrumentation data; C++ binary fallback N/A) |
-| Execution evidence | `cargo test --lib encode_push_` → 14 passed, 11 failed (real symbol exercised) |
+| Function | Source | Tested | Result |
+|----------|--------|--------|--------|
+| encode_push16 | gp_integer.rs:382 | yes | 5 props passing, 4 failing (3 bugs) |
 
-## Branches / behaviors
+## Documented behaviors vs properties
 
 | Behavior | Property | Status |
 |----------|----------|--------|
-| r32 short 50+n | p1, p5 | passing |
-| imm8/imm32 6A/68 | p2, p6 | passing |
-| mem FF /6 no seg | p3 | passing |
-| mem + segment override | p4, p7 | failing (B1) |
-| arity ≠1 Err | p8 | passing |
-| reject xmm | p9 | failing (B2) |
-| reject r8 | p10 | failing (B2) |
-| Sreg push forms | p11 | failing (B3) |
-| r16 + 0x66 | p12 | failing (B4) |
-| symbol imm 0x68+reloc (sweep) | encode_push_invariant_symbol_imm / KAT | passing |
-| mixed extra ops (sweep) | encode_push_neg_extra_mixed | passing |
+| Imm integer form (66 6A / 66 68) | encode_push16_diff_imm, encode_push16_invariant_imm_form | passing |
+| Imm8 metamorphic vs pushl | encode_push16_metamorphic_imm8_vs_pushl | passing |
+| Arity ≠ 1 → Err | encode_push16_neg_arity | passing |
+| r32/r8 rejected | encode_push16_neg_wrong_width_gp | passing |
+| r16 short form | encode_push16_diff_r16 | failing (bug) |
+| Sreg forms | encode_push16_diff_sreg | failing (bug) |
+| Memory FF /6 | encode_push16_diff_mem | failing (bug) |
+| Segmented memory | encode_push16_diff_mem_segment | failing (same bug) |
 
-## Sweep
+## Contract-surface sweep
 
-One `coverage_gaps` round (standard tier). Tool: no line data; file-level C++ binaries unrelated. Cargo evidence + added symbol-imm and mixed-arity properties cover remaining documented arms. Close.
+- Round 1 (standard tier): coverage_gaps → no line-level data; file-level cargo evidence shows encode_push16 exercised.
+- Uncovered documented arms still absent in SUT body: Register r16, Sreg, Memory, Symbol imm — already targeted by failing properties; no additional properties owed beyond the three filed bugs.
+- Close reason: tier sweep round complete; every documented llvm-mc pushw form has a property.

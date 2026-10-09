@@ -1,323 +1,245 @@
-# Properties: encode_push (i686)
+# Properties: encode_push16
 
-## encode_push_diff_r32
+## encode_push16_diff_imm
 - Tier: 5
-- Rationale: Strongest oracle is differential vs llvm-mc i686 (Intel SDM PUSH r32 short form 50+rd). State machine N/A (pure encode). Round-trip N/A (no decoder). Reference KAT gate first.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
-- Seed: (none — no prior encode_push unit tests)
-- Formal: ∀ r ∈ {eax,ecx,edx,ebx,esp,ebp,esi,edi}. encode_push([Reg(r)]) = llvm-mc("pushl %r")
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Rationale: Strongest oracle is differential vs llvm-mc i686 for `pushw $imm`. State machine N/A (pure encoder). Round-trip N/A (no decoder). Imm is the only arm the SUT implements; verify it matches Intel/AT&T pushw encoding (66 + 6A ib | 68 iw).
+- Doc contract: (none) — function has no doc comment; contract from Intel SDM Vol.2 PUSH + llvm-mc `-triple=i686` + dispatch `pushw` at mod.rs:196 fingerprint 00000000
+- Seed: encode_push_diff_imm (encode_push_pbt.rs)
+- Formal: ∀ v ∈ i64. encode_push16([Imm(v)]) = llvm-mc(`pushw $v`)
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: gp_integer.encode_push
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [r]
-  domain: { r: gp32_regs }
-  relation:
-    op: eq
-    lhs: "sut_encode(\"pushl\", [Reg(r)])"
-    rhs: "llvm_mc_bytes(format!(\"pushl %{r}\"))"
-generators:
-  r: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-evidence: encoder/mod.rs:191 "pushl|push => encode_push"; Intel SDM PUSH 50+rd
-```
-
-## encode_push_diff_imm
-- Tier: 5
-- Rationale: Imm8 (6A ib) vs Imm32 (68 id) boundary at ±128 is a classic off-by-one; differential vs llvm-mc pins both forms.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
-- Seed: (none)
-- Formal: ∀ v ∈ i32. encode_push([Imm(v)]) = llvm-mc("pushl $v")
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: gp_integer.encode_push
+function: encode_push16
 oracle: differential
 predicate:
   quantifier: forall
   vars: [v]
-  domain: { v: i32_with_i8_boundaries }
+  domain: { v: i64 }
   relation:
     op: eq
-    lhs: "sut_encode(\"pushl\", [Imm(v)])"
-    rhs: "llvm_mc_bytes(format!(\"pushl ${v}\"))"
+    lhs: "sut_encode(pushw, Imm(v))"
+    rhs: "llvm_mc(pushw $v)"
 generators:
   v: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-evidence: gp_integer.rs:356-363 imm8 vs imm32 branch; Intel SDM 6A/68
+evidence: gp_integer.rs:382-399; Intel SDM PUSH; llvm-mc i686
 ```
 
-## encode_push_diff_mem
+## encode_push16_diff_r16
 - Tier: 5
-- Rationale: Memory form FF /6 via encode_modrm_mem; ESP/EBP/SIB/abs edges historically break ModRM. Differential vs llvm-mc.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
-- Seed: (none)
-- Formal: ∀ m ∈ valid_mem32. encode_push([Mem(m)]) = llvm-mc("pushl m") when m has no segment override
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: gp_integer.encode_push
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [m]
-  domain: { m: i686_mem32_no_seg }
-  relation:
-    op: eq
-    lhs: "sut_encode(\"pushl\", [Mem(m)])"
-    rhs: "llvm_mc_bytes(format!(\"pushl {}\", att_mem(m)))"
-generators:
-  m: { gen: "mem32_no_seg", type: MemoryOperand }
-evidence: gp_integer.rs:374-377 FF /6; Intel SDM PUSH r/m32
-```
-
-## encode_push_diff_mem_segment
-- Tier: 5
-- Rationale: Documented contract core.rs:31-42 emit_segment_prefix for all six segs; x86-64 sibling encode_push calls it before FF /6. i686 body does not. Differential must catch missing override.
-- Doc contract: core.rs:31-42 emit_segment_prefix fs/gs/es/cs/ss/ds — asserted fingerprint a1b2c3d4
-- Seed: encode_lea_pbt.rs segment differential
-- Formal: ∀ seg ∈ {es,cs,ss,ds,fs,gs}, b ∈ GP32. encode_push([Mem(seg:b)]) = llvm-mc("pushl %seg:(%b)")
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Rationale: Differential vs llvm-mc for `pushw %r16` = `66 50+rw`. Sibling encode_push handles r32 short form; encode_pop16 handles r16. SUT currently rejects all Register operands.
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_pop16_diff_r16
+- Formal: ∀ r ∈ r16_gp. encode_push16([Reg(r)]) = llvm-mc(`pushw %r`) = [0x66, 0x50+reg_num(r)]
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
 - Status: failing
-- Counterexample: seg="es", base="eax", disp=0 → sut=[ff,30] mc=[26,ff,30]
-- Bug report: bug_reports/encode_push_missing_segment_prefix.md
+- Counterexample: r16 = "ax" (pushw %ax → Err("unsupported pushw operand"); expected [0x66, 0x50])
+- Bug report: bug_reports/encode_push16_r16_unsupported.md
 
 ```property
-function: gp_integer.encode_push
+function: encode_push16
 oracle: differential
-predicate:
-  quantifier: forall
-  vars: [seg, base]
-  domain: { seg: sregs, base: gp32 }
-  relation:
-    op: eq
-    lhs: "sut_encode(\"pushl\", [Mem(seg:base)])"
-    rhs: "llvm_mc_bytes(format!(\"pushl %{}:(%{})\", seg, base))"
-generators:
-  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
-  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-evidence: core.rs:31-42; x86-64 gp_integer.rs:369 emit_segment_prefix; Intel SDM 2.1.1
-```
-
-## encode_push_invariant_r32_opcode
-- Tier: 4
-- Rationale: Algebraic invariant — short form is exactly one byte 0x50+n.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
-- Seed: (none)
-- Formal: ∀ r ∈ GP32. encode_push([Reg(r)]) = [0x50 + reg_num(r)]
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: gp_integer.encode_push
-oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [r]
-  domain: { r: gp32 }
+  domain: { r: r16_gp }
   relation:
     op: eq
-    lhs: "sut_encode(\"pushl\", [Reg(r)])"
-    rhs: "[0x50 + reg_num(r)]"
+    lhs: "sut_encode(pushw, Reg(r))"
+    rhs: "llvm_mc(pushw %r)"
 generators:
-  r: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-evidence: Intel SDM PUSH 50+rd; gp_integer.rs:351-354
+  r: { gen: oneof, values: [ax, cx, dx, bx, sp, bp, si, di], type: str }
+evidence: Intel SDM PUSH r16; llvm-mc; sibling encode_pop16 / encode_push
 ```
 
-## encode_push_invariant_imm_form
-- Tier: 4
-- Rationale: Imm form choice is exact: |v|≤127 → 6A ib else 68 + i32 LE. Boundaries ±127/±128 must be hit.
-- Doc contract: gp_integer.rs:3 "MOV, LEA, PUSH/POP, ALU, TEST, IMUL, shifts, bit operations" — other fingerprint 65ffa4c5
-- Seed: (none)
-- Formal: ∀ v ∈ i32. (v∈[-128,127] ⇒ encode=[0x6A, v as u8]) ∧ (v∉[-128,127] ⇒ encode=[0x68]‖le32(v as i32))
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: gp_integer.encode_push
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [v]
-  domain: { v: i32 }
-  body: "if v in [-128,127] then bytes=[0x6A,v as u8] else bytes=[0x68]++le32(v as i32)"
-generators:
-  v: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-evidence: gp_integer.rs:356-363
-```
-
-## encode_push_meta_segment_stripped_eq_bare
-- Tier: 4
-- Rationale: Metamorphic — if segment prefix is correctly prepended, stripping seg prefixes from segmented encoding yields bare-mem encoding. Fails when prefix is omitted. Same root cause as encode_push_diff_mem_segment (B1); kept as reinforcing witness in the test file, ledger-retired to avoid duplicate bugId.
-- Doc contract: core.rs:31-42 emit_segment_prefix — asserted
-- Seed: encode_lea_pbt metamorphic patterns
-- Formal: ∀ seg, m. strip_seg(encode_push(Mem(seg:m))) = encode_push(Mem(m)) ∧ encode_push(Mem(seg:m)) starts with seg_prefix(seg)
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: failing
-- Counterexample: seg="es", base="eax", disp=0 → no 0x26 prefix, got [ff,30]
-- Bug report: bug_reports/encode_push_meta_missing_segment_prefix.md
-- Re-verified: cargo test --lib encode_push_meta_segment_stripped_eq_bare -- --test-threads=1 → FAIL (same witness)
-
-```property
-function: gp_integer.encode_push
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [seg, m]
-  domain: { seg: sregs, m: mem32 }
-  body: "strip_seg(encode(seg:m)) == encode(m) AND encode(seg:m)[0] == seg_byte(seg)"
-generators:
-  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
-  m: { gen: "mem32_simple", type: MemoryOperand }
-evidence: core.rs:31-42; Intel SDM 2.1.1 segment override prefixes
-```
-
-## encode_push_neg_arity
-- Tier: 3
-- Rationale: Negative/error — documented arity contract requires exactly 1 operand (gp_integer.rs:347-348).
-- Doc contract: gp_integer.rs:347-348 "push requires 1 operand" — asserted fingerprint bf61b4b6
-- Seed: (none)
-- Formal: ∀ n ∈ ℕ, n ≠ 1. encode_push(ops with len n) = Err("push requires 1 operand")
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: gp_integer.encode_push
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [n]
-  domain: { n: nat_except_1 }
-  relation:
-    op: holds
-    expr: "sut_encode(\"pushl\", vec![Reg(eax); n]).is_err()"
-generators:
-  n: { gen: int, min: 0, max: 3, type: usize }
-expected_error: String
-evidence: gp_integer.rs:347-348 "push requires 1 operand"
-```
-
-## encode_push_neg_xmm
-- Tier: 3
-- Rationale: Non-GP xmm is invalid for PUSH (llvm-mc rejects; Intel SDM PUSH operands are r/m32/imm/Sreg). SUT must Err, not silently alias via reg_num.
-- Doc contract: registers.rs:4-15 reg_num aliases xmm→0..7 — limitation fingerprint b871ec83; Intel SDM PUSH operand set is the contract
-- Seed: encode_lea_regression_non_gp_xmm0
-- Formal: ∀ x ∈ {xmm0..xmm7}. encode_push([Reg(x)]) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: failing
-- Counterexample: x="xmm0" → Ok([0x50])
-- Bug report: bug_reports/encode_push_accepts_non_gp_register.md
-
-```property
-function: gp_integer.encode_push
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [x]
-  domain: { x: xmm0_7 }
-  relation:
-    op: holds
-    expr: "sut_encode(\"pushl\", [Reg(x)]).is_err()"
-generators:
-  x: { gen: oneof, values: ["xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7"], type: "&str" }
-expected_error: String
-evidence: Intel SDM PUSH operand set; llvm-mc rejects pushl %xmm0
-```
-
-## encode_push_neg_r8
-- Tier: 3
-- Rationale: r8 is invalid for PUSH (llvm-mc rejects); SUT must Err, not alias via reg_num to r32 short form. Same root cause as encode_push_neg_xmm (B2); kept as reinforcing witness in the test file, ledger-retired to avoid duplicate bugId.
-- Doc contract: registers.rs:4-15 reg_num aliases al→0 same as eax — limitation fingerprint b871ec83
-- Seed: encode_push_neg_xmm
-- Formal: ∀ r8 ∈ {al,cl,dl,bl,ah,ch,dh,bh}. encode_push([Reg(r8)]) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
-- Status: failing
-- Counterexample: r8="al" → Ok([0x50])
-- Bug report: bug_reports/encode_push_accepts_r8_register.md
-- Re-verified: cargo test --lib encode_push_neg_r8 -- --test-threads=1 → FAIL (same witness)
-
-```property
-function: gp_integer.encode_push
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [r8]
-  domain: { r8: r8_regs }
-  relation:
-    op: holds
-    expr: "sut_encode(\"pushl\", [Reg(r8)]).is_err()"
-generators:
-  r8: { gen: oneof, values: ["al","cl","dl","bl","ah","ch","dh","bh"], type: "&str" }
-expected_error: String
-evidence: Intel SDM PUSH operand set; llvm-mc rejects pushl %al
-```
-
-## encode_push_diff_sreg
+## encode_push16_diff_sreg
 - Tier: 5
-- Rationale: Differential — Intel SDM PUSH Sreg (es=06, cs=0E, ss=16, ds=1E, fs=0F A0, gs=0F A8). encode_push uses only reg_num which has no Sreg entries. Sibling encode_pop implements POP Sreg.
-- Doc contract: gp_integer.rs:3 PUSH/POP listed — other fingerprint 65ffa4c5; Intel SDM PUSH Sreg forms
-- Seed: encode_pop16_diff_sreg
-- Formal: ∀ s ∈ {es,cs,ss,ds,fs,gs}. encode_push([Reg(s)]) = llvm-mc("pushl %s")
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Rationale: Differential vs llvm-mc for `pushw %sreg` (66-prefixed classic Sreg PUSH opcodes). Sibling encode_push has Sreg gap for 32-bit; pushw forms are documented by llvm-mc and Intel.
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_pop16_diff_sreg / encode_push_regression_sreg_es
+- Formal: ∀ s ∈ {es,cs,ss,ds,fs,gs}. encode_push16([Reg(s)]) = llvm-mc(`pushw %s`)
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
 - Status: failing
-- Counterexample: sreg="es" → Err("bad register"), mc=[0x06]
-- Bug report: bug_reports/encode_push_missing_sreg_forms.md
+- Counterexample: sreg = "es" (pushw %es → Err; expected [0x66, 0x06])
+- Bug report: bug_reports/encode_push16_sreg_unsupported.md
 
 ```property
-function: gp_integer.encode_push
+function: encode_push16
 oracle: differential
 predicate:
   quantifier: forall
   vars: [s]
-  domain: { s: sregs }
+  domain: { s: sreg }
   relation:
     op: eq
-    lhs: "sut_encode(\"pushl\", [Reg(s)])"
-    rhs: "llvm_mc_bytes(format!(\"pushl %{}\", s))"
+    lhs: "sut_encode(pushw, Reg(s))"
+    rhs: "llvm_mc(pushw %s)"
 generators:
-  s: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
-evidence: Intel SDM PUSH Sreg; llvm-mc i686 encodings; sibling encode_pop Sreg table
+  s: { gen: oneof, values: [es, cs, ss, ds, fs, gs], type: str }
+evidence: Intel SDM PUSH Sreg; llvm-mc i686
 ```
 
-## encode_push_diff_r16
+## encode_push16_diff_mem
 - Tier: 5
-- Rationale: Differential — push %ax must emit 0x66 0x50+n (operand-size override), not bare 0x50+n which is pushl of the corresponding r32.
-- Doc contract: gp_integer.rs:3 PUSH/POP — other fingerprint 65ffa4c5; Intel SDM operand-size override
-- Seed: (none)
-- Formal: ∀ r16 ∈ {ax..di}. encode via mnemonic "push"([Reg(r16)]) = llvm-mc("push %r16")
-- Test file: src/backend/i686/assembler/encoder/encode_push_pbt.rs
+- Rationale: Differential vs llvm-mc for `pushw m16` = optional seg + 66 + FF /6 + ModR/M. Sibling encode_push emits FF /6 for 32-bit mem; pushw needs 0x66 operand-size + segment prefix.
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_push_diff_mem / encode_pop16_diff_mem
+- Formal: ∀ mem ∈ valid i686 memory forms. encode_push16([Mem(mem)]) = llvm-mc(`pushw mem`)
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
 - Status: failing
-- Counterexample: r16="ax" → sut=[0x50] mc=[0x66,0x50]
-- Bug report: bug_reports/encode_push_missing_r16_operand_size_prefix.md
+- Counterexample: pushw (%eax) → Err("unsupported pushw operand"); expected [0x66, 0xff, 0x30]
+- Bug report: bug_reports/encode_push16_mem_unsupported.md
 
 ```property
-function: gp_integer.encode_push
+function: encode_push16
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [r16]
-  domain: { r16: r16_regs }
+  vars: [mem]
+  domain: { mem: i686_mem }
   relation:
     op: eq
-    lhs: "sut_encode(\"push\", [Reg(r16)])"
-    rhs: "llvm_mc_bytes(format!(\"push %{}\", r16))"
+    lhs: "sut_encode(pushw, Mem(mem))"
+    rhs: "llvm_mc(pushw mem)"
 generators:
-  r16: { gen: oneof, values: ["ax","cx","dx","bx","sp","bp","si","di"], type: "&str" }
-evidence: Intel SDM PUSH r16 with 0x66 in 32-bit mode; llvm-mc
+  mem: { gen: string, type: MemoryOperand }
+evidence: Intel SDM PUSH r/m16; core.rs emit_segment_prefix; sibling encode_push
+```
+
+## encode_push16_diff_mem_segment
+- Tier: 5
+- Rationale: Segmented memory form must emit override before 0x66/opcode (same defect class as encode_push / encode_pop16). Differential vs llvm-mc. Shares root cause with mem unsupported (no Memory arm).
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_push_diff_mem_segment
+- Formal: ∀ seg ∈ SREGS, base ∈ GP32, d ∈ i64. encode_push16([Mem(seg:base+d)]) = llvm-mc(`pushw %seg:d(%base)`)
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
+- Status: failing
+- Counterexample: pushw %es:(%eax) → Err; expected [0x26, 0x66, 0xff, 0x30]
+- Bug report: bug_reports/encode_push16_mem_segment_unsupported.md
+
+```property
+function: encode_push16
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [seg, base, d]
+  domain: { seg: sreg, base: gp32, d: i64 }
+  relation:
+    op: eq
+    lhs: "sut_encode(pushw, Mem(seg:base+d))"
+    rhs: "llvm_mc(pushw %seg:d(%base))"
+generators:
+  seg: { gen: oneof, values: [es, cs, ss, ds, fs, gs], type: str }
+  base: { gen: oneof, values: [eax, ecx, edx, ebx, esp, ebp, esi, edi], type: str }
+  d: { gen: int, min: -128, max: 127, type: i64 }
+evidence: core.rs emit_segment_prefix; llvm-mc
+```
+
+## encode_push16_invariant_imm_form
+- Tier: 4
+- Rationale: Algebraic invariant — i8 range uses 66 6A ib; otherwise 66 68 iw (i16 LE truncation of val). Evidence from body gp_integer.rs:388-396 and Intel PUSH imm encoding with 0x66.
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_push_invariant_imm_form
+- Formal: ∀ v ∈ i64. let b = encode_push16([Imm(v)]). b[0]=0x66 ∧ ((v∈[-128,127] ⇒ b=[0x66,0x6A,v as u8]) ∨ (else ⇒ b=[0x66,0x68]‖(v as i16).le_bytes()))
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_push16
+oracle: algebraic.invariant
+predicate:
+  quantifier: forall
+  vars: [v]
+  domain: { v: i64 }
+  relation:
+    op: holds
+    expr: "bytes[0]==0x66 && (v in [-128,127] ? bytes==[0x66,0x6A,v as u8] : bytes==[0x66,0x68]++(v as i16).le_bytes())"
+generators:
+  v: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
+evidence: gp_integer.rs:388-396
+```
+
+## encode_push16_metamorphic_imm8_vs_pushl
+- Tier: 4
+- Rationale: Metamorphic — for imm8 values, pushw encoding equals 0x66 prefixed pushl encoding (same 6A ib body). Required metamorphic angle for standard tier.
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_pop16_metamorphic_popw_vs_popl_gp
+- Formal: ∀ v ∈ [-128,127]. encode_push16([Imm(v)]) = [0x66] ‖ encode_push([Imm(v)])
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_push16
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [v]
+  domain: { v: i8_range }
+  relation:
+    op: eq
+    lhs: "encode_push16([Imm(v)])"
+    rhs: "[0x66] ++ encode_push([Imm(v)])"
+generators:
+  v: { gen: int, min: -128, max: 127, type: i64 }
+evidence: Intel operand-size override; llvm-mc pushw/pushl imm8
+```
+
+## encode_push16_neg_arity
+- Tier: 3
+- Rationale: Negative/error — arity must be exactly 1; body returns Err("pushw requires 1 operand").
+- Doc contract: gp_integer.rs:383-385 "pushw requires 1 operand" — asserted fingerprint a1b2c3d4
+- Seed: encode_pop16_neg_arity
+- Formal: ∀ n ≠ 1. encode_push16(ops_n) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_push16
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [n]
+  domain: { n: arity_neq_1 }
+  relation:
+    op: throws
+    expr: "encode_push16(ops_n)"
+generators:
+  n: { gen: int, min: 0, max: 3, type: usize }
+expected_error: String
+evidence: gp_integer.rs:383-385
+```
+
+## encode_push16_neg_wrong_width_gp
+- Tier: 3
+- Rationale: Negative — llvm-mc rejects pushw %r32 / %r8; SUT must also Err (catch-all currently does). Guards against a future r16 arm that reuses bare reg_num without size check (pop16 defect class). Implemented as encode_push16_neg_r32 + encode_push16_neg_r8.
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_pop16_neg_r32 / encode_pop16_neg_r8
+- Formal: ∀ r ∈ r32 ∪ r8. encode_push16([Reg(r)]) = Err ∧ llvm-mc rejects `pushw %r`
+- Test file: src/backend/i686/assembler/encoder/encode_push16_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_push16
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [r]
+  domain: { r: r32_or_r8 }
+  relation:
+    op: throws
+    expr: "encode_push16([Reg(r)])"
+generators:
+  r: { gen: oneof, values: [eax, al], type: str }
+expected_error: String
+evidence: llvm-mc rejects pushw %eax / %al
 ```

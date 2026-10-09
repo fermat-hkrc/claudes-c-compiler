@@ -189,3 +189,14 @@
 - Fix shapes: `emit_segment_prefix(mem)` before 0xFF; gate register class/size; Sreg table ES=06/CS=0E/SS=16/DS=1E/FS=0FA0/GS=0FA8; emit 0x66 when reg_size==2.
 - llvm-mc: `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
 - proptest cases=1000; harness `encode_push_pbt.rs`.
+
+## encode_push16 (i686 gp_integer encoder)
+
+- Dispatch: `pushw` → encode_push16 (mod.rs:196).
+- Imm integer path matches llvm-mc i686: leading 0x66; imm8 `6A ib` when v∈[-128,127]; else `68` + (v as i16) LE (truncates OOR i16 the same way llvm-mc does).
+- Metamorphic: pushw imm8 = `[0x66] ‖` pushl imm8.
+- Negative: arity ≠1 → Err; r32/r8 → Err (llvm-mc also rejects).
+- Known defects (this campaign): (1) no r16 Register arm — `pushw %ax` → Err vs `[66,50]`; (2) no Sreg table — `pushw %es` → Err vs `[66,06]`; (3) no Memory arm — `pushw (%eax)` → Err vs `[66,ff,30]`, and segmented forms need `emit_segment_prefix` before 0x66.
+- Fix shapes: r16 arm `0x66; 0x50+n` with `reg_size==2`; Sreg table with 0x66 + classic opcodes; Memory: `emit_segment_prefix` + 0x66 + FF /6.
+- llvm-mc: `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+- proptest cases=1000; harness `encode_push16_pbt.rs`.

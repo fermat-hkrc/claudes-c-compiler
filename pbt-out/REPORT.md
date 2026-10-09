@@ -1,221 +1,155 @@
-# PBT Campaign Report: encode_push (i686)
+# PBT Campaign Report: encode_push16
 
 ## Summary
 
-**Verdict:** 6 failing properties / 6 bug reports (4 root-cause classes, worst severity **high**): `encode_push` drops segment overrides on memory operands (TLS/`%fs:`/`%gs:` silently wrong), accepts non-GP/r8 via `reg_num` alias as `pushl %eax`-class bytes, rejects valid Sreg PUSH forms, and encodes r16 without the required 0x66 prefix (stack delta wrong).
+**Verdict:** 4 high bugs (3 root causes): `encode_push16` only encodes integer immediates and rejects valid `pushw` r16, Sreg, bare memory, and segmented-memory forms that llvm-mc accepts, so any 16-bit register/memory/segment push fails to assemble.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_push (src/backend/i686/assembler/encoder/gp_integer.rs)
-**Tests:** 12 properties + 6 KAT + 3 regression witnesses (proptest cases=1000)
-**Result:** 6 properties passing, 6 failing (6 bug reports / 4 root causes); 4 KAT pass / 2 KAT fail; 3 regression fail
-**Change surface:** 1 changed function (encode_push), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no Rust `.profraw` and C++-binary fallback marked encode_push NOT LINKED; cargo lib-test run exercised the real symbol (14 pass / 11 fail under `cargo test --lib encode_push_`). Recorded as file-level + cargo execution evidence.
+**Modules tested:** encode_push16 (gp_integer.rs)
+**Tests:** 9 properties (+ KAT + regression witnesses)
+**Result:** 5 passing, 4 failing, 4 bugs
+**Change surface:** 1 changed function (encode_push16), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (cargo symbol execution) — no Rust .profraw/.gcda; coverage_gaps returned NOT LINKED against unrelated OH binaries (ignored). `cargo test --lib encode_push16` exercised the real symbol.
 **Effort tier:** standard
-**Contract-surface sweep:** 1 round — added symbol-imm invariant + mixed-arity negative; both pass. Remaining fails are filed bugs, not untested branches.
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_push | 12 props (+ KAT/regression) | 6 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_push16 | 9 | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_push omits segment-override prefix on memory operands
+### B1: encode_push16 rejects r16 register operands
 
-**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, b ∈ GP32. encode_push([Mem(seg:b)]) = llvm-mc("pushl %seg:(%b)")
-**Contract evidence:** documented core.rs:31-42 emit_segment_prefix for all six segs; x86-64 sibling `encode_push` calls `emit_segment_prefix` before FF /6; Intel SDM 2.1.1
-**Documentation conflict:** (none — code simply omits the call)
+**Formal:** ∀ r ∈ {ax,cx,dx,bx,sp,bp,si,di}. encode_push16([Reg(r)]) = llvm-mc(`pushw %r`) = [0x66, 0x50+reg_num(r)]
+**Contract evidence:** inferred (Intel SDM Vol.2 PUSH r16; AT&T `pushw %r16`; llvm-mc `-triple=i686`; sibling encode_push short form + encode_pop16 r16 path)
+**Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `pushl %fs:(%eax)` → expected `[0x64, 0xff, 0x30]`, actual `[0xff, 0x30]`
-**Expected / Actual:** `[0x64, 0xff, 0x30]` / `[0xff, 0x30]`
-**Impact:** Segmented memory PUSH (especially FS/GS TLS) silently uses the wrong segment at runtime.
-**Root cause:** gp_integer.rs:374-377 pushes 0xFF then encode_modrm_mem without emit_segment_prefix.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:374`
+**Counterexample:** `pushw %ax` → Operand::Register("ax")
+**Expected / Actual:** `[0x66, 0x50]` / `Err("unsupported pushw operand")`
+**Impact:** 16-bit GP stack pushes cannot be assembled under the public `pushw` mnemonic.
+**Root cause:** gp_integer.rs:389-400 — match only handles Immediate(Integer); Register hits catch-all Err.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:400`
 ```rust
-            Operand::Memory(mem) => {
-                self.bytes.push(0xFF);
-                self.encode_modrm_mem(6, mem)
-            }
+            _ => Err("unsupported pushw operand".to_string()),
 ```
-**Suggested fix:** Call emit_segment_prefix before the opcode.
-```rust
-            Operand::Memory(mem) => {
-                self.emit_segment_prefix(mem);
-                self.bytes.push(0xFF);
-                self.encode_modrm_mem(6, mem)
-            }
-```
-**Bug report:** bug_reports/encode_push_missing_segment_prefix.md
-**Repro seed:** proptest cc f818f220e3b4019905d8b72a95279a923103d69a39a70ee313d391192c2b2a9a (seg=es,base=eax,disp=0)
-**Raw output:**
-```text
-assertion failed: `(left == right)` left: `[255, 48]`, right: `[38, 255, 48]`: segment diff `pushl %es:(%eax)`
-```
-
-### B2: encode_push accepts non-GP / r8 registers via reg_num alias
-
-**Formal:** ∀ x ∈ {xmm0..xmm7} ∪ {al..bh}. encode_push([Reg(x)]) = Err
-**Contract evidence:** inferred (Intel SDM PUSH operand set is r/m32/imm/Sreg; llvm-mc rejects `pushl %xmm0` / `pushl %al`; sibling campaigns on encode_lea/encode_mov* same class)
-**Documentation conflict:** registers.rs:4-15 intentionally lists xmm/mm aliases for ModRM numbering — that is a shared helper limitation, not a PUSH domain restriction; PUSH must still reject non-GP
-**Severity:** high
-**Counterexample:** `pushl %xmm0` → Ok([0x50]); `pushl %al` → Ok([0x50])
-**Expected / Actual:** Err / Ok([0x50]) (same as pushl %eax)
-**Impact:** Silent mis-assembly: invalid operands become PUSH EAX-class encodings with no diagnostic.
-**Root cause:** gp_integer.rs:351-354 uses only reg_num, which maps xmm0/al/eax all to 0.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:351`
+**Suggested fix:** Add r16 Register arm with `reg_size==2`, emit `0x66` then `0x50+n`.
 ```rust
             Operand::Register(reg) => {
+                if reg_size(&reg.name) != 2 {
+                    return Err(format!("pushw requires r16, got {}", reg.name));
+                }
                 let num = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.push(0x66);
                 self.bytes.push(0x50 + num);
                 Ok(())
             }
 ```
-**Suggested fix:** Gate on reg class/size; reject xmm/mm/r8.
-```rust
-                if is_xmm(&reg.name) || is_mm(&reg.name) || reg_size(&reg.name) == 1 {
-                    return Err(format!("invalid push register {}", reg.name));
-                }
-```
-**Bug report:** bug_reports/encode_push_accepts_non_gp_register.md
-**Repro seed:** x="xmm0" / r8="al"
+**Bug report:** bug_reports/encode_push16_r16_unsupported.md
+**Repro seed:** r16 = "ax" (proptest minimal)
 **Raw output:**
 ```text
-encode_push must reject non-GP `xmm0`, got Ok([80])
+Test failed: SUT rejected valid r16 form `pushw %ax`: unsupported pushw operand; ...
+minimal failing input: r16 = "ax"
 ```
 
-### B3: encode_push rejects valid segment-register PUSH forms
+### B2: encode_push16 rejects segment-register pushw
 
-**Formal:** ∀ s ∈ {es,cs,ss,ds,fs,gs}. encode_push([Reg(s)]) = llvm-mc("pushl %s")
-**Contract evidence:** inferred (Intel SDM PUSH Sreg encodings; sibling encode_pop implements POP Sreg table at gp_integer.rs:408-416; llvm-mc accepts)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** `pushl %es` → Err("bad register"); expected Ok([0x06])
-**Expected / Actual:** Ok([0x06]) / Err("bad register")
-**Impact:** Valid AT&T `push %es` / `%fs` / etc. cannot be assembled.
-**Root cause:** Register arm only calls reg_num (no Sreg entries); does not use is_segment_reg like encode_pop.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:351`
-```rust
-            Operand::Register(reg) => {
-                let num = reg_num(&reg.name).ok_or("bad register")?;
-                self.bytes.push(0x50 + num);
-                Ok(())
-            }
-```
-**Suggested fix:** Mirror encode_pop Sreg table with PUSH opcodes (ES=06, CS=0E, SS=16, DS=1E, FS=0F A0, GS=0F A8).
-```rust
-                if is_segment_reg(&reg.name) {
-                    return match reg.name.as_str() {
-                        "es" => { self.bytes.push(0x06); Ok(()) }
-                        "cs" => { self.bytes.push(0x0E); Ok(()) }
-                        "ss" => { self.bytes.push(0x16); Ok(()) }
-                        "ds" => { self.bytes.push(0x1E); Ok(()) }
-                        "fs" => { self.bytes.extend_from_slice(&[0x0F, 0xA0]); Ok(()) }
-                        "gs" => { self.bytes.extend_from_slice(&[0x0F, 0xA8]); Ok(()) }
-                        _ => Err(format!("cannot push {}", reg.name)),
-                    };
-                }
-```
-**Bug report:** bug_reports/encode_push_missing_sreg_forms.md
-**Repro seed:** sreg="es"
-**Raw output:**
-```text
-SUT rejected Sreg push `pushl %es`: bad register
-```
-
-### B4: encode_push encodes r16 as bare r32 short form (missing 0x66)
-
-**Formal:** ∀ r16 ∈ {ax..di}. encode("push", [Reg(r16)]) = llvm-mc("push %r16") = [0x66, 0x50+n]
-**Contract evidence:** inferred (Intel SDM operand-size override in 32-bit mode; llvm-mc `push %ax` → [0x66, 0x50]; mnemonic `push` routes to encode_push at mod.rs:191)
+**Formal:** ∀ s ∈ {es,cs,ss,ds,fs,gs}. encode_push16([Reg(s)]) = llvm-mc(`pushw %s`)
+**Contract evidence:** inferred (Intel SDM PUSH Sreg; llvm-mc encodings 66 06 / 0E / 16 / 1E / 0F A0 / 0F A8)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `push %ax` → sut=[0x50] mc=[0x66, 0x50]
-**Expected / Actual:** [0x66, 0x50] / [0x50]
-**Impact:** Wrong stack delta (4 bytes vs 2) — silent ABI/stack corruption for 16-bit pushes.
-**Root cause:** reg_num aliases ax→same n as eax; no reg_size check / no 0x66. pushw only handles immediates.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:351`
+**Counterexample:** `pushw %es` → Operand::Register("es")
+**Expected / Actual:** `[0x66, 0x06]` / `Err("unsupported pushw operand")`
+**Impact:** Segment save under operand-size override cannot be encoded.
+**Root cause:** gp_integer.rs:400 — no Sreg table; Register falls through to Err.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:400`
 ```rust
-            Operand::Register(reg) => {
-                let num = reg_num(&reg.name).ok_or("bad register")?;
-                self.bytes.push(0x50 + num);
-                Ok(())
+            _ => Err("unsupported pushw operand".to_string()),
+```
+**Suggested fix:** Sreg arm: push 0x66 then classic PUSH Sreg opcodes (es=06, cs=0E, ss=16, ds=1E, fs=0F A0, gs=0F A8).
+```rust
+            Operand::Register(reg) if is_segment_reg(&reg.name) => {
+                self.bytes.push(0x66);
+                match reg.name.as_str() {
+                    "es" => { self.bytes.push(0x06); Ok(()) }
+                    "cs" => { self.bytes.push(0x0E); Ok(()) }
+                    "ss" => { self.bytes.push(0x16); Ok(()) }
+                    "ds" => { self.bytes.push(0x1E); Ok(()) }
+                    "fs" => { self.bytes.extend_from_slice(&[0x0F, 0xA0]); Ok(()) }
+                    "gs" => { self.bytes.extend_from_slice(&[0x0F, 0xA8]); Ok(()) }
+                    _ => Err(format!("cannot push {}", reg.name)),
+                }
             }
 ```
-**Suggested fix:** Emit 0x66 when reg_size==2 for GP registers.
-```rust
-                if reg_size(&reg.name) == 2 {
-                    self.bytes.push(0x66);
-                }
-                self.bytes.push(0x50 + num);
-```
-**Bug report:** bug_reports/encode_push_missing_r16_operand_size_prefix.md
-**Repro seed:** r16="ax"
+**Bug report:** bug_reports/encode_push16_sreg_unsupported.md
+**Repro seed:** sreg = "es"
 **Raw output:**
 ```text
-left: `[80]`, right: `[102, 80]`: r16 push diff `push %ax`
+Test failed: SUT rejected valid Sreg form `pushw %es`: unsupported pushw operand; ...
+minimal failing input: sreg = "es"
 ```
 
-### B5: encode_push metamorphic segment strip fails (missing override)
+### B3: encode_push16 rejects memory operands (PUSH m16)
 
-**Formal:** ∀ seg, m. encode(seg:m) starts with seg_prefix(seg) ∧ strip_seg(encode(seg:m)) = encode(m)
-**Contract evidence:** documented core.rs:31-42 emit_segment_prefix (same root cause as B1)
+**Formal:** ∀ mem ∈ valid i686 memory forms. encode_push16([Mem(mem)]) = llvm-mc(`pushw mem`) = optional seg + 0x66 + FF /6 + ModR/M
+**Contract evidence:** inferred (Intel SDM PUSH r/m16; sibling encode_push FF /6; core.rs emit_segment_prefix; llvm-mc)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** seg="es", base="eax", disp=0 → no 0x26 prefix, got [ff,30]
-**Expected / Actual:** prefix 0x26 then bare body / [0xff, 0x30]
-**Impact:** Reinforcing witness of B1 — wrong segment at runtime.
-**Root cause:** gp_integer.rs:374-377 omits emit_segment_prefix (same statement as B1).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:374`
+**Counterexample:** `pushw (%ebx)` → Err; also `pushw %es:(%eax)` → Err
+**Expected / Actual:** `[0x66, 0xff, 0x33]` / Err; segmented `[0x26, 0x66, 0xff, 0x30]` / Err
+**Impact:** All 16-bit memory pushes (including segment overrides) fail to assemble.
+**Root cause:** gp_integer.rs:400 — Memory falls through to catch-all Err; no FF /6 path and no emit_segment_prefix.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:400`
 ```rust
-            Operand::Memory(mem) => {
-                self.bytes.push(0xFF);
-                self.encode_modrm_mem(6, mem)
-            }
+            _ => Err("unsupported pushw operand".to_string()),
 ```
-**Suggested fix:** Call emit_segment_prefix before the opcode.
+**Suggested fix:** Memory arm with segment prefix, 0x66, FF /6:
 ```rust
             Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
+                self.bytes.push(0x66);
                 self.bytes.push(0xFF);
                 self.encode_modrm_mem(6, mem)
             }
 ```
-**Bug report:** bug_reports/encode_push_meta_missing_segment_prefix.md
-**Repro seed:** seg="es", base="eax", disp=0
+**Bug report:** bug_reports/encode_push16_mem_unsupported.md
+**Repro seed:** pushw (%eax)
 **Raw output:**
 ```text
-segmented push must start with 0x26 for %es:, got [ff, 30]
+SUT rejected valid mem form `pushw (%eax)`: unsupported pushw operand
+regression: encode_push16 must accept memory, got Err(unsupported pushw operand)
 ```
 
-### B6: encode_push accepts r8 via reg_num alias
+### B4: encode_push16 rejects segmented memory pushw
 
-**Formal:** ∀ r8 ∈ {al..bh}. encode_push([Reg(r8)]) = Err
-**Contract evidence:** inferred (Intel SDM PUSH operand set; llvm-mc rejects pushl %al; same root class as B2)
+**Formal:** ∀ seg ∈ SREGS, base ∈ GP32, d ∈ i64. encode_push16([Mem(seg:base+d)]) = llvm-mc(`pushw %seg:d(%base)`)
+**Contract evidence:** inferred (Intel SDM PUSH r/m16 + segment override; core.rs emit_segment_prefix; llvm-mc)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** r8="al" → Ok([0x50])
-**Expected / Actual:** Err / Ok([0x50])
-**Impact:** Silent mis-assembly of 8-bit register PUSH.
-**Root cause:** gp_integer.rs:351-354 reg_num maps al→0 same as eax.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:351`
+**Counterexample:** `pushw %es:(%eax)` → Err; expected `[0x26, 0x66, 0xff, 0x30]`
+**Expected / Actual:** `[0x26, 0x66, 0xff, 0x30]` / `Err("unsupported pushw operand")`
+**Impact:** Segment-overridden 16-bit memory pushes cannot be assembled.
+**Root cause:** gp_integer.rs:400 — same missing Memory arm as B3; fix must call emit_segment_prefix before 0x66 + FF /6.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:400`
 ```rust
-            Operand::Register(reg) => {
-                let num = reg_num(&reg.name).ok_or("bad register")?;
-                self.bytes.push(0x50 + num);
-                Ok(())
+            _ => Err("unsupported pushw operand".to_string()),
+```
+**Suggested fix:** Same Memory arm as B3 with `emit_segment_prefix`.
+```rust
+            Operand::Memory(mem) => {
+                self.emit_segment_prefix(mem);
+                self.bytes.push(0x66);
+                self.bytes.push(0xFF);
+                self.encode_modrm_mem(6, mem)
             }
 ```
-**Suggested fix:** Reject reg_size==1.
-```rust
-                if reg_size(&reg.name) == 1 {
-                    return Err(format!("invalid push register {}", reg.name));
-                }
-```
-**Bug report:** bug_reports/encode_push_accepts_r8_register.md
-**Repro seed:** r8="al"
+**Bug report:** bug_reports/encode_push16_mem_segment_unsupported.md
+**Repro seed:** seg=es base=eax
 **Raw output:**
 ```text
-encode_push must reject r8 `al` when llvm-mc does, got Ok([80])
+regression: encode_push16 must accept segmented mem, got Err(unsupported pushw operand)
 ```
 
 ## Design Caveats
@@ -226,19 +160,21 @@ encode_push must reject r8 `al` when llvm-mc does, got Ok([80])
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_push_pbt.rs | 12 properties + 6 KAT + 3 regression (+ 2 sweep KAT) |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_push_pbt;` |
+| src/backend/i686/assembler/encoder/encode_push16_pbt.rs | 9 properties + 6 KAT + 4 regression |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_push16_pbt;` registration |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_push_ -- --test-threads=1
-# single bug witnesses:
-cargo test --lib encode_push_regression_missing_fs_prefix -- --test-threads=1 --exact
-cargo test --lib encode_push_regression_non_gp_xmm0 -- --test-threads=1 --exact
-cargo test --lib encode_push_regression_sreg_es -- --test-threads=1 --exact
-cargo test --lib encode_push_diff_r16_via_push -- --test-threads=1
+cargo test --lib encode_push16 -- --test-threads=1
+# Single-case serial confirms:
+cargo test --lib encode_push16_diff_r16 -- --test-threads=1
+cargo test --lib encode_push16_diff_sreg -- --test-threads=1
+cargo test --lib encode_push16_diff_mem -- --test-threads=1
+cargo test --lib test_encode_push16_regression_r16_unsupported -- --test-threads=1
+cargo test --lib test_encode_push16_regression_sreg_unsupported -- --test-threads=1
+cargo test --lib test_encode_push16_regression_mem_unsupported -- --test-threads=1
 ```
 
 ## Output Directories
@@ -252,21 +188,18 @@ cargo test --lib encode_push_diff_r16_via_push -- --test-threads=1
 - pbt-out/report.json
 - pbt-out/INVARIANTS.md
 - pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_push_missing_segment_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_push_accepts_non_gp_register.md (+ .html)
-- pbt-out/bug_reports/encode_push_missing_sreg_forms.md (+ .html)
-- pbt-out/bug_reports/encode_push_missing_r16_operand_size_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_push_meta_missing_segment_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_push_accepts_r8_register.md (+ .html)
-- pbt-out/run/encode_push_test.log
-- pbt-out/run/encode_push_full2.log
+- pbt-out/bug_reports/encode_push16_r16_unsupported.md (+ .html)
+- pbt-out/bug_reports/encode_push16_sreg_unsupported.md (+ .html)
+- pbt-out/bug_reports/encode_push16_mem_unsupported.md (+ .html)
+- pbt-out/bug_reports/encode_push16_mem_segment_unsupported.md (+ .html)
+- pbt-out/run/encode_push16_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 06:16 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 276/398 total | PBT candidates: 276 | Tested: 276 (100%) | 1 pass, 276 fail
+> Last updated: 2026-10-09 06:30 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 277/399 total | PBT candidates: 277 | Tested: 277 (100%) | 1 pass, 277 fail
 
 ## Summary
 
@@ -274,11 +207,11 @@ cargo test --lib encode_push_diff_r16_via_push -- --test-threads=1
 |--------|-------|
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
-| Total functions (all files) | 398 |
-| PBT candidates (from FUNCTION_INDEX) | 276 |
-| **Tested (of PBT candidates)** | **276 / 276 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 276 / -1 |
-| **Overall (tested / all functions)** | **276 / 398 (69%)** |
+| Total functions (all files) | 399 |
+| PBT candidates (from FUNCTION_INDEX) | 277 |
+| **Tested (of PBT candidates)** | **277 / 277 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 277 / -1 |
+| **Overall (tested / all functions)** | **277 / 399 (69%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -286,13 +219,13 @@ cargo test --lib encode_push_diff_r16_via_push -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 276 | 276 | 0 | 100% |
+|  | 277 | 277 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 276 | 276 | 0 | 100% |
+| unknown | 277 | 277 | 0 | 100% |
 
 ## File Coverage
 
@@ -303,7 +236,7 @@ cargo test --lib encode_push_diff_r16_via_push -- --test-threads=1
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 30 | 10 | 10 | 100% | covered |
+| gp_integer.rs | 31 | 11 | 11 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -591,3 +524,4 @@ cargo test --lib encode_push_diff_r16_via_push -- --test-threads=1
 | encode_movzx | gp_integer.rs |
 | encode_lea | gp_integer.rs |
 | encode_push | gp_integer.rs |
+| encode_push16 | gp_integer.rs |
