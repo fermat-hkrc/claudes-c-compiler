@@ -1,128 +1,84 @@
-# PBT Campaign Report: encode_in
+# PBT Campaign Report: encode_invlpg
 
 ## Summary
 
-**Verdict:** 3 high/medium bugs in i686 `encode_in`: non-canonical register pairs encode as EC/ED, out-of-range port immediates silently truncate via `as u8`, and the AT&T `(%dx)` port form is rejected — same defect class as the sibling `encode_out`.
+**Verdict:** 1 high: `encode_invlpg` omits segment-override prefixes (`%fs:`/`%gs:`/…), so INVLPG targeting a non-DS segment assembles to the wrong address and leaves stale TLB entries.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_in (src/backend/i686/assembler/encoder/system.rs)
-**Tests:** 10 properties (+ 6 KAT + 3 regression witnesses)
-**Result:** 7 passing, 3 failing properties → 3 bugs
-**Change surface:** 1 changed function (encode_in), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reports no native line-level profraw for this Rust cargo target; encode_in is linked into the lib test binary via encode_in_pbt.rs
+**Modules tested:** encode_invlpg
+**Tests:** 10 properties (+ 5 KAT + 2 regression)
+**Result:** 8 passing, 2 failing properties; 2 bug reports (one root cause: missing segment prefix; base+disp and SIB witnesses)
+**Change surface:** 1 changed function (encode_invlpg), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` found no .gcda/.profraw (Rust run; reporter scanned unrelated OH C++ binaries). Cargo test log is the execution evidence for encode_invlpg.
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_in | 10 props (+KAT/regression) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_invlpg | 10 properties (+ KAT/regression) | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_in accepts non-canonical register pairs
+### B1: encode_invlpg drops segment override prefix (base+disp)
 
-**Formal:** ∀ m ∈ {inb,inw,inl}, src, dst. ¬(src=dx ∧ dst=data_reg(m)) ∧ llvm_mc rejects ⇒ encode_in(m,[src,dst]) = Err(_)
-**Contract evidence:** inferred (Intel SDM IN fixed DX + AL/AX/EAX; llvm-mc rejects other pairs; AT&T syntax `inb %dx, %al`)
+**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, disp ∈ i32. encode(invlpg, Mem(seg:base+disp)) = llvm_mc("invlpg %seg:…")
+**Contract evidence:** inferred (Intel SDM segment-override prefixes; sibling `emit_segment_prefix` at core.rs:31-42; x86-64 `encode_mem_only` via `emit_rex_rm`; llvm-mc i686 reference emits 0x64/0x65/…)
+**Documentation conflict:** (none) — doc comment states opcode form only; segment handling is implied by MemoryOperand.segment and core helper
+**Severity:** high
+**Counterexample:** `invlpg %es:(%eax)` → SUT `[0f,01,38]`, llvm-mc `[26,0f,01,38]`; also `%fs:(%eax)` → SUT misses leading `0x64`
+**Expected / Actual:** Expected `[0x26,0x0f,0x01,0x38]` / Actual `[0x0f,0x01,0x38]`
+**Impact:** INVLPG with `%fs:`/`%gs:` (common in kernel TLS/per-CPU paths) invalidates the wrong virtual address; TLB shootdown can silently miss.
+**Root cause:** system.rs:116-117 emits `0F 01` + ModR/M without calling `emit_segment_prefix(mem)`; `encode_modrm_mem` never emits segment prefixes itself.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:116`
+```rust
+                self.bytes.extend_from_slice(&[0x0F, 0x01]);
+                self.encode_modrm_mem(7, mem)
+```
+**Suggested fix:** Emit the segment prefix before the opcode.
+```rust
+                self.emit_segment_prefix(mem);
+                self.bytes.extend_from_slice(&[0x0F, 0x01]);
+                self.encode_modrm_mem(7, mem)
+```
+**Bug report:** bug_reports/encode_invlpg_missing_segment_prefix.md
+**Repro seed:** cc 3e05cfec304bbc270192f0cfec41758c0b2f36d6645bebfcb7548354393d2a3f
+**Raw output:**
+```text
+assertion `left == right` failed: SUT must emit FS override 0x64 before 0F 01
+  left: [15, 1, 56]
+ right: [100, 15, 1, 56]
+minimal failing input: seg = "es", base = "eax", disp = 0
+  left: [15, 1, 56], right: [38, 15, 1, 56]
+```
+
+### B2: encode_invlpg drops segment override prefix (SIB)
+
+**Formal:** ∀ seg, base, index≠esp, scale, disp. encode(invlpg, Seg:SIB) = llvm_mc(att)
+**Contract evidence:** inferred (same as B1)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `encode_in("inb", [%al, %al])` → Ok([0xec]); llvm-mc rejects
-**Expected / Actual:** Err / Ok([0xec])
-**Impact:** Invalid source operands assemble to a real IN DX-port instruction, so wrong I/O code is emitted silently.
-**Root cause:** system.rs:94 matches any `(Register, Register)` and ignores names.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:94`
+**Counterexample:** `invlpg %es:(%eax,%eax,1)` → SUT `[0f,01,3c,00]`, llvm-mc `[26,0f,01,3c,00]`
+**Expected / Actual:** Expected `[0x26,0x0f,0x01,0x3c,0x00]` / Actual `[0x0f,0x01,0x3c,0x00]`
+**Impact:** Same class as B1 on SIB addressing forms.
+**Root cause:** Same statements as B1 (system.rs:116-117).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:116`
 ```rust
-(Operand::Register(_src), Operand::Register(_dst)) => {
-    if size == 2 { self.bytes.push(0x66); }
-    self.bytes.push(if size == 1 { 0xEC } else { 0xED });
-    Ok(())
-}
+                self.bytes.extend_from_slice(&[0x0F, 0x01]);
+                self.encode_modrm_mem(7, mem)
 ```
-**Suggested fix:** Require `src.name == "dx"` and `dst.name` equal to the size-canonical data register; else Err.
+**Suggested fix:**
 ```rust
-(Operand::Register(src), Operand::Register(dst))
-    if src.name == "dx"
-        && matches!((size, dst.name.as_str()), (1, "al") | (2, "ax") | (4, "eax")) =>
-{
-    if size == 2 { self.bytes.push(0x66); }
-    self.bytes.push(if size == 1 { 0xEC } else { 0xED });
-    Ok(())
-}
+                self.emit_segment_prefix(mem);
+                self.bytes.extend_from_slice(&[0x0F, 0x01]);
+                self.encode_modrm_mem(7, mem)
 ```
-**Bug report:** bug_reports/encode_in_wrong_registers.md
-**Repro seed:** mnemonic="inb", src="al", dst="al"
+**Bug report:** bug_reports/encode_invlpg_missing_segment_prefix_sib.md
+**Repro seed:** (deterministic; no proptest seed required for regression)
 **Raw output:**
 ```text
-SUT accepted invalid IN `inb %al, %al` → [ec]; llvm-mc rejected
-minimal failing input: mnemonic = "inb", src = "al", dst = "al"
-```
-
-### B2: encode_in silently truncates out-of-range port immediates
-
-**Formal:** ∀ m ∈ {inb,inw,inl}, v ∉ imm8_accepted. llvm_mc rejects(m,$v) ⇒ encode_in(m,[imm(v),data_reg(m)]) = Err(_)
-**Contract evidence:** inferred (Intel SDM imm8 port; llvm-mc rejects $256; signature accepts Immediate i64)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `encode_in("inb", [$256, %al])` → Ok([0xe4, 0x00])
-**Expected / Actual:** Err / Ok([0xe4, 0x00])
-**Impact:** Port 256 becomes port 0; wrong I/O port selected without diagnostic.
-**Root cause:** system.rs:102 `self.bytes.push(*val as u8)` truncates without range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:99`
-```rust
-(Operand::Immediate(ImmediateValue::Integer(val)), Operand::Register(_dst)) => {
-    if size == 2 { self.bytes.push(0x66); }
-    self.bytes.push(if size == 1 { 0xE4 } else { 0xE5 });
-    self.bytes.push(*val as u8);
-    Ok(())
-}
-```
-**Suggested fix:** Reject values outside the imm8 domain before casting.
-```rust
-if *val < -128 || *val > 255 {
-    return Err(format!("IN port immediate out of imm8 range: {val}"));
-}
-self.bytes.push(*val as u8);
-```
-**Bug report:** bug_reports/encode_in_imm_truncation.md
-**Repro seed:** mnemonic="inb", imm_v=256
-**Raw output:**
-```text
-SUT silently encoded out-of-range port `inb $256, %al` → [e4, 00] (truncated?); llvm-mc rejected
-minimal failing input: mnemonic = "inb", imm_v = 256
-```
-
-### B3: encode_in rejects AT&T (%dx) memory port form
-
-**Formal:** ∀ m ∈ {inb,inw,inl}. encode_in(m, [mem(%dx), data_reg(m)]) = llvm_mc(m " (%dx), %" ++ data_reg(m))
-**Contract evidence:** documented sibling x86/system.rs:75 "Also handle parenthesized form: inl (%dx), %eax"; llvm-mc accepts and emits EC/ED
-**Documentation conflict:** (none for i686 — gap relative to sibling + llvm-mc)
-**Severity:** medium
-**Counterexample:** `encode_in("inb", [Memory(%dx), %al])` → Err("unsupported inb operands"); llvm-mc=[0xec]
-**Expected / Actual:** Ok([0xec]) / Err("unsupported inb operands")
-**Impact:** Valid AT&T forms used in kernel/boot code fail to assemble on the i686 backend.
-**Root cause:** No `(Memory, Register)` match arm; falls through to `_ => Err`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:93`
-```rust
-match (&ops[0], &ops[1]) {
-    (Operand::Register(_src), Operand::Register(_dst)) => { ... }
-    (Operand::Immediate(ImmediateValue::Integer(val)), Operand::Register(_dst)) => { ... }
-    _ => Err(format!("unsupported {} operands", mnemonic)),
-}
-```
-**Suggested fix:** Add Memory,Register arm (mirror x86 sibling system.rs:83-87).
-```rust
-(Operand::Memory(_), Operand::Register(_)) => {
-    if size == 2 { self.bytes.push(0x66); }
-    self.bytes.push(if size == 1 { 0xEC } else { 0xED });
-    Ok(())
-}
-```
-**Bug report:** bug_reports/encode_in_missing_dx_mem_form.md
-**Repro seed:** mnemonic="inb"
-**Raw output:**
-```text
-SUT rejected valid AT&T form `inb (%dx), %al`: unsupported inb operands; llvm-mc=[ec].
-minimal failing input: mnemonic = "inb"
+left: [15, 1, 60, 0], right: [38, 15, 1, 60, 0]
+minimal failing input: seg = "es", base = "eax", index = "eax", scale = 1, disp = 0
 ```
 
 ## Design Caveats
@@ -133,18 +89,18 @@ minimal failing input: mnemonic = "inb"
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_in_pbt.rs | 10 properties + 6 KAT + 3 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_in_pbt` registration |
+| src/backend/i686/assembler/encoder/encode_invlpg_pbt.rs | 10 properties + 5 KAT + 2 regression |
+| src/backend/i686/assembler/encoder/mod.rs | +`mod encode_invlpg_pbt` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_in_pbt -- --test-threads=1
-# narrowed:
-cargo test --lib encode_in_pbt::test_encode_in_regression_wrong_reg_al_al -- --test-threads=1
-cargo test --lib encode_in_pbt::test_encode_in_regression_imm_256_truncated -- --test-threads=1
-cargo test --lib encode_in_pbt::test_encode_in_regression_dx_mem_form -- --test-threads=1
+cargo test --lib encode_invlpg -- --test-threads=1
+# narrowed to the bug:
+cargo test --lib encode_invlpg_kat_llvm_mc_segment_fs -- --test-threads=1
+cargo test --lib test_encode_invlpg_regression_missing_fs_prefix -- --test-threads=1
+cargo test --lib encode_invlpg_diff_llvm_mc_segment -- --test-threads=1
 ```
 
 ## Output Directories
@@ -156,19 +112,19 @@ cargo test --lib encode_in_pbt::test_encode_in_regression_dx_mem_form -- --test-
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_in_wrong_registers.md (+ .html)
-- pbt-out/bug_reports/encode_in_imm_truncation.md (+ .html)
-- pbt-out/bug_reports/encode_in_missing_dx_mem_form.md (+ .html)
-- pbt-out/run/encode_in_pbt_serial.log
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix.md
+- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix.html
+- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix_sib.md
+- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix_sib.html
+- pbt-out/run/encode_invlpg_kat.log
+- pbt-out/run/encode_invlpg_full.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 01:08 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 257/397 total | PBT candidates: 257 | Tested: 257 (100%) | 1 pass, 257 fail
+> Last updated: 2026-10-09 01:23 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 258/397 total | PBT candidates: 258 | Tested: 258 (100%) | 1 pass, 258 fail
 
 ## Summary
 
@@ -177,10 +133,10 @@ cargo test --lib encode_in_pbt::test_encode_in_regression_dx_mem_form -- --test-
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 257 |
-| **Tested (of PBT candidates)** | **257 / 257 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 257 / -1 |
-| **Overall (tested / all functions)** | **257 / 397 (65%)** |
+| PBT candidates (from FUNCTION_INDEX) | 258 |
+| **Tested (of PBT candidates)** | **258 / 258 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 258 / -1 |
+| **Overall (tested / all functions)** | **258 / 397 (65%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -188,13 +144,13 @@ cargo test --lib encode_in_pbt::test_encode_in_regression_dx_mem_form -- --test-
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 257 | 257 | 0 | 100% |
+|  | 258 | 258 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 257 | 257 | 0 | 100% |
+| unknown | 258 | 258 | 0 | 100% |
 
 ## File Coverage
 
@@ -474,3 +430,4 @@ cargo test --lib encode_in_pbt::test_encode_in_regression_dx_mem_form -- --test-
 | encode_prefetch_0f0d | system.rs |
 | encode_out | system.rs |
 | encode_in | system.rs |
+| encode_invlpg | system.rs |

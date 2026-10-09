@@ -1,30 +1,19 @@
 # Coverage Status
 
-**Campaign target:** encode_in (src/backend/i686/assembler/encoder/system.rs:75)
-**Effort tier:** standard
-**Coverage evidence:** file-level (symbol presence) — no .gcda/.profraw for the Rust cargo lib target; `coverage_gaps` inspected unrelated OH C++ pbt binaries and reported encode_in NOT LINKED there (expected). Execution evidence is the cargo test run of `encode_in_pbt` (12 passing / 7 failing cases including KAT/regression).
+**Campaign:** encode_invlpg (standard tier)
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw for this Rust run (harness looks at unrelated OH C++ binaries and says encode_invlpg NOT LINKED there). Execution evidence is cargo test output: 17 tests in `encode_invlpg_pbt` exercised `InstructionEncoder::encode` → `encode_invlpg` (12 pass / 5 fail).
 
-## Sweep round 1 (standard allowance)
-
-- Tool: `coverage_gaps` → no line-level data; file-level only on OH C++ binaries.
-- Documented behaviors of encode_in already have properties:
-  - DX-port differential + opcode invariant
-  - imm8-port differential + opcode invariant
-  - metamorphic inw = 66|inl
-  - metamorphic DX vs imm opcode families
-  - negative arity
-  - negative wrong registers (FAIL → bug B1)
-  - negative imm OOR (FAIL → bug B2)
-  - differential (%dx) memory form (FAIL → bug B3)
-- No additional documented branch without a property; sweep closed.
-
-## Counts
+## This campaign
 
 | Metric | Value |
 |--------|-------|
-| Properties | 10 |
-| Passing | 7 |
-| Failing | 3 |
-| Bugs filed | 3 |
-| KAT | 6 (5 pass, 1 fail on (%dx)) |
-| Regression witnesses | 3 (all fail, confirming bugs) |
+| Target function | encode_invlpg |
+| Properties | 10 (8 passing, 2 failing) |
+| KAT / regression | 4 KAT pass, 1 KAT fail, 2 regression fail |
+| Bugs | 1 (missing segment prefix) |
+| Documented behaviors covered | opcode 0F 01 /7, base+disp, SIB, abs disp32, ESP/EBP edges, segment prefix (failing), segment+SIB (failing), metamorphic vs lidt, arity error, non-memory error |
+
+## Sweep (standard, 1 round)
+
+- `coverage_gaps` → no line-level data; file-level OH binaries irrelevant for Rust SUT.
+- All documented behaviors of encode_invlpg already have properties. Closed after filing 1 bug.

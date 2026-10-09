@@ -389,7 +389,7 @@
 | encode_prefetch_0f0d | i686/encoder/system.rs | 25 | method | yes | prior campaign target |
 | encode_out | i686/encoder/system.rs | 39 | method | yes | change-surface target this campaign |
 | encode_in | i686/encoder/system.rs | 75 | method | yes | change-surface target this campaign |
-| encode_invlpg | i686/encoder/system.rs | 110 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_invlpg | i686/encoder/system.rs | 110 | method | yes | change-surface target this campaign |
 | encode_verw | i686/encoder/system.rs | 124 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_lsl | i686/encoder/system.rs | 144 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_system_table | i686/encoder/system.rs | 170 | method | no | out of campaign scope (HARD: test only encode_prefetch) |

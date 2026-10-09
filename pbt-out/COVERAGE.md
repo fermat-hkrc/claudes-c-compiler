@@ -260,3 +260,4 @@
 | encode_prefetch_0f0d | system.rs | encode_prefetch_0f0d_pbt.rs | cargo test --lib encode_prefetch_0f0d | 8 passing / 1 failing properties (plus 4 KAT pass + 1 KAT/regression fail; 1 high bug missing segment prefix; sweep file-level) |
 | encode_out | system.rs | encode_out_pbt.rs | cargo test --lib encode_out | 5 passing / 3 failing properties (plus 5 KAT + 3 failing regression witnesses; 3 bugs: wrong regs, imm truncation, missing (%dx) form) |
 | encode_in | system.rs | encode_in_pbt.rs | cargo test --lib encode_in_pbt | 7 passing / 3 failing properties (plus 5 KAT + 3 failing regression witnesses; 3 bugs: wrong regs, imm truncation, missing (%dx) form) |
+| encode_invlpg | system.rs | encode_invlpg_pbt.rs | cargo test --lib encode_invlpg | 8 passing / 2 failing properties (plus 4 KAT pass + 1 KAT fail + 2 failing regression witnesses; 1 bug: missing segment prefix) |

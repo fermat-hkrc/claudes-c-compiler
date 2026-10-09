@@ -10,7 +10,17 @@
 - proptest cases set explicitly to 1000 for standard tier.
 - Known defect class (both encode_in and encode_out): (1) any Register,Register pair accepted; (2) `*val as u8` truncates OOR imm; (3) missing Memory port form on i686 (x86-64 sibling handles it).
 
+## encode_invlpg (i686 system encoder)
+
+- Opcode: 0F 01 /7 + ModR/M memory only (rejects register/imm/label).
+- Non-segment base/disp/SIB/abs forms match llvm-mc `-triple=i686`.
+- Metamorphic: same memory → invlpg Mod+RM/SIB/disp equals lidt; only ModRM.reg differs (7 vs 3).
+- Known defect: does not call `emit_segment_prefix` before opcode (same class as encode_prefetch / encode_prefetch_0f0d). Witness: `invlpg %es:(%eax)` → SUT omits 0x26.
+- Fix shape: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`.
+
 ## Harness
 
 - PBT files: `src/backend/i686/assembler/encoder/*_pbt.rs` + `#[cfg(test)] mod` in `encoder/mod.rs`.
 - Build contract form: `cargo test --lib <filter> -- --test-threads=1`.
+- llvm-mc path: `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+- proptest cases set explicitly to 1000 for standard tier.
