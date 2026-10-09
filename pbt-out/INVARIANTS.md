@@ -18,6 +18,13 @@
 - Known defect: does not call `emit_segment_prefix` before opcode (same class as encode_prefetch / encode_prefetch_0f0d). Witness: `invlpg %es:(%eax)` → SUT omits 0x26.
 - Fix shape: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`.
 
+## encode_verw (i686 system encoder)
+
+- Opcode: 0F 00 /5 + ModR/M; Intel VERW is r/m16 (register form: ax/bx/cx/dx/sp/bp/si/di only).
+- Non-segment base/disp/SIB/abs and r16 forms match llvm-mc `-triple=i686`.
+- Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_invlpg/prefetch); (2) register arm accepts 32/8-bit names via `reg_num` aliasing (eax→same bytes as ax).
+- Fix shapes: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x00])`; gate register form with `reg_size(&reg.name) == 2`.
+
 ## Harness
 
 - PBT files: `src/backend/i686/assembler/encoder/*_pbt.rs` + `#[cfg(test)] mod` in `encoder/mod.rs`.

@@ -1,19 +1,30 @@
 # Coverage Status
 
-**Campaign:** encode_invlpg (standard tier)
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw for this Rust run (harness looks at unrelated OH C++ binaries and says encode_invlpg NOT LINKED there). Execution evidence is cargo test output: 17 tests in `encode_invlpg_pbt` exercised `InstructionEncoder::encode` → `encode_invlpg` (12 pass / 5 fail).
+**Campaign:** encode_verw (i686)
+**Tier:** standard
+**Coverage evidence:** file-level (symbol presence) — no .gcda/.profraw for Rust; `coverage_gaps` listed unrelated OH C++ pbt_test binaries and reported encode_verw NOT LINKED there (expected). Execution evidence is cargo lib test `encode_verw_pbt` (11 pass / 6 fail including KAT+regression).
 
-## This campaign
+## Sweep round 1
+
+- Tool: `coverage_gaps` → no line-level data; file-level only on non-Rust binaries.
+- Documented behaviors of encode_verw already have properties:
+  - memory base/disp/SIB/abs (differential, passing)
+  - r16 register (differential, passing)
+  - segment override (differential, failing → B1)
+  - segment+SIB (differential, failing → B1)
+  - opcode 0F 00 /5 invariant (passing)
+  - arity ≠ 1 (negative, passing)
+  - non-r16 / imm / label (negative, failing on non-r16 → B2)
+- No additional property written: every match arm and documented contract path already targeted.
+- Closed after filing 2 bugs.
+
+## Counts
 
 | Metric | Value |
 |--------|-------|
-| Target function | encode_invlpg |
-| Properties | 10 (8 passing, 2 failing) |
-| KAT / regression | 4 KAT pass, 1 KAT fail, 2 regression fail |
-| Bugs | 1 (missing segment prefix) |
-| Documented behaviors covered | opcode 0F 01 /7, base+disp, SIB, abs disp32, ESP/EBP edges, segment prefix (failing), segment+SIB (failing), metamorphic vs lidt, arity error, non-memory error |
-
-## Sweep (standard, 1 round)
-
-- `coverage_gaps` → no line-level data; file-level OH binaries irrelevant for Rust SUT.
-- All documented behaviors of encode_invlpg already have properties. Closed after filing 1 bug.
+| Properties | 10 |
+| Passing | 7 |
+| Failing | 3 |
+| Bugs | 2 |
+| KAT | 5 (4 pass, 1 fail = segment FS) |
+| Regression witnesses | 2 (both fail, pin B1/B2) |

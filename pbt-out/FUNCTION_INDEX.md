@@ -1,4 +1,4 @@
-> Total files: 17 | Total functions: 397 | PBT candidates: 257 | Excluded: 140
+> Total files: 17 | Total functions: 397 | PBT candidates: 260 | Excluded: 137
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -390,7 +390,7 @@
 | encode_out | i686/encoder/system.rs | 39 | method | yes | change-surface target this campaign |
 | encode_in | i686/encoder/system.rs | 75 | method | yes | change-surface target this campaign |
 | encode_invlpg | i686/encoder/system.rs | 110 | method | yes | change-surface target this campaign |
-| encode_verw | i686/encoder/system.rs | 124 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
+| encode_verw | i686/encoder/system.rs | 124 | method | yes | change-surface target this campaign |
 | encode_lsl | i686/encoder/system.rs | 144 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_system_table | i686/encoder/system.rs | 170 | method | no | out of campaign scope (HARD: test only encode_prefetch) |
 | encode_lmsw | i686/encoder/system.rs | 203 | method | no | out of campaign scope (HARD: test only encode_prefetch) |

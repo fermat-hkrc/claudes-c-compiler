@@ -1,84 +1,128 @@
-# PBT Campaign Report: encode_invlpg
+# PBT Campaign Report: encode_verw
 
 ## Summary
 
-**Verdict:** 1 high: `encode_invlpg` omits segment-override prefixes (`%fs:`/`%gs:`/…), so INVLPG targeting a non-DS segment assembles to the wrong address and leaves stale TLB entries.
+**Verdict:** 2 unique root-cause bugs (high missing segment prefix; medium non-r16 register accept) — 3 failing property witnesses (segment, segment+SIB, non-r16).
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_invlpg
-**Tests:** 10 properties (+ 5 KAT + 2 regression)
-**Result:** 8 passing, 2 failing properties; 2 bug reports (one root cause: missing segment prefix; base+disp and SIB witnesses)
-**Change surface:** 1 changed function (encode_invlpg), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` found no .gcda/.profraw (Rust run; reporter scanned unrelated OH C++ binaries). Cargo test log is the execution evidence for encode_invlpg.
-**Effort tier:** standard
+**Modules tested:** encode_verw (i686 system encoder)
+**Tests:** 10 properties (+ 5 KAT + 2 regression witnesses)
+**Result:** 7 passing, 3 failing properties; 3 bug report entries (2 root causes)
+**Change surface:** 1 changed function (encode_verw), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` has no Rust profraw line data; reporter listed unrelated OH C++ binaries; execution evidence is cargo lib `encode_verw_pbt`
+
+**Effort tier:** standard (5–8+ properties, ≥1000 proptest cases, 1 strengthening round, 1 contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_invlpg | 10 properties (+ KAT/regression) | 1 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_verw | 10 props (+5 KAT +2 reg) | 2 root causes (3 reports) | differential (llvm-mc), algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_invlpg drops segment override prefix (base+disp)
+### B1: encode_verw omits segment-override prefix on memory operands
 
-**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, disp ∈ i32. encode(invlpg, Mem(seg:base+disp)) = llvm_mc("invlpg %seg:…")
-**Contract evidence:** inferred (Intel SDM segment-override prefixes; sibling `emit_segment_prefix` at core.rs:31-42; x86-64 `encode_mem_only` via `emit_rex_rm`; llvm-mc i686 reference emits 0x64/0x65/…)
-**Documentation conflict:** (none) — doc comment states opcode form only; segment handling is implied by MemoryOperand.segment and core helper
+**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, disp. encode_verw([Mem(seg:base+disp)]) = llvm_mc("verw %seg:…")
+**Contract evidence:** inferred (Intel SDM segment override prefixes; sibling x86 `encode_verw` calls `emit_rex_rm` before opcode; i686 `emit_segment_prefix` at core.rs:31-42 used by gp_integer; llvm-mc emits 26/2E/36/3E/64/65)
+**Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `invlpg %es:(%eax)` → SUT `[0f,01,38]`, llvm-mc `[26,0f,01,38]`; also `%fs:(%eax)` → SUT misses leading `0x64`
-**Expected / Actual:** Expected `[0x26,0x0f,0x01,0x38]` / Actual `[0x0f,0x01,0x38]`
-**Impact:** INVLPG with `%fs:`/`%gs:` (common in kernel TLS/per-CPU paths) invalidates the wrong virtual address; TLB shootdown can silently miss.
-**Root cause:** system.rs:116-117 emits `0F 01` + ModR/M without calling `emit_segment_prefix(mem)`; `encode_modrm_mem` never emits segment prefixes itself.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:116`
+**Counterexample:** `verw %es:(%eax)` then compare bytes; also `verw %fs:(%eax)`
+**Expected / Actual:** Expected `[0x26, 0x0f, 0x00, 0x28]` / Actual `[0x0f, 0x00, 0x28]`
+**Impact:** Segment-relative VERW targets the wrong segment; kernel/boot code using `%fs:`/`%gs:` overrides assembles incorrect machine code.
+**Root cause:** system.rs:129-132 memory arm does not call `emit_segment_prefix(mem)` before emitting `0F 00`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:129`
 ```rust
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(7, mem)
+            Operand::Memory(mem) => {
+                self.bytes.extend_from_slice(&[0x0F, 0x00]);
+                self.encode_modrm_mem(5, mem)
+            }
 ```
-**Suggested fix:** Emit the segment prefix before the opcode.
+**Suggested fix:** Emit the segment prefix first.
 ```rust
+            Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(7, mem)
+                self.bytes.extend_from_slice(&[0x0F, 0x00]);
+                self.encode_modrm_mem(5, mem)
+            }
 ```
-**Bug report:** bug_reports/encode_invlpg_missing_segment_prefix.md
-**Repro seed:** cc 3e05cfec304bbc270192f0cfec41758c0b2f36d6645bebfcb7548354393d2a3f
+**Bug report:** bug_reports/encode_verw_missing_segment_prefix.md
+**Repro seed:** proptest minimal `seg="es", base="eax", disp=0` (also deterministic KAT/regression)
 **Raw output:**
 ```text
-assertion `left == right` failed: SUT must emit FS override 0x64 before 0F 01
-  left: [15, 1, 56]
- right: [100, 15, 1, 56]
-minimal failing input: seg = "es", base = "eax", disp = 0
-  left: [15, 1, 56], right: [38, 15, 1, 56]
+segment prefix diff for `verw %es:(%eax)`: SUT=[0f, 00, 28] llvm-mc=[26, 0f, 00, 28]
+assertion failed: verw %fs:(%eax) must be [64, 0f, 00, 28], got [0f, 00, 28]
 ```
 
-### B2: encode_invlpg drops segment override prefix (SIB)
+### B2: encode_verw accepts non-r16 registers
 
-**Formal:** ∀ seg, base, index≠esp, scale, disp. encode(invlpg, Seg:SIB) = llvm_mc(att)
+**Formal:** ∀ r ∈ {eax…edi, al…bh}. encode_verw([Reg(r)]) = Err
+**Contract evidence:** documented-and-violated via Intel SDM VERW r/m16 + llvm-mc rejection of `%eax`/`%al`; doc comment states `0F 00 /5` (r/m16 form of that opcode group)
+**Documentation conflict:** (none on this function beyond the opcode line; width rule from SDM/llvm-mc)
+**Severity:** medium
+**Counterexample:** `verw %eax` → Ok([0x0f, 0x00, 0xe8]) (same as `verw %ax`)
+**Expected / Actual:** Expected Err / Actual Ok([0x0f, 0x00, 0xe8])
+**Impact:** Invalid-width operands assemble without error, aliasing to 16-bit encodings and hiding author mistakes.
+**Root cause:** system.rs:133-138 uses `reg_num` only; al/ax/eax share the same 3-bit code with no width gate.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:133`
+```rust
+            Operand::Register(reg) => {
+                let rm = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x00]);
+                self.bytes.push(self.modrm(3, 5, rm));
+                Ok(())
+            }
+```
+**Suggested fix:** Require `reg_size(&reg.name) == 2` (and not a segment name).
+```rust
+            Operand::Register(reg) => {
+                if reg_size(&reg.name) != 2 || is_segment_reg(&reg.name) {
+                    return Err(format!("verw requires r/m16 register, got {}", reg.name));
+                }
+                let rm = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x00]);
+                self.bytes.push(self.modrm(3, 5, rm));
+                Ok(())
+            }
+```
+**Bug report:** bug_reports/encode_verw_accepts_non_r16_register.md
+**Repro seed:** proptest minimal `kind=2, bad_reg="eax", imm=0`
+**Raw output:**
+```text
+SUT accepted invalid-width register `verw %eax` → [0f, 00, e8]; VERW requires r/m16 (llvm-mc rejects)
+verw %eax must Err (r/m16 only); got Ok(Ok([15, 0, 232]))
+```
+
+### B3: encode_verw omits segment-override prefix on SIB memory operands
+
+**Formal:** ∀ seg, base, index≠esp, scale, disp. encode_verw([Mem seg+SIB]) = llvm_mc(att)
 **Contract evidence:** inferred (same as B1)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `invlpg %es:(%eax,%eax,1)` → SUT `[0f,01,3c,00]`, llvm-mc `[26,0f,01,3c,00]`
-**Expected / Actual:** Expected `[0x26,0x0f,0x01,0x3c,0x00]` / Actual `[0x0f,0x01,0x3c,0x00]`
-**Impact:** Same class as B1 on SIB addressing forms.
-**Root cause:** Same statements as B1 (system.rs:116-117).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:116`
+**Counterexample:** `verw %es:(%eax,%eax,1)` → SUT=[0f,00,2c,00] llvm-mc=[26,0f,00,2c,00]
+**Expected / Actual:** Expected `[0x26, 0x0f, 0x00, 0x2c, 0x00]` / Actual `[0x0f, 0x00, 0x2c, 0x00]`
+**Impact:** Segment-relative VERW with index/scale targets the wrong segment.
+**Root cause:** system.rs:129-132 — same missing `emit_segment_prefix` as B1.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:129`
 ```rust
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(7, mem)
+            Operand::Memory(mem) => {
+                self.bytes.extend_from_slice(&[0x0F, 0x00]);
+                self.encode_modrm_mem(5, mem)
+            }
 ```
-**Suggested fix:**
+**Suggested fix:** Same as B1 — call `emit_segment_prefix(mem)` before the opcode.
 ```rust
+            Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(7, mem)
+                self.bytes.extend_from_slice(&[0x0F, 0x00]);
+                self.encode_modrm_mem(5, mem)
+            }
 ```
-**Bug report:** bug_reports/encode_invlpg_missing_segment_prefix_sib.md
-**Repro seed:** (deterministic; no proptest seed required for regression)
+**Bug report:** bug_reports/encode_verw_missing_segment_prefix_sib.md
+**Repro seed:** proptest minimal `seg="es", base="eax", index="eax", scale=1, disp=0`
 **Raw output:**
 ```text
-left: [15, 1, 60, 0], right: [38, 15, 1, 60, 0]
-minimal failing input: seg = "es", base = "eax", index = "eax", scale = 1, disp = 0
+seg+SIB diff for `verw %es:(%eax,%eax,1)`: SUT=[0f, 00, 2c, 00] llvm-mc=[26, 0f, 00, 2c, 00]
 ```
 
 ## Design Caveats
@@ -89,18 +133,33 @@ minimal failing input: seg = "es", base = "eax", index = "eax", scale = 1, disp 
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_invlpg_pbt.rs | 10 properties + 5 KAT + 2 regression |
-| src/backend/i686/assembler/encoder/mod.rs | +`mod encode_invlpg_pbt` |
+| src/backend/i686/assembler/encoder/encode_verw_pbt.rs | 10 properties, 5 KAT, 2 regression |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_verw_pbt;` |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_invlpg -- --test-threads=1
-# narrowed to the bug:
-cargo test --lib encode_invlpg_kat_llvm_mc_segment_fs -- --test-threads=1
-cargo test --lib test_encode_invlpg_regression_missing_fs_prefix -- --test-threads=1
-cargo test --lib encode_invlpg_diff_llvm_mc_segment -- --test-threads=1
+cargo test --lib encode_verw -- --test-threads=1
+```
+
+B1:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_verw_regression_missing_fs_prefix -- --test-threads=1
+```
+
+B2:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib test_encode_verw_regression_rejects_eax -- --test-threads=1
+```
+
+B3:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_verw_diff_segment_sib -- --test-threads=1
 ```
 
 ## Output Directories
@@ -112,19 +171,19 @@ cargo test --lib encode_invlpg_diff_llvm_mc_segment -- --test-threads=1
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix.md
-- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix.html
-- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix_sib.md
-- pbt-out/bug_reports/encode_invlpg_missing_segment_prefix_sib.html
-- pbt-out/run/encode_invlpg_kat.log
-- pbt-out/run/encode_invlpg_full.log
+- pbt-out/INVARIANTS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_verw_missing_segment_prefix.md (+ .html)
+- pbt-out/bug_reports/encode_verw_missing_segment_prefix_sib.md (+ .html)
+- pbt-out/bug_reports/encode_verw_accepts_non_r16_register.md (+ .html)
+- pbt-out/run/encode_verw_test.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 01:23 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 258/397 total | PBT candidates: 258 | Tested: 258 (100%) | 1 pass, 258 fail
+> Last updated: 2026-10-09 01:38 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 259/397 total | PBT candidates: 259 | Tested: 259 (100%) | 1 pass, 259 fail
 
 ## Summary
 
@@ -133,10 +192,10 @@ cargo test --lib encode_invlpg_diff_llvm_mc_segment -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 258 |
-| **Tested (of PBT candidates)** | **258 / 258 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 258 / -1 |
-| **Overall (tested / all functions)** | **258 / 397 (65%)** |
+| PBT candidates (from FUNCTION_INDEX) | 259 |
+| **Tested (of PBT candidates)** | **259 / 259 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 259 / -1 |
+| **Overall (tested / all functions)** | **259 / 397 (65%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -144,13 +203,13 @@ cargo test --lib encode_invlpg_diff_llvm_mc_segment -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 258 | 258 | 0 | 100% |
+|  | 259 | 259 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 258 | 258 | 0 | 100% |
+| unknown | 259 | 259 | 0 | 100% |
 
 ## File Coverage
 
@@ -431,3 +490,4 @@ cargo test --lib encode_invlpg_diff_llvm_mc_segment -- --test-threads=1
 | encode_out | system.rs |
 | encode_in | system.rs |
 | encode_invlpg | system.rs |
+| encode_verw | system.rs |
