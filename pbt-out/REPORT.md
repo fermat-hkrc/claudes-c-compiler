@@ -1,113 +1,97 @@
-# PBT Campaign Report: encode_mov_reg_mem
+# PBT Campaign Report: encode_mov_imm_mem (i686)
 
 ## Summary
 
-**Verdict:** 3 high: `encode_mov_reg_mem` rejects es/cs/ss/ds segment overrides, silently accepts size-mismatched GP sources (`movl %ax, mem` → eax store bytes), and silently accepts non-GP sources (`movl %xmm0, mem` → eax store bytes) via `reg_num` aliasing.
+**Verdict:** 2 bugs — 1 high: `encode_mov_imm_mem` silently drops every segment-override prefix (including fs/gs), so `movb $0, %es:(%eax)` encodes without 0x26; 1 medium (documented by the author): movb/movw `$sym` rejected while llvm-mc accepts FK_Data_1/2.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_mov_reg_mem (i686 gp_integer)
-**Tests:** 8 properties (+ KAT gates + 3 regression witnesses)
-**Result:** 5 passing, 3 failing (3 bugs)
-**Change surface:** 1 changed function (encode_mov_reg_mem), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw and listed unrelated OH C++ binaries as NOT LINKED for this Rust symbol. Campaign execution evidence: `cargo test --lib encode_mov_reg_mem` compiles and runs production `InstructionEncoder::encode` → `encode_mov_reg_mem` (KAT + 1000-case proptest). Tier: standard.
-**Effort tier:** standard (5–8 properties, ≥1000 cases, ≥1 strengthen/metamorphic, 1 coverage_gaps sweep)
+**Modules tested:** encode_mov_imm_mem (src/backend/i686/assembler/encoder/gp_integer.rs)
+**Tests:** 9 properties (+ KAT/regression witnesses)
+**Result:** 7 passing, 2 bugs
+**Change surface:** 1 changed function (encode_mov_imm_mem), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) + cargo execution — `coverage_gaps` had no .gcda/.profraw and reported NOT LINKED against unrelated OH binaries; campaign evidence is `cargo test --lib encode_mov_imm_mem` executing production encode path
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_mov_reg_mem | 8 | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_mov_imm_mem | 9 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_mov_reg_mem rejects es/cs/ss/ds segment overrides
+### B1: encode_mov_imm_mem omits all segment-override prefixes
 
-**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, disp ∈ i32, width ∈ {1,2,4}, src ∈ GP(width). bytes(SUT) = llvm-mc(att with %seg:)
-**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` implements all six overrides; Intel SDM 2.1.1; llvm-mc accepts; public MOV path via encode_mov)
+**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, disp, width, imm. encode(mov{b,w,l} $imm, %seg:mem) = llvm-mc(same) including override prefix
+**Contract evidence:** inferred (Intel SDM 2.1.1 segment overrides; core.rs:31-42 `emit_segment_prefix` implements all six; x86-64 sibling gp_integer.rs:180 calls it; llvm-mc `-triple=i686` reference)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `movb %al, %es:(%eax)` — SUT `Err("unsupported segment: es")`; llvm-mc `[0x26, 0x88, 0x00]`
-**Expected / Actual:** `[0x26, 0x88, 0x00]` / `Err("unsupported segment: es")`
-**Impact:** Valid AT&T forms used in OS/kernel code are rejected; fs/gs work, es/cs/ss/ds do not
-**Root cause:** gp_integer.rs:220-225 inlines fs/gs-only match instead of `emit_segment_prefix`
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:220`
+**Counterexample:** `movb $0, %es:(%eax)` → sut=`[c6,00,00]` mc=`[26,c6,00,00]`; also `movl $1, %fs:(%eax)` omits 0x64
+**Expected / Actual:** `[0x26,0xc6,0x00,0x00]` / `[0xc6,0x00,0x00]`
+**Impact:** Silent wrong machine code for segment-qualified imm→mem stores common in OS/kernel AT&T asm
+**Root cause:** gp_integer.rs:239-247 never calls `emit_segment_prefix` before C6/C7
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:239`
 ```rust
-        if let Some(ref seg) = mem.segment {
-            match seg.as_str() {
-                "fs" => self.bytes.push(0x64),
-                "gs" => self.bytes.push(0x65),
-                _ => return Err(format!("unsupported segment: {}", seg)),
-            }
+    fn encode_mov_imm_mem(&mut self, imm: &ImmediateValue, mem: &MemoryOperand, size: u8) -> Result<(), String> {
+        if size == 2 {
+            self.bytes.push(0x66);
         }
+        if size == 1 {
+            self.bytes.push(0xC6);
+        } else {
+            self.bytes.push(0xC7);
+        }
+        self.encode_modrm_mem(0, mem)?;
 ```
-**Suggested fix:** Call the shared helper:
+**Suggested fix:** Call the shared helper first:
 ```rust
         self.emit_segment_prefix(mem);
 ```
-**Bug report:** bug_reports/encode_mov_reg_mem_missing_segment_prefix.md
-**Repro seed:** proptest cc 28687c1cb77be470c1ea50a67dbb4ae3d376c5535467c7fe51f644388b94ae29; minimal seg="es", base="eax", disp=0, width=1, si=0
+**Bug report:** bug_reports/encode_mov_imm_mem_missing_segment_prefix.md
+**Repro seed:** proptest `cc b3c80a26bfc1efaa47b03d7db28abb1d2c97e917fb274034d61bbdce993f96c1`
 **Raw output:**
 ```text
-Test failed: SUT rejected valid segment form `movb %al, %es:(%eax)`: unsupported segment: es; i686 MOV reg→mem must emit segment override (core.rs emit_segment_prefix; Intel SDM 2.1.1). Body only accepts fs/gs..
-minimal failing input: seg = "es", base = "eax", disp = 0, width = 1, si = 0
+segment diff `movb $0, %es:(%eax)`: sut=[c6, 00, 00] mc=[26, c6, 00, 00]
+minimal failing input: seg = "es", base = "eax", disp = 0, width = 1, imm = 0
 ```
 
-### B2: encode_mov_reg_mem accepts size-mismatched GP source
+### B2: encode_mov_imm_mem rejects symbol immediates for movb/movw
 
-**Formal:** ∀ mnemonic width W, src with reg_size≠W. llvm-mc rejects ⇒ SUT returns Err
-**Contract evidence:** inferred (Intel SDM MOV size match; llvm-mc rejects; signature takes size from mnemonic)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `movl %ax, (%eax)` → `Ok([0x89, 0x00])` (same as `movl %eax, (%eax)`)
-**Expected / Actual:** Err / Ok([0x89, 0x00])
-**Impact:** Wrong-width assembly silently encodes as matching-width GP store
-**Root cause:** gp_integer.rs:217 uses `reg_num` with no `reg_size(&src.name) == size` gate
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:217`
+**Formal:** ∀ width ∈ {1,2}, base, disp. encode(mov{b,w} $sym, mem) = llvm-mc(same)
+**Contract evidence:** documented limitation gp_integer.rs:265 "symbol immediate only supported for 32-bit mov to memory"; AT&T/public path accepts Symbol via movb/movw (mod.rs:167-169); llvm-mc FK_Data_1/2
+**Documentation conflict:** gp_integer.rs:265 `return Err("symbol immediate only supported for 32-bit mov to memory")` — admits limitation on accepted input (not a domain exclusion)
+**Severity:** medium (documented by the author)
+**Counterexample:** `movb $sym, (%eax)` → Err(...); llvm-mc `[c6,00,00]`
+**Expected / Actual:** Ok with C6/C7 + narrow fixup placeholders / Err
+**Impact:** Callers cannot assemble symbol immediates into byte/word memory stores
+**Root cause:** gp_integer.rs:259-265 only handles size==4 with R_386_32
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:259`
 ```rust
-        let src_num = reg_num(&src.name).ok_or_else(|| format!("bad register: {}", src.name))?;
+            ImmediateValue::Symbol(sym) | ImmediateValue::SymbolPlusOffset(sym, _) => {
+                let addend = if let ImmediateValue::SymbolPlusOffset(_, a) = imm { *a } else { 0 };
+                if size == 4 {
+                    self.add_relocation(sym, R_386_32, addend);
+                    self.bytes.extend_from_slice(&[0, 0, 0, 0]);
+                } else {
+                    return Err("symbol immediate only supported for 32-bit mov to memory".to_string());
+                }
+            }
 ```
-**Suggested fix:**
+**Suggested fix:** Emit size-appropriate reloc + placeholder bytes for width 1 and 2 (project R_386_8/R_386_16 or equivalent)
 ```rust
-        if reg_size(&src.name) != size {
-            return Err(format!("register size mismatch for mov: {}", src.name));
-        }
-        let src_num = reg_num(&src.name).ok_or_else(|| format!("bad register: {}", src.name))?;
+                match size {
+                    1 => { /* reloc 8-bit + push 0 */ }
+                    2 => { /* reloc 16-bit + [0,0] */ }
+                    4 => { self.add_relocation(sym, R_386_32, addend); self.bytes.extend_from_slice(&[0,0,0,0]); }
+                    _ => unreachable!(),
+                }
 ```
-**Bug report:** bug_reports/encode_mov_reg_mem_mismatched_width.md
-**Repro seed:** mode=0, bi=0, si=0, disp=0
+**Bug report:** bug_reports/encode_mov_imm_mem_narrow_symbol_imm_rejected.md
+**Repro seed:** (deterministic minimal: width=1, base=eax, disp=0)
 **Raw output:**
 ```text
-Test failed: SUT accepted size-mismatched reg→mem `movl %ax, (%eax)` → [89, 00]; MOV m,r requires matching operand size (Intel SDM; llvm-mc rejects). reg_num aliases widths so bytes look like a valid same-width form..
-minimal failing input: mode = 0, bi = 0, si = 0, disp = 0
-```
-
-### B3: encode_mov_reg_mem accepts non-GP source via reg_num alias
-
-**Formal:** ∀ non_gp ∈ {xmm*,mm*,st*,ymm*}, width. llvm-mc rejects ⇒ SUT returns Err
-**Contract evidence:** inferred (Intel SDM 88/89 is GP-only; llvm-mc rejects; registers.rs aliases xmm/mm/st)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `movb %xmm0, (%eax)` → `Ok([0x88, 0x00])` (same as `movb %al, (%eax)`)
-**Expected / Actual:** Err / Ok([0x88, 0x00])
-**Impact:** Non-GP register names silently encode as GP stores
-**Root cause:** `reg_num` maps xmm0/mm0/st/ymm0 to 0–7; no is_xmm/is_mm/st/ymm reject
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:217`
-```rust
-        let src_num = reg_num(&src.name).ok_or_else(|| format!("bad register: {}", src.name))?;
-```
-**Suggested fix:**
-```rust
-        if is_xmm(&src.name) || is_mm(&src.name) || src.name.starts_with("st") || src.name.starts_with("ymm") {
-            return Err(format!("non-GP register for mov: {}", src.name));
-        }
-        let src_num = reg_num(&src.name).ok_or_else(|| format!("bad register: {}", src.name))?;
-```
-**Bug report:** bug_reports/encode_mov_reg_mem_non_gp_src.md
-**Repro seed:** ni=0, bi=0, width=1, disp=0
-**Raw output:**
-```text
-Test failed: SUT accepted non-GP MOV reg→mem `movb %xmm0, (%eax)` → [88, 00]; 88/89 form is GP-only (Intel SDM). reg_num aliases xmm/mm/st to 0-7..
-minimal failing input: ni = 0, bi = 0, width = 1, disp = 0
+SUT rejected valid narrow symbol imm `movb $sym, (%eax)`: symbol immediate only supported for 32-bit mov to memory; llvm-mc encodes [c6, 00, 00]
+minimal failing input: width = 1, base = "eax", disp = 0
 ```
 
 ## Design Caveats
@@ -118,44 +102,42 @@ minimal failing input: ni = 0, bi = 0, width = 1, disp = 0
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_mov_reg_mem_pbt.rs | 8 properties + 6 KAT + 3 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_mov_reg_mem_pbt;` |
+| src/backend/i686/assembler/encoder/encode_mov_imm_mem_pbt.rs | 9 properties + KAT + 2 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | `mod encode_mov_imm_mem_pbt` registration |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_mov_reg_mem -- --test-threads=1
-cargo test --lib encode_mov_reg_mem_diff_llvm_mc_segment -- --test-threads=1
-cargo test --lib encode_mov_reg_mem_neg_mismatched_width -- --test-threads=1
-cargo test --lib encode_mov_reg_mem_neg_non_gp_src -- --test-threads=1
-cargo test --lib encode_mov_reg_mem_regression_es_segment_prefix -- --test-threads=1
-cargo test --lib encode_mov_reg_mem_regression_mismatched_width_ax -- --test-threads=1
-cargo test --lib encode_mov_reg_mem_regression_non_gp_xmm0 -- --test-threads=1
+cargo test --lib encode_mov_imm_mem -- --test-threads=1
+cargo test --lib encode_mov_imm_mem_diff_llvm_mc_segment -- --test-threads=1
+cargo test --lib encode_mov_imm_mem_diff_symbol_narrow -- --test-threads=1
+cargo test --lib test_encode_mov_imm_mem_regression_missing_es_prefix -- --test-threads=1
 ```
+
+Build contract (immutable): `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` (prebuilt; swap filter for test target as above).
 
 ## Output Directories
 
-- pbt-out/PLAN.md
-- pbt-out/PROPERTIES.md
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (auto-rendered from report.json)
-- pbt-out/report.json
+- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/PROPERTIES.md
+- pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/INVARIANTS.md
-- pbt-out/bug_reports/encode_mov_reg_mem_missing_segment_prefix.md (+ .html)
-- pbt-out/bug_reports/encode_mov_reg_mem_mismatched_width.md (+ .html)
-- pbt-out/bug_reports/encode_mov_reg_mem_non_gp_src.md (+ .html)
-- pbt-out/run/encode_mov_reg_mem_test.log
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_mov_imm_mem_missing_segment_prefix.md
+- pbt-out/bug_reports/encode_mov_imm_mem_missing_segment_prefix.html
+- pbt-out/bug_reports/encode_mov_imm_mem_narrow_symbol_imm_rejected.md
+- pbt-out/bug_reports/encode_mov_imm_mem_narrow_symbol_imm_rejected.html
+- pbt-out/run/encode_mov_imm_mem_test2.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 04:50 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 271/398 total | PBT candidates: 271 | Tested: 271 (100%) | 1 pass, 271 fail
+> Last updated: 2026-10-09 05:04 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 272/398 total | PBT candidates: 272 | Tested: 272 (100%) | 1 pass, 272 fail
 
 ## Summary
 
@@ -164,10 +146,10 @@ cargo test --lib encode_mov_reg_mem_regression_non_gp_xmm0 -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 398 |
-| PBT candidates (from FUNCTION_INDEX) | 271 |
-| **Tested (of PBT candidates)** | **271 / 271 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 271 / -1 |
-| **Overall (tested / all functions)** | **271 / 398 (68%)** |
+| PBT candidates (from FUNCTION_INDEX) | 272 |
+| **Tested (of PBT candidates)** | **272 / 272 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 272 / -1 |
+| **Overall (tested / all functions)** | **272 / 398 (68%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -175,13 +157,13 @@ cargo test --lib encode_mov_reg_mem_regression_non_gp_xmm0 -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 271 | 271 | 0 | 100% |
+|  | 272 | 272 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 271 | 271 | 0 | 100% |
+| unknown | 272 | 272 | 0 | 100% |
 
 ## File Coverage
 
@@ -192,7 +174,7 @@ cargo test --lib encode_mov_reg_mem_regression_non_gp_xmm0 -- --test-threads=1
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 30 | 5 | 5 | 100% | covered |
+| gp_integer.rs | 30 | 6 | 6 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -475,3 +457,4 @@ cargo test --lib encode_mov_reg_mem_regression_non_gp_xmm0 -- --test-threads=1
 | encode_mov_rr | gp_integer.rs |
 | encode_mov_mem_reg | gp_integer.rs |
 | encode_mov_reg_mem | gp_integer.rs |
+| encode_mov_imm_mem | gp_integer.rs |

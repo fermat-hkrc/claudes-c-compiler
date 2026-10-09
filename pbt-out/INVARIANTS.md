@@ -141,3 +141,12 @@
 - Known defects: (1) segment arm only accepts fs/gs and Errs on es/cs/ss/ds (should call emit_segment_prefix); (2) no reg_size vs mnemonic size gate (movl %ax,mem accepted); (3) reg_num aliases xmm/mm/st as GP src.
 - Fix shapes: `self.emit_segment_prefix(mem);`; `if reg_size(&src.name) != size { return Err(...); }`; reject is_xmm/is_mm/st/ymm src.
 - Harness: encode_mov_reg_mem_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
+
+## encode_mov_imm_mem (i686 gp_integer encoder)
+
+- Opcode: C6 (size=1) / C7 (else) /0 + optional leading 0x66 when size=2; trailing LE imm of width bytes.
+- Non-segment base/disp/SIB/abs integer-imm forms match llvm-mc `-triple=i686`.
+- movl $sym / $sym+N: R_386_32 reloc + 4 zero imm bytes (llvm-mc A,A,A,A).
+- Metamorphic: same mem, two integer imms share prefix+opcode+ModRM+SIB+disp; only imm trail differs.
+- Known defects: (1) no segment prefix at all — even fs/gs omitted (worse than encode_mov_reg_mem fs/gs-only). Witness: `movb $0, %es:(%eax)` → `[c6,00,00]` vs `[26,c6,00,00]`; `movl $1, %fs:(%eax)` omits 0x64. (2) symbol imm rejected for size 1/2 (error string documents 32-bit only); llvm-mc accepts FK_Data_1/2.
+- Fix shapes: `self.emit_segment_prefix(mem);` before 0x66/C6/C7; support size 1/2 symbol with narrow reloc + placeholder bytes.

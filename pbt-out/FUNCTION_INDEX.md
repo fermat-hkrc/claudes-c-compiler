@@ -237,7 +237,7 @@
 | encode_mov_rr | gp_integer.rs | 162 | method | yes | HARD scope this campaign |
 | encode_mov_mem_reg | gp_integer.rs | 194 | method | yes | HARD scope this campaign |
 | encode_mov_reg_mem | gp_integer.rs | 216 | method | yes | HARD scope this campaign |
-| encode_mov_imm_mem | gp_integer.rs | 179 | method | no | out of campaign scope |
+| encode_mov_imm_mem | gp_integer.rs | 238 | method | yes | HARD scope this campaign |
 | encode_movabs | gp_integer.rs | 222 | method | no | out of campaign scope |
 | encode_movsx | gp_integer.rs | 250 | method | no | out of campaign scope |
 | encode_movzx | gp_integer.rs | 284 | method | no | out of campaign scope |
