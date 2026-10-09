@@ -1,280 +1,219 @@
-# Properties: encode_double_shift (i686)
+# Properties: encode_bswap (i686)
 
-## encode_double_shift_diff_imm_rr
-- Tier: 4
-- Rationale: Strongest oracle is differential vs llvm-mc (independent assembler). State machine N/A. Algebraic round-trip N/A (no decoder). Shared contract: Intel SDM SHLD/SHRD Imm8,r32,r32 and assembler README listing shld/shrd.
-- Doc contract: (none on function) — dispatch `mod.rs:250-251` `"shldl"|"shld" => 0xA4`, `"shrdl"|"shrd" => 0xAC` — asserted fingerprint a4acshld
-- Seed: (none — no prior unit test for double shift)
-- Formal: ∀ mnem ∈ {shldl,shld,shrdl,shrd}, src,dst ∈ GP32, c ∈ 0..255. encode(mnem, Imm(c), Reg(src), Reg(dst)) = llvm-mc(mnem $c, %src, %dst)
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
+## encode_bswap_diff_r32_llvm_mc
+- Tier: 5
+- Rationale: Strongest oracle is differential vs independent llvm-mc i686 assembler. State machine N/A (pure encoder). Round-trip N/A (no in-tree i686 BSWAP decoder). Intel SDM Vol.2 BSWAP r32 = 0F C8+rd; dispatch mod.rs:262 `bswapl|bswap`.
+- Doc contract: (none) — function has no doc comment at gp_integer.rs:945
+- Seed: (none) — no prior unit test for encode_bswap
+- Formal: ∀ r ∈ {eax,ecx,edx,ebx,esp,ebp,esi,edi}, m ∈ {bswapl,bswap}. encode(m, [%r]) = llvm-mc(m %r)
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_double_shift
+function: encode_bswap
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, src, dst, count]
-  domain: { mnem: {shldl,shld,shrdl,shrd}, src: GP32, dst: GP32, count: 0..255 }
+  vars: [r, m]
+  domain: { r: gp32, m: {bswapl, bswap} }
   relation:
     op: eq
-    lhs: sut_encode(mnem, [Imm(count), Reg(src), Reg(dst)])
-    rhs: llvm_mc(mnem + " $" + count + ", %" + src + ", %" + dst)
+    lhs: "sut_encode(m, [Reg(r)])"
+    rhs: "llvm_mc_bytes(format!(\"{m} %{r}\"))"
 generators:
-  mnem: { gen: oneof, values: ["shldl", "shld", "shrdl", "shrd"] }
-  src: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  dst: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  count: { gen: int, min: 0, max: 255, type: u8 }
-evidence: mod.rs:250-251; Intel SDM Vol.2 SHLD/SHRD; llvm-mc -triple=i686
+  r: { gen: oneof, values: [eax, ecx, edx, ebx, esp, ebp, esi, edi], type: "&str" }
+  m: { gen: oneof, values: [bswapl, bswap], type: "&str" }
+evidence: "mod.rs:262 bswapl|bswap => encode_bswap; Intel SDM BSWAP 0F C8+rd; llvm-mc -triple=i686"
 ```
 
-## encode_double_shift_diff_cl_rr
+## encode_bswap_invariant_opcode
 - Tier: 4
-- Rationale: Differential CL-count form (opc+1). Same evidence chain as Imm form.
-- Doc contract: (none on function) — body `gp_integer.rs:934-939` CL arm uses `opcode + 1` — asserted fingerprint clarm0f
+- Rationale: Algebraic invariant from Intel SDM — valid r32 encoding is exactly [0x0F, 0xC8+n]. Differential covers agreement; invariant pins the structural form.
+- Doc contract: (none)
 - Seed: (none)
-- Formal: ∀ mnem ∈ {shldl,shld,shrdl,shrd}, src,dst ∈ GP32. encode(mnem, Reg(cl), Reg(src), Reg(dst)) = llvm-mc(mnem %cl, %src, %dst)
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
+- Formal: ∀ r ∈ GP32. encode(bswapl, [%r]) = [0x0F, 0xC8 + reg_num(r)]
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_double_shift
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mnem, src, dst]
-  domain: { mnem: {shldl,shld,shrdl,shrd}, src: GP32, dst: GP32 }
-  relation:
-    op: eq
-    lhs: sut_encode(mnem, [Reg(cl), Reg(src), Reg(dst)])
-    rhs: llvm_mc(mnem + " %cl, %" + src + ", %" + dst)
-generators:
-  mnem: { gen: oneof, values: ["shldl", "shld", "shrdl", "shrd"] }
-  src: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  dst: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-evidence: gp_integer.rs:934-939; Intel SDM SHLD/SHRD CL form
-```
-
-## encode_double_shift_diff_mem_dst
-- Tier: 4
-- Rationale: Intel SDM and llvm-mc encode memory destinations for SHLD/SHRD. Public mnemonics shldl/shrdl claim support (README). Differential must hold for Imm/CL × Reg × Mem.
-- Doc contract: assembler/README.md:171 "Shifts: … shld/shrd" — asserted fingerprint shldshrd
-- Seed: (none)
-- Formal: ∀ mnem ∈ {shldl,shrdl}, src ∈ GP32, mem ∈ valid_i686_mem, form ∈ {Imm(c), CL}. encode(mnem, form, Reg(src), Mem(mem)) = llvm-mc(…)
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
-- Status: failing
-- Counterexample: shldl $0, %eax, (%eax) → Err("unsupported double shift operands"); llvm-mc Ok([0x0f,0xa4,0x00,0x00])
-- Bug report: bug_reports/encode_double_shift_mem_dst_unsupported.md
-
-```property
-function: encode_double_shift
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mnem, src, mem, form]
-  domain: { mnem: {shldl,shrdl}, src: GP32, mem: i686_mem, form: Imm0_255|CL }
-  relation:
-    op: eq
-    lhs: sut_encode(mnem, [form, Reg(src), Mem(mem)])
-    rhs: llvm_mc(corresponding AT&T)
-generators:
-  mnem: { gen: oneof, values: ["shldl", "shrdl"] }
-  src: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  count: { gen: int, min: 0, max: 255, type: u8 }
-evidence: Intel SDM Vol.2 SHLD/SHRD r/m32 forms; assembler/README.md:171
-```
-
-## encode_double_shift_invariant_opcodes
-- Tier: 3
-- Rationale: Algebraic invariant from Intel opcodes: Imm → 0F A4/AC + ModRM(mod=3,reg=src,rm=dst) + ib; CL → 0F A5/AD + ModRM.
-- Doc contract: (none) — body pushes `[0x0F, opcode]` / `[0x0F, opcode+1]` — asserted fingerprint 0fa4ac
-- Seed: (none)
-- Formal: ∀ src,dst ∈ GP32, c ∈ 0..255. encode(shldl,Imm(c),src,dst) = [0x0F,0xA4, modrm(3,src,dst), c] ∧ encode(shrdl,…) = [0x0F,0xAC,…] ∧ CL forms use A5/AD without ib
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_double_shift
+function: encode_bswap
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [src, dst, count]
-  domain: { src: GP32, dst: GP32, count: 0..255 }
-  body: "sut_encode(shldl, Imm(count), src, dst) == [0x0F, 0xA4, modrm(3,src,dst), count] && sut_encode(shrdl, Imm(count), src, dst) == [0x0F, 0xAC, modrm(3,src,dst), count] && sut_encode(shldl, CL, src, dst) == [0x0F, 0xA5, modrm(3,src,dst)] && sut_encode(shrdl, CL, src, dst) == [0x0F, 0xAD, modrm(3,src,dst)]"
+  vars: [r]
+  domain: { r: gp32 }
+  relation:
+    op: eq
+    lhs: "sut_encode(\"bswapl\", [Reg(r)])"
+    rhs: "[0x0Fu8, 0xC8 + reg_num(r)]"
 generators:
-  src: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  dst: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  count: { gen: int, min: 0, max: 255, type: u8 }
-evidence: Intel SDM SHLD 0F A4/A5; SHRD 0F AC/AD
+  r: { gen: oneof, values: [eax, ecx, edx, ebx, esp, ebp, esi, edi], type: "&str" }
+evidence: "Intel SDM Vol.2 BSWAP — Opcode 0F C8+rd; gp_integer.rs:952"
 ```
 
-## encode_double_shift_meta_alias_mnemonic
-- Tier: 3
-- Rationale: Metamorphic — dispatcher aliases shld≡shldl and shrd≡shrdl with same opcode; encodings must be identical on identical operands.
-- Doc contract: mod.rs:250-251 `"shldl" | "shld"` share 0xA4; `"shrdl" | "shrd"` share 0xAC — asserted fingerprint alias0xa4
+## encode_bswap_meta_bswap_eq_bswapl
+- Tier: 4
+- Rationale: Metamorphic — dispatch aliases bswap and bswapl to the same helper; encodings must be identical for the same r32.
+- Doc contract: (none)
 - Seed: (none)
-- Formal: ∀ src,dst ∈ GP32, c ∈ 0..255. encode(shld,…) = encode(shldl,…) ∧ encode(shrd,…) = encode(shrdl,…)
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
+- Formal: ∀ r ∈ GP32. encode(bswap, [%r]) = encode(bswapl, [%r])
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_double_shift
+function: encode_bswap
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [src, dst, count]
-  domain: { src: GP32, dst: GP32, count: 0..255 }
+  vars: [r]
+  domain: { r: gp32 }
   relation:
     op: eq
-    lhs: sut_encode("shld", [Imm(count), Reg(src), Reg(dst)])
-    rhs: sut_encode("shldl", [Imm(count), Reg(src), Reg(dst)])
+    lhs: "sut_encode(\"bswap\", [Reg(r)])"
+    rhs: "sut_encode(\"bswapl\", [Reg(r)])"
 generators:
-  src: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  dst: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  count: { gen: int, min: 0, max: 255, type: u8 }
-evidence: mod.rs:250-251
+  r: { gen: oneof, values: [eax, ecx, edx, ebx, esp, ebp, esi, edi], type: "&str" }
+evidence: "mod.rs:262 \"bswapl\" | \"bswap\" => self.encode_bswap(ops)"
 ```
 
-## encode_double_shift_neg_arity
-- Tier: 2
-- Rationale: Negative contract — body requires ops.len()==3.
-- Doc contract: gp_integer.rs:921-923 `"double shift requires 3 operands"` — domain-restriction fingerprint need3ops
+## encode_bswap_neg_arity
+- Tier: 3
+- Rationale: Negative/error — arity must be exactly 1 (gp_integer.rs:946-948).
+- Doc contract: gp_integer.rs:947 "bswap requires 1 operand" — asserted fingerprint 7a3c91e2
 - Seed: (none)
-- Formal: ∀ n ≠ 3. encode(shldl, ops_n) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
+- Formal: ∀ ops. |ops| ≠ 1 ⇒ encode_bswap(ops) = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_double_shift
+function: encode_bswap
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [n]
-  domain: { n: arity_not_3 }
+  domain: { n: arity_neq_1 }
   relation:
-    op: throws
-    expr: sut_encode("shldl", ops_of_len(n))
+    op: holds
+    expr: "sut_encode(\"bswapl\", ops_len(n)).is_err()"
 generators:
-  n: { gen: int, min: 0, max: 5, type: usize }
-expected_error: String
-evidence: gp_integer.rs:921-923
+  n: { gen: int, min: 0, max: 4, type: "usize" }
+expected_error: "bswap requires 1 operand"
+evidence: "gp_integer.rs:946-948"
 ```
 
-## encode_double_shift_neg_non_gp
-- Tier: 2
-- Rationale: Non-GP (xmm) must be rejected; llvm-mc rejects; reg_num alias must not silently accept.
-- Doc contract: (none declaring xmm valid) — inferred from Intel SDM register class and llvm-mc — asserted fingerprint nogpxmm
-- Seed: encode_inc_dec_pbt.rs neg_xmm
-- Formal: ∀ mnem ∈ {shldl,shrdl}, x ∈ XMM, role ∈ {src,dst}. encode(mnem, Imm(1)|CL, … x …) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
-- Status: failing
-- Counterexample: shldl $1, %eax, %xmm0 → Ok([0x0f,0xa4,0xc0,0x01]) (same as %eax)
-- Bug report: bug_reports/encode_double_shift_accepts_non_gp.md
-
-```property
-function: encode_double_shift
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnem, x]
-  domain: { mnem: shldl_or_shrdl, x: XMM }
-  relation:
-    op: throws
-    expr: sut_encode(mnem, [Imm(1), Reg(eax), Reg(x)])
-generators:
-  mnem: { gen: oneof, values: ["shldl", "shrdl"] }
-  x: { gen: oneof, values: ["xmm0","xmm1","xmm7"] }
-expected_error: String
-evidence: Intel SDM SHLD r32 class; llvm-mc rejects
-```
-
-## encode_double_shift_neg_mismatched_width
-- Tier: 2
-- Rationale: Width-mismatched GP (r16/r8) as src/dst of shldl must be rejected.
-- Doc contract: (none) — inferred size=4 dispatch and llvm-mc rejection — asserted fingerprint width4
-- Seed: encode_inc_dec_pbt.rs neg_mismatched_width
-- Formal: ∀ mnem ∈ {shldl,shrdl}, bad ∈ GP16∪GP8. encode(mnem, Imm(1), … bad …) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
-- Status: failing
-- Counterexample: shldl $1, %eax, %ax → Ok([0x0f,0xa4,0xc0,0x01]) (same as %eax dst)
-- Bug report: bug_reports/encode_double_shift_mismatched_width.md
-
-```property
-function: encode_double_shift
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnem, bad]
-  domain: { mnem: shldl_or_shrdl, bad: GP16_or_GP8 }
-  relation:
-    op: throws
-    expr: sut_encode(mnem, [Imm(1), Reg(bad), Reg(edx)])
-generators:
-  mnem: { gen: oneof, values: ["shldl", "shrdl"] }
-  bad: { gen: oneof, values: ["ax","al","cx","bl"] }
-expected_error: String
-evidence: Intel SDM; llvm-mc rejects shldl with r16/r8
-```
-
-## encode_double_shift_neg_imm_out_of_u8
-- Tier: 2
-- Rationale: Imm8 count must be in byte domain. llvm-mc rejects $256; SUT must not silently truncate via `as u8`.
-- Doc contract: (none) — inferred Imm8 encoding width; llvm-mc rejects 256 — asserted fingerprint imm8only
+## encode_bswap_neg_non_register
+- Tier: 3
+- Rationale: Negative/error — only Register operand accepted (gp_integer.rs:955).
+- Doc contract: gp_integer.rs:955 "bswap requires register operand" — asserted fingerprint 9f2b44aa
 - Seed: (none)
-- Formal: ∀ c outside Imm8 acceptance of llvm-mc. SUT Err iff llvm Err; never Ok with truncated byte when llvm rejects
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
-- Status: failing
-- Counterexample: shldl $256, %eax, %eax → SUT Ok([0x0f,0xa4,0xc0,0x00]); llvm-mc Err
-- Bug report: bug_reports/encode_double_shift_imm8_truncate.md
-
-```property
-function: encode_double_shift
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [count]
-  domain: { count: edge imm including 256, 512, -129, 0x100 }
-  body: "(llvm_ok(count) && sut_ok(count) && sut_bytes == llvm_bytes) || (!llvm_ok(count) && !sut_ok(count))"
-generators:
-  count: { gen: oneof, values: [256, 512, -129, 0x100, 0x1_0000] }
-evidence: Intel Imm8; llvm-mc rejects $256
-```
-
-## encode_double_shift_neg_bad_count_reg
-- Tier: 2
-- Rationale: Documented negative contract — only Imm or %cl may be the count operand (gp_integer.rs:926 Imm arm and :934 `cl.name == "cl"` guard); any other first register is out of domain and the SUT correctly returns Err. This property asserts that rejection holds (passing = contract satisfied).
-- Doc contract: gp_integer.rs:934 guard `cl.name == "cl"`; else arm `unsupported double shift operands` — domain-restriction fingerprint onlycl
-- Seed: (none)
-- Formal: ∀ r ≠ cl, src,dst ∈ GP32. encode(shldl, Reg(r), Reg(src), Reg(dst)) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs
+- Formal: ∀ op ∈ {Mem, Imm, Label}. encode(bswapl, [op]) = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_double_shift
+function: encode_bswap
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [bad_count, src, dst]
-  domain: { bad_count: GP_except_cl, src: GP32, dst: GP32 }
+  vars: [op]
+  domain: { op: non_register }
   relation:
-    op: throws
-    expr: sut_encode("shldl", [Reg(bad_count), Reg(src), Reg(dst)])
+    op: holds
+    expr: "sut_encode(\"bswapl\", [op]).is_err()"
 generators:
-  bad_count: { gen: oneof, values: ["eax","edx","ax"] }
-  src: { gen: oneof, values: ["eax","ecx"] }
-  dst: { gen: oneof, values: ["edx","ebx"] }
-expected_error: String
-evidence: gp_integer.rs:934-941
+  op: { gen: oneof, values: [mem, imm, label], type: "Operand" }
+expected_error: "bswap requires register operand"
+evidence: "gp_integer.rs:955; Intel SDM BSWAP r32 only"
+```
+
+## encode_bswap_neg_wrong_width
+- Tier: 3
+- Rationale: Negative/error — Intel BSWAP is undefined/invalid for 16-bit and 8-bit operands; llvm-mc rejects. SUT uses bare reg_num which aliases r16/r8 → same encoding as r32 (same defect class as encode_mov_cr / encode_lmsw).
+- Doc contract: (none) — no width gate in function body
+- Seed: encode_mov_cr_pbt.rs (r16/r8 rejection pattern)
+- Formal: ∀ r ∈ R16∪R8, m ∈ {bswapl,bswap}. encode(m, [%r]) = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
+- Status: failing
+- Counterexample: bswapl %ax → Ok([0x0f, 0xc8]) (also %al → [0x0f, 0xc8])
+- Bug report: pbt-out/bug_reports/encode_bswap_wrong_width.md
+
+```property
+function: encode_bswap
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [r, m]
+  domain: { r: r16_or_r8, m: {bswapl, bswap} }
+  relation:
+    op: holds
+    expr: "sut_encode(m, [Reg(r)]).is_err()"
+generators:
+  r: { gen: oneof, values: [ax, cx, dx, bx, sp, bp, si, di, al, cl, dl, bl, ah, ch, dh, bh], type: "&str" }
+  m: { gen: oneof, values: [bswapl, bswap], type: "&str" }
+expected_error: "width / bad register"
+evidence: "Intel SDM Vol.2 BSWAP — not defined for 16-bit; llvm-mc rejects bswapl %ax / %al"
+```
+
+## encode_bswap_neg_non_gp
+- Tier: 3
+- Rationale: Negative/error — non-GP names that reg_num aliases (xmm/mm/st/ymm) must not encode as BSWAP r32.
+- Doc contract: (none)
+- Seed: (none)
+- Formal: ∀ r ∈ {xmm*,mm*,st*,ymm*}. encode(bswapl, [%r]) = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
+- Status: failing
+- Counterexample: bswapl %xmm0 → Ok([0x0f, 0xc8])
+- Bug report: pbt-out/bug_reports/encode_bswap_non_gp.md
+
+```property
+function: encode_bswap
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [r]
+  domain: { r: non_gp_aliased }
+  relation:
+    op: holds
+    expr: "sut_encode(\"bswapl\", [Reg(r)]).is_err()"
+generators:
+  r: { gen: oneof, values: [xmm0, xmm1, xmm7, mm0, mm3, st, st(0), st(1), ymm0, ymm7], type: "&str" }
+expected_error: "bad register / non-GP"
+evidence: "Intel SDM BSWAP r32; llvm-mc rejects bswapl %xmm0; registers.rs:4-15 aliases xmm/mm/st"
+```
+
+## encode_bswap_neg_unknown_reg
+- Tier: 3
+- Rationale: Strengthen round — sreg/cr are unknown to reg_num and already Err("bad register"); lock that path so a future reg_num expansion does not silently accept them.
+- Doc contract: (none)
+- Seed: (none)
+- Formal: ∀ r ∈ {es,cs,ss,ds,fs,gs,cr0,cr2,cr3,cr4}. encode(bswapl, [%r]) = Err(_)
+- Test file: src/backend/i686/assembler/encoder/encode_bswap_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_bswap
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [r]
+  domain: { r: sreg_or_cr }
+  relation:
+    op: holds
+    expr: "sut_encode(\"bswapl\", [Reg(r)]).is_err()"
+generators:
+  r: { gen: oneof, values: [es, cs, ss, ds, fs, gs, cr0, cr2, cr3, cr4], type: "&str" }
+expected_error: "bad register"
+evidence: "registers.rs:4-15 omits sreg/cr from reg_num; gp_integer.rs:951 ok_or(\"bad register\")"
 ```

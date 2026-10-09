@@ -245,3 +245,16 @@
 - GP r32 Imm/CL RR forms match llvm-mc `-triple=i686`.
 - Known defects: (1) no memory destination arms (Intel r/m32); (2) Imm `*count as u8` truncates out-of-Imm8; (3) no GP-class gate (xmm via reg_num); (4) no width gate (r16/r8 alias); (5) `_size` unused (no 0x66 path).
 - Fix shapes: Imm/CL+Reg+Mem with emit_segment_prefix+encode_modrm_mem; Imm8 range check; is_xmm/is_mm + reg_size==size gates.
+
+## encode_bswap (i686 gp_integer.rs:945)
+- Opcode: `0F C8+rd` (Intel SDM BSWAP r32 only; 16-bit form undefined).
+- Dispatch: mod.rs:262 `bswapl` | `bswap` → encode_bswap.
+- GP r32 forms match llvm-mc `-triple=i686` (eax..edi → 0F C8..CF).
+- Metamorphic: bswap ≡ bswapl for the same r32.
+- Invariant: encoding is exactly `[0x0F, 0xC8 + reg_num(r)]` for valid r32.
+- Arity ≠1 and non-Register operands correctly Err.
+- sreg/cr unknown to reg_num correctly Err("bad register").
+- Known defects: (1) no width gate — r16/r8 accepted via reg_num aliasing (`bswapl %ax` → `[0f,c8]`). (2) no GP-class gate — xmm/mm/st/ymm accepted via reg_num (`bswapl %xmm0` → `[0f,c8]`).
+- Fix shape: before reg_num, require `reg_size==4` and reject is_xmm/is_mm/st*/ymm*.
+- Harness: encode_bswap_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
+- Coverage note: coverage_gaps file-level matcher may report NOT LINKED for Rust `pub(super)` methods; nm shows `InstructionEncoder::encode_bswap` in the libtest binary and KAT/differential runs prove execution.

@@ -1,25 +1,18 @@
-# PBT Campaign: encode_double_shift (i686)
+# PBT Campaign: encode_bswap (i686)
 
 ## Scan findings
-- **Spec:** (none found — symbol-targeted campaign via `--func encode_double_shift`)
-- **Test layout:** Project-owned Rust module tests under `src/backend/i686/assembler/encoder/*_pbt.rs`, registered with `#[cfg(test)] mod ...` in `encoder/mod.rs`; runner is `cargo test --lib <filter>`. Framework: proptest (dev-dep in Cargo.toml).
-- **Buildability probe:** `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` → pass (prebuilt SUT; log pbt-out/build.log). Canonical contract form: `cargo test --lib <target> -- --test-threads=1`.
-- **Harness placement:** extend existing test target (rung 1) — new file `src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs` + one `#[cfg(test)] mod encode_double_shift_pbt;` line in `mod.rs`.
-- **Candidate modules:** encode_double_shift in `src/backend/i686/assembler/encoder/gp_integer.rs:920` (HARD scope sole target)
-- **Skipped modules:** all other functions in gp_integer.rs and outside scope — HARD scope is `encode_double_shift` only. HEAD changes outside this path skipped.
+- **Spec:** (none found — no requirement doc; Intel SDM Vol.2 BSWAP + llvm-mc i686 as reference)
+- **Test layout:** Project-owned Rust inline tests: `src/backend/i686/assembler/encoder/*_pbt.rs` registered via `#[cfg(test)] mod ...` in `encoder/mod.rs`; runner `cargo test --lib <filter>`. Framework: proptest 1.11.0 (dev-dependency).
+- **Buildability probe:** `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` (user build contract) — pre-campaign success (pbt-out/build.log). Neighbouring PBT modules compile under the same cargo test harness.
+- **Harness placement:** extend existing cargo lib test target — new file `src/backend/i686/assembler/encoder/encode_bswap_pbt.rs` + one `#[cfg(test)] mod encode_bswap_pbt;` line in `encoder/mod.rs` (rung 1).
+- **Candidate modules:** encode_bswap (gp_integer.rs:945) — sole HARD-scope / change-surface target
+- **Skipped modules:** all other functions in gp_integer.rs (HARD scope: test only encode_bswap); files outside src/backend/i686/assembler/encoder/gp_integer.rs
 
-### Target analysis
-- Doc contract: (none on the function itself). Dispatch: `mod.rs:250-251` shldl/shld→0xA4, shrdl/shrd→0xAC size=4. README lists shld/shrd. Intel SDM Imm8|CL × r/m32 × r32.
-- Body: Imm+Reg+Reg and CL+Reg+Reg only; `_size` unused; Imm `as u8` truncates; no GP/width gate; no memory arm.
-
-### Oracle classification
-- Differential primary (llvm-mc); algebraic.invariant + metamorphic; negative_error for arity/class/Imm8/mem.
-
-### Contract-surface sweep
-- [x] coverage_gaps round 1 (standard tier) — after first full run
-
-## Module: encode_double_shift
+## Module: encode_bswap
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
 - [x] Test: write and run
 - [x] Review: triage results
+
+## Sweep
+- [x] coverage_gaps round 1 (standard): no line-level data; file-level matcher missed Rust mangled `encode_bswap` (false NOT LINKED); nm + KAT prove link/execution. Documented behaviors already have properties (success r32, arity, non-reg, wrong-width, non-GP, sreg/cr). No additional gap properties required.

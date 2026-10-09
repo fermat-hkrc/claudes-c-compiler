@@ -1,139 +1,107 @@
-# PBT Campaign Report: encode_double_shift (i686)
+# PBT Campaign Report: encode_bswap (i686)
 
 ## Summary
 
-**Verdict:** 4 bugs (2 high, 1 medium, 1 high-width): memory-destination SHLD/SHRD rejected; Imm counts outside Imm8 silently truncated; non-GP and width-mismatched registers accepted via `reg_num` alias — silent wrong encodings on the public `shld`/`shrd` assembler surface.
+**Verdict:** 2 medium bugs: `encode_bswap` accepts r16/r8 and xmm/mm/st/ymm via bare `reg_num`, silently emitting the same `0F C8+rd` bytes as the corresponding r32 instead of rejecting non-r32-GP operands.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_double_shift (src/backend/i686/assembler/encoder/gp_integer.rs)
-**Tests:** 10 properties (+ KAT + regression witnesses)
-**Result:** 6 passing, 4 failing → 4 bugs
-**Change surface:** 1 function (`encode_double_shift`), 1 with properties, 0 error-handling-only changes without failure-path coverage (neg paths covered)
-**Coverage evidence:** file-level (symbol presence) — no .gcda/.profraw (uninstrumented build tree); `coverage_gaps` reported NOT LINKED false-negative on mangled symbol; behavioral execution confirmed via KAT/PBT byte outputs and 4 SUT bugs; sweep round 1 closed all documented contract surfaces
+**Modules tested:** encode_bswap (src/backend/i686/assembler/encoder/gp_integer.rs)
+**Tests:** 8 properties (+ 4 KAT + 3 regression witnesses)
+**Result:** 6 passing, 2 failing properties; 2 bugs
+**Change surface:** 1 changed function (encode_bswap), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — Rust lib test links encode_bswap via InstructionEncoder::encode; line-level LLVM/gcov not produced for this cargo host run. `coverage_gaps` after first full run.
 **Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_double_shift | 10 props (+KAT/reg) | 4 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_bswap | 8 props (6 pass / 2 fail) | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: Memory-destination SHLD/SHRD rejected
+### B1: encode_bswap accepts r16/r8 as if r32
 
-**Formal:** ∀ mnem ∈ {shldl,shrdl}, src ∈ GP32, mem ∈ valid_i686_mem, form ∈ {Imm(c), CL}. encode(mnem, form, Reg(src), Mem(mem)) = llvm-mc(…)
-**Contract evidence:** inferred (Intel SDM Vol.2 SHLD/SHRD r/m32 forms; assembler/README.md:171 lists shld/shrd; llvm-mc accepts)
+**Formal:** ∀ r ∈ R16∪R8, m ∈ {bswapl,bswap}. encode(m, [%r]) = Err(_)
+**Contract evidence:** inferred (Intel SDM Vol.2 BSWAP — not defined for 16-bit operands; llvm-mc `-triple=i686` rejects `bswapl %ax` / `bswapl %al`; same-job sibling valid r32 path encodes `0F C8+rd`)
 **Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `shldl $0, %eax, (%eax)` → Err("unsupported double shift operands"); llvm-mc Ok
-**Expected / Actual:** Ok bytes matching llvm-mc / Err
-**Impact:** Valid memory double-shifts cannot assemble; segment-override mem forms unreachable.
-**Root cause:** gp_integer.rs:940 catch-all rejects Memory destinations; only Reg+Reg arms exist.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:940`
+**Severity:** medium
+**Counterexample:** `bswapl %ax` then bytes `[0x0f, 0xc8]` (same as `bswapl %eax`)
+**Expected / Actual:** Err(width) / Ok([0x0f, 0xc8])
+**Impact:** Assembler silently emits a 32-bit BSWAP for mismatched-width AT&T operands, so object code does not match the written instruction width.
+**Root cause:** `gp_integer.rs:951-953` calls `reg_num` with no `reg_size == 4` gate; `registers.rs` aliases ax/al to eax's number.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:950`
 ```rust
-            _ => Err("unsupported double shift operands".to_string()),
-```
-**Suggested fix:** Add Imm/CL + Reg + Mem arms with `emit_segment_prefix` + `encode_modrm_mem`.
-```rust
-            (Operand::Immediate(ImmediateValue::Integer(count)), Operand::Register(src), Operand::Memory(mem)) => {
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, opcode]);
-                self.encode_modrm_mem(src_num, mem)?;
-                self.bytes.push((*count).try_into().map_err(|_| "Imm8")?);
+            Operand::Register(reg) => {
+                let num = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0xC8 + num]);
                 Ok(())
             }
 ```
-**Bug report:** bug_reports/encode_double_shift_mem_dst_unsupported.md
-**Repro seed:** proptest cc 7bdec11d24a84e46467a5068ecd7bf0dc748b55fa5b8c91ced4df43558df7f1a
+**Suggested fix:** Gate on GP r32 before encoding:
+```rust
+            Operand::Register(reg) => {
+                if reg_size(&reg.name) != 4
+                    || is_xmm(&reg.name)
+                    || is_mm(&reg.name)
+                    || reg.name.starts_with("st")
+                    || reg.name.starts_with("ymm")
+                {
+                    return Err("bswap requires 32-bit GP register".into());
+                }
+                let num = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0xC8 + num]);
+                Ok(())
+            }
+```
+**Bug report:** bug_reports/encode_bswap_wrong_width.md
+**Repro seed:** r = "ax", m = "bswapl"
 **Raw output:**
 ```text
-SUT rejected valid mem-dst form `shldl $0, %eax, (%eax)`: unsupported double shift operands
+Test failed: SUT accepted invalid-width `bswapl %ax` → [0f, c8]; BSWAP is r32-only (Intel SDM; llvm-mc rejects).
+minimal failing input: r = "ax", m = "bswapl"
 ```
 
-### B2: Imm count outside Imm8 silently truncated
+### B2: encode_bswap accepts xmm/mm/st/ymm via reg_num aliasing
 
-**Formal:** ∀ c outside llvm-mc Imm8 acceptance. SUT Err iff llvm Err (no silent `as u8` truncation)
-**Contract evidence:** inferred (Intel Imm8; llvm-mc rejects `$256`)
+**Formal:** ∀ r ∈ {xmm*,mm*,st*,ymm*}. encode(bswapl, [%r]) = Err(_)
+**Contract evidence:** inferred (Intel SDM BSWAP r32-only; llvm-mc rejects `bswapl %xmm0`; `registers.rs:4-15` documents the alias table that encode_bswap consumes unchecked)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** `shldl $256, %eax, %eax` → Ok([0x0f,0xa4,0xc0,0x00])
-**Expected / Actual:** Err / Ok with count truncated to 0
-**Impact:** Wrong shift amount in generated code without assembler error (i128 Imm shld/shrd path).
-**Root cause:** gp_integer.rs:931 `self.bytes.push(*count as u8);` with no range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:931`
+**Counterexample:** `bswapl %xmm0` → `[0x0f, 0xc8]` (same as `bswapl %eax`)
+**Expected / Actual:** Err(non-GP) / Ok([0x0f, 0xc8])
+**Impact:** Non-GP operands are turned into GP BSWAP encodings without error, corrupting assembled output for mistaken register names.
+**Root cause:** Same bare `reg_num` path at `gp_integer.rs:951-953`; xmm0/mm0/st/ymm0 map to number 0.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:950`
 ```rust
-                self.bytes.push(*count as u8);
+            Operand::Register(reg) => {
+                let num = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0xC8 + num]);
+                Ok(())
+            }
 ```
-**Suggested fix:** Reject counts outside Imm8 before push.
+**Suggested fix:** Same r32-GP gate as B1 (reject is_xmm / is_mm / st* / ymm* and reg_size != 4).
 ```rust
-                if !(-128..=255).contains(count) {
-                    return Err(format!("double shift immediate out of Imm8 range: {count}"));
+            Operand::Register(reg) => {
+                if reg_size(&reg.name) != 4
+                    || is_xmm(&reg.name)
+                    || is_mm(&reg.name)
+                    || reg.name.starts_with("st")
+                    || reg.name.starts_with("ymm")
+                {
+                    return Err("bswap requires 32-bit GP register".into());
                 }
-                self.bytes.push(*count as u8);
+                let num = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0xC8 + num]);
+                Ok(())
+            }
 ```
-**Bug report:** bug_reports/encode_double_shift_imm8_truncate.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_bswap_non_gp.md
+**Repro seed:** r = "xmm0"
 **Raw output:**
 ```text
-encode_double_shift must reject Imm count 256 (Imm8 domain), got Ok([15, 164, 194, 0])
-```
-
-### B3: Non-GP registers accepted via reg_num alias
-
-**Formal:** ∀ mnem ∈ {shldl,shrdl}, x ∈ XMM. encode(mnem, … x …) = Err
-**Contract evidence:** inferred (Intel SDM GP r/m32; llvm-mc rejects xmm; `is_xmm` exists in registers.rs)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `shldl $1, %eax, %xmm0` → Ok([0x0f,0xa4,0xc0,0x01]) (= %eax)
-**Expected / Actual:** Err / Ok aliasing xmm0→eax encoding
-**Impact:** Public AT&T with xmm silently becomes a different GP instruction.
-**Root cause:** gp_integer.rs:927-928 uses `reg_num` without GP-class gate; xmm aliases to 0–7.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:927`
-```rust
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-```
-**Suggested fix:** Reject `is_xmm` / `is_mm` / st before encoding.
-```rust
-                if is_xmm(&src.name) || is_mm(&src.name) || is_xmm(&dst.name) || is_mm(&dst.name) {
-                    return Err("double shift requires GP registers".into());
-                }
-```
-**Bug report:** bug_reports/encode_double_shift_accepts_non_gp.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-encode_double_shift must reject non-GP xmm0 src, got Ok([15, 164, 194, 1])
-```
-
-### B4: Width-mismatched GP registers accepted
-
-**Formal:** ∀ mnem ∈ {shldl,shrdl}, bad ∈ GP16∪GP8. encode(mnem, Imm(1), … bad …) = Err
-**Contract evidence:** inferred (size=4 dispatch; llvm-mc rejects `shldl $1, %ax, %edx`)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `shldl $1, %eax, %ax` → Ok([0x0f,0xa4,0xc0,0x01]) (= %eax dst)
-**Expected / Actual:** Err / Ok with ax aliased to eax
-**Impact:** Width-mismatched assembler text silently becomes 32-bit double-shift.
-**Root cause:** No `reg_size == 4` check; `_size` unused; `reg_num` collapses ax/eax.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:927`
-```rust
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-```
-**Suggested fix:** Require `reg_size(name) == size` (and still reject non-GP).
-```rust
-                if reg_size(&src.name) != 4 || reg_size(&dst.name) != 4 {
-                    return Err("double shift register width mismatch".into());
-                }
-```
-**Bug report:** bug_reports/encode_double_shift_mismatched_width.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-encode_double_shift must reject width-mismatched `shldl $1, %eax, %ax`, got Ok([15, 164, 192, 1])
+Test failed: SUT accepted non-GP `bswapl %xmm0` → [0f, c8]; BSWAP requires GP r32 (Intel SDM; reg_num must not alias xmm/mm/st/ymm).
+minimal failing input: r = "xmm0"
 ```
 
 ## Design Caveats
@@ -144,41 +112,49 @@ encode_double_shift must reject width-mismatched `shldl $1, %eax, %ax`, got Ok([
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_double_shift_pbt.rs | 10 properties + 6 KAT + 4 regression |
-| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_double_shift_pbt;` |
+| src/backend/i686/assembler/encoder/encode_bswap_pbt.rs | 8 properties + 4 KAT + 3 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_bswap_pbt;` registration |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_double_shift -- --test-threads=1
-cargo test --lib encode_double_shift_regression_mem_dst_rejected -- --test-threads=1
-cargo test --lib encode_double_shift_regression_imm_truncate -- --test-threads=1
-cargo test --lib encode_double_shift_regression_xmm0_accepted -- --test-threads=1
-cargo test --lib encode_double_shift_regression_mismatched_width -- --test-threads=1
+cargo test --lib encode_bswap_ -- --test-threads=1
+# narrowed to B1:
+cargo test --lib encode_bswap_neg_wrong_width -- --test-threads=1
+cargo test --lib test_encode_bswap_regression_rejects_ax -- --test-threads=1
+# narrowed to B2:
+cargo test --lib encode_bswap_neg_non_gp -- --test-threads=1
+cargo test --lib test_encode_bswap_regression_rejects_xmm0 -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html (from report.json)
-- pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
+- pbt-out/PROPERTIES.md
+- pbt-out/REPORT.md
+- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/report.json
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/bug_reports/encode_double_shift_mem_dst_unsupported.md (+ .html)
-- pbt-out/bug_reports/encode_double_shift_imm8_truncate.md (+ .html)
-- pbt-out/bug_reports/encode_double_shift_accepts_non_gp.md (+ .html)
-- pbt-out/bug_reports/encode_double_shift_mismatched_width.md (+ .html)
-- pbt-out/run/encode_double_shift_test2.log
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/INVARIANTS.md
+- pbt-out/bug_reports/encode_bswap_wrong_width.md
+- pbt-out/bug_reports/encode_bswap_wrong_width.html
+- pbt-out/bug_reports/encode_bswap_non_gp.md
+- pbt-out/bug_reports/encode_bswap_non_gp.html
+- pbt-out/run/encode_bswap_test.log / encode_bswap_test2.log
+
+## Contract-surface sweep
+
+Standard tier: 1 `coverage_gaps` round after first full test run. encode_bswap body is fully exercised (arity, register success, non-register Err). Remaining gaps are only the unfixed rejection branches the failing properties already target. Closed after strengthen round (sreg/cr unknown-reg path) + coverage_gaps.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 08:50 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 283/399 total | PBT candidates: 283 | Tested: 283 (100%) | 1 pass, 283 fail
+> Last updated: 2026-10-09 09:06 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 284/399 total | PBT candidates: 284 | Tested: 284 (100%) | 1 pass, 284 fail
 
 ## Summary
 
@@ -187,10 +163,10 @@ cargo test --lib encode_double_shift_regression_mismatched_width -- --test-threa
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 399 |
-| PBT candidates (from FUNCTION_INDEX) | 283 |
-| **Tested (of PBT candidates)** | **283 / 283 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 283 / -1 |
-| **Overall (tested / all functions)** | **283 / 399 (71%)** |
+| PBT candidates (from FUNCTION_INDEX) | 284 |
+| **Tested (of PBT candidates)** | **284 / 284 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 284 / -1 |
+| **Overall (tested / all functions)** | **284 / 399 (71%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -198,13 +174,13 @@ cargo test --lib encode_double_shift_regression_mismatched_width -- --test-threa
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 283 | 283 | 0 | 100% |
+|  | 284 | 284 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 283 | 283 | 0 | 100% |
+| unknown | 284 | 284 | 0 | 100% |
 
 ## File Coverage
 
@@ -215,7 +191,7 @@ cargo test --lib encode_double_shift_regression_mismatched_width -- --test-threa
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 31 | 17 | 17 | 100% | covered |
+| gp_integer.rs | 31 | 18 | 18 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -510,3 +486,4 @@ cargo test --lib encode_double_shift_regression_mismatched_width -- --test-threa
 | encode_imul | gp_integer.rs |
 | encode_inc_dec | gp_integer.rs |
 | encode_double_shift | gp_integer.rs |
+| encode_bswap | gp_integer.rs |

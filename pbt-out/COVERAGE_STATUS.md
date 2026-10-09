@@ -1,22 +1,28 @@
-# Coverage Status — encode_double_shift campaign
+# PBT Coverage Status
 
-**Date:** 2026-10-09
-**Tier:** standard
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (build tree not reconfigured for instrumentation). Tooling also reported `encode_double_shift` NOT LINKED (mangling/inlining false negative); the live suite exercises it via `InstructionEncoder::encode` → dispatch → `encode_double_shift` (KAT + 1000-case properties produced concrete byte vectors and four SUT bugs).
+> Last updated: 2026-10-09 (campaign: encode_bswap)
+> Coverage evidence: file-level (symbol presence) — no .gcda/.profraw from cargo host run
+> Change-surface target encode_bswap: tested (8 properties, linked in ccc libtest binary per `nm`)
 
 ## This campaign
 
-| Function | Indexed | Properties | Executed (behavioral) | Notes |
-|----------|---------|------------|----------------------|-------|
-| encode_double_shift | yes (gp_integer.rs:920) | 10 | yes | Imm/CL RR, arity reject, bad-count reject exercised; mem arms absent (bug); Imm8 overflow truncated (bug); non-GP/width accepted (bugs) |
+| Metric | Value |
+|--------|-------|
+| Target | encode_bswap (gp_integer.rs:945) |
+| Properties | 8 (6 passing, 2 failing) |
+| Bugs | 2 medium |
+| Test binary | target/debug/deps/ccc-70d56e2a1978a8d3 |
+| Symbol evidence | `InstructionEncoder::encode_bswap` present (nm); error strings `bswap requires 1 operand` / `bswap requires register operand` in binary |
+| coverage_gaps | no line-level; matcher reported NOT LINKED (Rust name mangling false negative) — overridden by nm + executed KAT/differential |
 
-## Sweep round 1 (standard)
+## Sweep decision
 
-- Called `coverage_gaps` after first full test run.
-- Documented behaviors already targeted: Imm RR, CL RR, mem dst (Intel r/m32), Imm8 domain, GP class, width match, arity, count-reg class, mnemonic alias.
-- No additional documented branch without a property: missing mem arms are missing code (filed as B1), not unexecuted dead code. `_size` unused — no 16-bit dispatch path exists at call sites (only size=4).
-- Sweep closed: every documented contract surface for this sole target has a property.
+Documented behaviors of encode_bswap:
+1. r32 success → differential + invariant + metamorphic (covered, passing)
+2. arity ≠ 1 → neg_arity (covered, passing)
+3. non-register → neg_non_register (covered, passing)
+4. wrong width r16/r8 → neg_wrong_width (covered, failing = bug B1)
+5. non-GP aliased → neg_non_gp (covered, failing = bug B2)
+6. sreg/cr unknown → neg_unknown_reg (covered, passing; strengthen round)
 
-## Prior campaigns
-
-See historical rows in COVERAGE.md (many modules across ARM/RISC-V/i686).
+No further documented branch without a property. Sweep closed.
