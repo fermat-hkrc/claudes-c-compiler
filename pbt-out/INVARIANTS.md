@@ -122,3 +122,12 @@
 - Known defects: (1) no-register form (imm→mem) defaults to size 4 instead of rejecting ambiguous; (2) mismatched GP widths take first-reg size instead of Err.
 - Fix shapes: reject `_ =>` default; when both ops are GP regs require equal reg_size before encode_mov.
 
+## encode_mov_mem_reg (i686 gp_integer encoder)
+
+- Opcode: 8A (size1) / 8B (else) + optional 0x66 for size2; ModRM.reg = dest; memory via encode_modrm_mem.
+- Non-segment base/disp/SIB/abs forms (except moffs-preferred abs→eAX) match llvm-mc `-triple=i686`.
+- Metamorphic: same mem+GP → load (8A/8B) and store (88/89) share prefixes+ModRM/SIB/disp; only opcode differs.
+- moffs note: llvm-mc may emit A0/A1 for abs→al/ax/eax; SUT uses general 8A/8B form — both valid; differential skips moffs when llvm chooses it.
+- Known defects: (1) segment arm only accepts fs/gs and Errs on es/cs/ss/ds (should call emit_segment_prefix); (2) no reg_size vs mnemonic size gate (movl mem,%ax accepted); (3) reg_num aliases xmm/mm/st as GP dest.
+- Fix shapes: `self.emit_segment_prefix(mem);`; `if reg_size(&dst.name) != size { return Err(...); }`; reject is_xmm/is_mm/st/ymm dest.
+- Harness: encode_mov_mem_reg_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.

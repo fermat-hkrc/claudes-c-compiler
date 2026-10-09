@@ -1,21 +1,21 @@
-# PBT Campaign: encode_mov_rr (i686)
+# PBT Campaign: encode_mov_mem_reg (i686)
 
 ## Scan findings
-- **Spec:** (none found beyond inline comments) — Intel SDM Vol.2 MOV r/m,r/r: opcode 88/89 /r with optional 0x66 operand-size override for 16-bit; AT&T `movb`/`movw`/`movl %src, %dst`. llvm-mc `-triple=i686` is the independent reference. Inline comment at gp_integer.rs:163–176 documents segment-register arms (`mov %r16, %sreg` 8E /r; `mov %sreg, %r16` 8C /r); GP path has no separate doc comment.
-- **Test layout:** project-owned Rust module tests under `src/backend/i686/assembler/encoder/`; pattern `encode_*_pbt.rs` + `#[cfg(test)] mod` in `encoder/mod.rs`; runner `cargo test --lib <filter> -- --test-threads=1`; framework `proptest = "1.11.0"` (dev-dependency).
-- **Buildability probe:** `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` → PASS (prebuilt SUT contract; log pbt-out/build.log; re-probed this campaign: 2 passed).
-- **Harness placement:** extend existing cargo lib-test target — new file `src/backend/i686/assembler/encoder/encode_mov_rr_pbt.rs` + one `#[cfg(test)] mod encode_mov_rr_pbt;` line in `encoder/mod.rs` (rung 1).
-- **Candidate modules:** encode_mov_rr (gp_integer.rs:162) — sole HARD-scope / change-surface target.
-- **Skipped modules:** encode_mov and all other gp_integer symbols, plus every other encoder — HARD scope: test only encode_mov_rr. (Dispatch path through `InstructionEncoder::encode("movl"|"movw"|"movb", …)` with two GP registers reaches the production symbol via encode_mov → encode_mov_rr. Segment/CR RR forms are routed away by encode_mov before encode_mov_rr and are covered by prior encode_mov_seg / encode_mov_cr campaigns.)
-- **Oracle (strongest):** differential vs llvm-mc `-triple=i686 -show-encoding`; algebraic.invariant (opcode 88|89, optional 0x66, mod=3); algebraic.metamorphic (identity + swap); negative_error (mismatched width; non-GP aliases).
-- **Doc contract:** gp_integer.rs:163 `"// Handle segment register moves"` — other fingerprint 28e3197a. GP path: no width/GP-class validation before reg_num.
-- **Dispatch path:** encoder/mod.rs:161-163 `movl`→size 4, `movw`→2, `movb`→1 → encode_mov → encode_mov_rr for Register,Register when neither is CR/seg.
-- **Seed:** encode_mov_infer_size_pbt.rs:175; encode_mov_cr_pbt width-rejection pattern.
-- **Contract-surface sweep:** 1 round via `coverage_gaps` after first full run — tool reported no .gcda/.profraw (Rust cargo; file-level). Campaign evidence: cargo test executes production symbol via InstructionEncoder::encode; NOT LINKED listing referred to unrelated OH C++ binaries, not this Rust lib test. Documented behaviors covered: same-width differential, invariant, metamorphic identity/swap, mismatched-width negative, non-GP negative. No further documented GP-path branch left untargeted.
+- **Spec:** (none found beyond Intel SDM / AT&T conventions) — Intel SDM Vol.2 MOV r32/r16/r8, m32/m16/m8: opcode 8B/8A /r with optional 0x66; segment overrides 26/2E/36/3E/64/65. AT&T `movb`/`movw`/`movl mem, %dst`. llvm-mc `-triple=i686` reference. i686 `core.rs:31-42` `emit_segment_prefix` implements all six prefixes; `encode_mov_mem_reg` inlines fs/gs-only.
+- **Test layout:** project-owned Rust module tests under `src/backend/i686/assembler/encoder/`; pattern `encode_*_pbt.rs` + `#[cfg(test)] mod` in `encoder/mod.rs`; runner `cargo test --lib <filter> -- --test-threads=1`; framework `proptest = "1.11.0"`.
+- **Buildability probe:** `cargo test --lib encode_ldrsw_kat_llvm_mc_x0_x1 -- --test-threads=1` → PASS (prebuilt SUT contract; log pbt-out/build.log). Re-probed: `cargo test --lib encode_mov_rr_kat_llvm_mc_rr32 -- --test-threads=1` → 1 passed.
+- **Harness placement:** extend existing cargo lib-test target — `src/backend/i686/assembler/encoder/encode_mov_mem_reg_pbt.rs` + one `#[cfg(test)] mod encode_mov_mem_reg_pbt;` in `encoder/mod.rs` (rung 1).
+- **Candidate modules:** encode_mov_mem_reg (gp_integer.rs:194) — sole HARD-scope / change-surface target.
+- **Skipped modules:** encode_mov and all other gp_integer symbols, plus every other encoder — HARD scope: test only encode_mov_mem_reg.
+- **Oracle (strongest):** differential vs llvm-mc; algebraic.invariant; algebraic.metamorphic (load vs store); negative_error (mismatched width; non-GP dest).
+- **Doc contract:** (none) on function; body gp_integer.rs:198-203 fs/gs-only match is the producing statement under test.
+- **Dispatch path:** encoder/mod.rs:161-165 movl/movw/movb → encode_mov → encode_mov_mem_reg for Memory,Register GP dest.
+- **Seed:** encode_invlpg_pbt.rs memory/segment; encode_mov_rr_pbt.rs width/GP.
+- **Contract-surface sweep:** 1 round via `coverage_gaps` after first full run. Tool: no .gcda/.profraw (Rust cargo); file-level evidence listed unrelated OH C++ binaries as NOT LINKED for this symbol. Campaign evidence: `cargo test --lib encode_mov_mem_reg` compiles and executes production `InstructionEncoder::encode` → `encode_mov_mem_reg` (KAT + 1000-case properties). Documented behaviors covered: base/disp/SIB/edge differential, all-six segment differential (fails), opcode/modrm invariant, load/store metamorphic, mismatched-width negative (fails), non-GP negative (fails). No further documented branch left untargeted under HARD scope. Sweep closed: tier rounds done.
 
-## Module: encode_mov_rr
+## Module: encode_mov_mem_reg
 - [x] Scan: identify targets
 - [x] Plan: formalize properties
 - [x] Test: write and run
 - [x] Review: triage results
-- [x] Contract-surface sweep (1 round via coverage_gaps; file-level evidence + cargo execution)
+- [x] Contract-surface sweep (1 round via coverage_gaps; file-level + cargo execution evidence)
