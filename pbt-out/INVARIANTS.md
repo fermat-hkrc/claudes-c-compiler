@@ -49,3 +49,11 @@
 - Label form: mod=00 rm=101 + R_386_32 reloc + 4 zero bytes (llvm-mc `A,A,A,A`).
 - Known defect: memory arm does not call `emit_segment_prefix` before opcode (same class as encode_invlpg/prefetch/verw/lsl). Witness: `sgdt %es:(%eax)` → SUT omits 0x26; `lgdt %fs:(%eax)` omits 0x64.
 - Fix shape: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`.
+
+## encode_lmsw (i686 system encoder)
+
+- Opcode: 0F 01 /6 + ModR/M; Intel LMSW is r/m16 (register form: ax/bx/cx/dx/sp/bp/si/di only). No 0x66 prefix on register form (unlike SMSW).
+- Non-segment base/disp/SIB/abs and r16 forms match llvm-mc `-triple=i686`.
+- Metamorphic: same memory → lmsw Mod+RM/SIB/disp equals lidt; only ModRM.reg differs (6 vs 3).
+- Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_invlpg/prefetch/verw/lsl/system_table). Witness: `lmsw %es:(%eax)` → SUT omits 0x26; `lmsw %fs:4(%esi)` omits 0x64. (2) register arm accepts 32/8-bit names via `reg_num` aliasing (eax→same bytes as ax).
+- Fix shapes: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`; gate register form with `reg_size(&reg.name) == 2`.

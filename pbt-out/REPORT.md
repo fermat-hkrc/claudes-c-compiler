@@ -1,93 +1,130 @@
-# PBT Campaign Report: encode_system_table (i686)
+# PBT Campaign Report: encode_lmsw (i686)
 
 ## Summary
 
-**Verdict:** 1 high: `encode_system_table` omits segment-override prefixes on memory operands (`lgdt %fs:(%eax)` → `[0f,01,10]` instead of `[64,0f,01,10]`), so any AT&T system-table instruction with `%es/%cs/%ss/%ds/%fs/%gs:` assembles to wrong machine code.
+**Verdict:** 2 root-cause bugs (3 reports): (1) high — `encode_lmsw` omits segment override prefixes on memory operands so `lmsw %es:(%eax)` / SIB forms drop 0x26; (2) medium — register arm accepts 32/8-bit names (`%eax`/`%al`) despite doc "16-bit register" and Intel LMSW r/m16.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_system_table (i686 system encoder)
-**Tests:** 12 properties (+ KAT + 3 regression witnesses)
-**Result:** 10 passing, 2 failing properties; 2 bug reports (one root cause: missing emit_segment_prefix — base+disp and SIB witnesses)
-**Change surface:** 1 changed function (encode_system_table), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no native .gcda/.profraw and listed unrelated OH C++ binaries; Rust `cargo test --lib encode_system_table` executed the real SUT symbol (13 pass / 6 fail including KAT/regression). All documented behaviors of encode_system_table have properties.
-**Effort tier:** standard (≥1000 proptest cases; strengthening round: abs + segment+SIB; 1 contract-surface sweep)
+**Modules tested:** encode_lmsw
+**Tests:** 11 properties (+ 6 KAT + 4 regression witnesses)
+**Result:** 8 properties passing, 3 failing; 2 root-cause bugs (3 reports)
+**Change surface:** 1 changed function (encode_lmsw), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no .gcda/.profraw and only unrelated OH C++ binaries; execution confirmed by `cargo test --lib encode_lmsw` (12 pass / 9 fail including KAT/regression)
+**Tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_system_table | 12 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_lmsw | 11 properties | 2 root-cause (3 reports) | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_system_table omits segment-override prefix on memory operands
+### B1: encode_lmsw omits segment override prefix on memory operands
 
-**Formal:** ∀ mnem ∈ {sgdt,sidt,lgdt,lidt}, seg ∈ SEG, base ∈ GP32, disp. encode_system_table([Mem(seg:base+disp)], mnem) = llvm_mc("%seg:disp(%base)")
-**Contract evidence:** inferred (public assembler path `encoder/mod.rs:340` routes sgdt/sidt/lgdt/lidt to this helper unchanged; sibling GP encoders call `emit_segment_prefix`; Intel SDM / llvm-mc i686 require the override byte)
-**Documentation conflict:** (none) — function doc states memory-operand form but does not mention segment prefixes; `core.rs:31-42` documents `emit_segment_prefix` as the intended mechanism
+**Formal:** ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, disp. encode_lmsw([Mem seg:base+disp]) = llvm_mc(att with %seg:)
+**Contract evidence:** inferred (x86 sibling `emit_rex_rm` before opcode at x86/.../system.rs:256; i686 `core.rs:31-42` `emit_segment_prefix`; llvm-mc i686 reference; same defect class as encode_invlpg/verw/prefetch/system_table)
+**Documentation conflict:** (none) — doc states memory operand is accepted but does not name segment prefixes; contract from assembler encoding rules + sibling helpers
 **Severity:** high
-**Counterexample:** `sgdt %es:(%eax)` — SUT=`[0f,01,00]`, llvm-mc=`[26,0f,01,00]`; also `lgdt %fs:(%eax)` → missing `0x64`; `lidt %gs:8(%ebx)` → missing `0x65`; segment+SIB same class
-**Expected / Actual:** Expected `[0x26, 0x0f, 0x01, 0x00]` / Actual `[0x0f, 0x01, 0x00]`
-**Impact:** Boot/OS AT&T that loads/stores GDT/IDT through a non-default segment silently encodes the wrong effective address.
-**Root cause:** `system.rs:185-187` emits `0F 01` + ModR/M without calling `self.emit_segment_prefix(mem)` first (same class as encode_invlpg/prefetch/verw/lsl memory arms).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:185`
+**Counterexample:** `lmsw %es:(%eax)` then compare bytes — SUT `[0f,01,30]`, llvm-mc `[26,0f,01,30]`
+**Expected / Actual:** `[0x26,0x0f,0x01,0x30]` / `[0x0f,0x01,0x30]`
+**Impact:** Segment-qualified LMSW assembles to default-DS addressing; privileged code that intentionally loads MSW from FS/ES/etc. gets wrong machine code.
+**Root cause:** `system.rs:214-216` memory arm never calls `emit_segment_prefix(mem)` before emitting `0F 01`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:214`
 ```rust
             Operand::Memory(mem) => {
                 self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(reg_ext, mem)
+                self.encode_modrm_mem(6, mem)
             }
 ```
-**Suggested fix:** Call the existing helper before the opcode:
+**Suggested fix:** Call `emit_segment_prefix` before the opcode.
 ```rust
             Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
                 self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(reg_ext, mem)
+                self.encode_modrm_mem(6, mem)
             }
 ```
-**Bug report:** bug_reports/encode_system_table_missing_segment_prefix.md
-**Repro seed:** proptest `cc 0565eaaea050e6ee04b96e03a6ab82c2b899f38d340edfb63b40b3b6cae94f23` (mnem=sgdt, seg=es, base=eax, disp=0)
+**Bug report:** bug_reports/encode_lmsw_missing_segment_prefix.md
+**Repro seed:** proptest `cc fd7824514f31a10119584b0a7394ddd6e0080ce571361bbd5a6698929f08078b` (seg=es, base=eax, disp=0)
 **Raw output:**
 ```text
 Test failed: assertion failed: `(left == right)`
-  left: `[15, 1, 0]`,
- right: `[38, 15, 1, 0]`: segment prefix diff for `sgdt %es:(%eax)`: SUT=[0f, 01, 00] llvm-mc=[26, 0f, 01, 00]
-minimal failing input: mnem = "sgdt", seg = "es", base = "eax", disp = 0
+  left: `[15, 1, 48]`,
+ right: `[38, 15, 1, 48]`: segment prefix diff for `lmsw %es:(%eax)`: SUT=[0f, 01, 30] llvm-mc=[26, 0f, 01, 30]
+minimal failing input: seg = "es", base = "eax", disp = 0
 ```
 
-### B2: encode_system_table omits segment-override prefix on SIB memory operands
+### B3: encode_lmsw omits segment override prefix on SIB memory operands
 
-**Formal:** ∀ mnem, seg, base, index≠esp, scale, disp. SUT = llvm-mc for segment+SIB memory
-**Contract evidence:** inferred (same as B1; public assembler path routes through encode_system_table unchanged)
+**Formal:** ∀ seg, base, index≠esp, scale, disp. encode_lmsw([Mem seg:SIB]) = llvm_mc(att)
+**Contract evidence:** inferred (same as B1 — emit_segment_prefix / llvm-mc / x86 sibling)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `sgdt %es:(%eax,%eax,1)` — SUT=`[0f,01,04,00]`, llvm-mc=`[26,0f,01,04,00]`
-**Expected / Actual:** Expected `[0x26, 0x0f, 0x01, 0x04, 0x00]` / Actual `[0x0f, 0x01, 0x04, 0x00]`
-**Impact:** Same silent wrong encoding when the memory form uses index/scale.
-**Root cause:** Same `system.rs:185-187` missing `emit_segment_prefix(mem)` as B1.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:185`
+**Counterexample:** `lmsw %es:(%eax,%eax,1)` — SUT `[0f,01,34,00]`, llvm-mc `[26,0f,01,34,00]`
+**Expected / Actual:** `[0x26,0x0f,0x01,0x34,0x00]` / `[0x0f,0x01,0x34,0x00]`
+**Impact:** Same as B1 for SIB forms.
+**Root cause:** Same statement as B1 (`system.rs:214-216`).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:214`
 ```rust
             Operand::Memory(mem) => {
                 self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(reg_ext, mem)
+                self.encode_modrm_mem(6, mem)
             }
 ```
-**Suggested fix:**
+**Suggested fix:** Same as B1 — call `emit_segment_prefix` before opcode.
 ```rust
             Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
                 self.bytes.extend_from_slice(&[0x0F, 0x01]);
-                self.encode_modrm_mem(reg_ext, mem)
+                self.encode_modrm_mem(6, mem)
             }
 ```
-**Bug report:** bug_reports/encode_system_table_missing_segment_prefix_sib.md
-**Repro seed:** (deterministic shrink) mnem=sgdt, seg=es, base=eax, index=eax, scale=1, disp=0
+**Bug report:** bug_reports/encode_lmsw_missing_segment_prefix_sib.md
+**Repro seed:** (deterministic first shrink: seg=es, base=eax, index=eax, scale=1, disp=0)
 **Raw output:**
 ```text
-Test failed: assertion failed: `(left == right)`
-  left: `[15, 1, 4, 0]`,
- right: `[38, 15, 1, 4, 0]`: seg+SIB diff for `sgdt %es:(%eax,%eax,1)`
-minimal failing input: mnem = "sgdt", seg = "es", base = "eax", index = "eax", scale = 1, disp = 0
+seg+SIB diff for `lmsw %es:(%eax,%eax,1)`: SUT=[0f, 01, 34, 00] llvm-mc=[26, 0f, 01, 34, 00]
+minimal failing input: seg = "es", base = "eax", index = "eax", scale = 1, disp = 0
+```
+
+### B2: encode_lmsw accepts 32-bit and 8-bit registers (r/m16 only)
+
+**Formal:** ∀ bad ∈ {Reg32, Reg8}. encode_lmsw([bad]) = Err(...)
+**Contract evidence:** documented `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:202` "Accepts a 16-bit register or memory operand." + Intel SDM LMSW r/m16 + llvm-mc rejects `%eax`/`%al`
+**Documentation conflict:** system.rs:202 "Accepts a 16-bit register or memory operand." — asserts 16-bit register form; code accepts any name `reg_num` knows (eax/al alias to same rm). Class: contract the code violates.
+**Severity:** medium
+**Counterexample:** `lmsw %eax` → SUT Ok(`[0f,01,f0]`) (same as `%ax`); llvm-mc rejects
+**Expected / Actual:** Err / Ok(`[0x0f,0x01,0xf0]`)
+**Impact:** Width mistakes on LMSW are silently accepted as 16-bit encodings, diverging from gas/llvm-mc and the function's own doc.
+**Root cause:** `system.rs:208-212` uses `reg_num` without gating `reg_size(&reg.name) == 2`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/system.rs:208`
+```rust
+            Operand::Register(reg) => {
+                let rm = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x01]);
+                self.bytes.push(self.modrm(3, 6, rm));
+                Ok(())
+            }
+```
+**Suggested fix:** Reject non-16-bit register names.
+```rust
+            Operand::Register(reg) => {
+                if reg_size(&reg.name) != 2 {
+                    return Err(format!("lmsw requires 16-bit register, got {}", reg.name));
+                }
+                let rm = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x01]);
+                self.bytes.push(self.modrm(3, 6, rm));
+                Ok(())
+            }
+```
+**Bug report:** bug_reports/encode_lmsw_accepts_non_r16_register.md
+**Repro seed:** proptest `cc 8bfd22a7ff0ba7e4839c0fc93eb78bd3f244d48d4db157628933e60a841645e1` (kind=2, bad_reg=eax)
+**Raw output:**
+```text
+Test failed: SUT accepted invalid-width register `lmsw %eax` → [0f, 01, f0]; LMSW requires r/m16 (doc: 16-bit register; llvm-mc rejects).
+minimal failing input: kind = 2, bad_reg = "eax", imm = 0
 ```
 
 ## Design Caveats
@@ -98,27 +135,29 @@ minimal failing input: mnem = "sgdt", seg = "es", base = "eax", index = "eax", s
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_system_table_pbt.rs | 12 properties + 4 KAT + 3 regression witnesses |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_system_table_pbt;` |
+| src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs | 11 properties + 6 KAT + 4 regression |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_lmsw_pbt;` |
 
 ## Reproduction
 
-Whole suite (serial):
+Whole suite (serial, build-contract form):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_system_table -- --test-threads=1
+cargo test --lib encode_lmsw -- --test-threads=1
 ```
 
-B1 regression only:
+B1 segment prefix:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_system_table_regression_missing_fs_prefix -- --test-threads=1 --exact
+cargo test --lib encode_lmsw_diff_segment -- --test-threads=1
+cargo test --lib test_encode_lmsw_regression_missing_es_prefix -- --test-threads=1
 ```
 
-Segment differential property:
+B2 non-r16 register:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_system_table_diff_segment_llvm_mc -- --test-threads=1 --exact
+cargo test --lib encode_lmsw_neg_bad_operand -- --test-threads=1
+cargo test --lib test_encode_lmsw_regression_rejects_eax -- --test-threads=1
 ```
 
 ## Output Directories
@@ -127,20 +166,21 @@ cargo test --lib encode_system_table_diff_segment_llvm_mc -- --test-threads=1 --
 - `pbt-out/REPORT.html` — customer-facing overview (from report.json)
 - `pbt-out/PROPERTIES.md` — property ledger
 - `pbt-out/PLAN.md` — campaign phases
-- `pbt-out/COVERAGE.md` — coverage ledger row for encode_system_table
-- `pbt-out/COVERAGE_STATUS.md` — coverage statistics
+- `pbt-out/COVERAGE.md` — coverage ledger row for encode_lmsw
+- `pbt-out/COVERAGE_STATUS.md` — this-campaign coverage status
 - `pbt-out/report.json` — machine-readable report
-- `pbt-out/bug_reports/encode_system_table_missing_segment_prefix.md` (+ `.html`)
-- `pbt-out/bug_reports/encode_system_table_missing_segment_prefix_sib.md` (+ `.html`)
-- `pbt-out/run/encode_system_table_test2.log` — full test log
-- `pbt-out/INVARIANTS.md` — updated with encode_system_table notes
+- `pbt-out/bug_reports/encode_lmsw_missing_segment_prefix.md` (+ .html)
+- `pbt-out/bug_reports/encode_lmsw_missing_segment_prefix_sib.md` (+ .html)
+- `pbt-out/bug_reports/encode_lmsw_accepts_non_r16_register.md` (+ .html)
+- `pbt-out/run/encode_lmsw_test.log` — full test log
+- `pbt-out/INVARIANTS.md` — updated with encode_lmsw notes
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 02:12 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 261/397 total | PBT candidates: 261 | Tested: 261 (100%) | 1 pass, 261 fail
+> Last updated: 2026-10-09 02:27 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 262/397 total | PBT candidates: 262 | Tested: 262 (100%) | 1 pass, 262 fail
 
 ## Summary
 
@@ -149,10 +189,10 @@ cargo test --lib encode_system_table_diff_segment_llvm_mc -- --test-threads=1 --
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 397 |
-| PBT candidates (from FUNCTION_INDEX) | 261 |
-| **Tested (of PBT candidates)** | **261 / 261 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 261 / -1 |
-| **Overall (tested / all functions)** | **261 / 397 (66%)** |
+| PBT candidates (from FUNCTION_INDEX) | 262 |
+| **Tested (of PBT candidates)** | **262 / 262 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 262 / -1 |
+| **Overall (tested / all functions)** | **262 / 397 (66%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -160,13 +200,13 @@ cargo test --lib encode_system_table_diff_segment_llvm_mc -- --test-threads=1 --
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 261 | 261 | 0 | 100% |
+|  | 262 | 262 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 261 | 261 | 0 | 100% |
+| unknown | 262 | 262 | 0 | 100% |
 
 ## File Coverage
 
@@ -450,3 +490,4 @@ cargo test --lib encode_system_table_diff_segment_llvm_mc -- --test-threads=1 --
 | encode_verw | system.rs |
 | encode_lsl | system.rs |
 | encode_system_table | system.rs |
+| encode_lmsw | system.rs |

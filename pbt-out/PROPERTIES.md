@@ -1,327 +1,299 @@
-# Properties: encode_system_table (i686)
+# PROPERTIES — encode_lmsw (i686)
 
-## encode_system_table_diff_base_disp_llvm_mc
+## encode_lmsw_diff_reg16
 - Tier: 4
-- Rationale: Strongest applicable is differential vs llvm-mc (trusted i686 assembler). State machine rejected (pure encoder). Round-trip rejected (no in-tree i686 decoder for system-table ops). Same-job sibling x86 path rejected (REX/64-bit ISA).
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs (memory-form differential pattern)
-- Formal: ∀ mnem ∈ {sgdt,sidt,lgdt,lidt}, base ∈ GP32, disp ∈ i32. encode_system_table([Mem(base,disp)], mnem) = llvm_mc("{mnem} disp(%base)")
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+- Rationale: Strongest oracle is differential vs llvm-mc i686. LMSW register form is r/m16 (Intel SDM); llvm-mc emits `0F 01 /6` with mod=11. Round-trip rejected (no decoder). State machine rejected (pure encode).
+- Doc contract: system.rs:201-202 "Encode LMSW (Load Machine Status Word): 0F 01 /6 Accepts a 16-bit register or memory operand." — asserted fingerprint 9826e63a
+- Seed: (none) — sibling pattern from encode_verw_pbt.rs
+- Formal: ∀ r ∈ {ax,cx,dx,bx,sp,bp,si,di}. encode_lmsw([Reg(r)]) = llvm_mc("lmsw %r")
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, base, disp]
-  domain: { mnem: system_table_mnemonics, base: gp32, disp: i32 }
+  vars: [r]
+  domain: { r: r16_regs }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Mem(base,disp)])"
-    rhs: "llvm_mc_bytes(format!(\"{mnem} {}\", att_mem))"
+    lhs: "sut_encode(\"lmsw\", [Reg(r)])"
+    rhs: "llvm_mc(\"lmsw %\" ++ r)"
 generators:
-  mnem: { gen: oneof, values: ["sgdt","sidt","lgdt","lidt"], type: "&str" }
+  r: { gen: oneof, values: ["ax","cx","dx","bx","sp","bp","si","di"], type: "&str" }
+evidence: system.rs:201-202; Intel SDM LMSW r/m16; llvm-mc -triple=i686
+```
+
+## encode_lmsw_diff_base_disp
+- Tier: 4
+- Rationale: Differential memory base+disp forms vs llvm-mc; covers mod/disp8/disp32 and ESP/EBP special cases via random base.
+- Doc contract: system.rs:201-202 "Accepts a 16-bit register or memory operand." — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_diff_llvm_mc_base_disp
+- Formal: ∀ base ∈ GP32, disp ∈ i32. encode_lmsw([Mem(base,disp)]) = llvm_mc(att("lmsw", mem))
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_lmsw
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [base, disp]
+  domain: { base: gp32, disp: i32_disp_edges }
+  relation:
+    op: eq
+    lhs: "sut_encode(\"lmsw\", [Mem(base,disp)])"
+    rhs: "llvm_mc(att_lmsw_mem(base,disp))"
+generators:
   base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
   disp: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-evidence: system.rs:169-186; Intel SDM 0F 01 /0../3; llvm-mc -triple=i686
+evidence: system.rs:214-216; Intel SDM LMSW m16; llvm-mc
 ```
 
-## encode_system_table_diff_sib_llvm_mc
+## encode_lmsw_diff_sib
 - Tier: 4
-- Rationale: SIB forms (base+index*scale+disp, index not esp) must match llvm-mc.
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs
-- Formal: ∀ mnem, base?, index≠esp, scale∈{1,2,4,8}, disp. SUT bytes = llvm-mc bytes when llvm accepts
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+- Rationale: Differential SIB forms (index ≠ esp) vs llvm-mc.
+- Doc contract: system.rs:201-202 — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_diff_llvm_mc_sib
+- Formal: ∀ base?, index≠esp, scale∈{1,2,4,8}, disp. encode_lmsw([Mem SIB]) = llvm_mc(att)
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, base, index, scale, disp]
-  domain: { mnem: system_table, index: gp32_no_esp, scale: powers_of_two }
+  vars: [base, index, scale, disp]
+  domain: { index: gp32_minus_esp, scale: {1,2,4,8} }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Mem(base,index,scale,disp)])"
-    rhs: "llvm_mc_bytes(att_form)"
+    lhs: "sut_encode(\"lmsw\", [Mem SIB])"
+    rhs: "llvm_mc(att)"
 generators:
-  mnem: { gen: oneof, values: ["sgdt","sidt","lgdt","lidt"], type: "&str" }
   scale: { gen: oneof, values: [1, 2, 4, 8], type: u8 }
-evidence: system.rs:183-186; encode_modrm_mem SIB path
+evidence: system.rs:214-216; encode_modrm_mem SIB path
 ```
 
-## encode_system_table_diff_segment_llvm_mc
+## encode_lmsw_diff_segment
 - Tier: 4
-- Rationale: Segment override prefixes (es/cs/ss/ds/fs/gs) must precede 0F 01; core.rs emit_segment_prefix is the intended mechanism used by GP integer encoders. Differential vs llvm-mc.
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs segment property (same defect class)
-- Formal: ∀ mnem, seg ∈ SEG, base ∈ GP32, disp. encode_system_table([Mem(seg:base+disp)], mnem) = llvm_mc("%seg:disp(%base)")
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+- Rationale: Differential segment-override forms. i686 core.rs provides emit_segment_prefix; x86 sibling emit_rex_rm emits segment before opcode. Documented memory operand must carry segment prefix bytes matching llvm-mc.
+- Doc contract: system.rs:201-202 — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_diff_llvm_mc_segment
+- Formal: ∀ seg ∈ {es,cs,ss,ds,fs,gs}, base, disp. encode_lmsw([Mem seg:base+disp]) = llvm_mc(att with %seg:)
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: failing
-- Counterexample: mnem="sgdt", seg="es", base="eax", disp=0 — SUT=[0f,01,00] llvm-mc=[26,0f,01,00]
-- Bug report: bug_reports/encode_system_table_missing_segment_prefix.md
+- Counterexample: seg="es", base="eax", disp=0 → SUT=[0f,01,30] llvm-mc=[26,0f,01,30]
+- Bug report: bug_reports/encode_lmsw_missing_segment_prefix.md
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, seg, base, disp]
+  vars: [seg, base, disp]
   domain: { seg: segment_regs }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Mem(seg,base,disp)])"
-    rhs: "llvm_mc_bytes(att_seg_form)"
+    lhs: "sut_encode(\"lmsw\", [Mem(seg,base,disp)])"
+    rhs: "llvm_mc(att)"
 generators:
   seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
-evidence: core.rs:31-42 emit_segment_prefix; llvm-mc segment forms
+evidence: core.rs:31-42 emit_segment_prefix; x86 system.rs:256 emit_rex_rm; llvm-mc
 ```
 
-## encode_system_table_diff_edges_esp_ebp_abs
+## encode_lmsw_diff_edges
 - Tier: 4
-- Rationale: ESP forces SIB, EBP forces disp8/disp32 even at 0, absolute disp32 uses mod=00 rm=101 — boundary edges for ModR/M.
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs edges property
-- Formal: ∀ edge forms of mem, mnem. SUT = llvm-mc
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+- Rationale: Differential ESP/EBP/abs/SIB edge encodings that hit special ModR/M cases.
+- Doc contract: system.rs:201-202 — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_diff_edges_esp_ebp_abs
+- Formal: ∀ edge ∈ ESP/EBP/abs/SIB edge set. encode_lmsw([Mem edge]) = llvm_mc(att)
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [edge, mnem]
-  domain: { edge: esp_ebp_sib_abs_set }
+  vars: [edge]
+  domain: { edge: esp_ebp_abs_sib_set }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Mem(edge)])"
-    rhs: "llvm_mc_bytes(att_edge)"
+    lhs: "sut_encode(\"lmsw\", [Mem edge])"
+    rhs: "llvm_mc(att)"
 generators:
   edge: { gen: int, min: 0, max: 11, type: u8 }
-evidence: encode_modrm_mem special cases; Intel SDM addressing
+evidence: encode_modrm_mem ESP/EBP/abs special cases
 ```
 
-## encode_system_table_invariant_opcode_ext
+## encode_lmsw_invariant_opcode_ext6
 - Tier: 3
-- Rationale: Algebraic invariant — body after optional segment prefixes is always 0F 01 with ModRM.reg = {sgdt:0,sidt:1,lgdt:2,lidt:3}.
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs invariant_opcode_ext7
-- Formal: ∀ mnem, mem. let b = strip_seg(encode(mnem,mem)). b[0]=0x0F ∧ b[1]=0x01 ∧ (b[2]>>3)&7 = ext(mnem)
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+- Rationale: Algebraic invariant from doc "0F 01 /6" — every valid encoding's body starts 0F 01 and ModRM.reg == 6.
+- Doc contract: system.rs:201 "0F 01 /6" — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_invariant_opcode_ext5
+- Formal: ∀ valid ops. let b = strip_seg(encode_lmsw(ops)) in b[0]=0x0F ∧ b[1]=0x01 ∧ ((b[2]>>3)&7)=6
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mnem, mem]
-  domain: { mnem: system_table, mem: valid_mem }
+  vars: [ops]
+  domain: { ops: valid_lmsw_ops }
   relation:
     op: holds
-    expr: "strip_seg(sut)[0]==0x0F && strip_seg(sut)[1]==0x01 && ((strip_seg(sut)[2]>>3)&7)==ext(mnem)"
+    expr: "let b = strip_seg(encode_lmsw(ops)); b[0]==0x0F && b[1]==0x01 && ((b[2]>>3)&7)==6"
 generators:
-  mnem: { gen: oneof, values: ["sgdt","sidt","lgdt","lidt"], type: "&str" }
-evidence: system.rs:176-181 reg_ext table
+  ops: { gen: oneof, values: ["r16", "base_disp", "sib"], type: "Vec<Operand>" }
+evidence: system.rs:201 "0F 01 /6"
 ```
 
-## encode_system_table_meta_shared_modrm_across_mnemonics
+## encode_lmsw_metamorphic_vs_lidt
 - Tier: 3
-- Rationale: Metamorphic — same memory operand across the four mnemonics must share mod+rm/SIB/disp; only ModRM.reg differs (0/1/2/3).
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs meta vs lidt
-- Formal: ∀ mem. for each pair (a,b) of system-table mnemonics: strip(a) opcode equal, mod+rm equal, SIB/disp equal, only reg field differs by ext table
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+- Rationale: Metamorphic — same memory encoding shape as lidt (0F 01 /3); only ModRM.reg differs (6 vs 3). Independent of llvm-mc for structural relation.
+- Doc contract: system.rs:201 "0F 01 /6" — asserted fingerprint 9826e63a
+- Seed: encode_invlpg_pbt metamorphic vs lidt
+- Formal: ∀ mem (no segment). set_modrm_reg(body(encode_lmsw(mem)), 3) = body(encode_lidt(mem))
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
   vars: [mem]
-  domain: { mem: valid_mem }
-  relation:
-    op: holds
-    expr: "pairwise_same_mod_rm_sib_disp(sgdt,sidt,lgdt,lidt, mem)"
-generators:
-  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"], type: "&str" }
-evidence: system.rs:176-186 shared encode path
-```
-
-## encode_system_table_meta_l_suffix_equivalent
-- Tier: 3
-- Rationale: Metamorphic — optional 'l' suffix (lgdtl→lgdt) must not change encoding (doc comment + strip_suffix).
-- Doc contract: system.rs:174 "Strip optional 'l' suffix (e.g., \"lgdtl\" -> \"lgdt\")" — asserted fingerprint 35d6412b
-- Seed: (none) — from code comment at system.rs:174
-- Formal: ∀ mnem ∈ {sgdt,sidt,lgdt,lidt}, mem. encode(mnem,mem) = encode(mnem+"l",mem)
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: i686.InstructionEncoder.encode_system_table
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [mnem, mem]
-  domain: { mnem: base_forms }
+  domain: { mem: non_seg_memory }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, mem)"
-    rhs: "sut_encode(mnem + \"l\", mem)"
+    lhs: "set_modrm_reg(body_lmsw, 3)"
+    rhs: "body_lidt"
 generators:
-  mnem: { gen: oneof, values: ["sgdt","sidt","lgdt","lidt"], type: "&str" }
-evidence: system.rs:174-175 strip_suffix l
+  mem: { gen: oneof, values: ["base_disp", "sib", "abs"], type: MemoryOperand }
+evidence: system.rs:201 /6; system.rs:170-182 lidt /3; shared 0F 01
 ```
 
-## encode_system_table_neg_arity
-- Tier: 2
-- Rationale: Negative error — arity ≠ 1 must Err with requires-1-operand message.
-- Doc contract: system.rs:171-173 arity guard returns Err — asserted fingerprint 9f0e1d2c
-- Seed: encode_invlpg_pbt.rs neg_arity
-- Formal: ∀ mnem, ops. len(ops)≠1 ⇒ encode returns Err containing "requires 1 operand"
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+## encode_lmsw_neg_arity
+- Tier: 3
+- Rationale: Negative contract — doc and body require exactly 1 operand.
+- Doc contract: system.rs:201-205 — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_neg_arity
+- Formal: ∀ ops. |ops|≠1 ⇒ encode_lmsw(ops) = Err("lmsw requires 1 operand")
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mnem, ops]
-  domain: { ops: arity_not_1 }
+  vars: [ops]
+  domain: { ops: arity_neq_1 }
   relation:
-    op: throws
-    expr: "sut_encode(mnem, ops)"
+    op: eq
+    lhs: "encode_lmsw(ops).err"
+    rhs: "contains \"lmsw requires 1 operand\""
 generators:
   n_extra: { gen: int, min: 0, max: 3, type: usize }
-expected_error: "requires 1 operand"
-evidence: system.rs:171-173
+expected_error: "lmsw requires 1 operand"
+evidence: system.rs:204-206
 ```
 
-## encode_system_table_neg_non_memory_non_label
-- Tier: 2
-- Rationale: Negative error — register/imm/indirect operands must Err ("requires memory operand"); Label is accepted (absolute form).
-- Doc contract: system.rs:197 "{mnemonic} requires memory operand" — asserted fingerprint 7c8b9a0e
-- Seed: encode_invlpg_pbt.rs neg_non_memory (adapted: Label is valid here)
-- Formal: ∀ mnem, op ∈ {Reg, Imm, Indirect}. encode([op]) = Err(contains "memory operand")
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
+## encode_lmsw_neg_bad_operand
+- Tier: 3
+- Rationale: Negative — imm/label rejected; non-r16 registers rejected per doc "16-bit register" and Intel LMSW r/m16 (llvm-mc rejects eax/al).
+- Doc contract: system.rs:202 "Accepts a 16-bit register or memory operand." — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_neg_bad_operand
+- Formal: ∀ bad ∈ {Imm, Label, Reg32, Reg8}. encode_lmsw([bad]) = Err(...)
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
+- Status: failing
+- Counterexample: kind=2, bad_reg="eax" → SUT Ok([0f,01,f0]); llvm-mc rejects; doc requires 16-bit register
+- Bug report: bug_reports/encode_lmsw_accepts_non_r16_register.md
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mnem, op]
-  domain: { op: Reg_or_Imm_or_Indirect }
+  vars: [bad]
+  domain: { bad: imm_or_label_or_non_r16 }
   relation:
-    op: throws
-    expr: "sut_encode(mnem, [op])"
+    op: holds
+    expr: "sut_encode(\"lmsw\", [bad]).is_err()"
 generators:
-  kind: { gen: int, min: 0, max: 2, type: u8 }
-expected_error: "memory operand"
-evidence: system.rs:197
+  bad_reg: { gen: oneof, values: ["eax","al","ah","ebx","bl"], type: "&str" }
+expected_error: "lmsw requires register or memory operand | bad width"
+evidence: system.rs:202 "16-bit register"; Intel SDM LMSW r/m16; llvm-mc rejects
 ```
 
-## encode_system_table_label_form_structure
-- Tier: 3
-- Rationale: Label form is documented ("Label as absolute memory reference: lgdtl tr_gdt") — must emit 0F 01 + modrm(0,ext,5) + 4 zero disp bytes (relocation fill-in). Differential vs llvm-mc placeholder A,A,A,A.
-- Doc contract: system.rs:188 "Label as absolute memory reference: lgdtl tr_gdt" — asserted fingerprint 30014cd5
-- Seed: (none) — from code comment
-- Formal: ∀ mnem, label. encode([Label(label)]) = [0x0F,0x01, modrm(0,ext,5), 0,0,0,0]
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
+## encode_lmsw_diff_abs_disp32
+- Tier: 4
+- Rationale: Strengthening — absolute disp32 memory form differential.
+- Doc contract: system.rs:201-202 — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_diff_abs_disp32
+- Formal: ∀ disp ∈ i32. encode_lmsw([Mem abs disp]) = llvm_mc(att)
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: i686.InstructionEncoder.encode_system_table
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [mnem, label]
-  domain: { mnem: system_table, label: non_empty_ident }
-  relation:
-    op: eq
-    lhs: "sut_encode(mnem, [Label(label)])"
-    rhs: "[0x0F, 0x01, modrm(0, ext, 5), 0, 0, 0, 0]"
-generators:
-  mnem: { gen: oneof, values: ["sgdt","sidt","lgdt","lidt","sgdtl","lgdtl"], type: "&str" }
-evidence: system.rs:188-196; llvm-mc bare-label form
-```
-
-## encode_system_table_diff_segment_sib (strengthening round)
-- Tier: 4
-- Rationale: Strengthening — segment override combined with SIB addressing (standard tier extra round after first green batch on non-segment paths).
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs segment+SIB
-- Formal: ∀ mnem, seg, base, index≠esp, scale, disp. SUT = llvm-mc for segment+SIB memory
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
-- Status: failing
-- Counterexample: mnem="sgdt", seg="es", base="eax", index="eax", scale=1, disp=0 — SUT=[0f,01,04,00] llvm-mc=[26,0f,01,04,00]
-- Bug report: bug_reports/encode_system_table_missing_segment_prefix_sib.md
-
-```property
-function: i686.InstructionEncoder.encode_system_table
+function: encode_lmsw
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, seg, base, index, scale, disp]
-  domain: { seg: segment_regs, index: gp32_no_esp }
-  relation:
-    op: eq
-    lhs: "sut_encode(mnem, [Mem(seg,base,index,scale,disp)])"
-    rhs: "llvm_mc_bytes(att_seg_sib)"
-generators:
-  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
-  scale: { gen: oneof, values: [1, 2, 4, 8], type: u8 }
-evidence: core.rs:31-42; same missing-prefix root cause
-```
-
-## encode_system_table_diff_abs_disp32 (strengthening)
-- Tier: 4
-- Rationale: Absolute disp32 (no base/index) form — additional differential angle.
-- Doc contract: system.rs:169 "Encode SGDT/SIDT/LGDT/LIDT: 0F 01 /N (memory operand)" — asserted fingerprint e040d895
-- Seed: encode_invlpg_pbt.rs abs
-- Formal: ∀ mnem, disp∈i32. encode([Mem(abs disp)]) = llvm_mc
-- Test file: src/backend/i686/assembler/encoder/encode_system_table_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: i686.InstructionEncoder.encode_system_table
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mnem, disp]
+  vars: [disp]
   domain: { disp: i32 }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Mem(abs,disp)])"
-    rhs: "llvm_mc_bytes"
+    lhs: "sut_encode(\"lmsw\", [Mem abs disp])"
+    rhs: "llvm_mc(att)"
 generators:
   disp: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
-evidence: encode_modrm_mem direct memory path
+evidence: encode_modrm_mem abs path (mod=00 rm=101)
+```
+
+## encode_lmsw_diff_segment_sib
+- Tier: 4
+- Rationale: Strengthening — segment + SIB combined (edge of segment-prefix path). Same root cause as encode_lmsw_diff_segment (B1 missing emit_segment_prefix).
+- Doc contract: system.rs:201-202 — asserted fingerprint 9826e63a
+- Seed: encode_verw_pbt.rs encode_verw_diff_segment_sib
+- Formal: ∀ seg, base, index≠esp, scale, disp. encode_lmsw([Mem seg:SIB]) = llvm_mc(att)
+- Test file: src/backend/i686/assembler/encoder/encode_lmsw_pbt.rs
+- Status: failing
+- Counterexample: seg="es", base="eax", index="eax", scale=1, disp=0 → SUT=[0f,01,34,00] llvm-mc=[26,0f,01,34,00]
+- Bug report: bug_reports/encode_lmsw_missing_segment_prefix_sib.md
+
+```property
+function: encode_lmsw
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [seg, base, index, scale, disp]
+  domain: { seg: segment_regs, index: gp32_minus_esp }
+  relation:
+    op: eq
+    lhs: "sut_encode(\"lmsw\", [Mem seg SIB])"
+    rhs: "llvm_mc(att)"
+generators:
+  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"], type: "&str" }
+evidence: core.rs emit_segment_prefix + encode_modrm_mem SIB
 ```
