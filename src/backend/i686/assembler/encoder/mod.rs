@@ -25,6 +25,8 @@ mod encode_invlpg_pbt;
 mod encode_verw_pbt;
 #[cfg(test)]
 mod encode_lsl_pbt;
+#[cfg(test)]
+mod encode_system_table_pbt;
 
 pub(crate) use registers::*;
 

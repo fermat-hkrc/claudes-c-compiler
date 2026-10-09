@@ -40,3 +40,12 @@
 - Memory form must: (1) `emit_segment_prefix(mem)` before opcode; (2) emit 0x66 when dest is r16.
 - Known defects: (1) memory arm skips segment prefix; (2) register arm keys is_16 off src; (3) memory arm never emits 0x66 for r16 dest.
 - Fix shape: `is_16` on `dst.name`; memory arm `emit_segment_prefix` + optional 0x66 then `0F 03` + modrm_mem.
+
+## encode_system_table (i686 system encoder)
+
+- Opcode: 0F 01 /N with N={sgdt:0,sidt:1,lgdt:2,lidt:3}; optional `l` suffix stripped (`lgdtl`→`lgdt`).
+- Memory forms (base/disp/SIB/abs, no segment) and Label absolute form match llvm-mc `-triple=i686`.
+- Metamorphic: same memory → four mnemonics share mod+rm/SIB/disp; only ModRM.reg differs.
+- Label form: mod=00 rm=101 + R_386_32 reloc + 4 zero bytes (llvm-mc `A,A,A,A`).
+- Known defect: memory arm does not call `emit_segment_prefix` before opcode (same class as encode_invlpg/prefetch/verw/lsl). Witness: `sgdt %es:(%eax)` → SUT omits 0x26; `lgdt %fs:(%eax)` omits 0x64.
+- Fix shape: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x01])`.
