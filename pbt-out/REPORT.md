@@ -1,174 +1,147 @@
-# PBT Campaign Report: encode_test (i686)
+# PBT Campaign Report: encode_imul (i686)
 
 ## Summary
 
-**Verdict:** 4 high/medium bugs in `encode_test`: missing Reg→Mem form (high), missing segment override on Imm→Mem (high), accepts size-mismatched GP pairs (medium), accepts non-GP via reg_num (medium). Same-width RR / Imm→Reg / bare Imm→Mem match llvm-mc.
+**Verdict:** 10 filed bugs (4 root-cause classes) in `encode_imul`: (1) high — 2/3-op `imulw` omits 0x66 and emits imm32 instead of imm16; (2) high — memory forms omit segment prefixes; (3) high — 1-op segmented memory omits segment via `encode_unary_rm`; (4) medium — non-GP/mismatched-width registers silently alias through `reg_num`. Bare 32-bit forms match llvm-mc.
 **Date:** 2026-10-09
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_test (i686 gp_integer)
-**Tests:** 10 properties (+ 6 KAT + 4 regression witnesses)
-**Result:** 5 passing, 5 failing properties; 4 distinct root-cause bugs (5 bug entries; b2/b2b share segment-prefix root cause)
-**Change surface:** 1 changed function (encode_test), 1 with properties, 0 error-handling-only changes without failure-path coverage (arity/neg paths covered)
-**Coverage evidence:** file-level (symbol presence / cargo execution) — `coverage_gaps` reported no .gcda/.profraw for this Rust build and listed unrelated C++ binaries; real SUT execution evidenced by cargo test outcomes
-**Effort tier:** standard (proptest cases=1000; ≥1 metamorphic; 1 coverage sweep round)
+**Modules tested:** encode_imul (i686 gp_integer)
+**Tests:** 12 properties + 8 KAT + 5 regressions
+**Result:** 2 properties passing, 10 failing; 10 bugs (4 root-cause classes)
+**Change surface:** 1 changed function (encode_imul), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence / cargo test execution of encode_imul_pbt); native line coverage may appear under pbt-out/code-coverage/ when instrument-coverage data is collected
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_test | 10 props + 6 KAT + 4 reg | 4 root causes (5 entries) | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_imul | 12 props (+ KAT/regressions) | 10 (4 root classes) | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: Missing Reg→Mem TEST form
+### B1: encode_imul ignores size on 2/3-operand forms (missing 0x66 + wrong imm width)
 
-**Formal:** ∀ width∈{1,2,4}, src∈GP(width), base∈GP32, disp. bytes(encode_test(test*, %src, mem)) = llvm-mc_i686("test* %src, mem")
-**Contract evidence:** inferred (Intel SDM TEST r/m,r; AT&T `test %reg, mem`; x86-64 sibling `src/backend/x86/assembler/encoder/gp_integer.rs:608` implements the arm; llvm-mc accepts)
+**Formal:** ∀ width∈{2,4}, src,dst∈GP(width). encode(imul{w|l} %src, %dst) = llvm_mc(same) — falsified at width=2
+**Contract evidence:** inferred (Intel SDM IMUL 0F AF /r and 6B/69 with operand-size override; llvm-mc `-triple=i686` reference; dispatch passes size=2 for `imulw`)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `testb %al, (%eax)` → Err("unsupported test operands"); llvm-mc = `[84, 00]`
-**Expected / Actual:** Ok([0x84,0x00]) / Err("unsupported test operands")
-**Impact:** Memory-destination TEST forms cannot be assembled on i686.
-**Root cause:** `gp_integer.rs:708` default match arm — only RR, Imm→Reg, Imm→Mem are handled; no `(Register, Memory)`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:708`
+**Counterexample:** `imulw %ax, %bx` → sut `[0f,af,d8]` vs mc `[66,0f,af,d8]`; `imulw $300, %ax` → sut `[69,c0,2c,01,00,00]` vs mc `[66,69,c0,2c,01]`
+**Expected / Actual:** 66-prefixed 16-bit encoding / unprefixed 32-bit-shaped bytes
+**Impact:** Any `imulw` 2/3-op assembly produces 32-bit IMUL machine code
+**Root cause:** gp_integer.rs:716-771 never consults `size` on 2/3-op arms; 0x69 always appends i32 LE bytes
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:719`
 ```rust
-            _ => Err("unsupported test operands".to_string()),
+self.bytes.extend_from_slice(&[0x0F, 0xAF]);
+self.bytes.push(self.modrm(3, dst_num, src_num));
 ```
-**Suggested fix:** Add Reg→Mem arm with emit_segment_prefix + 84/85 + encode_modrm_mem (mirror x86-64 sibling).
+**Suggested fix:** Emit `0x66` when `size==2` before opcodes; use `(*val as i16).to_le_bytes()` for 0x69 when size==2
 ```rust
-            (Operand::Register(src), Operand::Memory(mem)) => {
-                let src_num = reg_num(&src.name).ok_or("bad src register")?;
-                self.emit_segment_prefix(mem);
-                if size == 2 { self.bytes.push(0x66); }
-                self.bytes.push(if size == 1 { 0x84 } else { 0x85 });
-                self.encode_modrm_mem(src_num, mem)
-            }
+if size == 2 { self.bytes.push(0x66); }
+self.bytes.extend_from_slice(&[0x0F, 0xAF]);
+// ...
+if size == 2 {
+    self.bytes.extend_from_slice(&(*val as i16).to_le_bytes());
+} else {
+    self.bytes.extend_from_slice(&(*val as i32).to_le_bytes());
+}
 ```
-**Bug report:** bug_reports/encode_test_missing_reg_mem.md
-**Repro seed:** proptest cc 4dfa37673f3b27f191e944dfd8eb9953927af4762d55fbbd54d62e48f131b44c
+**Bug report:** bug_reports/encode_imul_missing_operand_size_prefix.md
+**Repro seed:** proptest minimal width=2, si=0, di=0
 **Raw output:**
 ```text
-SUT rejected valid Reg→Mem TEST `testb %al, (%eax)`: unsupported test operands
+assertion `left == right` failed: imulw RR must emit 0x66 operand-size prefix; sut=[0f, af, d8] mc=[66, 0f, af, d8]
 ```
 
-### B2: Imm→Mem omits segment override prefix
+### B2: encode_imul memory forms omit segment override prefix
 
-**Formal:** ∀ seg∈{es,cs,ss,ds,fs,gs}, width, base, imm. bytes(encode_test(test*, $imm, seg:mem)) = llvm-mc_i686(...) ∧ = [seg_prefix(seg)] ‖ bare
-**Contract evidence:** documented `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/core.rs:31` "Emit segment override prefix if the memory operand has a segment."; x86-64 sibling calls emit_segment_prefix on Imm→Mem
-**Documentation conflict:** (none) — helper documents the required behavior; encode_test fails to call it
+**Formal:** ∀ seg, mem, dst. encode(seg:mem → dst) = [seg_prefix(seg)] ++ encode(mem → dst)
+**Contract evidence:** documented core.rs:31-42 `emit_segment_prefix`; inferred from llvm-mc and sibling encoders
+**Documentation conflict:** (none) — helper exists but is not called
 **Severity:** high
-**Counterexample:** `testb $5, %es:(%eax)` → sut=`[f6,00,05]` mc=`[26,f6,00,05]`
-**Expected / Actual:** `[0x26,0xf6,0x00,0x05]` / `[0xf6,0x00,0x05]`
-**Impact:** Segmented TEST imm forms encode against the wrong segment (silent wrong address).
-**Root cause:** Imm→Mem arm `gp_integer.rs:689-706` never calls `emit_segment_prefix(mem)`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:689`
+**Counterexample:** `imull %es:(%eax), %ebx` → sut `[0f,af,18]` vs mc `[26,0f,af,18]`; `imull $5, %es:(%eax), %ebx` → sut `[6b,18,05]` vs `[26,6b,18,05]`
+**Expected / Actual:** segment byte present / absent
+**Impact:** Segmented IMUL addresses the wrong segment silently
+**Root cause:** gp_integer.rs:723-726 and 761-771 call `encode_modrm_mem` without `emit_segment_prefix(mem)`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:723`
 ```rust
-            (Operand::Immediate(ImmediateValue::Integer(val)), Operand::Memory(mem)) => {
-                let val = *val;
-                if size == 2 { self.bytes.push(0x66); }
-                if size == 1 {
-                    self.bytes.push(0xF6);
-                } else {
-                    self.bytes.push(0xF7);
-                }
-                self.encode_modrm_mem(0, mem)?;
-```
-**Suggested fix:**
-```rust
-                self.emit_segment_prefix(mem);
-                if size == 2 { self.bytes.push(0x66); }
-```
-**Bug report:** bug_reports/encode_test_missing_segment_prefix.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-segment diff `testb $5, %es:(%eax)`: sut=[f6, 00, 05] mc=[26, f6, 00, 05]
-```
-
-### B2b: Metamorphic seg‖bare fails (same root cause as B2)
-
-**Formal:** ∀ seg, width, base, imm. encode(test*, $imm, seg:mem) = [seg_prefix(seg)] ‖ encode(test*, $imm, bare_mem)
-**Contract evidence:** documented core.rs:31 emit_segment_prefix
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `testb $0 %es:(%eax)` → got `[f6,00,00]` expect `[26,f6,00,00]`
-**Expected / Actual:** `[0x26,0xf6,0x00,0x00]` / `[0xf6,0x00,0x00]`
-**Impact:** Same as B2 — segmented TEST imm forms omit override prefix.
-**Root cause:** Same as B2 — Imm→Mem never calls emit_segment_prefix (`gp_integer.rs:689`).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:689`
-```rust
-            (Operand::Immediate(ImmediateValue::Integer(val)), Operand::Memory(mem)) => {
-                let val = *val;
-                if size == 2 { self.bytes.push(0x66); }
+(Operand::Memory(mem), Operand::Register(dst)) => {
+    let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+    self.bytes.extend_from_slice(&[0x0F, 0xAF]);
+    self.encode_modrm_mem(dst_num, mem)
+}
 ```
 **Suggested fix:**
 ```rust
 self.emit_segment_prefix(mem);
 if size == 2 { self.bytes.push(0x66); }
+self.bytes.extend_from_slice(&[0x0F, 0xAF]);
+self.encode_modrm_mem(dst_num, mem)
 ```
-**Bug report:** bug_reports/encode_test_metamorphic_segment_prefix.md
-**Repro seed:** (deterministic)
+**Bug report:** bug_reports/encode_imul_missing_segment_prefix.md
+**Repro seed:** si=0, bi=0, di=0, form=0
 **Raw output:**
 ```text
-metamorphic seg||bare for testb $0 %es:(%eax): got [f6, 00, 00] expect [26, f6, 00, 00]
+metamorphic seg: expected [26]||[0f, af, 00] got [0f, af, 00]
 ```
 
-### B3: Accepts size-mismatched GP pairs
+### B3: encode_imul 1-op memory path omits segment prefix (via encode_unary_rm)
 
-**Formal:** ∀ mismatched (src,dst,mnem) where llvm-mc rejects. encode_test → Err
-**Contract evidence:** inferred (Intel SDM same-width TEST; llvm-mc rejects `testl %ax, %ebx`)
+**Formal:** ∀ mem with segment. encode(imull mem) = llvm_mc(same)
+**Contract evidence:** inferred (llvm-mc; emit_segment_prefix contract; encode_imul 1-op delegates to encode_unary_rm)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `imull %es:(%eax)` → sut `[f7,28]` vs mc `[26,f7,28]`
+**Expected / Actual:** `[26,f7,28]` / `[f7,28]`
+**Impact:** Unary IMUL with segment override is wrong
+**Root cause:** encode_unary_rm memory arm (gp_integer.rs:794-796) never calls `emit_segment_prefix`
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:794`
+```rust
+Operand::Memory(mem) => {
+    self.bytes.push(if size == 1 { 0xF6 } else { 0xF7 });
+    self.encode_modrm_mem(op_ext, mem)
+}
+```
+**Suggested fix:**
+```rust
+self.emit_segment_prefix(mem);
+if size == 2 { self.bytes.push(0x66); }
+self.bytes.push(if size == 1 { 0xF6 } else { 0xF7 });
+self.encode_modrm_mem(op_ext, mem)
+```
+**Bug report:** bug_reports/encode_imul_unary_missing_segment_prefix.md
+**Repro seed:** width=2, form=2, si=0, bi=0
+**Raw output:**
+```text
+diff unary `imulw %es:(%eax)`: sut=[66, f7, 28] mc=[26, 66, f7, 28]
+```
+
+### B4: encode_imul accepts non-GP / mismatched-width registers
+
+**Formal:** ∀ non-GP or width-mismatched register pair. encode → Err (when llvm-mc rejects)
+**Contract evidence:** inferred (Intel SDM IMUL r/m forms are GP; llvm-mc rejects `imull %xmm0, %eax`; `reg_num` is not a width/class gate)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** `testl %ax, %eax` → Ok([0x85,0xc0]) (aliases as eax,eax)
-**Expected / Actual:** Err / Ok([0x85,0xc0])
-**Impact:** Mixed-width names silently encode as same-width GP forms.
-**Root cause:** RR arm uses `reg_num` without `reg_size` vs mnemonic size gate (`gp_integer.rs:654-660`).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:654`
+**Counterexample:** `imull %xmm0, %eax` → Ok(`[0f,af,c0]`) (aliases as eax,eax)
+**Expected / Actual:** Err / Ok with GP-aliased bytes
+**Impact:** Invalid asm silently produces wrong GP encoding
+**Root cause:** gp_integer.rs:717 uses `reg_num` without `reg_size`/GP class checks
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:717`
 ```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
-                let src_num = reg_num(&src.name).ok_or("bad src register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
+let src_num = reg_num(&src.name).ok_or("bad register")?;
+let dst_num = reg_num(&dst.name).ok_or("bad register")?;
 ```
-**Suggested fix:** Require `reg_size(src)==size && reg_size(dst)==size` before encoding.
+**Suggested fix:** Require `reg_size(name) == size` and GP-only names before encoding
 ```rust
-                if reg_size(&src.name) != Some(size) || reg_size(&dst.name) != Some(size) {
-                    return Err("size-mismatched test operands".into());
-                }
+if reg_size(&src.name) != size || reg_size(&dst.name) != size {
+    return Err("imul register width mismatch".into());
+}
 ```
-**Bug report:** bug_reports/encode_test_accepts_mismatched_width.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_imul_accepts_non_gp.md
+**Repro seed:** kind=2, ni=0 (xmm0)
 **Raw output:**
 ```text
-SUT accepted size-mismatched `testl %ax, %eax` → [85, c0]
-```
-
-### B4: Accepts non-GP register names
-
-**Formal:** ∀ non_gp∈{xmm*,mm*,st*,ymm*}, gp∈GP. encode_test(test*, …) = Err
-**Contract evidence:** inferred (Intel SDM TEST is GP r/m; llvm-mc rejects `testb %al, %xmm0`)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** `testb %al, %xmm0` → Ok([0x84,0xc0]) (aliases as al,al)
-**Expected / Actual:** Err / Ok([0x84,0xc0])
-**Impact:** Invalid SIMD/x87 names produce plausible GP encodings.
-**Root cause:** `reg_num` maps xmm/mm/st/ymm onto 0–7; RR arm does not reject non-GP (`gp_integer.rs:654-660`).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:654`
-```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
-                let src_num = reg_num(&src.name).ok_or("bad src register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad dst register")?;
-```
-**Suggested fix:** Reject non-GP names before `reg_num`.
-```rust
-                if !is_gp_reg(&src.name) || !is_gp_reg(&dst.name) {
-                    return Err("test requires GP registers".into());
-                }
-```
-**Bug report:** bug_reports/encode_test_accepts_non_gp.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-SUT accepted non-GP TEST RR `testb %al, %xmm0` → [84, c0]
+unsupported shape kind=2 must Err, got Ok(Some([0f, af, c0]))
 ```
 
 ## Design Caveats
@@ -179,41 +152,47 @@ SUT accepted non-GP TEST RR `testb %al, %xmm0` → [84, c0]
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_test_pbt.rs | 10 properties + 6 KAT + 4 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_test_pbt;` registration |
+| src/backend/i686/assembler/encoder/encode_imul_pbt.rs | 12 properties + 8 KAT + 5 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_imul_pbt;` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_test_ -- --test-threads=1
-# single bugs:
-cargo test --lib encode_test_regression_reg_mem_bare -- --test-threads=1
-cargo test --lib encode_test_regression_es_segment_imm_mem -- --test-threads=1
-cargo test --lib encode_test_regression_mismatched_width_testl_ax_ebx -- --test-threads=1
-cargo test --lib encode_test_regression_non_gp_xmm -- --test-threads=1
+cargo test --lib encode_imul_ -- --test-threads=1
+# Single bugs:
+cargo test --lib encode_imul_regression_imulw_rr_missing_66 -- --test-threads=1
+cargo test --lib encode_imul_regression_segment_mem_reg -- --test-threads=1
+cargo test --lib encode_imul_regression_unary_segment -- --test-threads=1
+cargo test --lib encode_imul_neg_unsupported_shape -- --test-threads=1
+# Green path:
+cargo test --lib encode_imul_diff_bare32_all_forms -- --test-threads=1
 ```
 
 ## Output Directories
 
-- `pbt-out/REPORT.md`, `pbt-out/REPORT.html` (rendered from report.json)
-- `pbt-out/PROPERTIES.md`, `pbt-out/PLAN.md`
-- `pbt-out/COVERAGE.md`, `pbt-out/COVERAGE_STATUS.md`
-- `pbt-out/report.json`
-- `pbt-out/INVARIANTS.md` (encode_test section appended)
-- `pbt-out/bug_reports/encode_test_missing_reg_mem.md` (+ .html)
-- `pbt-out/bug_reports/encode_test_missing_segment_prefix.md` (+ .html)
-- `pbt-out/bug_reports/encode_test_accepts_mismatched_width.md` (+ .html)
-- `pbt-out/bug_reports/encode_test_accepts_non_gp.md` (+ .html)
-- `pbt-out/bug_reports/encode_test_metamorphic_segment_prefix.md` (+ .html)
-- `pbt-out/run/encode_test_pbt.log`
+- pbt-out/REPORT.md, pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md, pbt-out/PLAN.md
+- pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_imul_missing_operand_size_prefix.md (+ .html)
+- pbt-out/bug_reports/encode_imul_missing_segment_prefix.md (+ .html)
+- pbt-out/bug_reports/encode_imul_unary_missing_segment_prefix.md (+ .html)
+- pbt-out/bug_reports/encode_imul_accepts_non_gp.md (+ .html)
+- pbt-out/bug_reports/encode_imul_diff_mem_reg_size_or_seg.md (+ .html)
+- pbt-out/bug_reports/encode_imul_diff_imm_reg_size.md (+ .html)
+- pbt-out/bug_reports/encode_imul_diff_imm_reg_reg_size.md (+ .html)
+- pbt-out/bug_reports/encode_imul_diff_imm_mem_reg_seg.md (+ .html)
+- pbt-out/bug_reports/encode_imul_invariant_rr_missing_66.md (+ .html)
+- pbt-out/bug_reports/encode_imul_neg_mismatched_width.md (+ .html)
+- pbt-out/run/encode_imul_*.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 07:22 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 280/399 total | PBT candidates: 280 | Tested: 280 (100%) | 1 pass, 280 fail
+> Last updated: 2026-10-09 07:42 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 281/399 total | PBT candidates: 281 | Tested: 281 (100%) | 1 pass, 281 fail
 
 ## Summary
 
@@ -222,10 +201,10 @@ cargo test --lib encode_test_regression_non_gp_xmm -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 399 |
-| PBT candidates (from FUNCTION_INDEX) | 280 |
-| **Tested (of PBT candidates)** | **280 / 280 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 280 / -1 |
-| **Overall (tested / all functions)** | **280 / 399 (70%)** |
+| PBT candidates (from FUNCTION_INDEX) | 281 |
+| **Tested (of PBT candidates)** | **281 / 281 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 281 / -1 |
+| **Overall (tested / all functions)** | **281 / 399 (70%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -233,13 +212,13 @@ cargo test --lib encode_test_regression_non_gp_xmm -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 280 | 280 | 0 | 100% |
+|  | 281 | 281 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 280 | 280 | 0 | 100% |
+| unknown | 281 | 281 | 0 | 100% |
 
 ## File Coverage
 
@@ -250,7 +229,7 @@ cargo test --lib encode_test_regression_non_gp_xmm -- --test-threads=1
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 31 | 14 | 14 | 100% | covered |
+| gp_integer.rs | 31 | 15 | 15 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -542,3 +521,4 @@ cargo test --lib encode_test_regression_non_gp_xmm -- --test-threads=1
 | encode_pop | gp_integer.rs |
 | encode_alu | gp_integer.rs |
 | encode_test | gp_integer.rs |
+| encode_imul | gp_integer.rs |

@@ -65,6 +65,8 @@ mod encode_pop_pbt;
 mod encode_alu_pbt;
 #[cfg(test)]
 mod encode_test_pbt;
+#[cfg(test)]
+mod encode_imul_pbt;
 
 pub(crate) use registers::*;
 

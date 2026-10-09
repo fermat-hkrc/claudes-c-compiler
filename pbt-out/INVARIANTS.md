@@ -220,6 +220,15 @@
 - Fix shapes: add `(Register, Memory)` with emit_segment_prefix + 84/85 + encode_modrm_mem; `emit_segment_prefix(mem)` on Imm→Mem; gate `reg_size == mnemonic size` and GP-only.
 - proptest cases=1000; harness `encode_test_pbt.rs`; llvm-mc `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
 
+## encode_imul (i686 gp_integer)
+
+- Dispatch: `imull|imul` → encode_imul(ops, 4); `imulw` → encode_imul(ops, 2) (mod.rs:219/818). No `imulb` dispatch.
+- Forms: 1-op via encode_unary_rm /5 (F6/F7); 2-op RR/Mem→Reg 0F AF; Imm→Reg and 3-op Imm,Reg/Mem,Reg via 6B (imm8) / 69 (imm16/32).
+- Bare 32-bit forms (no segment, size=4) match llvm-mc `-triple=i686`.
+- Known defects (this campaign): (1) 2/3-op arms ignore `size` — no 0x66 for imulw; 0x69 always emits imm32 not imm16. Witness: `imulw %ax, %bx` → `[0f,af,d8]` vs `[66,0f,af,d8]`; `imulw $300, %ax` → 4-byte imm. (2) Mem→Reg and Imm,Mem,Reg skip `emit_segment_prefix`. Witness: `imull %es:(%eax), %ebx` omits 0x26. (3) 1-op mem via encode_unary_rm also skips segment prefix. (4) RR accepts non-GP via reg_num (`imull %xmm0, %eax` → `[0f,af,c0]`).
+- Fix shapes: `if size==2 { push 0x66 }` on all 2/3-op arms; imm16 for 0x69 when size==2; `emit_segment_prefix(mem)` before opcode on mem arms and in encode_unary_rm; gate `reg_size == size` + GP-only.
+- proptest cases=1000; harness `encode_imul_pbt.rs`; llvm-mc `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+
 ## encode_alu (i686 gp_integer)
 
 - Dispatches add/or/adc/sbb/and/sub/xor/cmp (*b/*w/*l) via mod.rs:204-211 → encode_alu(alu_op 0..7).
