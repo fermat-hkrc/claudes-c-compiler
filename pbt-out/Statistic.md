@@ -90,3 +90,98 @@
 
 ---
 **方法说明**：审计母体 2011 − 3 假阳性 − 18 重复 = **有效 1990**；追踪器 open **1993** ＝ 1990 有效 ＋ 3 假阳性（假阳性单仍 open，计入表内合计）。一至四表分类行合计均为 1990、含假阳性合计均为 1993、占比基数均为 1993，交叉一致（表一/二 880+214+35+32+27+18+784；表三 16+659+1315；表四 917+895+103+32+31+10+2）。分类按"缺陷可观察后果"（优先级：崩溃＞内存＞丢弃＞运行时崩溃＞运算＞诊断＞其他）。CWE 为类级映射。Severity 依各 issue 正文标注校准。评论规约：仅对 open 单留证（关后不评）；重复处置保留"增量见证并入原单"记录。全部计数脚本化可复现。
+
+---
+
+# Statistic — FMBot-PBT Issue Statistics (full-tracker scope, self-verified) — English Version
+
+**FMBot-PBT discovered 2011 functional-logic issues** (all open issues at the audit starting point, fetched page by page via API). Full self-review confirmed: **3 false positives** (#30/#119/#247, still open) + **18 duplicates** (9 pairs from my three-stage audit + 9 additional closures by the maintainer; now **all closed**, among which #1348/#1165/#1518 were resolved by "merging the incremental witness into the original issue before closing", and #1423's root-cause claim was corrected via a live `-Wl,-rpath` test).
+
+**Tracker status: open 1993 = 1990 valid defects + 3 false positives**; closed 35 (18 closed as duplicates + 17 pre-audit operational mistakes / fixed / meta); 2028 total.
+
+> **Table convention (applies to Parts 1–4):** category rows sum to **valid 1990**; the **false-positive row (3)** sits between them; **grand total = open 1993**; **all percentages use 1993 as the base**. The 18 duplicates are closed issues — they never enter any in-table total and appear only as footnotes.
+
+> Distribution note: classification uses maximal "observable-consequence" migration. The remaining two-bucket concentration (computation 44.2%, feature-missing 39.3%) is the **true defect structure** of this compiler — one population is "invalid input silently accepted and encoded into wrong instructions", the other "valid input rejected".
+
+## Part 1 — Problem-Type Distribution
+
+| Problem type | Count | Pct (base 1993) |
+|---|---:|---:|
+| Incorrect computation results (accepted invalid operands/encoding-bit errors → wrong instruction semantics, wrong bytes/codes/wrap/reversal, C23 auto→int, wrong branch) | 880 | 44.2% |
+| Wrong variable/memory reads or writes (TLS wrong-address writes crossing modules, out-of-range offset wrap, lost/mistyped relocations, accepted bad addressing operands on load/store-family encoders, wrong addressing/stack-frame/alignment) | 214 | 10.7% |
+| Runtime results dropped (operations silently zeroed or encoded as NOP: #embed zero bytes, inputs never materialized, bit-tests dropped, dependencies omitted) | 35 | 1.8% |
+| Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash, negative-parameter hang) | 32 | 1.6% |
+| Missing or wrong diagnostics (pure warning gaps: default warnings, diagnostic attributes, warning-class flags as silent no-ops, label validation gaps) | 27 | 1.4% |
+| Program crash at runtime (emitted reserved/illegal bytes → SIGILL/#UD, GNU vector ops SIGSEGV, cross-target unusable artifacts) | 18 | 0.9% |
+| Other errors (feature missing / unimplemented: valid input rejected — instruction tables, builtins, intrinsic headers, C23 syntax) | 784 | 39.3% |
+| **Valid subtotal** | **1990** | 99.85% |
+| False positives (triple-oracle rejection, live-tested: #30/#119/#247) | 3 | 0.15% |
+| **Total (open)** | **1993** | **100%** |
+
+*Note: the 18 duplicates were closed as such (prefix/SIB family 14, .intel_syntax 1, macro/-Wl residue 3); they are not open and not in the totals; under the audit base their rate is 18/2011 ≈ 0.90%.*
+
+## Part 2 — CWE Distribution
+
+| CWE | Name (mapped problem type) | Count | Pct (base 1993) |
+|---|---|---:|---:|
+| CWE-681 Incorrect numeric conversion/computation (incl. wrong encodings → wrong instruction semantics) | Incorrect computation | 880 | 44.2% |
+| CWE-125/CWE-787 Out-of-bounds read/write (wrong-address access / bad relocations) | Wrong memory access | 214 | 10.7% |
+| CWE-229 Value handling error (lost/zeroed results) | Results dropped | 35 | 1.8% |
+| CWE-674 Uncontrolled recursion / CWE-476 NULL dereference | Compiler crash/hang | 32 | 1.6% |
+| CWE-754 improper check / CWE-1078 improper input validation | Missing diagnostics | 27 | 1.4% |
+| CWE-241 Improper data handling leading to crash | Runtime crash | 18 | 0.9% |
+| N/A (feature-missing class; cf. CWE-691 incomplete control flow) | Other errors | 784 | 39.3% |
+| **Valid subtotal** | | **1990** | 99.85% |
+| False positives (N/A) | | 3 | 0.15% |
+| **Total (open)** | | **1993** | **100%** |
+
+*Note: 18 duplicates closed, not in totals (same as Part 1).*
+
+## Part 3 — Severity Distribution
+
+| Severity | Count | Pct (base 1993) | Representative issues |
+|---|---:|---:|---|
+| High (silent data corruption / wrong control flow; prefix-family duplicates removed) | 16 | 0.8% | #1692 TLS initializers zeroed + cross-module writes, #1698 asm goto skips next statement, #1700 "x"-constraint input never materialized, #1702 auto→int, #1693 .so TLS relocs vanish, #1628 fsub reversed opcode, #1632 fcmp→NOP, #1490 mulx/pdep/pext operand swap, #1491 MMX 0x66 prefix |
+| Medium (wrong encodings enabling wrong behavior, missing hardening, most diagnostic gaps) | 659 | 33.1% | #1695 no PT_GNU_RELRO, #1696 backtrace single frame, #1710 #elifdef wrong branch, #1789 over-wide bit-field accepted, LSE/AVX wrong-byte families |
+| Low (pure feature gaps, obscure corners, warning-class) | 1315 | 66.0% | instruction-table / builtin / intrinsic families, #1712 __FILE_NAME__ |
+| **Valid subtotal** | **1990** | 99.85% | |
+| False positives (originally low-tier syntax class) | 3 | 0.15% | #30/#119/#247 BICS/EON/ORN aliases |
+| **Total (open)** | **1993** | **100%** | |
+
+*Note: 18 duplicates closed, not in totals.*
+
+## Part 4 — Verdict-Class Distribution
+
+Grouped by observable manifestation vs the oracle (priority: panic > reverse > differential > silent-accept > warn-accepts > C-level > missing/reject):
+
+| Verdict class | Count | Pct (base 1993) | Notes |
+|---|---:|---:|---|
+| missing/reject (valid input rejected / unimplemented: instruction tables, builtins, intrinsics, C23) | 917 | 46.0% | ccc rejects what the oracle accepts — zero-information feature gap |
+| silent-accept (invalid input silently accepted and encoded) | 895 | 44.9% | references reject; ccc emits machine code with zero diagnostics |
+| differential (encoding differs from the reference toolchain: wrong bytes/codes/signs/wraps) | 103 | 5.2% | both accept, but bytes differ |
+| panic-on-invalid (invalid input triggers compiler panic/ICE/overflow) | 32 | 1.6% | crash paths reachable from the CLI |
+| C-level/linker/runtime (C-language layer, linker layer, runtime behavior) | 31 | 1.6% | TLS/ELF/execution/inline-asm/presentation |
+| warn-accepts (reference only warns or requires a diagnostic; ccc silent; incl. no-op flags) | 10 | 0.5% | warning-gap class |
+| reverse (operand/order reversal: explicit reversed/swapped) | 2 | 0.1% | #1628 fsub opcode, #1050 sgnj |
+| **Valid subtotal** | **1990** | 99.85% | |
+| False positives (self-verified) | 3 | 0.15% | #30/#119/#247 |
+| **Total (open)** | **1993** | **100%** | |
+
+*Note: 18 duplicates closed, not in totals.*
+
+## Part 5 — False-Positive & Duplicate Verification Details (all self-tested)
+
+| Class | Count | Details |
+|---|---:|---|
+| False positives (triple-oracle rejection, live-tested) | 3 | #30 `bics x0,x1,#5`, #119 `eon`, #247 `orn` — gas 2.34 rejects, clang-21 rejects, ccc rejects: ccc matches the references |
+| Duplicates — prefix/SIB family (originals' witnesses explicitly cover, or byte-level live re-verified) | 14 | #1454⊂#1453, #1350⊂#1349, #1367⊂#1366 (lgdt both forms CLI-verified: gas `64 67 0f 01 10/14 40` vs ccc missing prefixes), #1484≡#1485 (witnesses verbatim identical), #1363⊂#1360 (lsl both forms CLI-verified: gas `67 66 0f 03 18/0405` vs ccc missing 66), #1358/#1376/#1383/#1398/#1443 (SIB pairs, maintainer ruled originals cover), #1462/#1463/#1502/#1513 (push/reg-alias/metamorphic family, closed by maintainer) |
+| Duplicates — others (witness comparison + increments merged) | 4 | #1792≡#1577 (identical error text `[Label("eax"),…]`); #1348⊂#1271 (the `for` position merged into #1271's body and title); #1165⊂#1423 (-Map comma-form witness merged, and #1423's mechanism claim corrected by the live `-Wl,-rpath,/tmp` → RUNPATH test: passthrough works, the internal linker silently ignores unimplemented options); #1518⊂#1314 (`F(,)` empty-arg witness merged into #1314) |
+
+**Total redundancy (audit base 2011): false positives 3 (0.15%) + duplicates 18 (0.90%) = 21 ≈ 1.04%**
+
+**Full false-positive sweep (2011/2011 coverage):** (1) 323 intrinsic issues (95 x86 names each `rg -w` against ALL gcc-9 intrinsic headers + clang live build/run; 155 NEON names 100% present in clang-21 `arm_neon.h`) → 0 FP; (2) 73 `__builtin_` issues each re-run as a link probe (11 initial anomalies were all re-check oracle mismatches; all held under the correct oracle) → 0 FP; (3) 65 "acceptance-claim" suspects individually live-tested (#1542 exact witness `v1.8b` source form, #994 bytes 53000042 vs 53700042, #780 gas/clang encode 20830ed5 while ccc rejects — all confirmed real); #537 is an internal-encoder unit-level witness (CLI input normalized/accepted today, no user-visible impact; two independent verifications saw the internal behavior; kept as real with a note).
+
+**Full duplicate audit (2011/2011 coverage, three stages, exhausted):** (1) keyed grouping (encode_fn/intrinsic/builtin names, ~340 groups adjudicated group by group); (2) rare-token clustering (186 candidates adjudicated); (3) residual candidates adjudicated by full-body comparison (the remaining 18 pairs, minimal-input against minimal-input, none left). A final re-scan on the current 1993 opens yields **zero new candidates** (all 14 produced pairs are previously adjudicated non-duplicates, reasons on file). Excluded look-alikes: same-function different-defect-class splits (LSE/condition-code/immr-imms etc., ~340 groups), differently-named intrinsic/NEON families, 13 free-text-similar pairs with different constructs, #1631/#1578 (same root cause "no active section at file start" but mutually non-covering witnesses — classified **related** and cross-linked). The maintainer additionally closed 9 (overriding my 5 SIB non-duplicate calls — the maintainer's ruling on the originals' coverage and the closures stand).
+
+---
+**Methodology:** audit base 2011 − 3 false positives − 18 duplicates = **1990 valid**; tracker open **1993** = 1990 valid + 3 false positives (the FP issues remain open and are included in table totals). In Parts 1–4 the category rows always sum to 1990, with the FP row the total is 1993, and all percentages use 1993 as base — cross-consistent (Parts 1/2: 880+214+35+32+27+18+784; Part 3: 16+659+1315; Part 4: 917+895+103+32+31+10+2). Classification follows "observable defect consequence" (priority: crash > memory > dropped > runtime-crash > computation > diagnostics > other). CWE mapping is class-level. Severity follows each issue's own labeling. Commenting rule: evidence comments only on open issues (never after closure); duplicate handling preserves "incremental witness merged into original" records. All counts are script-reproducible.
