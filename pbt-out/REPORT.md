@@ -1,127 +1,100 @@
-# PBT Campaign Report: encode_bit_count (i686)
+# PBT Campaign Report: encode_bsr_bsf
 
 ## Summary
 
-**Verdict:** 3 high bugs: `encode_bit_count` rejects valid memory sources (`lzcntl (%eax), %eax`), and silently accepts r16/r8 and xmm/mm/st via `reg_num` aliasing as if they were GP r32 — wrong machine code for invalid assembly.
-**Date:** 2026-10-09
+**Verdict:** 2 bugs (1 high, 1 medium): encode_bsr_bsf drops segment-override prefixes on memory forms so segmented BSF/BSR assemble as DS-relative, and accepts r16/r8 via reg_num aliasing so wrong-width operands silently encode as r32.
+**Date:** 2026-10-12
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bit_count (src/backend/i686/assembler/encoder/gp_integer.rs)
-**Tests:** 9 properties (+ 4 KAT + 3 regression witnesses)
-**Result:** 6 passing, 3 failing properties → 3 bugs
-**Change surface:** 1 changed function (encode_bit_count), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — no .gcda/.profraw; `coverage_gaps` matcher reported false NOT LINKED for Rust-mangled `encode_bit_count`; nm shows the real symbol in `ccc-70d56e2a1978a8d3` and KAT/differential runs execute it
-**Effort tier:** standard (≥1000 cases, strengthen round done, 1 contract-surface sweep)
+**Modules tested:** encode_bsr_bsf
+**Tests:** 8 properties (+ 6 KAT + 3 regression witnesses)
+**Result:** 6 passing, 2 failing (2 bugs)
+**Change surface:** 1 changed function (encode_bsr_bsf), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — no line-level .profraw usable by coverage_gaps; nm proves `InstructionEncoder::encode_bsr_bsf` linked; KAT/differential runs prove execution. False NOT LINKED from mangling.
+**Tier:** standard (5–8 properties, ≥1000 cases, ≥1 metamorphic/differential, 1 coverage_gaps sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bit_count | 9 props (+4 KAT +3 reg) | 3 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_bsr_bsf | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: Memory source rejected (r32, r/m32)
+### B1: encode_bsr_bsf omits segment-override prefix on memory forms
 
-**Formal:** ∀ m ∈ {lzcntl,tzcntl,popcntl}, ∀ base,d ∈ GP32. encode(m, Mem(base), Reg(d)) = llvm-mc("m (%base), %d")
-**Contract evidence:** inferred (Intel SDM LZCNT/TZCNT/POPCNT form r32, r/m32; llvm-mc accepts; x86 sibling encode_bit_count and i686 encode_bsr_bsf encode Memory)
+**Formal:** ∀ m ∈ {bsfl,bsrl}, seg ∈ Sreg, base ∈ GP32, d ∈ GP32, disp ∈ {0,4,8}. encode_bsr_bsf(m,[Mem(seg:disp(base)),Reg(d)]) = llvm-mc(...)
+**Contract evidence:** inferred (llvm-mc i686 reference + sibling encode_bsr_bsf_16 contract + core.rs:31 emit_segment_prefix API; Intel SDM segment-override prefixes)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `lzcntl (%eax), %eax` → Err("unsupported lzcntl operands"); llvm-mc = [f3, 0f, bd, 00]
-**Expected / Actual:** Ok([f3,0f,bd,00]) / Err("unsupported lzcntl operands")
-**Impact:** Any AT&T source using a memory operand for bit-count instructions fails to assemble.
-**Root cause:** gp_integer.rs:971-980 match only arms (Register, Register); Memory falls through to default Err.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:971`
-```rust
-        match (&ops[0], &ops[1]) {
-            (Operand::Register(src), Operand::Register(dst)) => {
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.push(prefix);
-                self.bytes.extend_from_slice(&opcode);
-                self.bytes.push(self.modrm(3, dst_num, src_num));
-                Ok(())
-            }
-            _ => Err(format!("unsupported {} operands", mnemonic)),
-        }
-```
-**Suggested fix:** Add Memory arm like encode_bsr_bsf:
+**Counterexample:** `bsfl %es:(%eax), %ebx` then compare bytes
+**Expected / Actual:** `[0x26, 0x0f, 0xbc, 0x18]` / `[0x0f, 0xbc, 0x18]`
+**Impact:** Segmented memory sources assemble without the override; runtime uses DS instead of the requested segment — silent wrong code gen.
+**Root cause:** gp_integer.rs:1003-1007 Memory arm emits opcode then encode_modrm_mem without emit_segment_prefix(mem).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1003`
 ```rust
             (Operand::Memory(mem), Operand::Register(dst)) => {
                 let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.push(prefix);
                 self.bytes.extend_from_slice(&opcode);
                 self.encode_modrm_mem(dst_num, mem)
             }
 ```
-**Bug report:** bug_reports/encode_bit_count_mem_src.md
-**Repro seed:** proptest cc 9ab739bcb2eca664adae6bb9e25942b1c5f04082c9a88a64f84fcb79e93d31fd
+**Suggested fix:** Emit segment prefix before the opcode.
+```rust
+            (Operand::Memory(mem), Operand::Register(dst)) => {
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.emit_segment_prefix(mem);
+                self.bytes.extend_from_slice(&opcode);
+                self.encode_modrm_mem(dst_num, mem)
+            }
+```
+**Bug report:** bug_reports/encode_bsr_bsf_missing_segment_prefix.md
+**Repro seed:** proptest minimal: mnemonic="bsfl", mseg="es", base="eax", dst="eax", disp=0
 **Raw output:**
 ```text
-SUT rejected valid mem-source `lzcntl (%eax), %eax`: unsupported lzcntl operands; got mc=[f3, 0f, bd, 00]
-minimal failing input: m = "lzcntl", base = "eax", d = "eax"
+assertion failed: `(left == right)`
+  left: `[15, 188, 0]`,
+ right: `[38, 15, 188, 0]`: segmented mem must include override before opcode for bsfl %es:(%eax), %eax
 ```
 
-### B2: Wrong-width r16/r8 accepted
+### B2: encode_bsr_bsf accepts r16/r8 via reg_num aliasing
 
-**Formal:** ∀ m ∈ {lzcntl,tzcntl,popcntl}, r16/r8 operands must Err (Intel *l forms are r32-only; llvm-mc rejects)
-**Contract evidence:** inferred (Intel SDM; llvm-mc rejects `lzcntl %ax, %eax`; registers.rs aliases widths)
+**Formal:** ∀ m ∈ {bsfl,bsrl}, bad ∈ R16∪R8, good ∈ GP32. llvm-mc rejects ∧ SUT must Err
+**Contract evidence:** inferred (Intel SDM BSF/BSR r32,r/m32; llvm-mc rejects bsfl %ax,%ebx; registers.rs:4 documents width aliasing)
 **Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `lzcntl %ax, %eax` → Ok([f3, 0f, bd, c0])
-**Expected / Actual:** Err / Ok([f3,0f,bd,c0]) (same as eax,eax)
-**Impact:** Wrong-width assembly silently produces r32 encodings.
-**Root cause:** gp_integer.rs:972-973 uses reg_num only; registers.rs maps ax/al to same codes as eax with no width check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:972`
+**Severity:** medium
+**Counterexample:** `bsfl %eax, %ax` (also `bsfl %ax, %ebx`, `bsrl %eax, %al`)
+**Expected / Actual:** Err / Ok([0x0f, 0xbc, 0xc0])
+**Impact:** Wrong-width register names silently encode as the aliased r32 form — no diagnostic, incorrect machine code for typos/size mismatches.
+**Root cause:** gp_integer.rs:996-1001 Register arm uses reg_num only; no reg_size==4 gate.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:996`
 ```rust
             (Operand::Register(src), Operand::Register(dst)) => {
                 let src_num = reg_num(&src.name).ok_or("bad register")?;
                 let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&opcode);
+                self.bytes.push(self.modrm(3, dst_num, src_num));
+                Ok(())
+            }
 ```
-**Suggested fix:**
+**Suggested fix:** Require 32-bit GP width on both operands.
 ```rust
+            (Operand::Register(src), Operand::Register(dst)) => {
                 if reg_size(&src.name) != 4 || reg_size(&dst.name) != 4 {
-                    return Err(format!("{} requires 32-bit GP registers", mnemonic));
+                    return Err(format!("bsf/bsr requires r32 operands"));
                 }
-```
-**Bug report:** bug_reports/encode_bit_count_wrong_width.md
-**Repro seed:** (deterministic regression)
-**Raw output:**
-```text
-SUT accepted invalid-width `lzcntl %ax, %eax` → [f3, 0f, bd, c0]
-minimal failing input: m = "lzcntl", s = "ax", d = "eax", flip = false
-```
-
-### B3: Non-GP xmm/mm/st/ymm accepted via reg_num
-
-**Formal:** ∀ m, non-GP aliased names must Err for bit-count
-**Contract evidence:** inferred (Intel SDM GP-only; llvm-mc rejects; registers.rs aliases xmm0→0)
-**Documentation conflict:** (none)
-**Severity:** high
-**Counterexample:** `lzcntl %xmm0, %eax` → Ok([f3, 0f, bd, c0])
-**Expected / Actual:** Err / Ok([f3,0f,bd,c0])
-**Impact:** Invalid non-GP assembly encodes as GP instruction.
-**Root cause:** Same reg_num alias path as B2 without is_xmm/is_mm/GP-only gate.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:972`
-```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
                 let src_num = reg_num(&src.name).ok_or("bad register")?;
                 let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&opcode);
+                self.bytes.push(self.modrm(3, dst_num, src_num));
+                Ok(())
+            }
 ```
-**Suggested fix:**
-```rust
-fn is_gp32(name: &str) -> bool {
-    matches!(name, "eax"|"ecx"|"edx"|"ebx"|"esp"|"ebp"|"esi"|"edi")
-}
-if !is_gp32(&src.name) || !is_gp32(&dst.name) {
-    return Err(format!("{} requires GP r32 registers", mnemonic));
-}
-```
-**Bug report:** bug_reports/encode_bit_count_non_gp.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_bsr_bsf_wrong_width_accepted.md
+**Repro seed:** mnemonic="bsfl", bad="ax", good="eax", bad_is_src=false
 **Raw output:**
 ```text
-SUT accepted non-GP `lzcntl %xmm0, %eax` → [f3, 0f, bd, c0]
-minimal failing input: m = "lzcntl", bad = "xmm0", d = "eax", flip = false
+Test failed: `bsfl %eax, %ax` must be Err like llvm-mc, got Ok([0f, bc, c0])
+minimal failing input: mnemonic = "bsfl", bad = "ax", good = "eax", bad_is_src = false
 ```
 
 ## Design Caveats
@@ -132,41 +105,42 @@ minimal failing input: m = "lzcntl", bad = "xmm0", d = "eax", flip = false
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs | 9 proptest properties + 4 KAT + 3 regression |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_bit_count_pbt` |
+| src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs | 8 properties + 6 KAT + 3 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_bsr_bsf_pbt;` |
 
 ## Reproduction
 
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bit_count -- --test-threads=1
-cargo test --lib test_encode_bit_count_regression_mem_src_eax_eax -- --test-threads=1
-cargo test --lib test_encode_bit_count_regression_rejects_ax_eax -- --test-threads=1
-cargo test --lib test_encode_bit_count_regression_rejects_xmm0_eax -- --test-threads=1
+cargo test --lib encoder::encode_bsr_bsf_pbt:: -- --test-threads=1
+cargo test --lib test_encode_bsr_bsf_regression_segment_es_missing -- --test-threads=1
+cargo test --lib test_encode_bsr_bsf_regression_r16_src_accepted -- --test-threads=1
+cargo test --lib test_encode_bsr_bsf_regression_r8_dst_accepted -- --test-threads=1
 ```
-
-Serial reconfirm (PBT_TEST_JOBS=1): all three property failures reproduced.
 
 ## Output Directories
 
 - pbt-out/REPORT.md
-- pbt-out/REPORT.html (rendered from report.json)
+- pbt-out/REPORT.html (auto-rendered from report.json)
 - pbt-out/PROPERTIES.md
 - pbt-out/PLAN.md
 - pbt-out/COVERAGE.md
 - pbt-out/COVERAGE_STATUS.md
 - pbt-out/report.json
-- pbt-out/bug_reports/encode_bit_count_mem_src.md (+ .html)
-- pbt-out/bug_reports/encode_bit_count_wrong_width.md (+ .html)
-- pbt-out/bug_reports/encode_bit_count_non_gp.md (+ .html)
-- pbt-out/run/encode_bit_count_test*.log
+- pbt-out/INVARIANTS.md
+- pbt-out/FUNCTION_INDEX.md
+- pbt-out/bug_reports/encode_bsr_bsf_missing_segment_prefix.md
+- pbt-out/bug_reports/encode_bsr_bsf_missing_segment_prefix.html
+- pbt-out/bug_reports/encode_bsr_bsf_wrong_width_accepted.md
+- pbt-out/bug_reports/encode_bsr_bsf_wrong_width_accepted.html
+- pbt-out/run/encode_bsr_bsf_pbt_only.log
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-09 09:39 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 285/399 total | PBT candidates: 285 | Tested: 285 (100%) | 1 pass, 285 fail
+> Last updated: 2026-10-12 10:09 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 286/401 total | PBT candidates: 286 | Tested: 286 (100%) | 1 pass, 286 fail
 
 ## Summary
 
@@ -174,11 +148,11 @@ Serial reconfirm (PBT_TEST_JOBS=1): all three property failures reproduced.
 |--------|-------|
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
-| Total functions (all files) | 399 |
-| PBT candidates (from FUNCTION_INDEX) | 285 |
-| **Tested (of PBT candidates)** | **285 / 285 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 285 / -1 |
-| **Overall (tested / all functions)** | **285 / 399 (71%)** |
+| Total functions (all files) | 401 |
+| PBT candidates (from FUNCTION_INDEX) | 286 |
+| **Tested (of PBT candidates)** | **286 / 286 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 286 / -1 |
+| **Overall (tested / all functions)** | **286 / 401 (71%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -186,13 +160,13 @@ Serial reconfirm (PBT_TEST_JOBS=1): all three property failures reproduced.
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 285 | 285 | 0 | 100% |
+|  | 286 | 286 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 285 | 285 | 0 | 100% |
+| unknown | 286 | 286 | 0 | 100% |
 
 ## File Coverage
 
@@ -203,10 +177,10 @@ Serial reconfirm (PBT_TEST_JOBS=1): all three property failures reproduced.
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 31 | 19 | 19 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
+| gp_integer.rs | 33 | 21 | 20 | 95% | partial |
 
 ## Recommended Focus
 
@@ -500,3 +474,4 @@ Serial reconfirm (PBT_TEST_JOBS=1): all three property failures reproduced.
 | encode_double_shift | gp_integer.rs |
 | encode_bswap | gp_integer.rs |
 | encode_bit_count | gp_integer.rs |
+| encode_bsr_bsf | gp_integer.rs |

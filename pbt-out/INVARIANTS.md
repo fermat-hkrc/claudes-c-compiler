@@ -258,3 +258,15 @@
 - Fix shape: before reg_num, require `reg_size==4` and reject is_xmm/is_mm/st*/ymm*.
 - Harness: encode_bswap_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
 - Coverage note: coverage_gaps file-level matcher may report NOT LINKED for Rust `pub(super)` methods; nm shows `InstructionEncoder::encode_bswap` in the libtest binary and KAT/differential runs prove execution.
+
+## encode_bsr_bsf (i686 gp_integer.rs:984)
+- Opcode: `0F BC /r` (bsfl/bsf) or `0F BD /r` (bsrl/bsr); AT&T `bsfl/bsrl src, dst` with dest in ModRM.reg.
+- Dispatch: mod.rs:270 `bsrl|bsfl|bsr|bsf` → encode_bsr_bsf (16-bit forms go to encode_bsr_bsf_16).
+- Non-segment r32×r32 and mem→r32 forms match llvm-mc `-triple=i686`.
+- Metamorphic: bare bsf/bsr ≡ bsfl/bsrl for the same r32 pair.
+- Invariant: encoding is exactly `[0x0F, opc, ModRM(3,dst,src)]` for valid r32 RR.
+- Arity ≠2 and unsupported shapes (mem/mem, reg/mem, imm/reg) correctly Err.
+- Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_bsr_bsf_16/lmsw/invlpg). Witness: `bsfl %es:(%eax), %ebx` → SUT omits `0x26`. (2) register arm accepts r16/r8 via `reg_num` aliasing. Witness: `bsfl %ax, %ebx` → `[0f,bc,d8]`; llvm-mc rejects.
+- Fix shapes: `emit_segment_prefix(mem)` before opcode on mem arm; gate both regs with `reg_size==4` (and mem dest).
+- Harness: encode_bsr_bsf_pbt.rs; proptest cases=1000; llvm-mc /home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding.
+- Coverage note: coverage_gaps file-level matcher may report NOT LINKED for Rust mangled names; nm shows `InstructionEncoder::encode_bsr_bsf` in the libtest binary and KAT/differential runs prove execution.

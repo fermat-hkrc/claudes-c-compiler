@@ -1,258 +1,233 @@
-# Properties: encode_bit_count (i686)
+# Properties: encode_bsr_bsf (i686)
 
-## encode_bit_count_diff_rr_llvm_mc
-- Tier: 4
-- Rationale: Strongest runnable oracle is differential vs llvm-mc i686. State machine N/A (pure encoder). Round-trip N/A (no in-tree i686 decoder). Intel SDM Vol.2 LZCNT/TZCNT/POPCNT r32,r/m32 with F3 0F BD/BC/B8 /r; AT&T src,dst order.
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: (none); pattern from encode_bswap_pbt.rs differential
-- Formal: ∀ m ∈ {lzcntl,tzcntl,popcntl}, ∀ s,d ∈ GP32. encode(m, Reg(s), Reg(d)) = llvm-mc("m %s, %d")
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
+## encode_bsr_bsf_diff_rr
+- Tier: 5
+- Rationale: Strongest oracle is differential vs independent llvm-mc i686 assembler. Round-trip rejected (no decoder). State machine rejected (pure encode).
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
+- Seed: encode_bsr_bsf_16_pbt.rs:encode_bsr_bsf_16_diff_r16 (generalized to 32-bit forms)
+- Formal: ∀ m ∈ {bsfl,bsrl,bsf,bsr}, s,d ∈ GP32. encode_bsr_bsf(m,[Reg(s),Reg(d)]) = llvm-mc("m %s, %d")
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.gp_integer.encode_bit_count
+function: encode_bsr_bsf
 oracle: differential
 predicate:
   quantifier: forall
   vars: [m, s, d]
-  domain: { m: {lzcntl,tzcntl,popcntl}, s: GP32, d: GP32 }
+  domain: { m: {bsfl,bsrl,bsf,bsr}, s: GP32, d: GP32 }
   relation:
     op: eq
     lhs: "sut_encode(m, [Reg(s), Reg(d)])"
-    rhs: "llvm_mc_bytes(f\"{m} %{s}, %{d}\")"
+    rhs: "llvm_mc_bytes(format!(\"{m} %{s}, %{d}\"))"
 generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
+  m: { gen: oneof, values: ["bsfl", "bsrl", "bsf", "bsr"] }
   s: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
   d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-evidence: gp_integer.rs:959-981; mod.rs:267; Intel SDM LZCNT/TZCNT/POPCNT; llvm-mc i686
+evidence: mod.rs:270; Intel SDM Vol.2 BSF/BSR r32,r/m32; llvm-mc -triple=i686
 ```
 
-## encode_bit_count_invariant_opcode
-- Tier: 3
-- Rationale: Algebraic invariant from Intel opcode map — F3 ‖ opc ‖ ModRM(mod=3,reg=dst,rm=src). Weaker than differential but pins the structural layout without an external tool.
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: (none)
-- Formal: ∀ m ∈ {lzcntl,tzcntl,popcntl}, ∀ s,d ∈ GP32. encode(m,Reg(s),Reg(d)) = [0xF3, 0x0F, opc(m), ModRM(3,d,s)] where opc(lzcntl)=0xBD, opc(tzcntl)=0xBC, opc(popcntl)=0xB8
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
+## encode_bsr_bsf_diff_mem
+- Tier: 5
+- Rationale: Memory source is architecturally valid (r/m32). Differential vs llvm-mc over base/disp/SIB/abs forms without segment.
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
+- Seed: encode_bsr_bsf_16_pbt.rs:encode_bsr_bsf_16_diff_mem
+- Formal: ∀ m ∈ {bsfl,bsrl}, d ∈ GP32, mem ∈ Mem32_no_seg. encode_bsr_bsf(m,[Mem(mem),Reg(d)]) = llvm-mc("m att(mem), %d")
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.gp_integer.encode_bit_count
+function: encode_bsr_bsf
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [m, d, mem]
+  domain: { m: {bsfl,bsrl}, d: GP32, mem: base/disp/SIB/abs no-segment }
+  relation:
+    op: eq
+    lhs: "sut_encode(m, [Mem(mem), Reg(d)])"
+    rhs: "llvm_mc_bytes(...)"
+generators:
+  m: { gen: oneof, values: ["bsfl", "bsrl"] }
+  d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+  mem: { gen: custom, note: "kind 0..6 base/index/scale/disp" }
+evidence: gp_integer.rs:1003-1007 Memory arm; Intel SDM BSF r32, r/m32
+```
+
+## encode_bsr_bsf_diff_mem_segment
+- Tier: 5
+- Rationale: Segment override must precede opcode (llvm-mc emits 26/2E/36/3E/64/65). Sibling encode_bsr_bsf_16 omitted it — same pattern expected here.
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
+- Seed: encode_bsr_bsf_16_pbt.rs:encode_bsr_bsf_16_diff_mem_segment
+- Formal: ∀ m ∈ {bsfl,bsrl}, seg ∈ Sreg, base ∈ GP32, d ∈ GP32, disp ∈ {0,4,8}. encode_bsr_bsf(m,[Mem(seg:disp(base)),Reg(d)]) = llvm-mc(...)
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
+- Status: failing
+- Counterexample: bsfl %es:(%eax), %eax → SUT [0f,bc,00] vs llvm-mc [26,0f,bc,00]
+- Bug report: bug_reports/encode_bsr_bsf_missing_segment_prefix.md
+
+```property
+function: encode_bsr_bsf
+oracle: differential
+predicate:
+  quantifier: forall
+  vars: [m, seg, base, d, disp]
+  domain: { m: {bsfl,bsrl}, seg: Sreg, base: GP32, d: GP32, disp: {0,4,8} }
+  relation:
+    op: eq
+    lhs: "sut_encode(...)"
+    rhs: "llvm_mc_bytes(...)"
+generators:
+  m: { gen: oneof, values: ["bsfl", "bsrl"] }
+  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
+  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+  d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+  disp: { gen: oneof, values: [0, 4, 8] }
+evidence: core.rs:31 emit_segment_prefix; llvm-mc bsfl %es:(%eax), %ebx → [26,0f,bc,18]
+```
+
+## encode_bsr_bsf_invariant_rr
+- Tier: 4
+- Rationale: Algebraic invariant — fixed byte layout 0F opc ModRM(3,dst,src) independent of llvm-mc process.
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
+- Seed: encode_bsr_bsf_16_pbt.rs:encode_bsr_bsf_16_invariant_r16
+- Formal: ∀ m ∈ {bsfl,bsrl,bsf,bsr}, s,d ∈ GP32. encode_bsr_bsf(m,[Reg(s),Reg(d)]) = [0x0F, opc(m), 0xC0|(reg(d)<<3)|reg(s)]
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_bsr_bsf
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
   vars: [m, s, d]
-  domain: { m: bitcount_mnems, s: GP32, d: GP32 }
+  domain: { m: {bsfl,bsrl,bsf,bsr}, s: GP32, d: GP32 }
   relation:
     op: eq
-    lhs: "sut_encode(m,[Reg(s),Reg(d)])"
-    rhs: "[0xF3, 0x0F, opc(m), modrm(3, reg_num(d), reg_num(s))]"
+    lhs: "sut_encode(m, [Reg(s), Reg(d)])"
+    rhs: "[0x0F, opc(m), modrm(3, reg(d), reg(s))]"
 generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
+  m: { gen: oneof, values: ["bsfl", "bsrl", "bsf", "bsr"] }
   s: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
   d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-evidence: gp_integer.rs:964-977; Intel SDM opcode map
+evidence: gp_integer.rs:990-1001; Intel SDM opcode map
 ```
 
-## encode_bit_count_meta_modrm_swap
-- Tier: 3
-- Rationale: Metamorphic — swapping src/dst must change ModRM when s≠d (reg and r/m fields swap roles); re-encode is deterministic.
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
+## encode_bsr_bsf_metamorphic_bare_vs_l
+- Tier: 4
+- Rationale: Metamorphic — bare bsf/bsr with r32 must equal suffixed bsfl/bsrl (llvm-mc normalizes bare to *l for r32). Required metamorphic/differential at standard tier.
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
 - Seed: (none)
-- Formal: ∀ m, ∀ s≠d ∈ GP32. encode(m,s,d) ≠ encode(m,d,s) ∧ encode(m,s,d) is deterministic
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
+- Formal: ∀ bare ∈ {bsf,bsr}, s,d ∈ GP32. encode(bare,[s,d]) = encode(bare+"l",[s,d])
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.gp_integer.encode_bit_count
+function: encode_bsr_bsf
 oracle: algebraic.metamorphic
 predicate:
   quantifier: forall
-  vars: [m, s, d]
-  domain: { m: bitcount_mnems, s: GP32, d: GP32, s != d }
-  relation:
-    op: ne
-    lhs: "sut_encode(m,[Reg(s),Reg(d)])"
-    rhs: "sut_encode(m,[Reg(d),Reg(s)])"
-generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
-  s: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-evidence: gp_integer.rs:977 modrm(3, dst_num, src_num)
-```
-
-## encode_bit_count_diff_mem_llvm_mc
-- Tier: 4
-- Rationale: Intel SDM and llvm-mc accept memory source (r32, r/m32). SUT match arm only handles Reg/Reg and rejects Mem — gap vs SDM/x86 sibling encode_bit_count which encodes Mem.
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: (none); x86 sibling gp_integer.rs:912-920 supports Memory
-- Formal: ∀ m ∈ {lzcntl,tzcntl,popcntl}, ∀ base ∈ GP32, ∀ d ∈ GP32. encode(m, Mem(base), Reg(d)) = llvm-mc("m (base), %d")
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
-- Status: failing
-- Counterexample: lzcntl (%eax), %eax → Err("unsupported lzcntl operands"); llvm-mc=[f3,0f,bd,00]
-- Bug report: bug_reports/encode_bit_count_mem_src.md
-
-```property
-function: encoder.gp_integer.encode_bit_count
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [m, base, d]
-  domain: { m: bitcount_mnems, base: GP32, d: GP32 }
+  vars: [bare, s, d]
+  domain: { bare: {bsf,bsr}, s: GP32, d: GP32 }
   relation:
     op: eq
-    lhs: "sut_encode(m,[Mem(base),Reg(d)])"
-    rhs: "llvm_mc_bytes(f\"{m} (%{base}), %{d}\")"
+    lhs: "sut_encode(bare, [Reg(s), Reg(d)])"
+    rhs: "sut_encode(bare+\"l\", [Reg(s), Reg(d)])"
 generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
-  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+  bare: { gen: oneof, values: ["bsf", "bsr"] }
+  s: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
   d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-evidence: Intel SDM LZCNT r32,r/m32; llvm-mc accepts; x86 encode_bit_count memory arm
+evidence: llvm-mc bsf %eax,%ebx ≡ bsfl; mod.rs:270 routes both to encode_bsr_bsf
 ```
 
-## encode_bit_count_neg_arity
+## encode_bsr_bsf_neg_arity
 - Tier: 3
-- Rationale: Negative/error contract — ops.len() must be 2 (gp_integer.rs:960-962).
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: encode_bswap_pbt encode_bswap_neg_arity
-- Formal: ∀ m, ∀ n ≠ 2, ∀ ops with |ops|=n. encode(m, ops) = Err ∧ message contains "requires 2 operands"
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
+- Rationale: Negative/error — ops.len()!=2 must Err (documented by code guard and llvm-mc).
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
+- Seed: encode_bsr_bsf_16_pbt.rs:encode_bsr_bsf_16_neg_arity
+- Formal: ∀ m ∈ MNEMS, n ≠ 2. encode_bsr_bsf(m, ops_n) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.gp_integer.encode_bit_count
+function: encode_bsr_bsf
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [m, n]
-  domain: { m: bitcount_mnems, n: 0..5, n != 2 }
+  domain: { m: MNEMS, n: arity_not_2 }
   relation:
     op: holds
-    expr: "sut_encode(m, ops_n).is_err()"
+    expr: "sut_encode(m, ops_of_len_n).is_err()"
 generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
-  n: { gen: int, min: 0, max: 4, type: usize }
-expected_error: "requires 2 operands"
-evidence: gp_integer.rs:960-962
+  m: { gen: oneof, values: ["bsfl", "bsrl", "bsf", "bsr"] }
+  n: { gen: int, min: 0, max: 3 }
+expected_error: String
+evidence: gp_integer.rs:985-987
 ```
 
-## encode_bit_count_neg_wrong_width
+## encode_bsr_bsf_neg_wrong_width
 - Tier: 4
-- Rationale: lzcntl/tzcntl/popcntl are 32-bit forms; llvm-mc rejects r16/r8 mixed with *l. SUT uses reg_num which aliases ax/al onto the same 3-bit codes — must still reject wrong width.
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: encode_bswap_pbt encode_bswap_neg_wrong_width
-- Formal: ∀ m, ∀ s ∈ BAD_WIDTH ∪ GP32, ∀ d ∈ BAD_WIDTH ∪ GP32. (s ∉ GP32 ∨ d ∉ GP32) ⇒ encode(m,Reg(s),Reg(d)) = Err ∧ llvm-mc rejects
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
+- Rationale: Negative — r16/r8 operands invalid for bsfl/bsrl (llvm-mc rejects). SUT uses reg_num which aliases widths — expected defect class from sibling campaigns.
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
+- Seed: encode_bsr_bsf_16_pbt.rs:encode_bsr_bsf_16_neg_wrong_width; encode_bit_count_pbt.rs
+- Formal: ∀ m ∈ {bsfl,bsrl}, bad ∈ R16∪R8, good ∈ GP32. llvm-mc rejects ∧ SUT must Err
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
 - Status: failing
-- Counterexample: lzcntl %ax, %eax → Ok([f3,0f,bd,c0])
-- Bug report: bug_reports/encode_bit_count_wrong_width.md
+- Counterexample: bsfl %eax, %ax → Ok([0f, bc, c0]) (should Err)
+- Bug report: bug_reports/encode_bsr_bsf_wrong_width_accepted.md
 
 ```property
-function: encoder.gp_integer.encode_bit_count
+function: encode_bsr_bsf
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [m, s, d]
-  domain: { m: bitcount_mnems, at least one of s,d in r16/r8 }
+  vars: [m, bad, good, bad_is_src]
+  domain: { m: {bsfl,bsrl}, bad: R16_or_R8, good: GP32 }
   relation:
     op: holds
-    expr: "sut_encode(m,[Reg(s),Reg(d)]).is_err()"
+    expr: "sut_encode(m, [Reg(src), Reg(dst)]).is_err()"
 generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
-  s: { gen: oneof, values: ["ax","cx","al","cl","eax","ecx"] }
-  d: { gen: oneof, values: ["bx","dx","bl","dl","ebx","edx"] }
-expected_error: invalid operand width
-evidence: Intel SDM; llvm-mc rejects lzcntl %ax,%ebx; registers.rs:4-14 aliases
+  m: { gen: oneof, values: ["bsfl", "bsrl"] }
+  bad: { gen: oneof, values: ["ax","cx","dx","bx","sp","bp","si","di","al","cl","dl","bl","ah","ch","dh","bh"] }
+  good: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+expected_error: String
+evidence: llvm-mc rejects bsfl %ax,%ebx; registers.rs:4 reg_num aliases; Intel SDM r32,r/m32
 ```
 
-## encode_bit_count_neg_non_gp
-- Tier: 4
-- Rationale: Non-GP names (xmm/mm/st/ymm) that reg_num aliases must be rejected; llvm-mc rejects them.
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: encode_bswap_pbt encode_bswap_neg_non_gp
-- Formal: ∀ m, ∀ bad ∈ NON_GP_ALIASED, ∀ d ∈ GP32. encode(m, Reg(bad), Reg(d)) = Err ∧ encode(m, Reg(d), Reg(bad)) = Err
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
-- Status: failing
-- Counterexample: lzcntl %xmm0, %eax → Ok([f3,0f,bd,c0])
-- Bug report: bug_reports/encode_bit_count_non_gp.md
-
-```property
-function: encoder.gp_integer.encode_bit_count
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [m, bad, d]
-  domain: { m: bitcount_mnems, bad: NON_GP_ALIASED, d: GP32 }
-  relation:
-    op: holds
-    expr: "sut_encode(m,[Reg(bad),Reg(d)]).is_err() && sut_encode(m,[Reg(d),Reg(bad)]).is_err()"
-generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
-  bad: { gen: oneof, values: ["xmm0","mm0","st(0)","ymm0"] }
-  d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-expected_error: bad/non-GP register
-evidence: registers.rs:4-14; llvm-mc rejects
-```
-
-## encode_bit_count_neg_imm_label
+## encode_bsr_bsf_neg_unsupported
 - Tier: 3
-- Rationale: Negative/error contract for inputs Intel SDM declares invalid for LZCNT/TZCNT/POPCNT (forms are only r32,r/m32 — Immediate, Label, and memory-as-destination are out of domain). SUT must reject them with Err.
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: encode_bswap_pbt encode_bswap_neg_non_register
-- Formal: ∀ m, ∀ kind ∈ {Imm, Label, Mem-as-dst}. encode(m, kind) = Err (Intel SDM: only r32, r/m32 forms exist)
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
+- Rationale: Negative — (mem,mem), (reg,mem), (imm,reg) must Err.
+- Doc contract: gp_integer.rs:984 (none) — other fingerprint 552e4230
+- Seed: encode_bsr_bsf_16_pbt.rs:encode_bsr_bsf_16_neg_unsupported_ops
+- Formal: ∀ m, ops ∈ UnsupportedShapes. encode_bsr_bsf(m, ops) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encoder.gp_integer.encode_bit_count
+function: encode_bsr_bsf
 oracle: negative_error
 predicate:
   quantifier: forall
   vars: [m, kind]
-  domain: { m: bitcount_mnems, kind: invalid operand pairs }
+  domain: { m: MNEMS, kind: unsupported_shapes }
   relation:
     op: holds
-    expr: "sut_encode(m, invalid_ops(kind)).is_err()"
+    expr: "sut_encode(m, ops).is_err()"
 generators:
-  m: { gen: oneof, values: ["lzcntl", "tzcntl", "popcntl"] }
-  kind: { gen: int, min: 0, max: 3, type: u8 }
-expected_error: unsupported operands
-evidence: gp_integer.rs:980; Intel SDM only r32,r/m32 forms
-```
-
-## encode_bit_count_meta_mnemonic_opcodes_differ
-- Tier: 3
-- Rationale: Strengthen round — metamorphic: lzcntl/tzcntl/popcntl must emit distinct opcodes 0xBD/0xBC/0xB8 for identical register pairs (Intel opcode map).
-- Doc contract: gp_integer.rs:959 (none — no doc comment on encode_bit_count) — other fingerprint e120fe10
-- Seed: (none)
-- Formal: ∀ s,d ∈ GP32. encode(lzcntl,s,d)[2]=0xBD ∧ encode(tzcntl,s,d)[2]=0xBC ∧ encode(popcntl,s,d)[2]=0xB8 ∧ pairwise distinct
-- Test file: src/backend/i686/assembler/encoder/encode_bit_count_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encoder.gp_integer.encode_bit_count
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [s, d]
-  domain: { s: GP32, d: GP32 }
-  relation:
-    op: holds
-    expr: "opc_byte(lzcntl,s,d)==0xBD && opc_byte(tzcntl,s,d)==0xBC && opc_byte(popcntl,s,d)==0xB8 && distinct"
-generators:
-  s: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  d: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-evidence: gp_integer.rs:964-968
+  m: { gen: oneof, values: ["bsfl", "bsrl", "bsf", "bsr"] }
+  kind: { gen: int, min: 0, max: 2 }
+expected_error: String
+evidence: gp_integer.rs:1008 _ => Err unsupported
 ```

@@ -1,4 +1,4 @@
-> Total files: 17 | Total functions: 399 | PBT candidates: 284 | Excluded: 115
+> Total files: 17 | Total functions: 401 | PBT candidates: 288 | Excluded: 113
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -253,8 +253,10 @@
 | encode_shift | gp_integer.rs | 756 | method | yes | - |
 | encode_double_shift | gp_integer.rs | 920 | method | yes | HARD-scope target this campaign |
 | encode_bswap | gp_integer.rs | 945 | method | yes | HARD-scope target this campaign |
-| encode_bit_count | gp_integer.rs | 959 | method | yes | HARD-scope target this campaign |
-| encode_setcc | gp_integer.rs | 915 | method | no | out of campaign scope |
+| encode_bit_count | gp_integer.rs | 959 | method | yes | prior campaign |
+| encode_bsr_bsf | gp_integer.rs | 984 | method | yes | HARD-scope target this campaign |
+| encode_bt | gp_integer.rs | 1012 | method | yes | - |
+| encode_setcc | gp_integer.rs | 1075 | method | no | out of campaign scope |
 | encode_cmovcc | gp_integer.rs | 949 | method | no | out of campaign scope |
 | encode_jmp | gp_integer.rs | 988 | method | no | out of campaign scope |
 | encode_jcc | gp_integer.rs | 1028 | method | no | out of campaign scope |
