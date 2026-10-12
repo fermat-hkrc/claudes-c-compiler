@@ -257,7 +257,7 @@
 | encode_bsr_bsf | gp_integer.rs | 984 | method | yes | HARD-scope target this campaign |
 | encode_bt | gp_integer.rs | 1012 | method | yes | - |
 | encode_setcc | gp_integer.rs | 1075 | method | yes | SETcc r/m8 encoder; differential vs llvm-mc |
-| encode_cmovcc | gp_integer.rs | 949 | method | no | out of campaign scope |
+| encode_cmovcc | gp_integer.rs | 1097 | method | yes | HARD-scope target this campaign; CMOVcc 0F 40+cc |
 | encode_jmp | gp_integer.rs | 988 | method | no | out of campaign scope |
 | encode_jcc | gp_integer.rs | 1028 | method | no | out of campaign scope |
 | encode_call | gp_integer.rs | 1050 | method | no | out of campaign scope |

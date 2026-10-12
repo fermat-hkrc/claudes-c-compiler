@@ -1,5 +1,16 @@
 # Confirmed invariants / environment quirks
 
+## encode_cmovcc (i686 gp_integer encoder)
+
+- Opcode: 0F 40+cc /r; AT&T `cmovcc src, dst` with dest in ModRM.reg; Intel CMOVcc is r16/r32 and r/m→reg only.
+- Dispatch mnemonics (mod.rs:286-297): cmove/z/ne/nz/… with optional `l`/`w` size suffixes; `cmovll` = less-than + long (cc strip handles nested l).
+- Same-width r32 RR, explicit `w` r16 RR, and non-segment mem→r32 (base/disp/SIB/abs) match llvm-mc `-triple=i686`.
+- Metamorphic: cmove≡cmovz, cmovne≡cmovnz, cmovb≡cmovc, cmovae≡cmovnc.
+- Algebraic invariant: unsuffixed r32 RR = [0F, 40+cc, modrm(3,dst,src)].
+- Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_setcc/smsw/…). Witness: `cmove %es:(%eax), %ebx` omits 0x26; `cmove %fs:8(%esi,%edi,4), %ecx` omits 0x64. (2) unsuffixed + r16 omits 0x66 while llvm-mc infers 16-bit (`cmove %ax, %bx` → SUT [0f,44,d8] vs [66,0f,44,d8]). (3) no GP/width gate — r8/non-GP/mismatched widths accepted via `reg_num` aliasing.
+- Fix shapes: `self.emit_segment_prefix(mem);` before opcode; derive 0x66 from `reg_size==2` (or reject unsuffixed r16); require matching r16/r32 GP and reject xmm/mm/st/ymm.
+- PBT: `src/backend/i686/assembler/encoder/encode_cmovcc_pbt.rs`; proptest cases=1000; llvm-mc `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+
 ## encode_setcc (i686 gp_integer encoder)
 
 - Opcode: 0F 90+cc /0; Intel SETcc is r/m8 only (al/cl/dl/bl/ah/ch/dh/bh + memory).

@@ -81,6 +81,8 @@ mod encode_bit_count_pbt;
 mod encode_bt_pbt;
 #[cfg(test)]
 mod encode_setcc_pbt;
+#[cfg(test)]
+mod encode_cmovcc_pbt;
 
 pub(crate) use registers::*;
 

@@ -1,100 +1,111 @@
-# PBT Campaign Report: encode_setcc (i686)
+# PBT Campaign Report: encode_cmovcc
 
 ## Summary
 
-**Verdict:** 2 high bugs in `encode_setcc`: (1) memory forms omit segment-override prefixes so `sete %es:(%eax)` drops 0x26; (2) non-r8 registers (`%ax`/`%eax`/`%xmm0`) are accepted via `reg_num` aliasing and encoded as the corresponding r8.
+**Verdict:** 3 bugs (2 high, 1 medium): `encode_cmovcc` drops memory segment-override prefixes, omits 0x66 for unsuffixed r16 forms, and accepts r8/non-GP/mismatched-width registers via `reg_num` aliasing — any of these yields wrong machine code or silent acceptance of invalid operands.
 **Date:** 2026-10-12
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_setcc (src/backend/i686/assembler/encoder/gp_integer.rs)
-**Tests:** 8 properties (+ KAT gates + 4 deterministic regressions); proptest cases=1000
-**Result:** 6 passing, 2 failing properties; 2 bugs
-**Change surface:** 1 changed function (encode_setcc), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (pre-campaign build tree); binary symbol scan said NOT LINKED for the mangled `pub(super)` method, but all properties exercise the production path via `InstructionEncoder::encode` → dispatch → `encode_setcc` (confirmed by differential byte disagreements). Recorded as file-level.
-**Effort tier:** standard (≈30 min, ≥1000 cases, ≥1 metamorphic/differential, 1 contract-surface sweep)
+**Modules tested:** encode_cmovcc (i686 gp_integer encoder)
+**Tests:** 8 properties (5 passing, 3 failing) + KAT gates + deterministic regressions
+**Result:** 5 passing, 3 bugs
+**Change surface:** 1 changed function (encode_cmovcc), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` found no .gcda/.profraw (uninstrumented build tree); binary scan missed Rust-mangled encode_cmovcc, but cargo lib tests in encode_cmovcc_pbt exercise it via InstructionEncoder::encode (KAT/PBT byte oracles confirm). One standard sweep round closed after strengthen mem_w16 PASS.
+**Effort tier:** standard (≥1000 proptest cases; ≥1 differential; 1 coverage_gaps sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_setcc | 8 properties (+KAT/regressions) | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_cmovcc | 8 properties | 3 | differential (llvm-mc), algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_setcc omits segment-override prefix on memory operands
+### B1: encode_cmovcc omits memory segment-override prefix
 
-**Formal:** ∀ m ∈ DISPATCHED_SETCC, seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, d ∈ edge_disp. llvm_mc(m " %"seg":" mem) = encode_setcc(m, [Mem(seg,base,d)])
-**Contract evidence:** inferred (Intel SETcc memory form + llvm-mc `-triple=i686` + sibling `emit_segment_prefix` at core.rs:31; same class as encode_smsw/invlpg/prefetch)
+**Formal:** ∀ m, seg, base, dst, disp. encode_cmovcc([Mem(seg:base+disp),Reg(dst)], m) = llvm-mc(...)
+**Contract evidence:** inferred (sibling encoders call `emit_segment_prefix` at core.rs:31; Intel SDM segment override; llvm-mc emits 0x26/0x64/…)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `sete %es:(%eax)` then compare bytes — SUT `[0f,94,00]` vs llvm-mc `[26,0f,94,00]`
-**Expected / Actual:** `[0x26,0x0f,0x94,0x00]` / `[0x0f,0x94,0x00]`
-**Impact:** Segmented memory SETcc forms assemble without the override, so the CPU uses the wrong segment at run time.
-**Root cause:** `gp_integer.rs:1089-1091` memory arm never calls `emit_segment_prefix(mem)` before `0F 90+cc`.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1089`
+**Counterexample:** `cmove %es:(%eax), %ebx` then compare bytes to llvm-mc
+**Expected / Actual:** `[26, 0f, 44, 18]` / `[0f, 44, 18]`
+**Impact:** FS/GS/ES memory cmovs assemble without the override → wrong segment at run time (silent data corruption).
+**Root cause:** gp_integer.rs:1128-1133 memory arm never calls `emit_segment_prefix(mem)` before `0F 40+cc`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1128`
 ```rust
-            Operand::Memory(mem) => {
-                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
-                self.encode_modrm_mem(0, mem)
+            (Operand::Memory(mem), Operand::Register(dst)) => {
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                if is_16bit { self.bytes.push(0x66); }
+                self.bytes.extend_from_slice(&[0x0F, 0x40 + cc]);
+                self.encode_modrm_mem(dst_num, mem)
             }
 ```
-**Suggested fix:** Call `emit_segment_prefix` first.
+**Suggested fix:** Call `emit_segment_prefix` before the opcode:
 ```rust
-            Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
-                self.encode_modrm_mem(0, mem)
-            }
+                if is_16bit { self.bytes.push(0x66); }
+                self.bytes.extend_from_slice(&[0x0F, 0x40 + cc]);
 ```
-**Bug report:** bug_reports/encode_setcc_missing_segment_prefix.md
-**Repro seed:** proptest cc 745de6caff4af69b316bc2ee32328a0fa6a18adf428d0708cbce340852d76bf8 (segment base form)
+**Bug report:** bug_reports/encode_cmovcc_missing_segment_prefix.md
+**Repro seed:** (deterministic regression; proptest shrunk to any seg/base)
 **Raw output:**
 ```text
-segment prefix diff for `sete %es:(%eax)`: SUT=[0f, 94, 00] llvm-mc=[26, 0f, 94, 00]
-minimal failing input: m = "sete", seg = "es", base = "eax", disp = 0
+assertion failed: cmove %es:(%eax), %ebx must be [26, 0f, 44, 18], got [0f, 44, 18]
 ```
 
-### B2: encode_setcc accepts non-r8 register operands via reg_num aliasing
+### B2: unsuffixed cmovcc with r16 omits 0x66
 
-**Formal:** ∀ m ∈ DISPATCHED_SETCC, r ∈ R16∪R32∪NON_GP_ALIASED. llvm_mc rejects m "%" r ∧ encode_setcc(m,[Reg(r)]) = Err
-**Contract evidence:** inferred (Intel SDM SETcc r/m8-only; llvm-mc rejects `sete %ax` / `sete %eax`; `reg_num` at registers.rs:4 aliases widths)
-**Documentation conflict:** (none)
+**Formal:** ∀ m ∈ CMOV_UNSUFFIXED, s,d ∈ GP16. encode_cmovcc([Reg(s),Reg(d)], m) = llvm-mc("m %s, %d")
+**Contract evidence:** inferred (llvm-mc/GAS size-infer from r16; Intel CMOVcc r16 requires operand-size override)
+**Documentation conflict:** gp_integer.rs:1103 "unsuffixed = 32-bit default" describes mnemonic-suffix default only — does not declare r16 invalid; SUT still accepts r16 and emits wrong (no 0x66) bytes. Not an input-domain exclusion.
 **Severity:** high
-**Counterexample:** `sete %ax` → Ok([0f,94,c0]) (identical to `sete %al`); also `%eax`, `%xmm0`
-**Expected / Actual:** Err(invalid operand) / Ok([0x0f,0x94,0xc0])
-**Impact:** Accidental r16/r32/non-GP names silently assemble as the aliased r8, hiding bugs in callers.
-**Root cause:** `gp_integer.rs:1083` uses bare `reg_num` with no `reg_size == 1` (and no non-GP reject).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1083`
+**Counterexample:** `cmove %ax, %ax` → SUT `[0f,44,c0]` vs llvm-mc `[66,0f,44,c0]`
+**Expected / Actual:** `[66, 0f, 44, c0]` / `[0f, 44, c0]`
+**Impact:** Unsuffixed 16-bit cmovs encode as 32-bit ops — wrong-width conditional moves.
+**Root cause:** gp_integer.rs:1104-1120 sets `is_16bit` only from explicit `w` suffix; register arm does not consult `reg_size`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1118`
 ```rust
-            Operand::Register(reg) => {
-                let num = reg_num(&reg.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
-                self.bytes.push(self.modrm(3, 0, num));
-                Ok(())
-            }
+            (Operand::Register(src), Operand::Register(dst)) => {
+                let src_num = reg_num(&src.name).ok_or("bad register")?;
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                if is_16bit { self.bytes.push(0x66); }
 ```
-**Suggested fix:** Gate on `reg_size(&reg.name) == 1` and reject xmm/mm/st/ymm prefixes before `reg_num`.
+**Suggested fix:** Infer 0x66 from matching r16 GP sizes (or reject unsuffixed r16):
 ```rust
-            Operand::Register(reg) => {
-                if reg_size(&reg.name) != 1
-                    || reg.name.starts_with("xmm")
-                    || reg.name.starts_with("mm")
-                    || reg.name.starts_with("st")
-                    || reg.name.starts_with("ymm")
-                {
-                    return Err(format!("setcc requires r8 register, got {}", reg.name));
-                }
-                let num = reg_num(&reg.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
-                self.bytes.push(self.modrm(3, 0, num));
-                Ok(())
-            }
+                let use_16 = is_16bit || reg_size(&dst.name) == 2;
+                if use_16 { self.bytes.push(0x66); }
 ```
-**Bug report:** bug_reports/encode_setcc_accepts_non_r8_register.md
-**Repro seed:** (deterministic; minimal `r="ax"`, `m="sete"`)
+**Bug report:** bug_reports/encode_cmovcc_unsuffixed_r16_no_66.md
+**Repro seed:** m="cmove", src="ax", dst="ax"
 **Raw output:**
 ```text
-SUT accepted invalid-width `sete %ax` → [0f, 94, c0]; SETcc is r/m8 only (Intel SDM; llvm-mc rejects).
-minimal failing input: r = "ax", m = "sete"
+unsuffixed r16 size diff for `cmove %ax, %ax`: SUT=[0f, 44, c0] llvm-mc=[66, 0f, 44, c0]
+```
+
+### B3: encode_cmovcc accepts r8, non-GP, and mismatched-width registers
+
+**Formal:** ∀ invalid ops ∈ {r8 pairs, non-GP, width mismatch}. encode_cmovcc(ops, m) = Err(_)
+**Contract evidence:** inferred (Intel SDM CMOVcc r16/r32 only; llvm-mc rejects; `reg_num` aliasing is not a contract)
+**Documentation conflict:** (none)
+**Severity:** medium
+**Counterexample:** `cmove %al, %al` → Ok(`[0f,44,c0]`); `cmove %eax, %xmm0` → Ok; `cmove %ax, %eax` → Ok
+**Expected / Actual:** Err / Ok with GP-aliased encoding
+**Impact:** Invalid operands assemble without diagnostic as if the aliased GP register were used.
+**Root cause:** gp_integer.rs:1119-1120 uses only `reg_num` with no `reg_size`/GP-class check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1119`
+```rust
+                let src_num = reg_num(&src.name).ok_or("bad register")?;
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+```
+**Suggested fix:** Require matching r16/r32 GP; reject xmm/mm/st/ymm prefixes (see bug report for full gate).
+```rust
+                if reg_size(&src.name) != reg_size(&dst.name)
+                    || !matches!(reg_size(&src.name), 2 | 4) { return Err(...); }
+```
+**Bug report:** bug_reports/encode_cmovcc_accepts_invalid_regs.md
+**Repro seed:** src="al", dst="al", m="cmove"
+**Raw output:**
+```text
+SUT accepted invalid-width r8 `cmove %al, %al` → [0f, 44, c0]
 ```
 
 ## Design Caveats
@@ -105,56 +116,38 @@ minimal failing input: r = "ax", m = "sete"
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_setcc_pbt.rs | 8 properties + 7 KAT + 4 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_setcc_pbt` registration |
+| src/backend/i686/assembler/encoder/encode_cmovcc_pbt.rs | 8 properties + KATs + 6 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | `#[cfg(test)] mod encode_cmovcc_pbt;` (one line) |
 
 ## Reproduction
 
-Whole suite (serial):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_setcc -- --test-threads=1
-```
-
-B1 only:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_setcc_regression_missing_es_prefix -- --test-threads=1 --exact
-cargo test --lib encode_setcc_diff_segment_llvm_mc -- --test-threads=1 --exact
-```
-
-B2 only:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib test_encode_setcc_regression_rejects_ax -- --test-threads=1 --exact
-cargo test --lib encode_setcc_neg_wrong_width -- --test-threads=1 --exact
+cargo test --lib encode_cmovcc -- --test-threads=1
+# narrowed:
+cargo test --lib test_encode_cmovcc_regression_missing_es_prefix -- --test-threads=1 --nocapture
+cargo test --lib test_encode_cmovcc_regression_unsuffixed_r16_prefix -- --test-threads=1 --nocapture
+cargo test --lib test_encode_cmovcc_regression_rejects_al_bl -- --test-threads=1 --nocapture
 ```
 
 ## Output Directories
 
-- `pbt-out/REPORT.md` — this report
-- `pbt-out/REPORT.html` — customer-facing overview (from report.json)
-- `pbt-out/PROPERTIES.md` — property ledger
-- `pbt-out/PLAN.md` — campaign checklist
-- `pbt-out/COVERAGE.md` — coverage ledger row
-- `pbt-out/COVERAGE_STATUS.md` — coverage status
-- `pbt-out/report.json` — machine-readable report
-- `pbt-out/bug_reports/encode_setcc_missing_segment_prefix.md` (+ `.html`)
-- `pbt-out/bug_reports/encode_setcc_accepts_non_r8_register.md` (+ `.html`)
-- `pbt-out/run/encode_setcc_test2.log` — full test log
-- `pbt-out/INVARIANTS.md` — updated with encode_setcc notes
-- `pbt-out/FUNCTION_INDEX.md` — encode_setcc marked PBT candidate yes
-
-## Contract-surface sweep
-
-One `coverage_gaps` round (standard tier). No line-level data; file-level note recorded. Documented behaviors already covered by the 8 properties (r8 differential, mem base/SIB/abs, segment, opcode invariant, alias metamorphic, arity/bad-op negatives, wrong-width negatives). Close reason: tier sweep round complete + documented surface has properties.
+- pbt-out/REPORT.md, pbt-out/REPORT.html
+- pbt-out/PROPERTIES.md, pbt-out/PLAN.md
+- pbt-out/COVERAGE.md, pbt-out/COVERAGE_STATUS.md
+- pbt-out/report.json
+- pbt-out/bug_reports/encode_cmovcc_missing_segment_prefix.md (+ .html)
+- pbt-out/bug_reports/encode_cmovcc_unsuffixed_r16_no_66.md (+ .html)
+- pbt-out/bug_reports/encode_cmovcc_accepts_invalid_regs.md (+ .html)
+- pbt-out/run/kat.log, pbt-out/run/full.log
+- pbt-out/INVARIANTS.md, pbt-out/FUNCTION_INDEX.md
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-12 10:41 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 288/401 total | PBT candidates: 288 | Tested: 288 (100%) | 1 pass, 288 fail
+> Last updated: 2026-10-12 11:00 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 289/401 total | PBT candidates: 289 | Tested: 289 (100%) | 1 pass, 289 fail
 
 ## Summary
 
@@ -163,10 +156,10 @@ One `coverage_gaps` round (standard tier). No line-level data; file-level note r
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 401 |
-| PBT candidates (from FUNCTION_INDEX) | 288 |
-| **Tested (of PBT candidates)** | **288 / 288 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 288 / -1 |
-| **Overall (tested / all functions)** | **288 / 401 (72%)** |
+| PBT candidates (from FUNCTION_INDEX) | 289 |
+| **Tested (of PBT candidates)** | **289 / 289 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 289 / -1 |
+| **Overall (tested / all functions)** | **289 / 401 (72%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -174,13 +167,13 @@ One `coverage_gaps` round (standard tier). No line-level data; file-level note r
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 288 | 288 | 0 | 100% |
+|  | 289 | 289 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 288 | 288 | 0 | 100% |
+| unknown | 289 | 289 | 0 | 100% |
 
 ## File Coverage
 
@@ -191,7 +184,7 @@ One `coverage_gaps` round (standard tier). No line-level data; file-level note r
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 33 | 22 | 22 | 100% | covered |
+| gp_integer.rs | 33 | 23 | 23 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -491,3 +484,4 @@ One `coverage_gaps` round (standard tier). No line-level data; file-level note r
 | encode_bit_count | gp_integer.rs |
 | encode_bsr_bsf | gp_integer.rs |
 | encode_bt | gp_integer.rs |
+| encode_cmovcc | gp_integer.rs |
