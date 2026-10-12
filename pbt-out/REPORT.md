@@ -1,100 +1,121 @@
-# PBT Campaign Report: encode_bsr_bsf
+# PBT Campaign Report: encode_bt (i686)
 
 ## Summary
 
-**Verdict:** 2 bugs (1 high, 1 medium): encode_bsr_bsf drops segment-override prefixes on memory forms so segmented BSF/BSR assemble as DS-relative, and accepts r16/r8 via reg_num aliasing so wrong-width operands silently encode as r32.
+**Verdict:** 3 unique high/medium defects in `encode_bt` (4 failing properties / bug reports): (1) high — memory forms omit segment-override prefixes so `%es:`/`%fs:` BT encodes as DS-default (diff + metamorphic witnesses); (2) high — out-of-range imm8 bit offsets truncate via `as u8` (`$256` -> `$0`); (3) medium — r16/r8 names are accepted via `reg_num` aliasing for *l forms.
 **Date:** 2026-10-12
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bsr_bsf
-**Tests:** 8 properties (+ 6 KAT + 3 regression witnesses)
-**Result:** 6 passing, 2 failing (2 bugs)
-**Change surface:** 1 changed function (encode_bsr_bsf), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — no line-level .profraw usable by coverage_gaps; nm proves `InstructionEncoder::encode_bsr_bsf` linked; KAT/differential runs prove execution. False NOT LINKED from mangling.
-**Tier:** standard (5–8 properties, ≥1000 cases, ≥1 metamorphic/differential, 1 coverage_gaps sweep)
+**Modules tested:** encode_bt (src/backend/i686/assembler/encoder/gp_integer.rs)
+**Tests:** 12 properties (+ 7 KAT + 4 regression witnesses)
+**Result:** 9 passing properties, 4 failing properties, 4 bug reports (3 unique root causes)
+**Change surface:** 1 function (`encode_bt`), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no line-level data (build tree not re-instrumented); file-level matcher falsely reported NOT LINKED for Rust-mangled `encode_bt`; KAT + 1000-case proptest runs prove execution. Sweep round 1 complete: all documented behaviors have properties.
+**Effort tier:** standard
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bsr_bsf | 8 | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
+| encode_bt | 13 props + 7 KAT + 4 regressions | 4 (3 unique RC) | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
 
 ## Bugs Found
 
-### B1: encode_bsr_bsf omits segment-override prefix on memory forms
+### B1: encode_bt omits segment override prefix on memory forms
 
-**Formal:** ∀ m ∈ {bsfl,bsrl}, seg ∈ Sreg, base ∈ GP32, d ∈ GP32, disp ∈ {0,4,8}. encode_bsr_bsf(m,[Mem(seg:disp(base)),Reg(d)]) = llvm-mc(...)
-**Contract evidence:** inferred (llvm-mc i686 reference + sibling encode_bsr_bsf_16 contract + core.rs:31 emit_segment_prefix API; Intel SDM segment-override prefixes)
+**Formal:** ∀ mnem ∈ BT_L, ∀ form ∈ {reg_mem,imm_mem}, ∀ seg ∈ {es,cs,ss,ds,fs,gs}, ∀ bare_mem. encode_bt(..., seg:mem) = llvm-mc(... %seg:mem)
+**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` documents all six overrides; x86-64 sibling `x87_misc.rs` encode_bt calls `emit_segment_prefix` on both mem arms; llvm-mc emits the prefix)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `bsfl %es:(%eax), %ebx` then compare bytes
-**Expected / Actual:** `[0x26, 0x0f, 0xbc, 0x18]` / `[0x0f, 0xbc, 0x18]`
-**Impact:** Segmented memory sources assemble without the override; runtime uses DS instead of the requested segment — silent wrong code gen.
-**Root cause:** gp_integer.rs:1003-1007 Memory arm emits opcode then encode_modrm_mem without emit_segment_prefix(mem).
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1003`
+**Counterexample:** `btl %eax, %es:(%ebx)` then compare bytes — SUT `[0f,a3,03]`, expected `[26,0f,a3,03]`
+**Expected / Actual:** `[26, 0f, a3, 03]` / `[0f, a3, 03]`
+**Impact:** Segmented BT/BTS/BTR/BTC memory forms assemble without the override, so the instruction addresses the wrong segment (DS default) — silent wrong machine code.
+**Root cause:** `gp_integer.rs:1033-1037` and `1045-1050` encode memory without calling `self.emit_segment_prefix(mem)` before the opcode.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1033`
 ```rust
-            (Operand::Memory(mem), Operand::Register(dst)) => {
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.encode_modrm_mem(dst_num, mem)
+            (Operand::Register(src), Operand::Memory(mem)) => {
+                let src_num = reg_num(&src.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, opcode_rr]);
+                self.encode_modrm_mem(src_num, mem)
             }
 ```
-**Suggested fix:** Emit segment prefix before the opcode.
+**Suggested fix:** Call `emit_segment_prefix` before the opcode on both memory arms.
 ```rust
-            (Operand::Memory(mem), Operand::Register(dst)) => {
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
                 self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&opcode);
-                self.encode_modrm_mem(dst_num, mem)
-            }
+                self.bytes.extend_from_slice(&[0x0F, opcode_rr]);
+                self.encode_modrm_mem(src_num, mem)
 ```
-**Bug report:** bug_reports/encode_bsr_bsf_missing_segment_prefix.md
-**Repro seed:** proptest minimal: mnemonic="bsfl", mseg="es", base="eax", dst="eax", disp=0
+**Bug report:** bug_reports/encode_bt_missing_segment_prefix.md
+**Repro seed:** proptest cc f1147210be13e46d1e589d708267310c23cf835f4b10df820ac7664cc43e675a
 **Raw output:**
 ```text
-assertion failed: `(left == right)`
-  left: `[15, 188, 0]`,
- right: `[38, 15, 188, 0]`: segmented mem must include override before opcode for bsfl %es:(%eax), %eax
+segment diff `btl %eax, %es:(%eax)`: sut=[0f, a3, 00] mc=[26, 0f, a3, 00]; expected prefix 0x26
 ```
 
-### B2: encode_bsr_bsf accepts r16/r8 via reg_num aliasing
+### B2: encode_bt accepts r16/r8 GP names via reg_num aliasing
 
-**Formal:** ∀ m ∈ {bsfl,bsrl}, bad ∈ R16∪R8, good ∈ GP32. llvm-mc rejects ∧ SUT must Err
-**Contract evidence:** inferred (Intel SDM BSF/BSR r32,r/m32; llvm-mc rejects bsfl %ax,%ebx; registers.rs:4 documents width aliasing)
+**Formal:** ∀ mnem ∈ {btl,btsl,btrl,btcl}, ∀ (src,dst) where a name is r16/r8 and llvm-mc rejects. encode_bt([%src,%dst], mnem) = Err(_)
+**Contract evidence:** inferred (Intel SDM BT *l is r32,r/m32; llvm-mc rejects `btl %ax, %ebx`; registers.rs `reg_num` aliases widths)
 **Documentation conflict:** (none)
 **Severity:** medium
-**Counterexample:** `bsfl %eax, %ax` (also `bsfl %ax, %ebx`, `bsrl %eax, %al`)
-**Expected / Actual:** Err / Ok([0x0f, 0xbc, 0xc0])
-**Impact:** Wrong-width register names silently encode as the aliased r32 form — no diagnostic, incorrect machine code for typos/size mismatches.
-**Root cause:** gp_integer.rs:996-1001 Register arm uses reg_num only; no reg_size==4 gate.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:996`
+**Counterexample:** `btl %ax, %ebx` → SUT `Ok([0f,a3,c3])` (same as `%eax,%ebx`)
+**Expected / Actual:** `Err(...)` / `Ok([0f, a3, c3])`
+**Impact:** Wrong-width register names silently assemble as r32 encodings with no diagnostic.
+**Root cause:** `gp_integer.rs:1026-1031` calls `reg_num` with no `reg_size` gate.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1026`
 ```rust
             (Operand::Register(src), Operand::Register(dst)) => {
                 let src_num = reg_num(&src.name).ok_or("bad register")?;
                 let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.bytes.push(self.modrm(3, dst_num, src_num));
+                self.bytes.extend_from_slice(&[0x0F, opcode_rr]);
+                self.bytes.push(self.modrm(3, src_num, dst_num));
                 Ok(())
             }
 ```
-**Suggested fix:** Require 32-bit GP width on both operands.
+**Suggested fix:** Require `reg_size(&name) == 4` on both GP operands before `reg_num`.
 ```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
                 if reg_size(&src.name) != 4 || reg_size(&dst.name) != 4 {
-                    return Err(format!("bsf/bsr requires r32 operands"));
+                    return Err(format!("{mnemonic} requires 32-bit registers"));
                 }
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&opcode);
-                self.bytes.push(self.modrm(3, dst_num, src_num));
-                Ok(())
-            }
 ```
-**Bug report:** bug_reports/encode_bsr_bsf_wrong_width_accepted.md
-**Repro seed:** mnemonic="bsfl", bad="ax", good="eax", bad_is_src=false
+**Bug report:** bug_reports/encode_bt_wrong_width_alias.md
+**Repro seed:** (deterministic regression)
 **Raw output:**
 ```text
-Test failed: `bsfl %eax, %ax` must be Err like llvm-mc, got Ok([0f, bc, c0])
-minimal failing input: mnemonic = "bsfl", bad = "ax", good = "eax", bad_is_src = false
+SUT accepted btl %ax, %ebx → Ok([15, 163, 195]); r16 not valid for btl
+```
+
+### B3: encode_bt truncates out-of-range bit-offset immediates
+
+**Formal:** ∀ mnem ∈ BT_L, ∀ imm ∉ imm8_domain that llvm-mc rejects, ∀ dst ∈ GP32. encode_bt([$imm,%dst], mnem) = Err(_)
+**Contract evidence:** inferred (Intel 0F BA /ext ib; llvm-mc rejects `$256`; SUT uses `*val as u8`)
+**Documentation conflict:** (none)
+**Severity:** high
+**Counterexample:** `btl $256, %eax` → SUT `Ok([0f,ba,e0,00])` (encodes as `$0`)
+**Expected / Actual:** `Err(...)` / `Ok([0f, ba, e0, 00])`
+**Impact:** An out-of-range bit index is silently truncated, so the wrong bit is tested/set/reset/complemented.
+**Root cause:** `gp_integer.rs:1041` (and Imm→Mem/Label arms) push `*val as u8` with no range check.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1038`
+```rust
+            (Operand::Immediate(ImmediateValue::Integer(val)), Operand::Register(dst)) => {
+                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0xBA]);
+                self.bytes.push(self.modrm(3, ext, dst_num));
+                self.bytes.push(*val as u8);
+                Ok(())
+            }
+```
+**Suggested fix:** Reject values outside the imm8 domain before casting.
+```rust
+                if !(-128..=255).contains(val) {
+                    return Err(format!("{mnemonic} immediate out of imm8 range: {val}"));
+                }
+                self.bytes.push(*val as u8);
+```
+**Bug report:** bug_reports/encode_bt_imm_oor_truncates.md
+**Repro seed:** (deterministic regression)
+**Raw output:**
+```text
+SUT accepted btl $256, %eax → Ok([15, 186, 224, 0]); imm must fit imm8
 ```
 
 ## Design Caveats
@@ -105,42 +126,59 @@ minimal failing input: mnemonic = "bsfl", bad = "ax", good = "eax", bad_is_src =
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_bsr_bsf_pbt.rs | 8 properties + 6 KAT + 3 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_bsr_bsf_pbt;` |
+| src/backend/i686/assembler/encoder/encode_bt_pbt.rs | 12 properties + 7 KAT + 4 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_bt_pbt;` |
 
 ## Reproduction
 
+Whole suite:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encoder::encode_bsr_bsf_pbt:: -- --test-threads=1
-cargo test --lib test_encode_bsr_bsf_regression_segment_es_missing -- --test-threads=1
-cargo test --lib test_encode_bsr_bsf_regression_r16_src_accepted -- --test-threads=1
-cargo test --lib test_encode_bsr_bsf_regression_r8_dst_accepted -- --test-threads=1
+cargo test --lib encode_bt -- --test-threads=1
+```
+
+B1 segment:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_bt_regression_segment_es_reg_mem -- --test-threads=1
+cargo test --lib encode_bt_diff_segment -- --test-threads=1
+```
+
+B2 wrong width:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_bt_regression_wrong_width_ax_ebx -- --test-threads=1
+```
+
+B3 imm OOR:
+```bash
+cd /home/toan/github/claudes-c-compiler
+cargo test --lib encode_bt_regression_imm_oor_256 -- --test-threads=1
 ```
 
 ## Output Directories
 
-- pbt-out/REPORT.md
-- pbt-out/REPORT.html (auto-rendered from report.json)
-- pbt-out/PROPERTIES.md
-- pbt-out/PLAN.md
-- pbt-out/COVERAGE.md
-- pbt-out/COVERAGE_STATUS.md
-- pbt-out/report.json
-- pbt-out/INVARIANTS.md
-- pbt-out/FUNCTION_INDEX.md
-- pbt-out/bug_reports/encode_bsr_bsf_missing_segment_prefix.md
-- pbt-out/bug_reports/encode_bsr_bsf_missing_segment_prefix.html
-- pbt-out/bug_reports/encode_bsr_bsf_wrong_width_accepted.md
-- pbt-out/bug_reports/encode_bsr_bsf_wrong_width_accepted.html
-- pbt-out/run/encode_bsr_bsf_pbt_only.log
+- `pbt-out/REPORT.md` — this report
+- `pbt-out/REPORT.html` — customer-facing overview (from report.json)
+- `pbt-out/PROPERTIES.md` — property ledger
+- `pbt-out/PLAN.md` — campaign phases
+- `pbt-out/COVERAGE.md` — coverage ledger row for encode_bt
+- `pbt-out/COVERAGE_STATUS.md` — coverage evidence summary
+- `pbt-out/INVARIANTS.md` — encode_bt section appended
+- `pbt-out/report.json` — machine-readable report
+- `pbt-out/bug_reports/encode_bt_missing_segment_prefix.md` (+ .html)
+- `pbt-out/bug_reports/encode_bt_wrong_width_alias.md` (+ .html)
+- `pbt-out/bug_reports/encode_bt_imm_oor_truncates.md` (+ .html)
+- `pbt-out/bug_reports/encode_bt_meta_segment_prefix.md` (+ .html)
+- `pbt-out/run/encode_bt_test2.log` — full test log
+- `src/backend/i686/assembler/encoder/encode_bt_pbt.rs` — harness
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-12 10:09 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 286/401 total | PBT candidates: 286 | Tested: 286 (100%) | 1 pass, 286 fail
+> Last updated: 2026-10-12 10:27 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 287/401 total | PBT candidates: 287 | Tested: 287 (100%) | 1 pass, 287 fail
 
 ## Summary
 
@@ -149,10 +187,10 @@ cargo test --lib test_encode_bsr_bsf_regression_r8_dst_accepted -- --test-thread
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 401 |
-| PBT candidates (from FUNCTION_INDEX) | 286 |
-| **Tested (of PBT candidates)** | **286 / 286 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 286 / -1 |
-| **Overall (tested / all functions)** | **286 / 401 (71%)** |
+| PBT candidates (from FUNCTION_INDEX) | 287 |
+| **Tested (of PBT candidates)** | **287 / 287 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 287 / -1 |
+| **Overall (tested / all functions)** | **287 / 401 (72%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -160,13 +198,13 @@ cargo test --lib test_encode_bsr_bsf_regression_r8_dst_accepted -- --test-thread
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 286 | 286 | 0 | 100% |
+|  | 287 | 287 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 286 | 286 | 0 | 100% |
+| unknown | 287 | 287 | 0 | 100% |
 
 ## File Coverage
 
@@ -177,10 +215,10 @@ cargo test --lib test_encode_bsr_bsf_regression_r8_dst_accepted -- --test-thread
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
+| gp_integer.rs | 33 | 21 | 21 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
-| gp_integer.rs | 33 | 21 | 20 | 95% | partial |
 
 ## Recommended Focus
 
@@ -475,3 +513,4 @@ cargo test --lib test_encode_bsr_bsf_regression_r8_dst_accepted -- --test-thread
 | encode_bswap | gp_integer.rs |
 | encode_bit_count | gp_integer.rs |
 | encode_bsr_bsf | gp_integer.rs |
+| encode_bt | gp_integer.rs |
