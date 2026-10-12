@@ -1,361 +1,216 @@
-# Properties: encode_bt (i686)
+# Properties: encode_setcc (i686)
 
-## encode_bt_diff_rr
+## encode_setcc_diff_r8_llvm_mc
 - Tier: 4
-- Rationale: Strongest oracle is differential vs llvm-mc (independent assembler). State machine N/A; no in-tree decoder for round-trip. Shared AT&T BT r32,r32 contract.
-- Doc contract: (none) — encode_bt has no doc comment
-- Seed: (none)
-- Formal: ∀ mnem ∈ {btl,btsl,btrl,btcl,bt,bts,btr,btc}, ∀ src,dst ∈ GP32. encode_bt([%src,%dst], mnem) = llvm-mc(mnem %src, %dst)
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
+- Rationale: Strongest oracle is differential vs independent llvm-mc i686 assembler. State machine rejected (pure encoding). Round-trip rejected (no in-tree i686 decoder). Intel SDM SETcc is r/m8; register form encodes 0F 90+cc /0 with mod=3.
+- Doc contract: (none) — function has no doc comment. Contract from Intel SDM SETcc + llvm-mc + dispatch `mod.rs:279-281`. fingerprint 00000000
+- Seed: (none) — no existing setcc unit tests
+- Formal: ∀ m ∈ DISPATCHED_SETCC, r ∈ R8. llvm_mc(m " %" r) = encode_setcc(m, [Reg(r)])
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_bt
+function: encode_setcc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, src, dst]
-  domain: { mnem: bt_family, src: gp32, dst: gp32 }
+  vars: [m, r]
+  domain: { m: dispatched_setcc_mnemonics, r: r8_regs }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Reg(src), Reg(dst)])"
-    rhs: "llvm_mc(mnem %src, %dst)"
+    lhs: "sut_encode(m, [Reg(r)])"
+    rhs: "llvm_mc_bytes(m + \" %\" + r)"
 generators:
-  mnem: { gen: oneof, values: ["btl","btsl","btrl","btcl","bt","bts","btr","btc"] }
-  src: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  dst: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-evidence: gp_integer.rs:1012 + Intel SDM BT 0F A3/AB/B3/BB + llvm-mc i686
+  m: { gen: oneof, values: ["sete","setz","setne","setnz","setl","setle","setg","setge","setb","setc","setbe","seta","setae","setnc","setnp","setp","sets","setns","seto","setno"] }
+  r: { gen: oneof, values: ["al","cl","dl","bl","ah","ch","dh","bh"] }
+evidence: gp_integer.rs:1075; Intel SDM SETcc; llvm-mc -triple=i686
 ```
 
-## encode_bt_diff_imm_reg
+## encode_setcc_diff_mem_base_disp_llvm_mc
 - Tier: 4
-- Rationale: Imm8 bit-offset form 0F BA /ext is the other primary encoding path; differential vs llvm-mc over imm ∈ [-128,255].
-- Doc contract: (none)
+- Rationale: Memory r/m8 form must match llvm-mc for base+disp (no segment).
+- Doc contract: (none) fingerprint 00000000
 - Seed: (none)
-- Formal: ∀ mnem ∈ MNEMS_L, ∀ dst ∈ GP32, ∀ imm ∈ imm8_domain. encode_bt([$imm,%dst], mnem) = llvm-mc(mnem $imm, %dst)
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
+- Formal: ∀ m ∈ DISPATCHED_SETCC, base ∈ GP32, d ∈ i32. llvm_mc(m att_mem(base,d)) = encode_setcc(m, [Mem(base,d)])
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_bt
+function: encode_setcc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, dst, imm]
-  domain: { mnem: bt_l_family, dst: gp32, imm: imm8 }
+  vars: [m, base, d]
+  domain: { m: dispatched_setcc_mnemonics, base: gp32, d: i32_disp }
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Imm(imm), Reg(dst)])"
-    rhs: "llvm_mc(mnem $imm, %dst)"
+    lhs: "sut_encode(m, [Mem(base,d)])"
+    rhs: "llvm_mc_bytes(asm)"
 generators:
-  mnem: { gen: oneof, values: ["btl","btsl","btrl","btcl"] }
-  dst: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  imm: { gen: int, min: -128, max: 255, type: i64 }
-evidence: gp_integer.rs:1038-1044 + Intel SDM 0F BA /4..7 ib
+  m: { gen: oneof, values: ["sete","setz","setne","setnz","setl","setle","setg","setge","setb","setc","setbe","seta","setae","setnc","setnp","setp","sets","setns","seto","setno"] }
+  base: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
+  d: { gen: int, min: -2147483648, max: 2147483647, type: i64 }
+evidence: gp_integer.rs:1089-1091; core.rs encode_modrm_mem
 ```
 
-## encode_bt_diff_reg_mem_bare
+## encode_setcc_diff_mem_sib_llvm_mc
 - Tier: 4
-- Rationale: Reg→Mem form is architecturally valid (BT r/m, r); bare memory without segment should match llvm-mc.
-- Doc contract: (none)
+- Rationale: SIB memory forms (index ≠ esp) must match llvm-mc.
+- Doc contract: (none) fingerprint 00000000
 - Seed: (none)
-- Formal: ∀ mnem ∈ MNEMS_L, ∀ src ∈ GP32, ∀ mem ∈ bare_mem32. encode_bt([%src,mem], mnem) = llvm-mc(mnem %src, mem)
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
+- Formal: ∀ m, base?, index≠esp, scale∈{1,2,4,8}, d. llvm_mc = encode_setcc on SIB mem
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_bt
+function: encode_setcc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, src, mem]
-  domain: { mnem: bt_l_family, src: gp32, mem: bare_i686_mem }
+  vars: [m, base, index, scale, d]
   relation:
     op: eq
-    lhs: "sut_encode(mnem, [Reg(src), Mem(mem)])"
-    rhs: "llvm_mc(mnem %src, att(mem))"
+    lhs: "sut_encode(m, [Mem SIB])"
+    rhs: "llvm_mc_bytes(asm)"
 generators:
-  mnem: { gen: oneof, values: ["btl","btsl","btrl","btcl"] }
-  src: { gen: oneof, values: ["eax","ecx","edx","ebx","esp","ebp","esi","edi"] }
-  mem: { gen: bare_mem }
-evidence: gp_integer.rs:1033-1037 + Intel SDM BT r/m32,r32
+  m: { gen: oneof, values: ["sete","setne","setb","seta","seto","setl"] }
+  scale: { gen: oneof, values: [1, 2, 4, 8] }
+evidence: gp_integer.rs:1089-1091
 ```
 
-## encode_bt_diff_imm_mem_bare
+## encode_setcc_diff_segment_llvm_mc
 - Tier: 4
-- Rationale: Imm→Mem form 0F BA /ext + modrm_mem + imm8 is a distinct code path including SIB/abs.
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ mnem ∈ MNEMS_L, ∀ imm ∈ imm8, ∀ mem ∈ bare_mem32. encode_bt([$imm,mem], mnem) = llvm-mc(mnem $imm, mem)
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bt
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mnem, imm, mem]
-  domain: { mnem: bt_l_family, imm: imm8, mem: bare_i686_mem }
-  relation:
-    op: eq
-    lhs: "sut_encode(mnem, [Imm(imm), Mem(mem)])"
-    rhs: "llvm_mc(mnem $imm, att(mem))"
-generators:
-  mnem: { gen: oneof, values: ["btl","btsl","btrl","btcl"] }
-  imm: { gen: int, min: 0, max: 255, type: i64 }
-  mem: { gen: bare_mem }
-evidence: gp_integer.rs:1045-1050
-```
-
-## encode_bt_diff_segment
-- Tier: 4
-- Rationale: core.rs emit_segment_prefix documents all six overrides; x86-64 sibling encode_bt calls emit_segment_prefix on mem arms; llvm-mc emits prefix. Differential must hold for %es:/ %fs: etc.
-- Doc contract: (none) — function has no comment; contract inferred from core.rs emit_segment_prefix + x86-64 sibling
-- Seed: encode_test_pbt encode_test_diff_segment_prefix
-- Formal: ∀ mnem, ∀ form ∈ {reg_mem,imm_mem}, ∀ seg ∈ SREG, ∀ bare_mem. encode_bt(..., seg:mem) = llvm-mc(... %seg:mem)
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
+- Rationale: Segment override must precede 0F 90+cc. Sibling encoders call `emit_segment_prefix`; encode_setcc memory arm does not. Differential vs llvm-mc is the strongest check.
+- Doc contract: (none) fingerprint 00000000
+- Seed: encode_smsw_pbt segment differential (same defect class)
+- Formal: ∀ m ∈ DISPATCHED_SETCC, seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, d ∈ edge_disp. llvm_mc(m " %"seg":" mem) = encode_setcc(m, [Mem(seg,base,d)])
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
 - Status: failing
-- Counterexample: btl %eax, %es:(%eax) -> sut=[0f,a3,00] mc=[26,0f,a3,00]
-- Bug report: bug_reports/encode_bt_missing_segment_prefix.md
+- Counterexample: m="sete", seg="es", base="eax", disp=0 → SUT=[0f,94,00] llvm-mc=[26,0f,94,00]
+- Bug report: bug_reports/encode_setcc_missing_segment_prefix.md
 
 ```property
-function: encode_bt
+function: encode_setcc
 oracle: differential
 predicate:
   quantifier: forall
-  vars: [mnem, form, seg, mem]
-  domain: { mnem: bt_l_family, form: {reg_mem,imm_mem}, seg: sreg, mem: base_mem }
+  vars: [m, seg, base, d]
   relation:
     op: eq
-    lhs: "sut_encode(mnem, segmented ops)"
-    rhs: "llvm_mc(AT&T with %seg:)"
-generators:
-  mnem: { gen: oneof, values: ["btl","btsl","btrl","btcl"] }
-  seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
-evidence: core.rs:31-42 emit_segment_prefix; x86 x87_misc.rs encode_bt emit_segment_prefix on mem
-```
-
-## encode_bt_meta_bare_equiv_l
-- Tier: 3
-- Rationale: Algebraic metamorphic — dispatch aliases bare mnemonics to same encode_bt path; bare must equal *l encoding for r32.
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ base ∈ {bt,bts,btr,btc}, ∀ src,dst ∈ GP32. encode(base) = encode(base+"l")
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bt
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [base, src, dst]
-  domain: { base: {bt,bts,btr,btc}, src: gp32, dst: gp32 }
-  relation:
-    op: eq
-    lhs: "sut_encode(base, [src,dst])"
-    rhs: "sut_encode(base+l, [src,dst])"
-generators:
-  base: { gen: oneof, values: ["bt","bts","btr","btc"] }
-evidence: mod.rs:274 bare and *l share encode_bt
-```
-
-## encode_bt_meta_segment_prefix
-- Tier: 3
-- Rationale: Algebraic metamorphic — segmented form must equal seg_prefix_byte ‖ bare encoding (core.rs contract). Independent of llvm-mc; same defective arms as differential segment.
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ mnem, ∀ seg, ∀ mem. encode(seg:mem) = [seg_prefix(seg)] ‖ encode(bare mem)
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
-- Status: failing
-- Counterexample: btl %es:(%eax) -> got [0f,a3,00] expect [26,0f,a3,00]
-- Bug report: bug_reports/encode_bt_meta_segment_prefix.md
-
-```property
-function: encode_bt
-oracle: algebraic.metamorphic
-predicate:
-  quantifier: forall
-  vars: [mnem, seg, mem]
-  domain: { mnem: bt_l_family, seg: sreg, mem: base_mem }
-  relation:
-    op: eq
-    lhs: "sut_encode(seg:mem)"
-    rhs: "[seg_prefix] ++ sut_encode(bare)"
+    lhs: "sut_encode(m, [Mem(seg,base,d)])"
+    rhs: "llvm_mc_bytes(asm)"
 generators:
   seg: { gen: oneof, values: ["es","cs","ss","ds","fs","gs"] }
-evidence: core.rs:31-42 emit_segment_prefix
+evidence: core.rs:31 emit_segment_prefix; gp_integer.rs:1089-1091 omits it
 ```
 
-## encode_bt_invariant_rr_layout
+## encode_setcc_invariant_opcode_cc
 - Tier: 3
-- Rationale: Algebraic invariant from Intel SDM — bytes are exactly [0F, opc, ModRM(3,src,dst)].
-- Doc contract: (none)
+- Rationale: Algebraic invariant — every valid encoding is 0F (90+cc) with ModRM.reg=0.
+- Doc contract: (none) fingerprint 00000000
 - Seed: (none)
-- Formal: ∀ mnem ∈ MNEMS_L, ∀ src,dst ∈ GP32. bytes = [0F, opc(mnem), modrm(3,num(src),num(dst))]
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
+- Formal: ∀ m, r∈R8. let b = encode_setcc(m,[Reg(r)]). b[0]=0x0F ∧ b[1]=0x90+cc(m) ∧ (b[2]>>3)&7 = 0 ∧ (b[2]&7)=reg_num(r)
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
 - Status: passing
 - Counterexample: (none)
 - Bug report: (none)
 
 ```property
-function: encode_bt
+function: encode_setcc
 oracle: algebraic.invariant
 predicate:
   quantifier: forall
-  vars: [mnem, src, dst]
-  domain: { mnem: bt_l_family, src: gp32, dst: gp32 }
+  vars: [m, r]
   relation:
-    op: eq
-    lhs: "sut_encode(mnem, RR)"
-    rhs: "[0x0F, opc_rr(mnem), modrm(3,src,dst)]"
+    op: holds
+    expr: "bytes[0]==0x0F && bytes[1]==0x90+cc(m) && ((bytes[2]>>3)&7)==0 && (bytes[2]&7)==reg_num(r)"
 generators:
-  mnem: { gen: oneof, values: ["btl","btsl","btrl","btcl"] }
-evidence: gp_integer.rs:1026-1032; Intel SDM
+  m: { gen: oneof, values: ["sete","setz","setne","setnz","setl","setle","setg","setge","setb","setc","setbe","seta","setae","setnc","setnp","setp","sets","setns","seto","setno"] }
+  r: { gen: oneof, values: ["al","cl","dl","bl","ah","ch","dh","bh"] }
+evidence: gp_integer.rs:1085-1086; registers.rs:118 cc_from_mnemonic
 ```
 
-## encode_bt_diff_label
+## encode_setcc_meta_alias_pairs
+- Tier: 3
+- Rationale: Metamorphic — condition-code aliases encode identically (sete≡setz, setne≡setnz, setb≡setc, setae≡setnc).
+- Doc contract: (none) fingerprint 00000000
+- Seed: (none)
+- Formal: ∀ (m1,m2) ∈ ALIAS_PAIRS, op ∈ R8∪Mem. encode_setcc(m1,op) = encode_setcc(m2,op)
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_setcc
+oracle: algebraic.metamorphic
+predicate:
+  quantifier: forall
+  vars: [pair, op]
+  relation:
+    op: eq
+    lhs: "encode(m1, op)"
+    rhs: "encode(m2, op)"
+generators:
+  pair: { gen: oneof, values: [["sete","setz"],["setne","setnz"],["setb","setc"],["setae","setnc"]] }
+evidence: registers.rs:118-136 cc_from_mnemonic alias arms
+```
+
+## encode_setcc_neg_arity_and_bad_ops
+- Tier: 3
+- Rationale: Negative contract — arity ≠ 1 and non-reg/non-mem operands must Err (documented by error strings in body).
+- Doc contract: gp_integer.rs:1077 "setcc requires 1 operand"; gp_integer.rs:1093 "setcc requires register or memory operand" — domain-restriction fingerprint a1b2c3d4
+- Seed: (none)
+- Formal: ∀ ops. |ops|≠1 ∨ ops[0]∉{Reg,Mem} ⇒ encode_setcc returns Err
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
+- Status: passing
+- Counterexample: (none)
+- Bug report: (none)
+
+```property
+function: encode_setcc
+oracle: negative_error
+predicate:
+  quantifier: forall
+  vars: [ops]
+  relation:
+    op: throws
+    expr: "sut_encode(\"sete\", ops)"
+expected_error: String
+generators:
+  n: { gen: int, min: 0, max: 4, type: usize }
+evidence: gp_integer.rs:1076-1078, 1093
+```
+
+## encode_setcc_neg_wrong_width
 - Tier: 4
-- Rationale: Label absolute forms (Imm→Label, Reg→Label) are explicit arms in encode_bt; differential vs llvm-mc with fixup bytes as zero.
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ mnem, ∀ form ∈ {imm_label,reg_label}. encode_bt(label form) = llvm-mc(same)
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bt
-oracle: differential
-predicate:
-  quantifier: forall
-  vars: [mnem, form, label]
-  domain: { mnem: bt_l_family, form: {imm,reg}, label: symbol }
-  relation:
-    op: eq
-    lhs: "sut_encode(label form)"
-    rhs: "llvm_mc(label form)"
-generators:
-  mnem: { gen: oneof, values: ["btl","btsl","btrl","btcl"] }
-evidence: gp_integer.rs:1051-1070
-```
-
-## encode_bt_neg_arity
-- Tier: 3
-- Rationale: Negative — arity≠2 must Err (documented by encode_bt guard).
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ mnem, ∀ arity ≠ 2. encode_bt(ops_arity).is_err()
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bt
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnem, arity]
-  domain: { mnem: bt_l_family, arity: {0,1,3} }
-  relation:
-    op: holds
-    expr: "sut_encode(mnem, ops_of_arity).is_err()"
-generators:
-  arity: { gen: int, min: 0, max: 3 }
-expected_error: String
-evidence: gp_integer.rs:1013-1014
-```
-
-## encode_bt_neg_wrong_width
-- Tier: 3
-- Rationale: Negative — r16/r8 with *l forms that llvm-mc rejects must Err (not reg_num alias).
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ mnem ∈ MNEMS_L, ∀ (src,dst) with a non-r32 GP name that llvm-mc rejects. encode_bt.is_err()
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
+- Rationale: Intel SETcc is r/m8 only; llvm-mc rejects r16/r32 and non-GP. SUT must reject (currently accepts via reg_num aliasing).
+- Doc contract: (none) — inferred from Intel SDM SETcc r/m8 + llvm-mc rejection. fingerprint 00000000
+- Seed: encode_bswap_pbt / encode_smsw_pbt wrong-width negatives
+- Formal: ∀ m ∈ DISPATCHED_SETCC, r ∈ R16∪R32∪NON_GP_ALIASED. llvm_mc rejects m "%" r ∧ encode_setcc(m,[Reg(r)]) = Err
+- Test file: src/backend/i686/assembler/encoder/encode_setcc_pbt.rs
 - Status: failing
-- Counterexample: btl %ax, %eax -> Ok([0f,a3,c0])
-- Bug report: bug_reports/encode_bt_wrong_width_alias.md
+- Counterexample: m="sete", r="ax" → Ok([0f,94,c0]) (same as sete %al); also r="eax", r="xmm0"
+- Bug report: bug_reports/encode_setcc_accepts_non_r8_register.md
 
 ```property
-function: encode_bt
+function: encode_setcc
 oracle: negative_error
 predicate:
   quantifier: forall
-  vars: [mnem, src, dst]
-  domain: { mnem: bt_l_family, src_or_dst: r16_or_r8 }
+  vars: [m, r]
   relation:
-    op: holds
-    expr: "sut_encode(mnem, [Reg(src), Reg(dst)]).is_err()"
-generators:
-  src: { gen: oneof, values: ["ax","al","eax"] }
+    op: throws
+    expr: "sut_encode(m, [Reg(r)])"
 expected_error: String
-evidence: Intel BT *l is r32; llvm-mc rejects btl %ax, %ebx
-```
-
-## encode_bt_neg_imm_oor
-- Tier: 3
-- Rationale: Negative — imm outside imm8 domain llvm-mc rejects must Err (not `as u8` truncate).
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ mnem, ∀ imm ∉ [-128,255] that llvm-mc rejects. encode_bt([$imm,%dst]).is_err()
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
-- Status: failing
-- Counterexample: btl $256, %eax -> Ok([0f,ba,e0,00])
-- Bug report: bug_reports/encode_bt_imm_oor_truncates.md
-
-```property
-function: encode_bt
-oracle: negative_error
-predicate:
-  quantifier: forall
-  vars: [mnem, imm, dst]
-  domain: { mnem: bt_l_family, imm: oor_imm, dst: gp32 }
-  relation:
-    op: holds
-    expr: "sut_encode(mnem, [Imm(imm), Reg(dst)]).is_err()"
 generators:
-  imm: { gen: int, min: 256, max: 1000, type: i64 }
-expected_error: String
-evidence: Intel 0F BA ib; llvm-mc rejects $256; gp_integer.rs:1041 `*val as u8`
-```
-
-## encode_bt_invariant_imm_reg_layout
-- Tier: 3
-- Rationale: Strengthen round — Imm→Reg layout [0F, BA, ModRM(3,ext,dst), imm8] structural invariant.
-- Doc contract: (none)
-- Seed: (none)
-- Formal: ∀ mnem ∈ MNEMS_L, ∀ dst ∈ GP32, ∀ imm ∈ 0..255. bytes = [0F, BA, modrm(3,ext,dst), imm]
-- Test file: src/backend/i686/assembler/encoder/encode_bt_pbt.rs
-- Status: passing
-- Counterexample: (none)
-- Bug report: (none)
-
-```property
-function: encode_bt
-oracle: algebraic.invariant
-predicate:
-  quantifier: forall
-  vars: [mnem, dst, imm]
-  domain: { mnem: bt_l_family, dst: gp32, imm: u8 }
-  relation:
-    op: eq
-    lhs: "sut_encode(imm→reg)"
-    rhs: "[0x0F, 0xBA, modrm(3,ext,dst), imm]"
-generators:
-  imm: { gen: int, min: 0, max: 255, type: u8 }
-evidence: gp_integer.rs:1038-1044; Intel SDM
+  m: { gen: oneof, values: ["sete","setne","seto","setb"] }
+  r: { gen: oneof, values: ["ax","eax","xmm0","mm0","st"] }
+evidence: Intel SDM SETcc r/m8; llvm-mc rejects sete %eax; registers.rs:4 reg_num aliases
 ```

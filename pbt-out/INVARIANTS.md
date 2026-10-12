@@ -1,5 +1,15 @@
 # Confirmed invariants / environment quirks
 
+## encode_setcc (i686 gp_integer encoder)
+
+- Opcode: 0F 90+cc /0; Intel SETcc is r/m8 only (al/cl/dl/bl/ah/ch/dh/bh + memory).
+- Dispatch mnemonics (mod.rs:279-281): sete/setz/setne/setnz/setl/setle/setg/setge/setb/setc/setbe/seta/setae/setnc/setnp/setp/sets/setns/seto/setno.
+- Non-segment r8 and base/disp/SIB/abs memory forms match llvm-mc `-triple=i686`.
+- Metamorphic: sete≡setz, setne≡setnz, setb≡setc, setae≡setnc (same cc encoding).
+- Known defects: (1) memory arm does not call `emit_segment_prefix` before opcode (same class as encode_smsw/invlpg/prefetch). Witness: `sete %es:(%eax)` → SUT omits 0x26; `sete %fs:8(%esi,%edi,4)` omits 0x64. (2) register arm accepts r16/r32/non-GP via `reg_num` aliasing (`sete %ax`/`%eax`/`%xmm0` → same bytes as `%al`).
+- Fix shapes: `self.emit_segment_prefix(mem);` before `extend_from_slice(&[0x0F, 0x90 + cc])`; gate register form with `reg_size(&reg.name) == 1` and reject xmm/mm/st/ymm prefixes.
+- PBT: `src/backend/i686/assembler/encoder/encode_setcc_pbt.rs`; proptest cases=1000; llvm-mc `/home/toan/tools/llvm15-official/bin/llvm-mc -triple=i686 -show-encoding`.
+
 ## encode_in / encode_out (i686 system encoder)
 
 - Intel IN/OUT fix data register to AL/AX/EAX and port to DX (or imm8).

@@ -2,6 +2,7 @@
 
 | Function | Source file | Test file | Test target | Notes |
 |----------|-------------|-----------|-------------|-------|
+| encode_setcc | gp_integer.rs | encode_setcc_pbt.rs | cargo test --lib encode_setcc | 6 passing / 2 failing properties (plus KAT + 4 regression witnesses; 2 bugs: missing segment prefix, accepts non-r8) |
 | encode_ubfx | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing, fp/mixed/extra/sp/lsb-width failing) |
 | encode_ubfm | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing, fp/mixed/extra/sp/immr-imms failing) |
 | encode_sbfx | bitfield.rs | bitfield.rs | cargo test --lib | 8 passing / 5 failing properties (plus 6 passing KAT + 5 failing regression witnesses; 5 bugs; sweep invalid-name/nonreg/alt-spellings passing, fp/mixed/extra/sp/lsb-width failing) |

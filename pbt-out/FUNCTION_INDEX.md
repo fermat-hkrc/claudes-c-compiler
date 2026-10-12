@@ -1,4 +1,4 @@
-> Total files: 17 | Total functions: 401 | PBT candidates: 288 | Excluded: 113
+> Total files: 17 | Total functions: 401 | PBT candidates: 289 | Excluded: 112
 
 | Function | Source File | Line | Kind | PBT Candidate | Reason |
 |----------|-------------|------|------|---------------|--------|
@@ -256,7 +256,7 @@
 | encode_bit_count | gp_integer.rs | 959 | method | yes | prior campaign |
 | encode_bsr_bsf | gp_integer.rs | 984 | method | yes | HARD-scope target this campaign |
 | encode_bt | gp_integer.rs | 1012 | method | yes | - |
-| encode_setcc | gp_integer.rs | 1075 | method | no | out of campaign scope |
+| encode_setcc | gp_integer.rs | 1075 | method | yes | SETcc r/m8 encoder; differential vs llvm-mc |
 | encode_cmovcc | gp_integer.rs | 949 | method | no | out of campaign scope |
 | encode_jmp | gp_integer.rs | 988 | method | no | out of campaign scope |
 | encode_jcc | gp_integer.rs | 1028 | method | no | out of campaign scope |

@@ -1,121 +1,100 @@
-# PBT Campaign Report: encode_bt (i686)
+# PBT Campaign Report: encode_setcc (i686)
 
 ## Summary
 
-**Verdict:** 3 unique high/medium defects in `encode_bt` (4 failing properties / bug reports): (1) high — memory forms omit segment-override prefixes so `%es:`/`%fs:` BT encodes as DS-default (diff + metamorphic witnesses); (2) high — out-of-range imm8 bit offsets truncate via `as u8` (`$256` -> `$0`); (3) medium — r16/r8 names are accepted via `reg_num` aliasing for *l forms.
+**Verdict:** 2 high bugs in `encode_setcc`: (1) memory forms omit segment-override prefixes so `sete %es:(%eax)` drops 0x26; (2) non-r8 registers (`%ax`/`%eax`/`%xmm0`) are accepted via `reg_num` aliasing and encoded as the corresponding r8.
 **Date:** 2026-10-12
 **Repository:** /home/toan/github/claudes-c-compiler
-**Modules tested:** encode_bt (src/backend/i686/assembler/encoder/gp_integer.rs)
-**Tests:** 12 properties (+ 7 KAT + 4 regression witnesses)
-**Result:** 9 passing properties, 4 failing properties, 4 bug reports (3 unique root causes)
-**Change surface:** 1 function (`encode_bt`), 1 with properties, 0 error-handling-only changes
-**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` returned no line-level data (build tree not re-instrumented); file-level matcher falsely reported NOT LINKED for Rust-mangled `encode_bt`; KAT + 1000-case proptest runs prove execution. Sweep round 1 complete: all documented behaviors have properties.
-**Effort tier:** standard
+**Modules tested:** encode_setcc (src/backend/i686/assembler/encoder/gp_integer.rs)
+**Tests:** 8 properties (+ KAT gates + 4 deterministic regressions); proptest cases=1000
+**Result:** 6 passing, 2 failing properties; 2 bugs
+**Change surface:** 1 changed function (encode_setcc), 1 with properties, 0 error-handling-only changes
+**Coverage evidence:** file-level (symbol presence) — `coverage_gaps` reported no .gcda/.profraw (pre-campaign build tree); binary symbol scan said NOT LINKED for the mangled `pub(super)` method, but all properties exercise the production path via `InstructionEncoder::encode` → dispatch → `encode_setcc` (confirmed by differential byte disagreements). Recorded as file-level.
+**Effort tier:** standard (≈30 min, ≥1000 cases, ≥1 metamorphic/differential, 1 contract-surface sweep)
 
 ## Modules Tested
 
 | Module | Tests | Bugs | Oracles Used |
 |--------|-------|------|-------------|
-| encode_bt | 13 props + 7 KAT + 4 regressions | 4 (3 unique RC) | differential, algebraic.metamorphic, algebraic.invariant, negative_error |
+| encode_setcc | 8 properties (+KAT/regressions) | 2 | differential, algebraic.invariant, algebraic.metamorphic, negative_error |
 
 ## Bugs Found
 
-### B1: encode_bt omits segment override prefix on memory forms
+### B1: encode_setcc omits segment-override prefix on memory operands
 
-**Formal:** ∀ mnem ∈ BT_L, ∀ form ∈ {reg_mem,imm_mem}, ∀ seg ∈ {es,cs,ss,ds,fs,gs}, ∀ bare_mem. encode_bt(..., seg:mem) = llvm-mc(... %seg:mem)
-**Contract evidence:** inferred (core.rs:31-42 `emit_segment_prefix` documents all six overrides; x86-64 sibling `x87_misc.rs` encode_bt calls `emit_segment_prefix` on both mem arms; llvm-mc emits the prefix)
+**Formal:** ∀ m ∈ DISPATCHED_SETCC, seg ∈ {es,cs,ss,ds,fs,gs}, base ∈ GP32, d ∈ edge_disp. llvm_mc(m " %"seg":" mem) = encode_setcc(m, [Mem(seg,base,d)])
+**Contract evidence:** inferred (Intel SETcc memory form + llvm-mc `-triple=i686` + sibling `emit_segment_prefix` at core.rs:31; same class as encode_smsw/invlpg/prefetch)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `btl %eax, %es:(%ebx)` then compare bytes — SUT `[0f,a3,03]`, expected `[26,0f,a3,03]`
-**Expected / Actual:** `[26, 0f, a3, 03]` / `[0f, a3, 03]`
-**Impact:** Segmented BT/BTS/BTR/BTC memory forms assemble without the override, so the instruction addresses the wrong segment (DS default) — silent wrong machine code.
-**Root cause:** `gp_integer.rs:1033-1037` and `1045-1050` encode memory without calling `self.emit_segment_prefix(mem)` before the opcode.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1033`
+**Counterexample:** `sete %es:(%eax)` then compare bytes — SUT `[0f,94,00]` vs llvm-mc `[26,0f,94,00]`
+**Expected / Actual:** `[0x26,0x0f,0x94,0x00]` / `[0x0f,0x94,0x00]`
+**Impact:** Segmented memory SETcc forms assemble without the override, so the CPU uses the wrong segment at run time.
+**Root cause:** `gp_integer.rs:1089-1091` memory arm never calls `emit_segment_prefix(mem)` before `0F 90+cc`.
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1089`
 ```rust
-            (Operand::Register(src), Operand::Memory(mem)) => {
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&[0x0F, opcode_rr]);
-                self.encode_modrm_mem(src_num, mem)
+            Operand::Memory(mem) => {
+                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
+                self.encode_modrm_mem(0, mem)
             }
 ```
-**Suggested fix:** Call `emit_segment_prefix` before the opcode on both memory arms.
+**Suggested fix:** Call `emit_segment_prefix` first.
 ```rust
+            Operand::Memory(mem) => {
                 self.emit_segment_prefix(mem);
-                self.bytes.extend_from_slice(&[0x0F, opcode_rr]);
-                self.encode_modrm_mem(src_num, mem)
-```
-**Bug report:** bug_reports/encode_bt_missing_segment_prefix.md
-**Repro seed:** proptest cc f1147210be13e46d1e589d708267310c23cf835f4b10df820ac7664cc43e675a
-**Raw output:**
-```text
-segment diff `btl %eax, %es:(%eax)`: sut=[0f, a3, 00] mc=[26, 0f, a3, 00]; expected prefix 0x26
-```
-
-### B2: encode_bt accepts r16/r8 GP names via reg_num aliasing
-
-**Formal:** ∀ mnem ∈ {btl,btsl,btrl,btcl}, ∀ (src,dst) where a name is r16/r8 and llvm-mc rejects. encode_bt([%src,%dst], mnem) = Err(_)
-**Contract evidence:** inferred (Intel SDM BT *l is r32,r/m32; llvm-mc rejects `btl %ax, %ebx`; registers.rs `reg_num` aliases widths)
-**Documentation conflict:** (none)
-**Severity:** medium
-**Counterexample:** `btl %ax, %ebx` → SUT `Ok([0f,a3,c3])` (same as `%eax,%ebx`)
-**Expected / Actual:** `Err(...)` / `Ok([0f, a3, c3])`
-**Impact:** Wrong-width register names silently assemble as r32 encodings with no diagnostic.
-**Root cause:** `gp_integer.rs:1026-1031` calls `reg_num` with no `reg_size` gate.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1026`
-```rust
-            (Operand::Register(src), Operand::Register(dst)) => {
-                let src_num = reg_num(&src.name).ok_or("bad register")?;
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&[0x0F, opcode_rr]);
-                self.bytes.push(self.modrm(3, src_num, dst_num));
-                Ok(())
+                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
+                self.encode_modrm_mem(0, mem)
             }
 ```
-**Suggested fix:** Require `reg_size(&name) == 4` on both GP operands before `reg_num`.
-```rust
-                if reg_size(&src.name) != 4 || reg_size(&dst.name) != 4 {
-                    return Err(format!("{mnemonic} requires 32-bit registers"));
-                }
-```
-**Bug report:** bug_reports/encode_bt_wrong_width_alias.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_setcc_missing_segment_prefix.md
+**Repro seed:** proptest cc 745de6caff4af69b316bc2ee32328a0fa6a18adf428d0708cbce340852d76bf8 (segment base form)
 **Raw output:**
 ```text
-SUT accepted btl %ax, %ebx → Ok([15, 163, 195]); r16 not valid for btl
+segment prefix diff for `sete %es:(%eax)`: SUT=[0f, 94, 00] llvm-mc=[26, 0f, 94, 00]
+minimal failing input: m = "sete", seg = "es", base = "eax", disp = 0
 ```
 
-### B3: encode_bt truncates out-of-range bit-offset immediates
+### B2: encode_setcc accepts non-r8 register operands via reg_num aliasing
 
-**Formal:** ∀ mnem ∈ BT_L, ∀ imm ∉ imm8_domain that llvm-mc rejects, ∀ dst ∈ GP32. encode_bt([$imm,%dst], mnem) = Err(_)
-**Contract evidence:** inferred (Intel 0F BA /ext ib; llvm-mc rejects `$256`; SUT uses `*val as u8`)
+**Formal:** ∀ m ∈ DISPATCHED_SETCC, r ∈ R16∪R32∪NON_GP_ALIASED. llvm_mc rejects m "%" r ∧ encode_setcc(m,[Reg(r)]) = Err
+**Contract evidence:** inferred (Intel SDM SETcc r/m8-only; llvm-mc rejects `sete %ax` / `sete %eax`; `reg_num` at registers.rs:4 aliases widths)
 **Documentation conflict:** (none)
 **Severity:** high
-**Counterexample:** `btl $256, %eax` → SUT `Ok([0f,ba,e0,00])` (encodes as `$0`)
-**Expected / Actual:** `Err(...)` / `Ok([0f, ba, e0, 00])`
-**Impact:** An out-of-range bit index is silently truncated, so the wrong bit is tested/set/reset/complemented.
-**Root cause:** `gp_integer.rs:1041` (and Imm→Mem/Label arms) push `*val as u8` with no range check.
-**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1038`
+**Counterexample:** `sete %ax` → Ok([0f,94,c0]) (identical to `sete %al`); also `%eax`, `%xmm0`
+**Expected / Actual:** Err(invalid operand) / Ok([0x0f,0x94,0xc0])
+**Impact:** Accidental r16/r32/non-GP names silently assemble as the aliased r8, hiding bugs in callers.
+**Root cause:** `gp_integer.rs:1083` uses bare `reg_num` with no `reg_size == 1` (and no non-GP reject).
+**Offending code:** `/home/toan/github/claudes-c-compiler/src/backend/i686/assembler/encoder/gp_integer.rs:1083`
 ```rust
-            (Operand::Immediate(ImmediateValue::Integer(val)), Operand::Register(dst)) => {
-                let dst_num = reg_num(&dst.name).ok_or("bad register")?;
-                self.bytes.extend_from_slice(&[0x0F, 0xBA]);
-                self.bytes.push(self.modrm(3, ext, dst_num));
-                self.bytes.push(*val as u8);
+            Operand::Register(reg) => {
+                let num = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
+                self.bytes.push(self.modrm(3, 0, num));
                 Ok(())
             }
 ```
-**Suggested fix:** Reject values outside the imm8 domain before casting.
+**Suggested fix:** Gate on `reg_size(&reg.name) == 1` and reject xmm/mm/st/ymm prefixes before `reg_num`.
 ```rust
-                if !(-128..=255).contains(val) {
-                    return Err(format!("{mnemonic} immediate out of imm8 range: {val}"));
+            Operand::Register(reg) => {
+                if reg_size(&reg.name) != 1
+                    || reg.name.starts_with("xmm")
+                    || reg.name.starts_with("mm")
+                    || reg.name.starts_with("st")
+                    || reg.name.starts_with("ymm")
+                {
+                    return Err(format!("setcc requires r8 register, got {}", reg.name));
                 }
-                self.bytes.push(*val as u8);
+                let num = reg_num(&reg.name).ok_or("bad register")?;
+                self.bytes.extend_from_slice(&[0x0F, 0x90 + cc]);
+                self.bytes.push(self.modrm(3, 0, num));
+                Ok(())
+            }
 ```
-**Bug report:** bug_reports/encode_bt_imm_oor_truncates.md
-**Repro seed:** (deterministic regression)
+**Bug report:** bug_reports/encode_setcc_accepts_non_r8_register.md
+**Repro seed:** (deterministic; minimal `r="ax"`, `m="sete"`)
 **Raw output:**
 ```text
-SUT accepted btl $256, %eax → Ok([15, 186, 224, 0]); imm must fit imm8
+SUT accepted invalid-width `sete %ax` → [0f, 94, c0]; SETcc is r/m8 only (Intel SDM; llvm-mc rejects).
+minimal failing input: r = "ax", m = "sete"
 ```
 
 ## Design Caveats
@@ -126,34 +105,29 @@ SUT accepted btl $256, %eax → Ok([15, 186, 224, 0]); imm must fit imm8
 
 | File | Tests |
 |------|-------|
-| src/backend/i686/assembler/encoder/encode_bt_pbt.rs | 12 properties + 7 KAT + 4 regressions |
-| src/backend/i686/assembler/encoder/mod.rs | +1 `#[cfg(test)] mod encode_bt_pbt;` |
+| src/backend/i686/assembler/encoder/encode_setcc_pbt.rs | 8 properties + 7 KAT + 4 regressions |
+| src/backend/i686/assembler/encoder/mod.rs | +1 `mod encode_setcc_pbt` registration |
 
 ## Reproduction
 
-Whole suite:
+Whole suite (serial):
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bt -- --test-threads=1
+cargo test --lib encode_setcc -- --test-threads=1
 ```
 
-B1 segment:
+B1 only:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bt_regression_segment_es_reg_mem -- --test-threads=1
-cargo test --lib encode_bt_diff_segment -- --test-threads=1
+cargo test --lib test_encode_setcc_regression_missing_es_prefix -- --test-threads=1 --exact
+cargo test --lib encode_setcc_diff_segment_llvm_mc -- --test-threads=1 --exact
 ```
 
-B2 wrong width:
+B2 only:
 ```bash
 cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bt_regression_wrong_width_ax_ebx -- --test-threads=1
-```
-
-B3 imm OOR:
-```bash
-cd /home/toan/github/claudes-c-compiler
-cargo test --lib encode_bt_regression_imm_oor_256 -- --test-threads=1
+cargo test --lib test_encode_setcc_regression_rejects_ax -- --test-threads=1 --exact
+cargo test --lib encode_setcc_neg_wrong_width -- --test-threads=1 --exact
 ```
 
 ## Output Directories
@@ -161,24 +135,26 @@ cargo test --lib encode_bt_regression_imm_oor_256 -- --test-threads=1
 - `pbt-out/REPORT.md` — this report
 - `pbt-out/REPORT.html` — customer-facing overview (from report.json)
 - `pbt-out/PROPERTIES.md` — property ledger
-- `pbt-out/PLAN.md` — campaign phases
-- `pbt-out/COVERAGE.md` — coverage ledger row for encode_bt
-- `pbt-out/COVERAGE_STATUS.md` — coverage evidence summary
-- `pbt-out/INVARIANTS.md` — encode_bt section appended
+- `pbt-out/PLAN.md` — campaign checklist
+- `pbt-out/COVERAGE.md` — coverage ledger row
+- `pbt-out/COVERAGE_STATUS.md` — coverage status
 - `pbt-out/report.json` — machine-readable report
-- `pbt-out/bug_reports/encode_bt_missing_segment_prefix.md` (+ .html)
-- `pbt-out/bug_reports/encode_bt_wrong_width_alias.md` (+ .html)
-- `pbt-out/bug_reports/encode_bt_imm_oor_truncates.md` (+ .html)
-- `pbt-out/bug_reports/encode_bt_meta_segment_prefix.md` (+ .html)
-- `pbt-out/run/encode_bt_test2.log` — full test log
-- `src/backend/i686/assembler/encoder/encode_bt_pbt.rs` — harness
+- `pbt-out/bug_reports/encode_setcc_missing_segment_prefix.md` (+ `.html`)
+- `pbt-out/bug_reports/encode_setcc_accepts_non_r8_register.md` (+ `.html`)
+- `pbt-out/run/encode_setcc_test2.log` — full test log
+- `pbt-out/INVARIANTS.md` — updated with encode_setcc notes
+- `pbt-out/FUNCTION_INDEX.md` — encode_setcc marked PBT candidate yes
+
+## Contract-surface sweep
+
+One `coverage_gaps` round (standard tier). No line-level data; file-level note recorded. Documented behaviors already covered by the 8 properties (r8 differential, mem base/SIB/abs, segment, opcode invariant, alias metamorphic, arity/bad-op negatives, wrong-width negatives). Close reason: tier sweep round complete + documented surface has properties.
 
 ## Coverage Report
 
 # PBT Coverage Status
 
-> Last updated: 2026-10-12 10:27 (campaign: coverage)
-> Files: 16/17 scanned (94%) | Functions: 287/401 total | PBT candidates: 287 | Tested: 287 (100%) | 1 pass, 287 fail
+> Last updated: 2026-10-12 10:41 (campaign: coverage)
+> Files: 16/17 scanned (94%) | Functions: 288/401 total | PBT candidates: 288 | Tested: 288 (100%) | 1 pass, 288 fail
 
 ## Summary
 
@@ -187,10 +163,10 @@ cargo test --lib encode_bt_regression_imm_oor_256 -- --test-threads=1
 | Total source files | 17 |
 | Files scanned | 16 / 17 (94%) |
 | Total functions (all files) | 401 |
-| PBT candidates (from FUNCTION_INDEX) | 287 |
-| **Tested (of PBT candidates)** | **287 / 287 (100%)** |
-| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 287 / -1 |
-| **Overall (tested / all functions)** | **287 / 401 (72%)** |
+| PBT candidates (from FUNCTION_INDEX) | 288 |
+| **Tested (of PBT candidates)** | **288 / 288 (100%)** |
+| &nbsp;&nbsp;↳ Pass / Fail / Other | 1 / 288 / -1 |
+| **Overall (tested / all functions)** | **288 / 401 (72%)** |
 | Untested | 0 |
 | Skipped | 0 |
 
@@ -198,13 +174,13 @@ cargo test --lib encode_bt_regression_imm_oor_256 -- --test-threads=1
 
 | Module | Scanned | Tested | Skipped | Coverage |
 |--------|---------|--------|---------|----------|
-|  | 287 | 287 | 0 | 100% |
+|  | 288 | 288 | 0 | 100% |
 
 ## Oracle Type Distribution
 
 | Oracle Type | Total | Covered | Skipped | Coverage |
 |-------------|-------|---------|---------|----------|
-| unknown | 287 | 287 | 0 | 100% |
+| unknown | 288 | 288 | 0 | 100% |
 
 ## File Coverage
 
@@ -215,7 +191,7 @@ cargo test --lib encode_bt_regression_imm_oor_256 -- --test-threads=1
 | constants.rs | 34 | 1 | 1 | 100% | covered |
 | data_processing.rs | 36 | 31 | 31 | 100% | covered |
 | fp_scalar.rs | 13 | 11 | 12 | 109% | covered |
-| gp_integer.rs | 33 | 21 | 21 | 100% | covered |
+| gp_integer.rs | 33 | 22 | 22 | 100% | covered |
 | load_store.rs | 20 | 19 | 19 | 100% | covered |
 | neon.rs | 68 | 63 | 63 | 100% | covered |
 | pseudo.rs | 44 | 19 | 19 | 100% | covered |
@@ -227,6 +203,7 @@ cargo test --lib encode_bt_regression_imm_oor_256 -- --test-threads=1
 
 | Function | Source |
 |----------|--------|
+| encode_setcc | gp_integer.rs |
 | encode_ubfx | bitfield.rs |
 | encode_ubfm | bitfield.rs |
 | encode_sbfx | bitfield.rs |

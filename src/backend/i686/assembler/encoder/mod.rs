@@ -79,6 +79,8 @@ mod encode_bswap_pbt;
 mod encode_bit_count_pbt;
 #[cfg(test)]
 mod encode_bt_pbt;
+#[cfg(test)]
+mod encode_setcc_pbt;
 
 pub(crate) use registers::*;
 

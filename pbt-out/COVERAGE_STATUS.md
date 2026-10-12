@@ -1,7 +1,7 @@
 # PBT Coverage Status
 
-> Last updated: 2026-10-12 10:22 (campaign: English campaign)
-> Files: 16/17 scanned (94%) | Functions: 287/401 total | PBT candidates: 287 | Tested: 287 (100%) | 1 pass, 287 fail
+> Last updated: 2026-10-12 10:37 (campaign: encode_setcc)
+> Files: 16/17 scanned (94%) | Functions: 289/401 total | PBT candidates: 289 | Tested: 288 | encode_setcc: 6 pass / 2 fail properties; Coverage evidence: file-level (symbol presence; no .gcda/.profraw)
 
 ## Summary
 
