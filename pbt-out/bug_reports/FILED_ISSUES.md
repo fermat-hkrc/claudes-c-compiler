@@ -921,3 +921,30 @@
 | 64 | | NEON intrinsic vrsra_n_s32 missing (b6) | **new** | [#2027](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2027) |
 | 64 | | NEON intrinsic vpaddl_u8 missing (b6) | **new** | [#2028](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2028) |
 | 64 | | NEON intrinsic vpadal_s16 missing (b6) | **new** | [#2029](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2029) |
+| 64 | | __builtin_tanl missing (l-backfill) | **new** | [#2030](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2030) |
+| 64 | | __builtin_asinl missing (l-backfill) | **new** | [#2031](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2031) |
+| 64 | | __builtin_acosl missing (l-backfill) | **new** | [#2032](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2032) |
+| 64 | | __builtin_atanl missing (l-backfill) | **new** | [#2033](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2033) |
+| 64 | | __builtin_sinhl missing (l-backfill) | **new** | [#2034](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2034) |
+| 64 | | __builtin_coshl missing (l-backfill) | **new** | [#2035](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2035) |
+| 64 | | __builtin_tanhl missing (l-backfill) | **new** | [#2036](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2036) |
+| 64 | | __builtin_expm1l missing (l-backfill) | **new** | [#2037](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2037) |
+| 64 | | __builtin_log1pl missing (l-backfill) | **new** | [#2038](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2038) |
+| 64 | | __builtin_log10l missing (l-backfill) | **new** | [#2039](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2039) |
+| 64 | | __builtin_cbrtl missing (l-backfill) | **new** | [#2040](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2040) |
+| 64 | | __builtin_tgammal missing (l-backfill) | **new** | [#2041](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2041) |
+| 64 | | __builtin_erfl missing (l-backfill) | **new** | [#2042](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2042) |
+| 64 | | __builtin_erfcl missing (l-backfill) | **new** | [#2043](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2043) |
+| 64 | | __builtin_fmal missing (l-backfill) | **new** | [#2044](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2044) |
+| 64 | | intrinsic _mm512_maskz_loadu_epi8 missing (backfill) | **new** | [#2045](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2045) |
+| 64 | | intrinsic _mm512_cvtepi16_epi32 missing (backfill) | **new** | [#2046](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2046) |
+| 64 | | intrinsic _mm512_shuffle_i32x4 missing (backfill) | **new** | [#2047](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2047) |
+| 64 | | intrinsic _mm256_cvtph_ps missing (backfill) | **new** | [#2048](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2048) |
+| 64 | | intrinsic _mm256_cvtps_ph missing (backfill) | **new** | [#2049](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2049) |
+| 64 | | NEON intrinsic vdotq_s32 missing (backfill) | **new** | [#2050](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2050) |
+| 64 | | NEON intrinsic vdotq_u32 missing (backfill) | **new** | [#2051](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2051) |
+| 64 | | NEON intrinsic vmmlaq_s32 missing (backfill) | **new** | [#2052](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2052) |
+| 64 | | NEON intrinsic vusdotq_s32 missing (backfill) | **new** | [#2053](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2053) |
+| 64 | | NEON intrinsic vsm4eq_u32 missing (backfill) | **new** | [#2054](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2054) |
+| 64 | | NEON intrinsic vsm4ekeyq_u32 missing (backfill) | **new** | [#2055](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2055) |
+| 64 | | NEON intrinsic vbfdotq_f32 missing (backfill) | **new** | [#2056](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2056) |
