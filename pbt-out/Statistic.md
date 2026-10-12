@@ -55,11 +55,19 @@
 
 ## 四、判定類別（Verdict-class）分佈
 
-| 判定 | 數量 | 占比 | 說明 |
+按缺陷對 oracle 的表現形態重劃（類目體系參照採樣分支之 verdict 分類法，計算全量獨立完成；優先級：panic＞reverse＞differential＞silent-accept＞warn-accepts＞C-level＞missing/reject）：
+
+| Verdict class（表現形態） | 數量 | 占比 | 說明 |
 |---|---:|---:|---|
-| 已證實（oracle 雙證或運行時復現，每張附收縮反例與 `## Found by` 復現塊） | 2008 | 100% | 母體＝open 剔除假陽性 |
-| 　└ 其中：作者文檔佐證（README/TODO 已載明，嚴重度降一級標註 "documented by the author"） | 5 | 0.2% | #1535、#1691、#1534/#1161、NEON 語料、_Atomic 註記 |
-| 假陽性（自行復核判定，未計入上列） | 3 | 0.15%（3/2011） | #30/#119/#247——三 oracle（gas／clang／ccc）齊拒該「GNU 立即數別名」語法，即 ccc 行為與兩家參考一致，原主張不成立 |
+| missing/reject（合法輸入被拒收／功能未實現：指令表、內建、intrinsic、C23） | 918 | 45.7% | ccc 拒收而 oracle 接受——零訊息的功能缺失 |
+| silent-accept（非法輸入被靜默接受並編碼） | 898 | 44.7% | 參考工具鏈拒絕，ccc 零診斷編出機器碼 |
+| differential（編碼與參考工具鏈不同：錯字節／錯碼／錯符號／回繞） | 117 | 5.8% | 雙方皆接受但字節級不同 |
+| panic-on-invalid（非法輸入觸發編譯器 panic/ICE/溢出） | 32 | 1.6% | 崩潰路徑可達命令行 |
+| C-level／linker／runtime（C 語言層、鏈接層、運行時行為） | 31 | 1.5% | TLS/ELF/執行時/內聯彙編/外觀層 |
+| warn-accepts（參考僅告警或要求診斷，ccc 零輸出；含旗標靜默無效） | 10 | 0.5% | 告警缺失類 |
+| reverse（操作數/順序反轉：顯式 reversed/swapped） | 2 | 0.1% | #1628 fsub 反碼、#1050 sgnj 反轉 |
+| **有效合計** | **2008** | **100%** | |
+| 假陽性（自行復核判定，未計入） | 3 | 0.15%（3/2011） | #30/#119/#247 |
 
 ## 五、假陽性驗證明細（自行測試，非引用）
 
