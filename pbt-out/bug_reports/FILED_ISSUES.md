@@ -948,3 +948,5 @@
 | 64 | | NEON intrinsic vsm4eq_u32 missing (backfill) | **new** | [#2054](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2054) |
 | 64 | | NEON intrinsic vsm4ekeyq_u32 missing (backfill) | **new** | [#2055](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2055) |
 | 64 | | NEON intrinsic vbfdotq_f32 missing (backfill) | **new** | [#2056](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2056) |
+| 64 | | _Complex div naive formula (Smith missing, NaN on 1e300) | **new** | [#2057](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2057) |
+| 64 | | sizeof(enum E) in own def accepted (incomplete type) | **new** | [#2058](https://github.com/fermat-hkrc/claudes-c-compiler/issues/2058) |

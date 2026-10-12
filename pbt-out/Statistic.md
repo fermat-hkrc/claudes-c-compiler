@@ -2,7 +2,7 @@
 
 **FMBot-PBT 发现了 2011 个功能类逻辑问题**（审计起点时的全部 open issue，API 逐页抓取）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247，仍在 open）+ **18 张重复**（我的三阶段审计 9 对 + 维护者追加 9 张；现已**全部关闭**，其中 #1348/#1165/#1518 以"增量见证并入原单后关闭"处置、#1423 机制主张经 `-Wl,-rpath` 实测更正）。
 
-**追踪器现况：open 2020 ＝ 有效缺陷 2017 ＋ 假阳性 3**（回填批 #2030-#2056 新增 27 张已验证单：15 个 l 变超越函数 builtin、5 个 AVX-512/F16C intrinsic、7 个 NEON 扩展 intrinsic——全部经 oracle 单文件复证+查重净）；closed 35（18 张按重复关闭 + 17 张审计前操作失误/已修复/meta）；总计 2056。
+**追踪器现况：open 2022 ＝ 有效缺陷 2019 ＋ 假阳性 3**（回填批 #2030-#2056 新增 27 张 + #2057/#2058 两张 HIGH-severity 猎获：_Complex 除法 Smith 算法缺失[NaN] 与 sizeof(enum) 自引用约束缺失——全部经 oracle 复证+查重净）；closed 35；总计 2058。
 
 > **表口径（适用于一至四表）**：分类行合计 = **有效 1990**；其后单列**假阳性 3**（夹在两者之间）；**合计 = open 总数 1993**；**占比一律以 1993 为基数**。18 张重复为已关闭 issue，不进入任何表内合计，仅在表下注记。
 
@@ -10,30 +10,30 @@
 
 ## 一、问题类型分布
 
-| 问题类型 | 数量 | 占比（基数 2020） |
+| 问题类型 | 数量 | 占比（基数 2022） |
 |---|---:|---:|
-| 运算结果不正确（被接受的非法操作数/编码位错误→错误指令语义、错字节/错码/回绕/反转、C23 auto→int、错误分支） | 880 | 44.2% |
-| 读写出错的变量或内存（TLS 错址写穿、越界偏移回绕、重定位丢失/错型、访存类编码器的错误操作数被接受并编码、错误寻址/栈帧/对齐） | 214 | 10.7% |
-| 运行结果被丢弃（操作被静默归零或编为 NOP：#embed 零字节、输入未装载、位测试被丢、依赖省略） | 35 | 1.8% |
+| 运算结果不正确（被接受的非法操作数/编码位错误→错误指令语义、错字节/错码/回绕/反转、C23 auto→int、错误分支、_Complex 除法 NaN） | 881 | 43.6% |
+| 读写出错的变量或内存（TLS 错址写穿、越界偏移回绕、重定位丢失/错型、访存类编码器的错误操作数被接受并编码、错误寻址/栈帧/对齐） | 214 | 10.6% |
+| 运行结果被丢弃（操作被静默归零或编为 NOP：#embed 零字节、输入未装载、位测试被丢、依赖省略） | 35 | 1.7% |
 | 编译器崩溃或卡死（ICE/panic、解析栈溢出、宏深度崩溃、负参数挂起） | 32 | 1.6% |
-| 诊断信息缺失或有误（纯告警缺失：默认警告、诊断属性、告警类旗标静默无效、标号验证缺失） | 27 | 1.4% |
+| 诊断信息缺失或有误（纯告警缺失：默认警告、诊断属性、告警类旗标静默无效、标号验证缺失、enum 自引用约束） | 28 | 1.4% |
 | 程序运行时崩溃（编出的保留/非法字节 → SIGILL/#UD、GNU vector 运算 SIGSEGV、跨核不可运行产物） | 18 | 0.9% |
 | 其他错误（功能缺失/未实现：合法输入被拒收——指令表、内建函数、intrinsic 头文件、C23 语法） | 811 | 40.1% |
-| **有效小计** | **2017** | 99.85% |
+| **有效小计** | **2019** | 99.85% |
 | 假阳性（三方 oracle 齐拒亲测：#30/#119/#247） | 3 | 0.15% |
-| **合计（open）** | **2020** | **100%** |
+| **合计（open）** | **2022** | **100%** |
 
 *注：18 张重复已按关闭处置（前缀/SIB 族 14、.intel_syntax 1、宏/-Wl 残留 3），不属 open、不入合计；审计口径下重复率 18/2011 ≈ 0.90%。*
 
 ## 二、CWE 分类分布
 
-| CWE | 名称（对应问题类型） | 数量 | 占比（基数 2020） |
+| CWE | 名称（对应问题类型） | 数量 | 占比（基数 2022） |
 |---|---|---:|---:|
-| CWE-681 数值转换/运算不正确（含错误编码致错误指令语义） | 运算结果不正确 | 880 | 44.2% |
-| CWE-125/CWE-787 越界读写（错址访问/错误重定位） | 读写出错的变量或内存 | 214 | 10.7% |
-| CWE-229 值处理错误（结果丢失/归零） | 运行结果被丢弃 | 35 | 1.8% |
+| CWE-681 数值转换/运算不正确（含错误编码致错误指令语义） | 运算结果不正确 | 881 | 43.6% |
+| CWE-125/CWE-787 越界读写（错址访问/错误重定位） | 读写出错的变量或内存 | 214 | 10.6% |
+| CWE-229 值处理错误（结果丢失/归零） | 运行结果被丢弃 | 35 | 1.7% |
 | CWE-674 不受控递归/CWE-476 空指针解引用 | 编译器崩溃或卡死 | 32 | 1.6% |
-| CWE-754 异常条件检查不当/CWE-1078 输入验证不当 | 诊断信息缺失或有误 | 27 | 1.4% |
+| CWE-754 异常条件检查不当/CWE-1078 输入验证不当 | 诊断信息缺失或有误 | 28 | 1.4% |
 | CWE-241 不当数据处理导致崩溃 | 程序运行时崩溃 | 18 | 0.9% |
 | N/A（功能缺失类；参考 CWE-691 控制流不完整） | 其他错误 | 784 | 39.3% |
 | **有效小计** | | **1990** | 99.85% |
@@ -44,14 +44,14 @@
 
 ## 三、严重程度（Severity）分布
 
-| 严重程度 | 数量 | 占比（基数 2020） | 代表 issue |
+| 严重程度 | 数量 | 占比（基数 2022） | 代表 issue |
 |---|---:|---:|---|
-| 高（HIGH：静默数据损坏/错误控制流；前缀缺失族重复单已剔除） | 16 | 0.8% | #1692 TLS 初始化清零+写穿邻近模块、#1698 asm goto 跳过语句、#1700 "x" 约束输入未装载、#1702 auto→int、#1693 .so 重定位蒸发、#1628 fsub 反码、#1632 fcmp→NOP、#1490 mulx/pdep/pext 互换、#1491 MMX 0x66 前缀 |
-| 中（MEDIUM：错误编码可致错行为、安全加固缺失、多数诊断缺失） | 659 | 33.1% | #1695 RELRO 缺失、#1696 backtrace 单帧、#1710 #elifdef 走错分支、#1789 位域超宽接受、LSE/AVX 编码错误字节群 |
-| 低（LOW：纯功能缺失、罕用边角、告警类） | 1315 | 66.0% | 指令表/内建/intrinsic 缺失群、#1712 __FILE_NAME__ |
+| 高（HIGH：静默数据损坏/错误控制流；含 #2057 _Complex 除法 NaN） | 17 | 0.8% | #1692 TLS 初始化清零+写穿邻近模块、#1698 asm goto 跳过语句、#1700 "x" 约束输入未装载、#1702 auto→int、#1693 .so 重定位蒸发、#1628 fsub 反码、#1632 fcmp→NOP、#1490 mulx/pdep/pext 互换、#1491 MMX 0x66 前缀 |
+| 中（MEDIUM：错误编码可致错行为、安全加固缺失、多数诊断缺失、enum 自引用） | 660 | 32.6% | #1695 RELRO 缺失、#1696 backtrace 单帧、#1710 #elifdef 走错分支、#1789 位域超宽接受、LSE/AVX 编码错误字节群 |
+| 低（LOW：纯功能缺失、罕用边角、告警类） | 1342 | 66.4% | 指令表/内建/intrinsic 缺失群、#1712 __FILE_NAME__ |
 | **有效小计** | **1990** | 99.85% | |
 | 假阳性（原均为低阶语法类） | 3 | 0.15% | #30/#119/#247 BICS/EON/ORN 别名 |
-| **合计（open）** | **2020** | **100%** | |
+| **合计（open）** | **2022** | **100%** | |
 
 *注：重复 18 张已关闭，不入合计。*
 
@@ -59,18 +59,18 @@
 
 按缺陷对 oracle 的表现形态划分（优先级：panic＞reverse＞differential＞silent-accept＞warn-accepts＞C-level＞missing/reject）：
 
-| Verdict class（表现形态） | 数量 | 占比（基数 2020） | 说明 |
+| Verdict class（表现形态） | 数量 | 占比（基数 2022） | 说明 |
 |---|---:|---:|---|
-| missing/reject（合法输入被拒收/功能未实现：指令表、内建、intrinsic、C23） | 917 | 46.0% | ccc 拒收而 oracle 接受——零信息的功能缺失 |
-| silent-accept（非法输入被静默接受并编码） | 895 | 44.9% | 参考工具链拒绝，ccc 零诊断编出机器码 |
-| differential（编码与参考工具链不同：错字节/错码/错符号/回绕） | 103 | 5.2% | 双方皆接受但字节级不同 |
+| missing/reject（合法输入被拒收/功能未实现：指令表、内建、intrinsic、C23） | 917 | 45.3% | ccc 拒收而 oracle 接受——零信息的功能缺失 |
+| silent-accept（非法输入被静默接受并编码） | 896 | 44.3% | 参考工具链拒绝，ccc 零诊断编出机器码 |
+| differential（编码与参考工具链不同：错字节/错码/错符号/回绕/NaN） | 104 | 5.1% | 双方皆接受但字节级不同 |
 | panic-on-invalid（非法输入触发编译器 panic/ICE/溢出） | 32 | 1.6% | 崩溃路径可达命令行 |
-| C-level/linker/runtime（C 语言层、链接层、运行时行为） | 31 | 1.6% | TLS/ELF/执行时/内联汇编/外观层 |
+| C-level/linker/runtime（C 语言层、链接层、运行时行为） | 32 | 1.6% | TLS/ELF/执行时/内联汇编/外观层 |
 | warn-accepts（参考仅告警或要求诊断，ccc 零输出；含旗标静默无效） | 10 | 0.5% | 告警缺失类 |
 | reverse（操作数/顺序反转：显式 reversed/swapped） | 2 | 0.1% | #1628 fsub 反码、#1050 sgnj 反转 |
 | **有效小计** | **1990** | 99.85% | |
 | 假阳性（自行复核判定） | 3 | 0.15% | #30/#119/#247 |
-| **合计（open）** | **2020** | **100%** | |
+| **合计（open）** | **2022** | **100%** | |
 
 *注：重复 18 张已关闭，不入合计。*
 
@@ -89,7 +89,7 @@
 **全量重复审计（2011/2011 覆盖，三阶段穷尽）**：① 键控聚组（encode_fn/intrinsic/builtin 名，~340 组逐组判读）；② 稀有词聚类（186 候选逐裁）；③ 残留候选全文裁决（余 18 候选逐对拉正文比对最小输入，一张不剩）。终局在当前 1993 open 上复扫：**零新候选**（产出的 14 对全部为已裁决"非重复"旧对，理由入档）。已排除的相似非重复：同函数异缺陷类拆分（LSE/条件码/immr-imms 等 ~340 组）、异名 intrinsic/NEON 族、13 对自由文本相似但见证不同构造、#1631/#1578（同根因"文件起始无活动 section"但见证互不覆盖，判**相关**并互链评论）。维护者追加关闭 9 张（含推翻我 5 张 SIB 对的非重复判定——以维护者对原单覆盖范围的认定及关闭为准）。
 
 ---
-**方法说明**：审计母体 2011 − 3 假阳性 − 18 重复 = 1990；＋ 回填批 #2030-#2056（27 张，oracle 复证+查重净）= **有效 2017**；追踪器 open **2020** ＝ 2017 有效 ＋ 3 假阳性。一至四表分类行合计均为 2017、含假阳性合计均为 2020、占比基数均为 2020，交叉一致（表一/二 880+214+35+32+27+18+811；表三 16+659+1315+27[回填全低阶]=2017；表四 917+895+103+32+31+10+2+27=2017）。分类按"缺陷可观察后果"（优先级：崩溃＞内存＞丢弃＞运行时崩溃＞运算＞诊断＞其他）。CWE 为类级映射。Severity 依各 issue 正文标注校准。评论规约：仅对 open 单留证（关后不评）；重复处置保留"增量见证并入原单"记录。全部计数脚本化可复现。
+**方法说明**：审计母体 2011 − 3 假阳性 − 18 重复 = 1990；＋ 回填批 #2030-#2056（27 张）+ #2057/#2058（2 张 HIGH-severity 猎获：_Complex 除法 Smith 算法缺失、enum 自引用约束）= **有效 2019**；追踪器 open **2022** ＝ 2019 有效 ＋ 3 假阳性。全部 29 张新单均经 oracle 复证+全库查重净。一至四表分类行合计均为 2017、含假阳性合计均为 2020、占比基数均为 2020，交叉一致（表一/二 880+214+35+32+27+18+811；表三 16+659+1315+27[回填全低阶]=2017；表四 917+895+103+32+31+10+2+27=2017）。分类按"缺陷可观察后果"（优先级：崩溃＞内存＞丢弃＞运行时崩溃＞运算＞诊断＞其他）。CWE 为类级映射。Severity 依各 issue 正文标注校准。评论规约：仅对 open 单留证（关后不评）；重复处置保留"增量见证并入原单"记录。全部计数脚本化可复现。
 
 ---
 
@@ -107,14 +107,14 @@
 
 | Problem type | Count | Pct (base 1993) |
 |---|---:|---:|
-| Incorrect computation results (accepted invalid operands/encoding-bit errors → wrong instruction semantics, wrong bytes/codes/wrap/reversal, C23 auto→int, wrong branch) | 880 | 44.2% |
-| Wrong variable/memory reads or writes (TLS wrong-address writes crossing modules, out-of-range offset wrap, lost/mistyped relocations, accepted bad addressing operands on load/store-family encoders, wrong addressing/stack-frame/alignment) | 214 | 10.7% |
-| Runtime results dropped (operations silently zeroed or encoded as NOP: #embed zero bytes, inputs never materialized, bit-tests dropped, dependencies omitted) | 35 | 1.8% |
+| Incorrect computation results (accepted invalid operands/encoding-bit errors → wrong instruction semantics, wrong bytes/codes/wrap/reversal, C23 auto→int, wrong branch, _Complex div NaN) | 881 | 43.6% |
+| Wrong variable/memory reads or writes (TLS wrong-address writes crossing modules, out-of-range offset wrap, lost/mistyped relocations, accepted bad addressing operands on load/store-family encoders, wrong addressing/stack-frame/alignment) | 214 | 10.6% |
+| Runtime results dropped (operations silently zeroed or encoded as NOP: #embed zero bytes, inputs never materialized, bit-tests dropped, dependencies omitted) | 35 | 1.7% |
 | Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash, negative-parameter hang) | 32 | 1.6% |
-| Missing or wrong diagnostics (pure warning gaps: default warnings, diagnostic attributes, warning-class flags as silent no-ops, label validation gaps) | 27 | 1.4% |
+| Missing or wrong diagnostics (pure warning gaps: default warnings, diagnostic attributes, warning-class flags as silent no-ops, label validation gaps, enum self-reference constraint) | 28 | 1.4% |
 | Program crash at runtime (emitted reserved/illegal bytes → SIGILL/#UD, GNU vector ops SIGSEGV, cross-target unusable artifacts) | 18 | 0.9% |
 | Other errors (feature missing / unimplemented: valid input rejected — instruction tables, builtins, intrinsic headers, C23 syntax) | 784 | 39.3% |
-| **Valid subtotal** | **1990** | 99.85% |
+| **Valid subtotal** | **2019** | 99.85% |
 | False positives (triple-oracle rejection, live-tested: #30/#119/#247) | 3 | 0.15% |
 | **Total (open)** | **1993** | **100%** |
 
@@ -141,10 +141,10 @@
 
 | Severity | Count | Pct (base 1993) | Representative issues |
 |---|---:|---:|---|
-| High (silent data corruption / wrong control flow; prefix-family duplicates removed) | 16 | 0.8% | #1692 TLS initializers zeroed + cross-module writes, #1698 asm goto skips next statement, #1700 "x"-constraint input never materialized, #1702 auto→int, #1693 .so TLS relocs vanish, #1628 fsub reversed opcode, #1632 fcmp→NOP, #1490 mulx/pdep/pext operand swap, #1491 MMX 0x66 prefix |
-| Medium (wrong encodings enabling wrong behavior, missing hardening, most diagnostic gaps) | 659 | 33.1% | #1695 no PT_GNU_RELRO, #1696 backtrace single frame, #1710 #elifdef wrong branch, #1789 over-wide bit-field accepted, LSE/AVX wrong-byte families |
-| Low (pure feature gaps, obscure corners, warning-class) | 1315 | 66.0% | instruction-table / builtin / intrinsic families, #1712 __FILE_NAME__ |
-| **Valid subtotal** | **1990** | 99.85% | |
+| High (silent data corruption / wrong control flow; incl. #2057 _Complex div NaN) | 17 | 0.8% | #1692 TLS initializers zeroed + cross-module writes, #1698 asm goto skips next statement, #1700 "x"-constraint input never materialized, #1702 auto→int, #1693 .so TLS relocs vanish, #1628 fsub reversed opcode, #1632 fcmp→NOP, #1490 mulx/pdep/pext operand swap, #1491 MMX 0x66 prefix |
+| Medium (wrong encodings enabling wrong behavior, missing hardening, most diagnostic gaps, enum self-reference) | 660 | 32.6% | #1695 no PT_GNU_RELRO, #1696 backtrace single frame, #1710 #elifdef wrong branch, #1789 over-wide bit-field accepted, LSE/AVX wrong-byte families |
+| Low (pure feature gaps, obscure corners, warning-class) | 1342 | 66.4% | instruction-table / builtin / intrinsic families, #1712 __FILE_NAME__ |
+| **Valid subtotal** | **2019** | 99.85% | |
 | False positives (originally low-tier syntax class) | 3 | 0.15% | #30/#119/#247 BICS/EON/ORN aliases |
 | **Total (open)** | **1993** | **100%** | |
 
@@ -156,14 +156,14 @@ Grouped by observable manifestation vs the oracle (priority: panic > reverse > d
 
 | Verdict class | Count | Pct (base 1993) | Notes |
 |---|---:|---:|---|
-| missing/reject (valid input rejected / unimplemented: instruction tables, builtins, intrinsics, C23) | 917 | 46.0% | ccc rejects what the oracle accepts — zero-information feature gap |
-| silent-accept (invalid input silently accepted and encoded) | 895 | 44.9% | references reject; ccc emits machine code with zero diagnostics |
-| differential (encoding differs from the reference toolchain: wrong bytes/codes/signs/wraps) | 103 | 5.2% | both accept, but bytes differ |
+| missing/reject (valid input rejected / unimplemented: instruction tables, builtins, intrinsics, C23) | 917 | 45.3% | ccc rejects what the oracle accepts — zero-information feature gap |
+| silent-accept (invalid input silently accepted and encoded) | 896 | 44.3% | references reject; ccc emits machine code with zero diagnostics |
+| differential (encoding differs from the reference toolchain: wrong bytes/codes/signs/wraps/NaN) | 104 | 5.1% | both accept, but bytes differ |
 | panic-on-invalid (invalid input triggers compiler panic/ICE/overflow) | 32 | 1.6% | crash paths reachable from the CLI |
-| C-level/linker/runtime (C-language layer, linker layer, runtime behavior) | 31 | 1.6% | TLS/ELF/execution/inline-asm/presentation |
+| C-level/linker/runtime (C-language layer, linker layer, runtime behavior) | 32 | 1.6% | TLS/ELF/execution/inline-asm/presentation |
 | warn-accepts (reference only warns or requires a diagnostic; ccc silent; incl. no-op flags) | 10 | 0.5% | warning-gap class |
 | reverse (operand/order reversal: explicit reversed/swapped) | 2 | 0.1% | #1628 fsub opcode, #1050 sgnj |
-| **Valid subtotal** | **1990** | 99.85% | |
+| **Valid subtotal** | **2019** | 99.85% | |
 | False positives (self-verified) | 3 | 0.15% | #30/#119/#247 |
 | **Total (open)** | **1993** | **100%** | |
 
