@@ -18,12 +18,7 @@
 | 编译器崩溃或卡死（ICE/panic、解析栈溢出、宏深度崩溃、负参数挂起） | 32 | 1.6% |
 | 诊断信息缺失或有误（纯告警缺失、约束违反被接受、enum 自引用、旗标静默无效） | 28 | 1.4% |
 | 程序运行时崩溃（编出的保留/非法字节 → SIGILL/#UD、GNU vector 运算 SIGSEGV） | 18 | 0.9% |
-| 程序編譯不通過（合法輸入被拒收） | 811 | 39.9% |
-| 　├ intrinsic 頭文件缺失（immintrin.h/arm_neon.h） | 249 | 12.3% |
-| 　├ 指令表/偽指令缺失 | 133 | 6.5% |
-| 　├ 內建函數派發缺失 | 96 | 4.7% |
-| 　├ C23 語法/屬性/宏缺失 | 49 | 2.4% |
-| 　└ 其他合法構造被拒收 | 284 | 14.0% |
+| 程序編譯不通過（合法輸入被拒收——指令表、內建函數、intrinsic 頭文件、C23 語法） | 811 | 39.9% |
 | **有效小计** | **2029** | 99.85% |
 | 假阳性（三方 oracle 齐拒亲测：#30/#119/#247） | 3 | 0.15% |
 | **合计（open）** | **2032** | **100%** |
@@ -104,12 +99,7 @@
 | Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash) | 32 | 1.6% |
 | Missing or wrong diagnostics (warning gaps, constraint violations accepted, enum self-reference, no-op flags) | 28 | 1.4% |
 | Program crash at runtime (SIGILL/#UD, GNU vector SIGSEGV) | 18 | 0.9% |
-| Compilation fails (valid input rejected) | 811 | 39.9% |
-| 　├ Intrinsic headers missing | 249 | 12.3% |
-| 　├ Instruction tables/directives missing | 133 | 6.5% |
-| 　├ Builtin dispatch missing | 96 | 4.7% |
-| 　├ C23 syntax/attributes/macros missing | 49 | 2.4% |
-| 　└ Other valid constructs rejected | 284 | 14.0% |
+| Compilation fails (valid input rejected — instruction tables, builtins, intrinsics, C23) | 811 | 39.9% |
 | **Valid subtotal** | **2029** | 99.85% |
 | False positives (triple-oracle rejection: #30/#119/#247) | 3 | 0.15% |
 | **Total (open)** | **2032** | **100%** |
