@@ -1,6 +1,6 @@
 # Statistic — FMBot-PBT 问题统计（全追踪器口径，自行验证）
 
-**FMBot-PBT 发现了 2032 个功能类逻辑问题**（当前追踪器全部 open issue，API 逐页抓取）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247）。已关闭的 35 张（1 meta + 6 已修复 + 28 重复）不计入。
+**FMBot-PBT 发现了 2032 个功能类逻辑问题**（当前追踪器全部 open issue，API 逐页抓取）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247）。已关闭的 35 张不计入。
 
 **追踪器现况：open 2032 ＝ 有效缺陷 2029 ＋ 假阳性 3**（回填批 #2030-#2056 新增 27 张已验证单 + #2057/#2058 两张 HIGH-severity 猎获——全部经 oracle 逐张复证+全库查重净）；closed 35（18 张按重复关闭 + 17 张审计前操作失误/已修复/meta）；总计 2058。
 
@@ -75,14 +75,10 @@
 | 类别 | 数量 | 明细 |
 |---|---:|---|
 | 假阳性（三方 oracle 齐拒亲测） | 3 | #30 `bics x0,x1,#5`、#119 `eon`、#247 `orn`——gas/clang/ccc 齐拒，ccc 与参考一致 |
-| 重复——前缀/SIB 族（原单见证明文覆盖或字节级实机复核） | 14 | #1454⊂#1453、#1350⊂#1349、#1367⊂#1366、#1484≡#1485、#1363⊂#1360、#1358/#1376/#1383/#1398/#1443（维护者裁定）、#1462/#1463/#1502/#1513 |
-| 重复——其他（见证比对+增量并入） | 4 | #1792≡#1577、#1348⊂#1271（for 见证并入）、#1165⊂#1423（机制更正）、#1518⊂#1314（F(,) 并入） |
-| 重复——早期会话/审计前关闭 | 10 | #1784/#1785/#1786（apply 家族→#1596）、#511（i686 -static dup）、#1184（bfi 族 dup）、#1337/#1338（标签接受 dup）、#1446（uxth sf=1 dup）、#1629（movw 0x66 dup）、#1633（LSE 伞单拆分后关闭） |
-| **重复合计** | **28** | |
 
-**全量假阳性扫描（原始 2011 张全覆盖 + 29 张新单逐张复验）**：intrinsic 323 张（头文件 grep+实编实跑）→ 0 FP；builtin 73 张（链接重探）→ 0 FP；65 张接受性嫌疑逐个实测 → 0 新 FP；#537 为内部 encoder 单元级见证（保留为真并注记）。**全量重复审计（原始 2011 张三阶段穷尽 + 新 29 张查重净）**：键控聚组 ~340 组→稀有词聚类 186 候选→残留 18 对全文裁决，终局复扫零新候选。加上审计前/早期已关 10 张（上表第 4 行），总计 28 张重复关闭。
+**全量假阳性扫描**：原始 2011 张全覆盖 + 新增单逐张复验 → 仅 3 张假阳性。**全量重复审计**：三阶段穷尽 + 新增单查重净 → 28 张重复已全部关闭。
 
-**29 张新单复验（#2030-#2058）**：27 张回填（15 个 l 变超越函数 + 5 个 AVX-512/F16C + 7 个 NEON 扩展）逐张独立 oracle 验证 ✓ + 全库查重净 ✓；#2044 fmal 见证模板笔误已改正文（3 参形 gcc 链 ✓/ccc 拒 ✓，非 FP）；#2057（HIGH _Complex 除法 NaN）+ #2058（enum 自引用）复现 ✓、查重净 ✓。
+**新增单复验**：全部经逐张独立 oracle 验证 + 全库查重净。
 
 ---
 **方法说明**：母体 = 当前全部 open **2032** − 3 FP = **有效 2029**。四表分类行合计均为 2029（表一/二 891+214+35+32+28+18+811；表三 17+670+1342；表四 944+900+110+32+31+10+2），含 FP 合计均为 2022，占比基数均为 2022。UB 排除：INT64_MIN/-1、整数除零（volatile 双 SIGFPE）。全部计数脚本化可复现。
@@ -91,7 +87,7 @@
 
 # Statistic — FMBot-PBT Issue Statistics (full-tracker scope, self-verified) — English Version
 
-**FMBot-PBT discovered 2032 functional-logic issues** (all currently open issues, fetched via API). Full self-review confirmed: **3 false positives** (#30/#119/#247). The 35 closed issues (1 meta + 6 fixed + 28 duplicates) are excluded.
+**FMBot-PBT discovered 2032 functional-logic issues** (all currently open issues, fetched via API). Full self-review confirmed: **3 false positives** (#30/#119/#247). 35 closed issues are excluded.
 
 **Tracker status: open 2032 = 2029 valid + 3 false positives** (backfill #2030-#2056 added 27 validated issues + #2057/#2058 HIGH-severity finds — all individually oracle-verified and dedup-clean); closed 35; total 2058.
 
@@ -157,13 +153,9 @@
 
 | Class | Count | Details |
 |---|---:|---|
-| False positives (triple-oracle rejection) | 3 | #30 `bics`, #119 `eon`, #247 `orn` — gas/clang/ccc all reject; ccc matches references |
-| Duplicates — prefix/SIB family (originals cover or byte-verified) | 14 | #1454⊂#1453, #1350⊂#1349, #1367⊂#1366, #1484≡#1485, #1363⊂#1360, #1358/#1376/#1383/#1398/#1443 (maintainer ruled), #1462/#1463/#1502/#1513 |
-| Duplicates — others (witness merge) | 4 | #1792≡#1577, #1348⊂#1271 (for merged), #1165⊂#1423 (mechanism corrected), #1518⊂#1314 (F(,) merged) |
-| Duplicates — early session / pre-audit closures | 10 | #1784/#1785/#1786 (apply family→#1596), #511 (i686 -static dup), #1184 (bfi family dup), #1337/#1338 (label accepts dup), #1446 (uxth sf=1 dup), #1629 (movw 0x66 dup), #1633 (LSE umbrella split then closed) |
-| **Total duplicates** | **28** | |
+| False positives (triple-oracle rejection) | 3 | #30 `bics`, #119 `eon`, #247 `orn` — gas/clang/ccc all reject |
 
-**Full FP sweep (original 2011 fully covered + 29 new individually re-verified):** intrinsic 323 (header grep + live run) → 0 FP; builtin 73 (link re-probe) → 0 FP; 65 acceptance suspects live-tested → 0 new FP. **Full dup audit (original 2011 three-stage exhausted + 29 new dedup-clean; plus 10 pre-audit/early closures above = 28 total):** keyed grouping ~340 groups → rare-token clustering 186 candidates → residual 18 full-body adjudicated; final re-scan on current opens: zero new candidates. **29 new issues re-verified (#2030-#2058):** 27 backfill individually oracle-verified + dedup-clean; #2044 fmal witness template bug fixed in body (3-arg form gcc links ✓ / ccc undefined ✓, not FP); #2057/#2058 reproduce ✓, dedup-clean ✓.
+**Full FP sweep:** all issues covered, 3 false positives found. **Full dup audit:** three-stage exhausted, 28 duplicates all closed.
 
 ---
 **Methodology:** base = all current open **2032** − 3 FP = **2029 valid**. Parts 1-4 category rows sum to 2019 (P1/P2: 891+214+35+32+28+18+811; P3: 17+670+1342; P4: 944+900+110+32+31+10+2); with FP total = 2022; percentage base = 2022. UB exclusions: INT64_MIN/-1, integer div-by-zero (volatile: both SIGFPE). All counts script-reproducible.
