@@ -30,12 +30,12 @@
 |---|---|---:|---:|
 | CWE-20 不当输入验证（合法输入被误拒） | 程序編譯不通過 | 700 | 34.4% |
 | CWE-681 数值转换/运算不正确 | 運算結果不正確 | 627 | 30.9% |
-| CWE-20 不当输入验证（非法寄存器類被靜默接受） | 允許編譯非法程序 | 264 | 13.0% |
+| CWE-1078 不当源代码质量（非法寄存器類被靜默接受） | 允許編譯非法程序 | 264 | 13.0% |
 | CWE-125/CWE-787 越界读写 | 讀寫錯誤的變量或內存 | 214 | 10.5% |
 | CWE-229/CWE-241 值處理錯誤/崩潰 | 運行結果被丟棄或崩潰 | 53 | 2.6% |
 | CWE-674/CWE-476 不受控遞歸/空指針 | 編譯器崩潰或卡死 | 32 | 1.6% |
-| CWE-754/CWE-1078 异常条件检查不当 | 診斷信息缺失或有誤 | 28 | 1.4% |
-| CWE-754 异常条件检查不当（行為異常） | 其他錯誤 | 111 | 5.5% |
+| CWE-754 异常条件检查不当 | 診斷信息缺失或有誤 | 28 | 1.4% |
+| N/A（混合類：旗標/輸出/工具鏈） | 其他錯誤 | 111 | 5.5% |
 | **有效小计** | | **2029** | 99.85% |
 | 假阳性（N/A） | | 3 | 0.15% |
 | **合计（open）** | | **2032** | **100%** |
@@ -113,12 +113,12 @@
 |---|---|---:|---:|
 | CWE-20 Improper Input Validation (valid input rejected) | Compilation fails | 700 | 34.4% |
 | CWE-681 Incorrect numeric conversion/computation | Incorrect computation | 627 | 30.9% |
-| CWE-20 Improper Input Validation (wrong register class accepted) | Allows compiling illegal programs | 264 | 13.0% |
+| CWE-1078 Inappropriate Source Code Quality (wrong register class accepted) | Allows compiling illegal programs | 264 | 13.0% |
 | CWE-125/CWE-787 Out-of-bounds read/write | Wrong memory access | 214 | 10.5% |
 | CWE-229/CWE-241 Value handling error / crash | Results dropped or crash | 53 | 2.6% |
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
-| CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
-| CWE-754 Improper check (abnormal behavior) | Other errors | 111 | 5.5% |
+| CWE-754 Improper check for unusual conditions | Missing diagnostics | 28 | 1.4% |
+| N/A (mixed: flags/output/toolchain) | Other errors | 111 | 5.5% |
 | **Valid subtotal** | | **2029** | 99.85% |
 | False positives (N/A) | | 3 | 0.15% |
 | **Total (open)** | | **2032** | **100%** |
