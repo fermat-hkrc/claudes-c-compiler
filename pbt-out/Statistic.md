@@ -87,7 +87,7 @@
 
 **Tracker status: open 2032 = 2029 valid + 3 false positives** (backfill #2030-#2056 added 27 validated issues + #2057/#2058 HIGH-severity finds — all individually oracle-verified and dedup-clean); closed 35; total 2067.
 
-> **Table convention (Parts 1-4):** category rows sum to **valid 2029**; the **false-positive row (3)** sits between; **grand total = open 2032**; **all percentages use 2032 as base**. The 18 duplicates are closed — footnotes only.
+> **Table convention (Parts 1-4):** category rows sum to **valid 2029**; the **false-positive row (3)** sits between; **grand total = open 2032**; **all percentages use 2032 as base**.
 
 ## Part 1 — Problem-Type Distribution
 
