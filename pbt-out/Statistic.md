@@ -13,13 +13,12 @@
 | 问题类型 | 数量 | 占比（基数 2032） |
 |---|---:|---:|
 | 程序編譯不通過（合法輸入被拒收——指令表、內建函數、intrinsic 頭文件、C23 語法等缺失） | 700 | 34.4% |
-| 運算結果不正確（合法輸入被錯編——錯誤編碼致指令語義改變、錯字節/錯碼/回繞/反轉、越界立即數截斷、多餘操作數被忽略、_Complex 除法 NaN） | 627 | 30.9% |
+| 運算結果不正確（合法輸入被錯編——錯誤編碼致指令語義改變、錯字節/錯碼/回繞/反轉、_Complex 除法 NaN） | 627 | 30.9% |
 | 允許編譯非法程序（非法寄存器類/寬度不匹配被靜默接受並編碼，C 標準 MUST-diagnose 違反） | 264 | 13.0% |
-| 診斷信息缺失或有誤（合法代碼缺警告：默認警告缺失、診斷屬性無效、約束違反未提示） | 28 | 1.4% |
 | 讀寫錯誤的變量或內存（TLS 錯址、越界偏移、重定位丟失、錯誤尋址/棧幀） | 214 | 10.5% |
-| 運行結果被丟棄（操作被靜默歸零或編為 NOP） | 35 | 1.7% |
+| 運行結果被丟棄或崩潰（操作被靜默歸零/編為 NOP、SIGILL/#UD、SIGSEGV） | 53 | 2.6% |
 | 編譯器崩潰或卡死（ICE/panic、解析棧溢出、宏深度崩潰） | 32 | 1.6% |
-| 程序運行時崩潰（SIGILL/#UD、SIGSEGV） | 18 | 0.9% |
+| 診斷信息缺失或有誤（合法代碼缺警告：默認警告缺失、診斷屬性無效） | 28 | 1.4% |
 | 其他錯誤（旗標靜默無效、輸出格式缺陷、工具鏈行為差異等） | 111 | 5.5% |
 | **有效小计** | **2029** | 99.85% |
 | 假阳性（三方 oracle 齐拒亲测：#30/#119/#247） | 3 | 0.15% |
@@ -30,13 +29,12 @@
 | CWE | 名称（对应问题类型） | 数量 | 占比（基数 2032） |
 |---|---|---:|---:|
 | CWE-20 不当输入验证（合法输入被误拒） | 程序編譯不通過 | 700 | 34.4% |
-| CWE-681 数值转换/运算不正确（合法輸入被錯編） | 運算結果不正確 | 627 | 30.9% |
-| CWE-20 不当输入验证（非法寄存器類被靜默接受，MUST-diagnose 缺失） | 允許編譯非法程序 | 264 | 13.0% |
-| CWE-754/CWE-1078 异常条件检查不当/输入验证不当 | 診斷信息缺失 | 28 | 1.4% |
+| CWE-681 数值转换/运算不正确 | 運算結果不正確 | 627 | 30.9% |
+| CWE-20 不当输入验证（非法寄存器類被靜默接受） | 允許編譯非法程序 | 264 | 13.0% |
 | CWE-125/CWE-787 越界读写 | 讀寫錯誤的變量或內存 | 214 | 10.5% |
-| CWE-229 值处理错误 | 運行結果被丟棄 | 35 | 1.7% |
+| CWE-229/CWE-241 值處理錯誤/崩潰 | 運行結果被丟棄或崩潰 | 53 | 2.6% |
 | CWE-674/CWE-476 不受控遞歸/空指針 | 編譯器崩潰或卡死 | 32 | 1.6% |
-| CWE-241 不当数据处理导致崩溃 | 程序運行時崩潰 | 18 | 0.9% |
+| CWE-754/CWE-1078 异常条件检查不当 | 診斷信息缺失或有誤 | 28 | 1.4% |
 | CWE-754 异常条件检查不当（行為異常） | 其他錯誤 | 111 | 5.5% |
 | **有效小计** | | **2029** | 99.85% |
 | 假阳性（N/A） | | 3 | 0.15% |
@@ -98,13 +96,12 @@
 | Problem type | Count | Pct (base 2032) |
 |---|---:|---:|
 | Compilation fails (valid input rejected — missing instruction tables, builtins, intrinsics, C23) | 700 | 34.4% |
-| Incorrect computation results (valid input wrongly encoded — wrong semantics, wrong bytes/codes/wrap/reversal, immediate truncation, extra operands ignored, _Complex div NaN) | 627 | 30.9% |
-| Allows compiling illegal programs (wrong register class/width mismatch silently accepted and encoded, C-standard MUST-diagnose violation) | 264 | 13.0% |
-| Missing or wrong diagnostics (valid code lacking warnings: default warnings absent, diagnostic attributes, constraint hints) | 28 | 1.4% |
+| Incorrect computation results (valid input wrongly encoded — wrong semantics, wrong bytes/codes/wrap/reversal, _Complex div NaN) | 627 | 30.9% |
+| Allows compiling illegal programs (wrong register class/width silently accepted and encoded, C-standard MUST-diagnose violation) | 264 | 13.0% |
 | Wrong variable/memory reads or writes (TLS wrong-address, offset wrap, lost relocations, bad addressing) | 214 | 10.5% |
-| Runtime results dropped (operations zeroed or as NOP) | 35 | 1.7% |
+| Runtime results dropped or crash (operations zeroed/as NOP, SIGILL/#UD, SIGSEGV) | 53 | 2.6% |
 | Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash) | 32 | 1.6% |
-| Program crash at runtime (SIGILL/#UD, SIGSEGV) | 18 | 0.9% |
+| Missing or wrong diagnostics (valid code lacking warnings) | 28 | 1.4% |
 | Other errors (silent flag no-ops, output format defects, toolchain differences) | 111 | 5.5% |
 | **Valid subtotal** | **2029** | 99.85% |
 | False positives (triple-oracle rejection: #30/#119/#247) | 3 | 0.15% |
@@ -115,13 +112,12 @@
 | CWE | Name (mapped type) | Count | Pct (base 2032) |
 |---|---|---:|---:|
 | CWE-20 Improper Input Validation (valid input rejected) | Compilation fails | 700 | 34.4% |
-| CWE-681 Incorrect numeric conversion/computation (valid input wrongly encoded) | Incorrect computation | 627 | 30.9% |
-| CWE-20 Improper Input Validation (wrong register class silently accepted) | Allows compiling illegal programs | 264 | 13.0% |
-| CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
+| CWE-681 Incorrect numeric conversion/computation | Incorrect computation | 627 | 30.9% |
+| CWE-20 Improper Input Validation (wrong register class accepted) | Allows compiling illegal programs | 264 | 13.0% |
 | CWE-125/CWE-787 Out-of-bounds read/write | Wrong memory access | 214 | 10.5% |
-| CWE-229 Value handling error | Results dropped | 35 | 1.7% |
+| CWE-229/CWE-241 Value handling error / crash | Results dropped or crash | 53 | 2.6% |
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
-| CWE-241 Improper data handling → crash | Runtime crash | 18 | 0.9% |
+| CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
 | CWE-754 Improper check (abnormal behavior) | Other errors | 111 | 5.5% |
 | **Valid subtotal** | | **2029** | 99.85% |
 | False positives (N/A) | | 3 | 0.15% |
