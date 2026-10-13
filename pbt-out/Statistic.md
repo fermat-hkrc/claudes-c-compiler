@@ -1,6 +1,6 @@
 # Statistic — FMBot-PBT 问题统计（全追踪器口径，自行验证）
 
-**FMBot-PBT 发现了 2032 个功能类逻辑问题**（当前追踪器全部 open issue，API 逐页抓取）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247）。已关闭的 53 张（18 重复 + 17 操作失误 + 10 队友已修 + 8 早期已修）不计入。
+**FMBot-PBT 发现了 2032 个功能类逻辑问题**（当前追踪器全部 open issue，API 逐页抓取）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247）。已关闭的 35 张（1 meta + 6 已修复 + 28 重复）不计入。
 
 **追踪器现况：open 2032 ＝ 有效缺陷 2029 ＋ 假阳性 3**（回填批 #2030-#2056 新增 27 张已验证单 + #2057/#2058 两张 HIGH-severity 猎获——全部经 oracle 逐张复证+全库查重净）；closed 35（18 张按重复关闭 + 17 张审计前操作失误/已修复/meta）；总计 2058。
 
@@ -89,7 +89,7 @@
 
 # Statistic — FMBot-PBT Issue Statistics (full-tracker scope, self-verified) — English Version
 
-**FMBot-PBT discovered 2032 functional-logic issues** (all currently open issues, fetched via API). Full self-review confirmed: **3 false positives** (#30/#119/#247). The 53 closed issues (18 duplicates + 17 operational + 10 teammate-fixed + 8 early-fixed) are excluded.
+**FMBot-PBT discovered 2032 functional-logic issues** (all currently open issues, fetched via API). Full self-review confirmed: **3 false positives** (#30/#119/#247). The 35 closed issues (1 meta + 6 fixed + 28 duplicates) are excluded.
 
 **Tracker status: open 2032 = 2029 valid + 3 false positives** (backfill #2030-#2056 added 27 validated issues + #2057/#2058 HIGH-severity finds — all individually oracle-verified and dedup-clean); closed 35; total 2058.
 
