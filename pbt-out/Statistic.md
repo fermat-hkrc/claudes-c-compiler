@@ -57,7 +57,7 @@
 
 | Verdict class（表现形态） | 数量 | 占比（基数 2032） | 说明 |
 |---|---:|---:|---|
-| missing/reject（合法输入被拒收/功能未实现：指令表、内建、intrinsic、C23；含 27 张回填） | 944 | 46.7% | ccc 拒收而 oracle 接受——零信息的功能缺失 |
+| missing/reject（合法输入被拒收/功能未实现：指令表、内建、intrinsic、C23；含 27 张回填） | 944 | 46.5% | ccc 拒收而 oracle 接受——零信息的功能缺失 |
 | silent-accept（非法输入被静默接受并编码） | 900 | 44.3% | 参考工具链拒绝，ccc 零诊断编出机器码 |
 | differential（编码/结果与参考工具链不同：错字节/NaN/回绕） | 110 | 5.4% | 双方皆接受但结果/字节级不同 |
 | panic-on-invalid（非法输入触发编译器 panic/ICE/溢出） | 32 | 1.6% | 崩溃路径可达命令行 |
@@ -138,7 +138,7 @@
 
 | Verdict class | Count | Pct (base 2032) | Notes |
 |---|---:|---:|---|
-| missing/reject (valid input rejected / unimplemented; incl. 27 backfill) | 944 | 46.7% | ccc rejects what the oracle accepts |
+| missing/reject (valid input rejected / unimplemented; incl. 27 backfill) | 944 | 46.5% | ccc rejects what the oracle accepts |
 | silent-accept (invalid input silently accepted and encoded) | 900 | 44.3% | references reject; ccc emits with zero diagnostics |
 | differential (encoding/result differs from reference) | 110 | 5.4% | both accept, but result/bytes differ |
 | panic-on-invalid (invalid input triggers panic/ICE) | 32 | 1.6% | crash paths reachable from CLI |
