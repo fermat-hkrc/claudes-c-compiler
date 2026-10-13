@@ -16,7 +16,7 @@
 | 读写出错的变量或内存（TLS 错址写穿、越界偏移回绕、重定位丢失/错型、错误寻址/栈帧/对齐、访存编码缺陷） | 314 | 15.5% |
 | 运行结果被丢弃（操作被静默归零或编为 NOP：#embed 零字节、输入未装载、依赖省略） | 35 | 1.7% |
 | 编译器崩溃或卡死（ICE/panic、解析栈溢出、宏深度崩溃、负参数挂起） | 32 | 1.6% |
-| 诊断信息缺失或有误（纯告警缺失、约束违反被接受、enum 自引用、旗标静默无效） | 28 | 1.4% |
+| 诊断信息缺失或有误（非法操作数/寄存器类/宽度不匹配被静默接受、默认警告缺失、约束违反未诊断） | 328 | 16.2% |
 | 程序运行时崩溃（编出的保留/非法字节 → SIGILL/#UD、GNU vector 运算 SIGSEGV） | 18 | 0.9% |
 | 程序編譯不通過（合法輸入被拒收——指令表、內建函數、intrinsic 頭文件、C23 語法等缺失導致編譯失敗） | 700 | 34.5% |
 | 其他錯誤（編譯可通過但行為異常——旗標靜默無效、輸出格式缺陷、工具鏈行為差異等） | 111 | 5.5% |
@@ -115,7 +115,7 @@
 | CWE-125/CWE-787 Out-of-bounds read/write | Wrong memory access | 314 | 15.5% |
 | CWE-229 Value handling error (lost/zeroed) | Results dropped | 35 | 1.7% |
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
-| CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
+| CWE-754/CWE-1078 Improper check / input validation (bad operands silently accepted) | Missing diagnostics | 328 | 16.2% |
 | CWE-241 Improper data handling → crash | Runtime crash | 18 | 0.9% |
 | CWE-20 Improper Input Validation (valid input incorrectly rejected) | Compilation fails | 700 | 34.5% |
 | N/A (other errors) | Other errors | 111 | 5.5% |
