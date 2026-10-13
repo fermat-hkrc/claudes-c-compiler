@@ -1,6 +1,6 @@
 # Statistic — FMBot-PBT 问题统计（全追踪器口径，自行验证）
 
-**FMBot-PBT 发现了 2050 个功能类逻辑问题**（审计起点 2011 张 + 回填/新猎 29 张 + 队友追加 10 张[#2059-#2068]）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247）+ **18 张重复**（现已全部关闭）。
+**FMBot-PBT 发现了 2032 个功能类逻辑问题**（当前追踪器全部 open issue，API 逐页抓取）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247）。已关闭的 53 张（18 重复 + 17 操作失误 + 10 队友已修 + 8 早期已修）不计入。
 
 **追踪器现况：open 2032 ＝ 有效缺陷 2029 ＋ 假阳性 3**（回填批 #2030-#2056 新增 27 张已验证单 + #2057/#2058 两张 HIGH-severity 猎获——全部经 oracle 逐张复证+全库查重净）；closed 35（18 张按重复关闭 + 17 张审计前操作失误/已修复/meta）；总计 2058。
 
@@ -83,13 +83,13 @@
 **29 张新单复验（#2030-#2058）**：27 张回填（15 个 l 变超越函数 + 5 个 AVX-512/F16C + 7 个 NEON 扩展）逐张独立 oracle 验证 ✓ + 全库查重净 ✓；#2044 fmal 见证模板笔误已改正文（3 参形 gcc 链 ✓/ccc 拒 ✓，非 FP）；#2057（HIGH _Complex 除法 NaN）+ #2058（enum 自引用）复现 ✓、查重净 ✓。
 
 ---
-**方法说明**：审计母体 2011 + 新增 29 + 队友追加 10 = 总发现 **2050** − 3 FP − 18 重复 = **有效 2029**；open **2032** = 2029 + 3 FP。四表分类行合计均为 2029（表一/二 891+214+35+32+28+18+811；表三 17+670+1342；表四 944+900+110+32+31+10+2），含 FP 合计均为 2022，占比基数均为 2022。UB 排除：INT64_MIN/-1、整数除零（volatile 双 SIGFPE）。全部计数脚本化可复现。
+**方法说明**：母体 = 当前全部 open **2032** − 3 FP = **有效 2029**。四表分类行合计均为 2029（表一/二 891+214+35+32+28+18+811；表三 17+670+1342；表四 944+900+110+32+31+10+2），含 FP 合计均为 2022，占比基数均为 2022。UB 排除：INT64_MIN/-1、整数除零（volatile 双 SIGFPE）。全部计数脚本化可复现。
 
 ---
 
 # Statistic — FMBot-PBT Issue Statistics (full-tracker scope, self-verified) — English Version
 
-**FMBot-PBT discovered 2050 functional-logic issues** (2011 at audit start + 29 new + 10 teammate [#2059-#2068]). Full self-review confirmed: **3 false positives** (#30/#119/#247) + **18 duplicates** (all closed).
+**FMBot-PBT discovered 2032 functional-logic issues** (all currently open issues, fetched via API). Full self-review confirmed: **3 false positives** (#30/#119/#247). The 53 closed issues (18 duplicates + 17 operational + 10 teammate-fixed + 8 early-fixed) are excluded.
 
 **Tracker status: open 2032 = 2029 valid + 3 false positives** (backfill #2030-#2056 added 27 validated issues + #2057/#2058 HIGH-severity finds — all individually oracle-verified and dedup-clean); closed 35; total 2058.
 
@@ -162,4 +162,4 @@
 **Full FP sweep (original 2011 fully covered + 29 new individually re-verified):** intrinsic 323 (header grep + live run) → 0 FP; builtin 73 (link re-probe) → 0 FP; 65 acceptance suspects live-tested → 0 new FP. **Full dup audit (original 2011 three-stage exhausted + 29 new dedup-clean):** keyed grouping ~340 groups → rare-token clustering 186 candidates → residual 18 full-body adjudicated; final re-scan on current opens: zero new candidates. **29 new issues re-verified (#2030-#2058):** 27 backfill individually oracle-verified + dedup-clean; #2044 fmal witness template bug fixed in body (3-arg form gcc links ✓ / ccc undefined ✓, not FP); #2057/#2058 reproduce ✓, dedup-clean ✓.
 
 ---
-**Methodology:** audit base 2011 + 29 new + 10 teammate = total **2050** − 3 FP − 18 dups = **2029 valid**; open **2032** = 2029 + 3 FP. Parts 1-4 category rows sum to 2019 (P1/P2: 891+214+35+32+28+18+811; P3: 17+670+1342; P4: 944+900+110+32+31+10+2); with FP total = 2022; percentage base = 2022. UB exclusions: INT64_MIN/-1, integer div-by-zero (volatile: both SIGFPE). All counts script-reproducible.
+**Methodology:** base = all current open **2032** − 3 FP = **2029 valid**. Parts 1-4 category rows sum to 2019 (P1/P2: 891+214+35+32+28+18+811; P3: 17+670+1342; P4: 944+900+110+32+31+10+2); with FP total = 2022; percentage base = 2022. UB exclusions: INT64_MIN/-1, integer div-by-zero (volatile: both SIGFPE). All counts script-reproducible.
