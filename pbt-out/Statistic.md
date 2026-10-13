@@ -18,7 +18,8 @@
 | 编译器崩溃或卡死（ICE/panic、解析栈溢出、宏深度崩溃、负参数挂起） | 32 | 1.6% |
 | 诊断信息缺失或有误（纯告警缺失、约束违反被接受、enum 自引用、旗标静默无效） | 28 | 1.4% |
 | 程序运行时崩溃（编出的保留/非法字节 → SIGILL/#UD、GNU vector 运算 SIGSEGV） | 18 | 0.9% |
-| 程序編譯不通過（合法輸入被拒收——指令表、內建函數、intrinsic 頭文件、C23 語法） | 811 | 39.9% |
+| 程序編譯不通過（合法輸入被拒收——指令表、內建函數、intrinsic 頭文件、C23 語法等缺失導致編譯失敗） | 700 | 34.5% |
+| 其他錯誤（編譯可通過但行為異常——旗標靜默無效、輸出格式缺陷、工具鏈行為差異等） | 111 | 5.5% |
 | **有效小计** | **2029** | 99.85% |
 | 假阳性（三方 oracle 齐拒亲测：#30/#119/#247） | 3 | 0.15% |
 | **合计（open）** | **2032** | **100%** |
@@ -33,7 +34,8 @@
 | CWE-674 不受控递归/CWE-476 空指针解引用 | 编译器崩溃或卡死 | 32 | 1.6% |
 | CWE-754 异常条件检查不当/CWE-1078 输入验证不当 | 诊断信息缺失或有误 | 28 | 1.4% |
 | CWE-241 不当数据处理导致崩溃 | 程序运行时崩溃 | 18 | 0.9% |
-| N/A（程序編譯不通過；参考 CWE-691 控制流不完整） | 程序編譯不通過 | 811 | 39.9% |
+| N/A（程序編譯不通過；参考 CWE-691 控制流不完整） | 程序編譯不通過 | 700 | 34.5% |
+| N/A（其他錯誤） | 其他錯誤 | 111 | 5.5% |
 | **有效小计** | | **2029** | 99.85% |
 | 假阳性（N/A） | | 3 | 0.15% |
 | **合计（open）** | | **2032** | **100%** |
@@ -99,7 +101,8 @@
 | Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash) | 32 | 1.6% |
 | Missing or wrong diagnostics (warning gaps, constraint violations accepted, enum self-reference, no-op flags) | 28 | 1.4% |
 | Program crash at runtime (SIGILL/#UD, GNU vector SIGSEGV) | 18 | 0.9% |
-| Compilation fails (valid input rejected — instruction tables, builtins, intrinsics, C23) | 811 | 39.9% |
+| Compilation fails (valid input rejected — missing instruction tables, builtins, intrinsics, C23 syntax) | 700 | 34.5% |
+| Other errors (compilation succeeds but abnormal behavior — silent flag no-ops, output format defects, toolchain differences) | 111 | 5.5% |
 | **Valid subtotal** | **2029** | 99.85% |
 | False positives (triple-oracle rejection: #30/#119/#247) | 3 | 0.15% |
 | **Total (open)** | **2032** | **100%** |
@@ -114,7 +117,8 @@
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
 | CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
 | CWE-241 Improper data handling → crash | Runtime crash | 18 | 0.9% |
-| N/A (compilation fails; cf. CWE-691) | Compilation fails | 811 | 39.9% |
+| N/A (compilation fails; cf. CWE-691) | Compilation fails | 700 | 34.5% |
+| N/A (other errors) | Other errors | 111 | 5.5% |
 | **Valid subtotal** | | **2029** | 99.85% |
 | False positives (N/A) | | 3 | 0.15% |
 | **Total (open)** | | **2032** | **100%** |
