@@ -12,8 +12,8 @@
 
 | 问题类型 | 数量 | 占比（基数 2032） |
 |---|---:|---:|
-| 运算结果不正确（被接受的非法操作数/编码位错误→错误指令语义、错字节/错码/回绕/反转、C23 auto→int、_Complex 除法 NaN） | 891 | 43.9% |
-| 读写出错的变量或内存（TLS 错址写穿、越界偏移回绕、重定位丢失/错型、错误寻址/栈帧/对齐） | 214 | 10.6% |
+| 运算结果不正确（错误编码致指令语义改变、错字节/错码/回绕/反转、C23 auto→int、_Complex 除法 NaN） | 491 | 24.2% |
+| 读写出错的变量或内存（TLS 错址写穿、越界偏移回绕、重定位丢失/错型、错误寻址/栈帧/对齐、访存编码缺陷） | 314 | 15.5% |
 | 运行结果被丢弃（操作被静默归零或编为 NOP：#embed 零字节、输入未装载、依赖省略） | 35 | 1.7% |
 | 编译器崩溃或卡死（ICE/panic、解析栈溢出、宏深度崩溃、负参数挂起） | 32 | 1.6% |
 | 诊断信息缺失或有误（纯告警缺失、约束违反被接受、enum 自引用、旗标静默无效） | 28 | 1.4% |
@@ -28,11 +28,11 @@
 
 | CWE | 名称（对应问题类型） | 数量 | 占比（基数 2032） |
 |---|---|---:|---:|
-| CWE-681 数值转换/运算不正确（含错误编码致错误指令语义） | 运算结果不正确 | 891 | 43.9% |
-| CWE-125/CWE-787 越界读写（错址访问/错误重定位） | 读写出错的变量或内存 | 214 | 10.6% |
+| CWE-681 数值转换/运算不正确（含错误编码致错误指令语义） | 运算结果不正确 | 491 | 24.2% |
+| CWE-125/CWE-787 越界读写（错址访问/错误重定位/访存编码缺陷） | 读写出错的变量或内存 | 314 | 15.5% |
 | CWE-229 值处理错误（结果丢失/归零） | 运行结果被丢弃 | 35 | 1.7% |
 | CWE-674 不受控递归/CWE-476 空指针解引用 | 编译器崩溃或卡死 | 32 | 1.6% |
-| CWE-754 异常条件检查不当/CWE-1078 输入验证不当 | 诊断信息缺失或有误 | 28 | 1.4% |
+| CWE-754 异常条件检查不当/CWE-1078 输入验证不当（非法操作数被静默接受） | 诊断信息缺失或有误 | 328 | 16.2% |
 | CWE-241 不当数据处理导致崩溃 | 程序运行时崩溃 | 18 | 0.9% |
 | CWE-20 不当输入验证（将合法输入误判为非法而拒绝编译） | 程序編譯不通過 | 700 | 34.5% |
 | CWE-754 异常条件检查不当（旗标/输出/工具链行为未正确校验） | 其他錯誤 | 111 | 5.5% |
@@ -95,11 +95,11 @@
 
 | Problem type | Count | Pct (base 2032) |
 |---|---:|---:|
-| Incorrect computation results (invalid operands/encoding-bit errors → wrong semantics, wrong bytes/codes/wrap/reversal, C23 auto→int, _Complex div NaN) | 891 | 43.9% |
-| Wrong variable/memory reads or writes (TLS wrong-address, offset wrap, lost relocations, bad addressing operands) | 214 | 10.6% |
+| Incorrect computation results (wrong encoding → wrong semantics, wrong bytes/codes/wrap/reversal, C23 auto→int, _Complex div NaN) | 491 | 24.2% |
+| Wrong variable/memory reads or writes (TLS wrong-address, offset wrap, lost relocations, bad addressing, memory-encoding defects) | 314 | 15.5% |
 | Runtime results dropped (operations zeroed or as NOP: #embed zero bytes, inputs never materialized) | 35 | 1.7% |
 | Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash) | 32 | 1.6% |
-| Missing or wrong diagnostics (warning gaps, constraint violations accepted, enum self-reference, no-op flags) | 28 | 1.4% |
+| Missing or wrong diagnostics (bad operands/registers silently accepted, default warnings absent, constraints undiagnosed) | 328 | 16.2% |
 | Program crash at runtime (SIGILL/#UD, GNU vector SIGSEGV) | 18 | 0.9% |
 | Compilation fails (valid input rejected — missing instruction tables, builtins, intrinsics, C23 syntax) | 700 | 34.5% |
 | Other errors (compilation succeeds but abnormal behavior — silent flag no-ops, output format defects, toolchain differences) | 111 | 5.5% |
@@ -111,8 +111,8 @@
 
 | CWE | Name (mapped type) | Count | Pct (base 2032) |
 |---|---|---:|---:|
-| CWE-681 Incorrect numeric conversion/computation | Incorrect computation | 891 | 43.9% |
-| CWE-125/CWE-787 Out-of-bounds read/write | Wrong memory access | 214 | 10.6% |
+| CWE-681 Incorrect numeric conversion/computation | Incorrect computation | 491 | 24.2% |
+| CWE-125/CWE-787 Out-of-bounds read/write | Wrong memory access | 314 | 15.5% |
 | CWE-229 Value handling error (lost/zeroed) | Results dropped | 35 | 1.7% |
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
 | CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
