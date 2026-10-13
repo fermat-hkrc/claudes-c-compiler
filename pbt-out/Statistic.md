@@ -35,7 +35,7 @@
 | CWE-229/CWE-241 值處理錯誤/崩潰 | 運行結果被丟棄或崩潰 | 53 | 2.6% |
 | CWE-674/CWE-476 不受控遞歸/空指針 | 編譯器崩潰或卡死 | 32 | 1.6% |
 | CWE-754 异常条件检查不当 | 診斷信息缺失或有誤 | 28 | 1.4% |
-| N/A（混合類：旗標/輸出/工具鏈） | 其他錯誤 | 111 | 5.5% |
+| CWE-1188 不安全默認配置（旗標被靜默忽略、輸出格式缺陷） | 其他錯誤 | 111 | 5.5% |
 | **有效小计** | | **2029** | 99.85% |
 | 假阳性（N/A） | | 3 | 0.15% |
 | **合计（open）** | | **2032** | **100%** |
@@ -118,7 +118,7 @@
 | CWE-229/CWE-241 Value handling error / crash | Results dropped or crash | 53 | 2.6% |
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
 | CWE-754 Improper check for unusual conditions | Missing diagnostics | 28 | 1.4% |
-| N/A (mixed: flags/output/toolchain) | Other errors | 111 | 5.5% |
+| CWE-1188 Insecure Default Configuration (flags silently ignored, output defects) | Other errors | 111 | 5.5% |
 | **Valid subtotal** | | **2029** | 99.85% |
 | False positives (N/A) | | 3 | 0.15% |
 | **Total (open)** | | **2032** | **100%** |
