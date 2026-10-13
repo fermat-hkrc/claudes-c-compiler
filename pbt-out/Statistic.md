@@ -77,8 +77,10 @@
 | 假阳性（三方 oracle 齐拒亲测） | 3 | #30 `bics x0,x1,#5`、#119 `eon`、#247 `orn`——gas/clang/ccc 齐拒，ccc 与参考一致 |
 | 重复——前缀/SIB 族（原单见证明文覆盖或字节级实机复核） | 14 | #1454⊂#1453、#1350⊂#1349、#1367⊂#1366、#1484≡#1485、#1363⊂#1360、#1358/#1376/#1383/#1398/#1443（维护者裁定）、#1462/#1463/#1502/#1513 |
 | 重复——其他（见证比对+增量并入） | 4 | #1792≡#1577、#1348⊂#1271（for 见证并入）、#1165⊂#1423（机制更正）、#1518⊂#1314（F(,) 并入） |
+| 重复——早期会话/审计前关闭 | 10 | #1784/#1785/#1786（apply 家族→#1596）、#511（i686 -static dup）、#1184（bfi 族 dup）、#1337/#1338（标签接受 dup）、#1446（uxth sf=1 dup）、#1629（movw 0x66 dup）、#1633（LSE 伞单拆分后关闭） |
+| **重复合计** | **28** | |
 
-**全量假阳性扫描（原始 2011 张全覆盖 + 29 张新单逐张复验）**：intrinsic 323 张（头文件 grep+实编实跑）→ 0 FP；builtin 73 张（链接重探）→ 0 FP；65 张接受性嫌疑逐个实测 → 0 新 FP；#537 为内部 encoder 单元级见证（保留为真并注记）。**全量重复审计（原始 2011 张三阶段穷尽 + 新 29 张查重净）**：键控聚组 ~340 组→稀有词聚类 186 候选→残留 18 对全文裁决，终局复扫零新候选。
+**全量假阳性扫描（原始 2011 张全覆盖 + 29 张新单逐张复验）**：intrinsic 323 张（头文件 grep+实编实跑）→ 0 FP；builtin 73 张（链接重探）→ 0 FP；65 张接受性嫌疑逐个实测 → 0 新 FP；#537 为内部 encoder 单元级见证（保留为真并注记）。**全量重复审计（原始 2011 张三阶段穷尽 + 新 29 张查重净）**：键控聚组 ~340 组→稀有词聚类 186 候选→残留 18 对全文裁决，终局复扫零新候选。加上审计前/早期已关 10 张（上表第 4 行），总计 28 张重复关闭。
 
 **29 张新单复验（#2030-#2058）**：27 张回填（15 个 l 变超越函数 + 5 个 AVX-512/F16C + 7 个 NEON 扩展）逐张独立 oracle 验证 ✓ + 全库查重净 ✓；#2044 fmal 见证模板笔误已改正文（3 参形 gcc 链 ✓/ccc 拒 ✓，非 FP）；#2057（HIGH _Complex 除法 NaN）+ #2058（enum 自引用）复现 ✓、查重净 ✓。
 
@@ -158,8 +160,10 @@
 | False positives (triple-oracle rejection) | 3 | #30 `bics`, #119 `eon`, #247 `orn` — gas/clang/ccc all reject; ccc matches references |
 | Duplicates — prefix/SIB family (originals cover or byte-verified) | 14 | #1454⊂#1453, #1350⊂#1349, #1367⊂#1366, #1484≡#1485, #1363⊂#1360, #1358/#1376/#1383/#1398/#1443 (maintainer ruled), #1462/#1463/#1502/#1513 |
 | Duplicates — others (witness merge) | 4 | #1792≡#1577, #1348⊂#1271 (for merged), #1165⊂#1423 (mechanism corrected), #1518⊂#1314 (F(,) merged) |
+| Duplicates — early session / pre-audit closures | 10 | #1784/#1785/#1786 (apply family→#1596), #511 (i686 -static dup), #1184 (bfi family dup), #1337/#1338 (label accepts dup), #1446 (uxth sf=1 dup), #1629 (movw 0x66 dup), #1633 (LSE umbrella split then closed) |
+| **Total duplicates** | **28** | |
 
-**Full FP sweep (original 2011 fully covered + 29 new individually re-verified):** intrinsic 323 (header grep + live run) → 0 FP; builtin 73 (link re-probe) → 0 FP; 65 acceptance suspects live-tested → 0 new FP. **Full dup audit (original 2011 three-stage exhausted + 29 new dedup-clean):** keyed grouping ~340 groups → rare-token clustering 186 candidates → residual 18 full-body adjudicated; final re-scan on current opens: zero new candidates. **29 new issues re-verified (#2030-#2058):** 27 backfill individually oracle-verified + dedup-clean; #2044 fmal witness template bug fixed in body (3-arg form gcc links ✓ / ccc undefined ✓, not FP); #2057/#2058 reproduce ✓, dedup-clean ✓.
+**Full FP sweep (original 2011 fully covered + 29 new individually re-verified):** intrinsic 323 (header grep + live run) → 0 FP; builtin 73 (link re-probe) → 0 FP; 65 acceptance suspects live-tested → 0 new FP. **Full dup audit (original 2011 three-stage exhausted + 29 new dedup-clean; plus 10 pre-audit/early closures above = 28 total):** keyed grouping ~340 groups → rare-token clustering 186 candidates → residual 18 full-body adjudicated; final re-scan on current opens: zero new candidates. **29 new issues re-verified (#2030-#2058):** 27 backfill individually oracle-verified + dedup-clean; #2044 fmal witness template bug fixed in body (3-arg form gcc links ✓ / ccc undefined ✓, not FP); #2057/#2058 reproduce ✓, dedup-clean ✓.
 
 ---
 **Methodology:** base = all current open **2032** − 3 FP = **2029 valid**. Parts 1-4 category rows sum to 2019 (P1/P2: 891+214+35+32+28+18+811; P3: 17+670+1342; P4: 944+900+110+32+31+10+2); with FP total = 2022; percentage base = 2022. UB exclusions: INT64_MIN/-1, integer div-by-zero (volatile: both SIGFPE). All counts script-reproducible.
