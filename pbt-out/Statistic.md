@@ -12,14 +12,14 @@
 
 | 问题类型 | 数量 | 占比（基数 2032） |
 |---|---:|---:|
-| 其他錯誤（編譯可通過但行為異常——旗標靜默無效、輸出格式缺陷、工具鏈行為差異等） | 688 | 33.9% |
-| 程序編譯不通過（合法輸入被拒收——指令表、內建函數、intrinsic 頭文件、C23 語法等缺失導致編譯失敗） | 525 | 25.9% |
-| 運算結果不正確（錯誤編碼致指令語義改變、錯字節/錯碼/回繞/反轉、C23 auto→int、_Complex 除法 NaN） | 345 | 17.0% |
-| 診斷信息缺失或有誤（非法操作數/寄存器類/寬度不匹配被靜默接受、默認警告缺失、約束違反未診斷） | 211 | 10.4% |
-| 讀寫錯誤的變量或內存（TLS 錯址寫穿、越界偏移回繞、重定位丟失/錯型、錯誤尋址/棧幀/對齊） | 187 | 9.2% |
-| 運行結果被丟棄（操作被靜默歸零或編為 NOP：#embed 零字節、輸入未裝載、依賴省略） | 37 | 1.8% |
-| 編譯器崩潰或卡死（ICE/panic、解析棧溢出、宏深度崩潰、負參數掛起） | 32 | 1.6% |
-| 程序運行時崩潰（編出的保留/非法字節 → SIGILL/#UD、GNU vector 運算 SIGSEGV） | 4 | 0.2% |
+| 程序編譯不通過（合法輸入被拒收——指令表、內建函數、intrinsic 頭文件、C23 語法等缺失） | 700 | 34.5% |
+| 運算結果不正確（錯誤編碼致指令語義改變、錯字節/錯碼/回繞/反轉、_Complex 除法 NaN） | 691 | 34.0% |
+| 診斷信息缺失或有誤（非法操作數被靜默接受、默認警告缺失、約束違反未診斷） | 228 | 11.2% |
+| 讀寫錯誤的變量或內存（TLS 錯址、越界偏移、重定位丟失、錯誤尋址/棧幀） | 214 | 10.5% |
+| 運行結果被丟棄（操作被靜默歸零或編為 NOP） | 35 | 1.7% |
+| 編譯器崩潰或卡死（ICE/panic、解析棧溢出、宏深度崩潰） | 32 | 1.6% |
+| 程序運行時崩潰（SIGILL/#UD、SIGSEGV） | 18 | 0.9% |
+| 其他錯誤（旗標靜默無效、輸出格式缺陷、工具鏈行為差異等） | 111 | 5.5% |
 | **有效小计** | **2029** | 99.85% |
 | 假阳性（三方 oracle 齐拒亲测：#30/#119/#247） | 3 | 0.15% |
 | **合计（open）** | **2032** | **100%** |
@@ -28,14 +28,14 @@
 
 | CWE | 名称（对应问题类型） | 数量 | 占比（基数 2032） |
 |---|---|---:|---:|
-| CWE-754 异常条件检查不当（編譯可行為異常、旗標/輸出未正確校驗） | 其他錯誤 | 688 | 33.9% |
-| CWE-20 不当输入验证（将合法输入误判为非法而拒绝编译） | 程序編譯不通過 | 525 | 25.9% |
-| CWE-681 数值转换/运算不正确（含错误编码致错误指令语义） | 運算結果不正確 | 345 | 17.0% |
-| CWE-1078 输入验证不当（非法操作數被靜默接受、約束違反未診斷） | 診斷信息缺失或有誤 | 211 | 10.4% |
-| CWE-125/CWE-787 越界读写（错址访问/错误重定位） | 讀寫錯誤的變量或內存 | 187 | 9.2% |
-| CWE-229 值处理错误（结果丢失/归零） | 運行結果被丟棄 | 37 | 1.8% |
-| CWE-674 不受控递归/CWE-476 空指针解引用 | 編譯器崩潰或卡死 | 32 | 1.6% |
-| CWE-241 不当数据处理导致崩溃 | 程序運行時崩潰 | 4 | 0.2% |
+| CWE-20 不当输入验证（合法输入被误拒） | 程序編譯不通過 | 700 | 34.5% |
+| CWE-681 数值转换/运算不正确 | 運算結果不正確 | 691 | 34.0% |
+| CWE-1078 输入验证不当（非法操作數被靜默接受） | 診斷信息缺失 | 228 | 11.2% |
+| CWE-125/CWE-787 越界读写 | 讀寫錯誤的變量或內存 | 214 | 10.5% |
+| CWE-229 值处理错误 | 運行結果被丟棄 | 35 | 1.7% |
+| CWE-674/CWE-476 不受控遞歸/空指針 | 編譯器崩潰或卡死 | 32 | 1.6% |
+| CWE-241 不当数据处理导致崩溃 | 程序運行時崩潰 | 18 | 0.9% |
+| CWE-754 异常条件检查不当（行為異常） | 其他錯誤 | 111 | 5.5% |
 | **有效小计** | | **2029** | 99.85% |
 | 假阳性（N/A） | | 3 | 0.15% |
 | **合计（open）** | | **2032** | **100%** |
@@ -95,14 +95,14 @@
 
 | Problem type | Count | Pct (base 2032) |
 |---|---:|---:|
-| Other errors (compilation succeeds but abnormal behavior — silent flag no-ops, output format defects, toolchain differences) | 688 | 33.9% |
-| Compilation fails (valid input rejected — missing instruction tables, builtins, intrinsics, C23 syntax) | 525 | 25.9% |
-| Incorrect computation results (wrong encoding → wrong semantics, wrong bytes/codes/wrap/reversal, C23 auto→int, _Complex div NaN) | 345 | 17.0% |
-| Missing or wrong diagnostics (bad operands/registers silently accepted, default warnings absent, constraints undiagnosed) | 211 | 10.4% |
-| Wrong variable/memory reads or writes (TLS wrong-address, offset wrap, lost relocations, bad addressing, memory-encoding defects) | 187 | 9.2% |
-| Runtime results dropped (operations zeroed or as NOP: #embed zero bytes, inputs never materialized) | 37 | 1.8% |
+| Compilation fails (valid input rejected — missing instruction tables, builtins, intrinsics, C23) | 700 | 34.5% |
+| Incorrect computation results (wrong encoding → wrong semantics, wrong bytes/codes/wrap/reversal, _Complex div NaN) | 691 | 34.0% |
+| Missing or wrong diagnostics (bad operands silently accepted, default warnings absent, constraints undiagnosed) | 228 | 11.2% |
+| Wrong variable/memory reads or writes (TLS wrong-address, offset wrap, lost relocations, bad addressing) | 214 | 10.5% |
+| Runtime results dropped (operations zeroed or as NOP) | 35 | 1.7% |
 | Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash) | 32 | 1.6% |
-| Program crash at runtime (SIGILL/#UD, GNU vector SIGSEGV) | 4 | 0.2% |
+| Program crash at runtime (SIGILL/#UD, SIGSEGV) | 18 | 0.9% |
+| Other errors (silent flag no-ops, output format defects, toolchain differences) | 111 | 5.5% |
 | **Valid subtotal** | **2029** | 99.85% |
 | False positives (triple-oracle rejection: #30/#119/#247) | 3 | 0.15% |
 | **Total (open)** | **2032** | **100%** |
@@ -111,14 +111,14 @@
 
 | CWE | Name (mapped type) | Count | Pct (base 2032) |
 |---|---|---:|---:|
-| CWE-754 Improper check (compilation succeeds, abnormal behavior/output) | Other errors | 688 | 33.9% |
-| CWE-20 Improper Input Validation (valid input incorrectly rejected) | Compilation fails | 525 | 25.9% |
-| CWE-681 Incorrect numeric conversion/computation | Incorrect computation | 345 | 17.0% |
-| CWE-1078 Improper input validation (bad operands silently accepted) | Missing diagnostics | 211 | 10.4% |
-| CWE-125/CWE-787 Out-of-bounds read/write | Wrong memory access | 187 | 9.2% |
-| CWE-229 Value handling error | Results dropped | 37 | 1.8% |
+| CWE-20 Improper Input Validation (valid input rejected) | Compilation fails | 700 | 34.5% |
+| CWE-681 Incorrect numeric conversion/computation | Incorrect computation | 691 | 34.0% |
+| CWE-1078 Improper input validation (bad operands accepted) | Missing diagnostics | 228 | 11.2% |
+| CWE-125/CWE-787 Out-of-bounds read/write | Wrong memory access | 214 | 10.5% |
+| CWE-229 Value handling error | Results dropped | 35 | 1.7% |
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
-| CWE-241 Improper data handling → crash | Runtime crash | 4 | 0.2% |
+| CWE-241 Improper data handling → crash | Runtime crash | 18 | 0.9% |
+| CWE-754 Improper check (abnormal behavior) | Other errors | 111 | 5.5% |
 | **Valid subtotal** | | **2029** | 99.85% |
 | False positives (N/A) | | 3 | 0.15% |
 | **Total (open)** | | **2032** | **100%** |
