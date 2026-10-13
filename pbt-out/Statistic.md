@@ -46,7 +46,7 @@
 |---|---:|---:|---|
 | 高（HIGH：静默数据损坏/错误控制流；含 #2057 _Complex 除法 NaN） | 17 | 0.8% | #1692 TLS 初始化清零+写穿、#1698 asm goto 跳过语句、#1700 "x" 约束、#1702 auto→int、#1693 .so 重定位蒸发、#1628 fsub 反码、#1632 fcmp→NOP、#1490 mulx/pdep/pext 互换 |
 | 中（MEDIUM：错误编码可致错行为、安全加固缺失、约束违反被接受） | 670 | 33.0% | #1695 RELRO 缺失、#1696 backtrace 单帧、#1710 #elifdef 走错分支、#1789 位域超宽接受、#2058 enum 自引用 |
-| 低（LOW：纯功能缺失、罕用边角、告警类） | 1342 | 66.4% | 指令表/内建/intrinsic 缺失群（含 27 张回填）、#1712 __FILE_NAME__ |
+| 低（LOW：纯功能缺失、罕用边角、告警类） | 1342 | 66.0% | 指令表/内建/intrinsic 缺失群（含 27 张回填）、#1712 __FILE_NAME__ |
 | **有效小计** | **2029** | 99.9% | |
 | 假阳性（原均为低阶语法类） | 3 | 0.1% | #30/#119/#247 BICS/EON/ORN 别名 |
 | **合计（open）** | **2032** | **100%** | |
@@ -129,7 +129,7 @@
 |---|---:|---:|---|
 | High (silent data corruption / wrong control flow) | 17 | 0.8% | #1692 TLS init zeroed+cross-module, #1698 asm goto skip, #1700 "x"-constraint, #1702 auto→int, #1693 .so relocs vanish, #1628 fsub reversed, #1632 fcmp→NOP, #1490 mulx swap, #2057 _Complex div NaN |
 | Medium (wrong encodings, missing hardening, constraint violations accepted) | 670 | 33.0% | #1695 no RELRO, #1696 backtrace 1-frame, #1710 #elifdef wrong branch, #1789 bit-field over-wide, #2058 enum self-ref |
-| Low (pure feature gaps, obscure corners, warning-class) | 1342 | 66.4% | instruction/builtin/intrinsic families (incl. 27 backfill), #1712 __FILE_NAME__ |
+| Low (pure feature gaps, obscure corners, warning-class) | 1342 | 66.0% | instruction/builtin/intrinsic families (incl. 27 backfill), #1712 __FILE_NAME__ |
 | **Valid subtotal** | **2029** | 99.9% | |
 | False positives (originally low-tier syntax) | 3 | 0.1% | #30/#119/#247 |
 | **Total (open)** | **2032** | **100%** | |
