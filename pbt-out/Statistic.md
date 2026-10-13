@@ -121,16 +121,16 @@
 | CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
 | CWE-241 Improper data handling → crash | Runtime crash | 18 | 0.9% |
 | N/A (feature-missing; cf. CWE-691) | Other errors | 811 | 40.1% |
-| **Valid subtotal** | | **2019** | 99.85% |
+| **Valid subtotal** | | **2029** | 99.85% |
 | False positives (N/A) | | 3 | 0.15% |
-| **Total (open)** | | **2022** | **100%** |
+| **Total (open)** | | **2032** | **100%** |
 
 ## Part 3 — Severity Distribution
 
 | Severity | Count | Pct (base 2032) | Representative issues |
 |---|---:|---:|---|
 | High (silent data corruption / wrong control flow) | 17 | 0.8% | #1692 TLS init zeroed+cross-module, #1698 asm goto skip, #1700 "x"-constraint, #1702 auto→int, #1693 .so relocs vanish, #1628 fsub reversed, #1632 fcmp→NOP, #1490 mulx swap, #2057 _Complex div NaN |
-| Medium (wrong encodings, missing hardening, constraint violations accepted) | 660 | 32.6% | #1695 no RELRO, #1696 backtrace 1-frame, #1710 #elifdef wrong branch, #1789 bit-field over-wide, #2058 enum self-ref |
+| Medium (wrong encodings, missing hardening, constraint violations accepted) | 670 | 33.0% | #1695 no RELRO, #1696 backtrace 1-frame, #1710 #elifdef wrong branch, #1789 bit-field over-wide, #2058 enum self-ref |
 | Low (pure feature gaps, obscure corners, warning-class) | 1342 | 66.4% | instruction/builtin/intrinsic families (incl. 27 backfill), #1712 __FILE_NAME__ |
 | **Valid subtotal** | **2029** | 99.85% | |
 | False positives (originally low-tier syntax) | 3 | 0.15% | #30/#119/#247 |
