@@ -34,8 +34,8 @@
 | CWE-674 不受控递归/CWE-476 空指针解引用 | 编译器崩溃或卡死 | 32 | 1.6% |
 | CWE-754 异常条件检查不当/CWE-1078 输入验证不当 | 诊断信息缺失或有误 | 28 | 1.4% |
 | CWE-241 不当数据处理导致崩溃 | 程序运行时崩溃 | 18 | 0.9% |
-| N/A（程序編譯不通過；参考 CWE-691 控制流不完整） | 程序編譯不通過 | 700 | 34.5% |
-| N/A（其他錯誤） | 其他錯誤 | 111 | 5.5% |
+| CWE-20 不当输入验证（将合法输入误判为非法而拒绝编译） | 程序編譯不通過 | 700 | 34.5% |
+| CWE-754 异常条件检查不当（旗标/输出/工具链行为未正确校验） | 其他錯誤 | 111 | 5.5% |
 | **有效小计** | | **2029** | 99.85% |
 | 假阳性（N/A） | | 3 | 0.15% |
 | **合计（open）** | | **2032** | **100%** |
@@ -117,7 +117,7 @@
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
 | CWE-754/CWE-1078 Improper check / input validation | Missing diagnostics | 28 | 1.4% |
 | CWE-241 Improper data handling → crash | Runtime crash | 18 | 0.9% |
-| N/A (compilation fails; cf. CWE-691) | Compilation fails | 700 | 34.5% |
+| CWE-20 Improper Input Validation (valid input incorrectly rejected) | Compilation fails | 700 | 34.5% |
 | N/A (other errors) | Other errors | 111 | 5.5% |
 | **Valid subtotal** | | **2029** | 99.85% |
 | False positives (N/A) | | 3 | 0.15% |
