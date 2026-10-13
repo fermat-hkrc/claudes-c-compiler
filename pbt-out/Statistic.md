@@ -63,7 +63,7 @@
 | panic-on-invalid（非法输入触发编译器 panic/ICE/溢出） | 32 | 1.6% | 崩溃路径可达命令行 |
 | C-level/linker/runtime（C 语言层、链接层、运行时行为） | 31 | 1.5% | TLS/ELF/执行时/内联汇编 |
 | warn-accepts（参考仅告警或要求诊断，ccc 零输出；含旗标静默无效） | 10 | 0.5% | 告警缺失类 |
-| reverse（操作数/顺序反转：显式 reversed/swapped） | 2 | 0.15% | #1628 fsub 反码、#1050 sgnj 反转 |
+| reverse（操作数/顺序反转：显式 reversed/swapped） | 2 | 0.1% | #1628 fsub 反码、#1050 sgnj 反转 |
 | **有效小计** | **2029** | 99.85% | |
 | 假阳性（自行复核判定） | 3 | 0.15% | #30/#119/#247 |
 | **合计（open）** | **2032** | **100%** | |
@@ -144,7 +144,7 @@
 | panic-on-invalid (invalid input triggers panic/ICE) | 32 | 1.6% | crash paths reachable from CLI |
 | C-level/linker/runtime (C semantics, linker, runtime behavior) | 31 | 1.5% | TLS/ELF/execution/inline-asm |
 | warn-accepts (reference warns; ccc silent) | 10 | 0.5% | warning-gap class |
-| reverse (operand/order reversal) | 2 | 0.15% | #1628, #1050 |
+| reverse (operand/order reversal) | 2 | 0.1% | #1628, #1050 |
 | **Valid subtotal** | **2029** | 99.85% | |
 | False positives (self-verified) | 3 | 0.15% | #30/#119/#247 |
 | **Total (open)** | **2032** | **100%** | |
