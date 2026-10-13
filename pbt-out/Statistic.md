@@ -20,8 +20,8 @@
 | 編譯器崩潰或卡死（ICE/panic、解析棧溢出、宏深度崩潰） | 32 | 1.6% |
 | 程序運行時崩潰（SIGILL/#UD、SIGSEGV） | 18 | 0.9% |
 | 其他錯誤（旗標靜默無效、輸出格式缺陷、工具鏈行為差異等） | 111 | 5.5% |
-| **有效小计** | **2029** | 99.9% |
-| 假阳性（三方 oracle 齐拒亲测：#30/#119/#247） | 3 | 0.1% |
+| **有效小计** | **2029** | 99.85% |
+| 假阳性（三方 oracle 齐拒亲测：#30/#119/#247） | 3 | 0.15% |
 | **合计（open）** | **2032** | **100%** |
 
 ## 二、CWE 分类分布
@@ -36,8 +36,8 @@
 | CWE-674/CWE-476 不受控遞歸/空指針 | 編譯器崩潰或卡死 | 32 | 1.6% |
 | CWE-241 不当数据处理导致崩溃 | 程序運行時崩潰 | 18 | 0.9% |
 | CWE-754 异常条件检查不当（行為異常） | 其他錯誤 | 111 | 5.5% |
-| **有效小计** | | **2029** | 99.9% |
-| 假阳性（N/A） | | 3 | 0.1% |
+| **有效小计** | | **2029** | 99.85% |
+| 假阳性（N/A） | | 3 | 0.15% |
 | **合计（open）** | | **2032** | **100%** |
 
 ## 三、严重程度（Severity）分布
@@ -47,8 +47,8 @@
 | 高（HIGH：静默数据损坏/错误控制流；含 #2057 _Complex 除法 NaN） | 17 | 0.8% | #1692 TLS 初始化清零+写穿、#1698 asm goto 跳过语句、#1700 "x" 约束、#1702 auto→int、#1693 .so 重定位蒸发、#1628 fsub 反码、#1632 fcmp→NOP、#1490 mulx/pdep/pext 互换 |
 | 中（MEDIUM：错误编码可致错行为、安全加固缺失、约束违反被接受） | 670 | 33.0% | #1695 RELRO 缺失、#1696 backtrace 单帧、#1710 #elifdef 走错分支、#1789 位域超宽接受、#2058 enum 自引用 |
 | 低（LOW：纯功能缺失、罕用边角、告警类） | 1342 | 66.0% | 指令表/内建/intrinsic 缺失群（含 27 张回填）、#1712 __FILE_NAME__ |
-| **有效小计** | **2029** | 99.9% | |
-| 假阳性（原均为低阶语法类） | 3 | 0.1% | #30/#119/#247 BICS/EON/ORN 别名 |
+| **有效小计** | **2029** | 99.85% | |
+| 假阳性（原均为低阶语法类） | 3 | 0.15% | #30/#119/#247 BICS/EON/ORN 别名 |
 | **合计（open）** | **2032** | **100%** | |
 
 ## 四、判定类别（Verdict-class）分布
@@ -63,9 +63,9 @@
 | panic-on-invalid（非法输入触发编译器 panic/ICE/溢出） | 32 | 1.6% | 崩溃路径可达命令行 |
 | C-level/linker/runtime（C 语言层、链接层、运行时行为） | 31 | 1.5% | TLS/ELF/执行时/内联汇编 |
 | warn-accepts（参考仅告警或要求诊断，ccc 零输出；含旗标静默无效） | 10 | 0.5% | 告警缺失类 |
-| reverse（操作数/顺序反转：显式 reversed/swapped） | 2 | 0.1% | #1628 fsub 反码、#1050 sgnj 反转 |
-| **有效小计** | **2029** | 99.9% | |
-| 假阳性（自行复核判定） | 3 | 0.1% | #30/#119/#247 |
+| reverse（操作数/顺序反转：显式 reversed/swapped） | 2 | 0.15% | #1628 fsub 反码、#1050 sgnj 反转 |
+| **有效小计** | **2029** | 99.85% | |
+| 假阳性（自行复核判定） | 3 | 0.15% | #30/#119/#247 |
 | **合计（open）** | **2032** | **100%** | |
 
 ## 五、假阳性与重复验证明细（全部自行测试）
@@ -103,8 +103,8 @@
 | Compiler crash or hang (ICE/panic, parser stack overflow, deep-macro crash) | 32 | 1.6% |
 | Program crash at runtime (SIGILL/#UD, SIGSEGV) | 18 | 0.9% |
 | Other errors (silent flag no-ops, output format defects, toolchain differences) | 111 | 5.5% |
-| **Valid subtotal** | **2029** | 99.9% |
-| False positives (triple-oracle rejection: #30/#119/#247) | 3 | 0.1% |
+| **Valid subtotal** | **2029** | 99.85% |
+| False positives (triple-oracle rejection: #30/#119/#247) | 3 | 0.15% |
 | **Total (open)** | **2032** | **100%** |
 
 ## Part 2 — CWE Distribution
@@ -119,8 +119,8 @@
 | CWE-674/CWE-476 Uncontrolled recursion / NULL deref | Compiler crash/hang | 32 | 1.6% |
 | CWE-241 Improper data handling → crash | Runtime crash | 18 | 0.9% |
 | CWE-754 Improper check (abnormal behavior) | Other errors | 111 | 5.5% |
-| **Valid subtotal** | | **2029** | 99.9% |
-| False positives (N/A) | | 3 | 0.1% |
+| **Valid subtotal** | | **2029** | 99.85% |
+| False positives (N/A) | | 3 | 0.15% |
 | **Total (open)** | | **2032** | **100%** |
 
 ## Part 3 — Severity Distribution
@@ -130,8 +130,8 @@
 | High (silent data corruption / wrong control flow) | 17 | 0.8% | #1692 TLS init zeroed+cross-module, #1698 asm goto skip, #1700 "x"-constraint, #1702 auto→int, #1693 .so relocs vanish, #1628 fsub reversed, #1632 fcmp→NOP, #1490 mulx swap, #2057 _Complex div NaN |
 | Medium (wrong encodings, missing hardening, constraint violations accepted) | 670 | 33.0% | #1695 no RELRO, #1696 backtrace 1-frame, #1710 #elifdef wrong branch, #1789 bit-field over-wide, #2058 enum self-ref |
 | Low (pure feature gaps, obscure corners, warning-class) | 1342 | 66.0% | instruction/builtin/intrinsic families (incl. 27 backfill), #1712 __FILE_NAME__ |
-| **Valid subtotal** | **2029** | 99.9% | |
-| False positives (originally low-tier syntax) | 3 | 0.1% | #30/#119/#247 |
+| **Valid subtotal** | **2029** | 99.85% | |
+| False positives (originally low-tier syntax) | 3 | 0.15% | #30/#119/#247 |
 | **Total (open)** | **2032** | **100%** | |
 
 ## Part 4 — Verdict-Class Distribution
@@ -144,9 +144,9 @@
 | panic-on-invalid (invalid input triggers panic/ICE) | 32 | 1.6% | crash paths reachable from CLI |
 | C-level/linker/runtime (C semantics, linker, runtime behavior) | 31 | 1.5% | TLS/ELF/execution/inline-asm |
 | warn-accepts (reference warns; ccc silent) | 10 | 0.5% | warning-gap class |
-| reverse (operand/order reversal) | 2 | 0.1% | #1628, #1050 |
-| **Valid subtotal** | **2029** | 99.9% | |
-| False positives (self-verified) | 3 | 0.1% | #30/#119/#247 |
+| reverse (operand/order reversal) | 2 | 0.15% | #1628, #1050 |
+| **Valid subtotal** | **2029** | 99.85% | |
+| False positives (self-verified) | 3 | 0.15% | #30/#119/#247 |
 | **Total (open)** | **2032** | **100%** | |
 
 ## Part 5 — False-Positive & Duplicate Verification Details
