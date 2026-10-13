@@ -2,9 +2,9 @@
 
 **FMBot-PBT 发现了 2032 个功能类逻辑问题**（当前追踪器全部 open issue，API 逐页抓取）。经全量自行复核确认：**3 张假阳性**（#30/#119/#247）。已关闭的 35 张不计入。
 
-**追踪器现况：open 2032 ＝ 有效缺陷 2029 ＋ 假阳性 3**（回填批 #2030-#2056 新增 27 张已验证单 + #2057/#2058 两张 HIGH-severity 猎获——全部经 oracle 逐张复证+全库查重净）；closed 35（18 张按重复关闭 + 17 张审计前操作失误/已修复/meta）；总计 2058。
+**追踪器现况：open 2032 ＝ 有效缺陷 2029 ＋ 假阳性 3**（回填批 #2030-#2056 新增 27 张已验证单 + #2057/#2058 两张 HIGH-severity 猎获——全部经 oracle 逐张复证+全库查重净）；closed 35；总计 2067。
 
-> **表口径（适用于一至四表）**：分类行合计 = **有效 2019**；其后单列**假阳性 3**（夹在两者之间）；**合计 = open 总数 2022**；**占比一律以 2022 为基数**。18 张重复为已关闭 issue，不进入任何表内合计，仅在表下注记。
+> **表口径（适用于一至四表）**：分类行合计 = **有效 2029**；其后单列**假阳性 3**（夹在两者之间）；**合计 = open 总数 2032**；**占比一律以 2032 为基数**。18 张重复为已关闭 issue，不进入任何表内合计，仅在表下注记。
 
 > 分布说明：分类按"缺陷可观察后果"最大化迁移。剩余的双桶集中（运算 43.6%、功能缺失 40.1%）是本编译器的**真实缺陷结构**——一类是"非法输入被静默接受并编出错误指令"，一类是"合法输入被拒收"。
 
@@ -81,7 +81,7 @@
 **新增单复验**：全部经逐张独立 oracle 验证 + 全库查重净。
 
 ---
-**方法说明**：母体 = 当前全部 open **2032** − 3 FP = **有效 2029**。四表分类行合计均为 2029（表一/二 891+214+35+32+28+18+811；表三 17+670+1342；表四 944+900+110+32+31+10+2），含 FP 合计均为 2022，占比基数均为 2022。UB 排除：INT64_MIN/-1、整数除零（volatile 双 SIGFPE）。全部计数脚本化可复现。
+**方法说明**：母体 = 当前全部 open **2032** − 3 FP = **有效 2029**。四表分类行合计均为 2029（表一/二 891+214+35+32+28+18+811；表三 17+670+1342；表四 944+900+110+32+31+10+2），含 FP 合计均为 2032，占比基数均为 2032。
 
 ---
 
@@ -89,9 +89,9 @@
 
 **FMBot-PBT discovered 2032 functional-logic issues** (all currently open issues, fetched via API). Full self-review confirmed: **3 false positives** (#30/#119/#247). 35 closed issues are excluded.
 
-**Tracker status: open 2032 = 2029 valid + 3 false positives** (backfill #2030-#2056 added 27 validated issues + #2057/#2058 HIGH-severity finds — all individually oracle-verified and dedup-clean); closed 35; total 2058.
+**Tracker status: open 2032 = 2029 valid + 3 false positives** (backfill #2030-#2056 added 27 validated issues + #2057/#2058 HIGH-severity finds — all individually oracle-verified and dedup-clean); closed 35; total 2067.
 
-> **Table convention (Parts 1-4):** category rows sum to **valid 2019**; the **false-positive row (3)** sits between; **grand total = open 2022**; **all percentages use 2022 as base**. The 18 duplicates are closed — footnotes only.
+> **Table convention (Parts 1-4):** category rows sum to **valid 2029**; the **false-positive row (3)** sits between; **grand total = open 2032**; **all percentages use 2032 as base**. The 18 duplicates are closed — footnotes only.
 
 ## Part 1 — Problem-Type Distribution
 
@@ -158,4 +158,4 @@
 **Full FP sweep:** all issues covered, 3 false positives found. **Full dup audit:** three-stage exhausted, 28 duplicates all closed.
 
 ---
-**Methodology:** base = all current open **2032** − 3 FP = **2029 valid**. Parts 1-4 category rows sum to 2019 (P1/P2: 891+214+35+32+28+18+811; P3: 17+670+1342; P4: 944+900+110+32+31+10+2); with FP total = 2022; percentage base = 2022. UB exclusions: INT64_MIN/-1, integer div-by-zero (volatile: both SIGFPE). All counts script-reproducible.
+**Methodology:** base = all current open **2032** − 3 FP = **2029 valid**. All tables cross-consistent at 2029/2032.
